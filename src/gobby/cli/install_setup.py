@@ -386,6 +386,25 @@ def run_daemon_setup(project_path: Path) -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install ghook: {e}")
 
+    # Install gloc binary (local LLM launcher)
+    try:
+        gloc_result = _install_gloc()
+        if gloc_result.get("installed"):
+            verb = "Upgraded" if gloc_result.get("upgraded") else "Installed"
+            click.echo(
+                f"{verb} gloc {gloc_result.get('version', '')} "
+                f"via {gloc_result.get('method', 'unknown')} (local LLM launcher)"
+            )
+        elif gloc_result.get("skipped"):
+            reason = gloc_result.get("reason", "")
+            suffix = f" ({reason})" if reason else ""
+            click.echo(f"gloc already installed and up to date{suffix}")
+        else:
+            reason = gloc_result.get("reason", "unknown error")
+            click.echo(f"Warning: Failed to install gloc: {reason}")
+    except Exception as e:
+        click.echo(f"Warning: Failed to install gloc: {e}")
+
     # Configure VS Code terminal title (any CLI may run inside VS Code's terminal)
     try:
         from .installers.ide_config import configure_ide_terminal_title
@@ -1229,3 +1248,195 @@ def _install_ghook(force: bool = False) -> dict[str, Any]:
     if compatibility_stamp.exists():
         result["compatibility"] = str(compatibility_stamp)
     return result
+
+
+# ── gloc (local LLM launcher) ───────────────────────────────────────
+
+_GLOC_RELEASE_TAG_PREFIX = "gloc-v"
+_GLOC_CRATES_API = "https://crates.io/api/v1/crates/gobby-local"
+_GLOC_VERSION_STAMP = ".gloc-version"
+_GLOC_BIN_NAME = "gloc.exe" if sys.platform == "win32" else "gloc"
+_GLOC_TARGETS = _PLATFORM_TARGETS
+
+
+def _get_latest_gloc_version() -> str | None:
+    """Query crates.io for the latest gloc version."""
+    try:
+        req = Request(_GLOC_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
+        with _urlopen_https(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        return str(data["crate"]["max_version"])
+    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
+        logger.debug("gloc: could not check latest version: %s", e)
+        return None
+
+
+def _get_installed_gloc_version(bin_dir: Path) -> str | None:
+    """Read the installed gloc version from stamp file."""
+    stamp = bin_dir / _GLOC_VERSION_STAMP
+    binary = bin_dir / _GLOC_BIN_NAME
+    if stamp.exists():
+        content = stamp.read_text().strip()
+        return content if content else None
+    if binary.exists():
+        return "unknown"
+    return None
+
+
+def _write_gloc_version_stamp(bin_dir: Path, version: str) -> None:
+    """Atomically write the gloc version stamp."""
+    stamp = bin_dir / _GLOC_VERSION_STAMP
+    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".gloc-version-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(version + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, stamp)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
+def _install_gloc_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    """Download and extract gloc from GitHub Releases."""
+    return _download_release_binary(
+        bin_dir,
+        binary_name=_GLOC_BIN_NAME,
+        artifact_name="gloc",
+        target=target,
+        version=version,
+        tag_prefix=_GLOC_RELEASE_TAG_PREFIX,
+        label="gloc",
+    )
+
+
+def _install_gloc_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
+    """Install gloc via cargo-binstall."""
+    if not shutil.which("cargo-binstall"):
+        return False
+    try:
+        crate = f"gobby-local@{version}" if version else "gobby-local"
+        result = subprocess.run(
+            [
+                "cargo-binstall",
+                crate,
+                "--install-path",
+                str(bin_dir),
+                "--no-confirm",
+                "--no-symlinks",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("gloc: cargo-binstall failed: %s", e)
+        return False
+
+
+def _install_gloc_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
+    """Compile and install gloc from source via ``cargo install``."""
+    if not shutil.which("cargo"):
+        return False
+    try:
+        cmd = ["cargo", "install", "gobby-local", "--root", str(bin_dir.parent)]
+        if version:
+            cmd.extend(["--version", version])
+        click.echo("  Compiling gloc from source (this may take 30-60 seconds)...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("gloc: cargo install failed: %s", e)
+        return False
+
+
+def _probe_gloc_version(gloc_path: Path) -> str | None:
+    """Probe the gloc binary for a version string."""
+    try:
+        result = subprocess.run(
+            [str(gloc_path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as e:
+        logger.warning("gloc: failed running --version probe: %s", e)
+        return None
+
+    if result.returncode != 0:
+        logger.warning("gloc: --version probe failed: %s", result.stderr.strip())
+        return None
+
+    output = (result.stdout or result.stderr).strip()
+    return output.split()[-1] if output else None
+
+
+def _install_gloc(force: bool = False) -> dict[str, Any]:
+    """Install or upgrade the gloc binary with the public release fallback chain."""
+    bin_dir = Path.home() / ".gobby" / "bin"
+    gloc_path = bin_dir / _GLOC_BIN_NAME
+
+    os_name = sys.platform
+    machine = platform.machine().lower()
+    target = _GLOC_TARGETS.get((os_name, machine))
+    if target is None:
+        logger.warning("gloc: unsupported platform %s/%s", os_name, machine)
+        return {
+            "installed": False,
+            "skipped": True,
+            "reason": f"unsupported platform {os_name}/{machine}",
+        }
+
+    installed_version = _get_installed_gloc_version(bin_dir)
+    target_version = _get_latest_gloc_version()
+
+    if gloc_path.exists() and not force:
+        if target_version and installed_version == target_version:
+            return {"installed": False, "skipped": True, "version": installed_version}
+        if installed_version and installed_version != "unknown" and target_version is None:
+            return {
+                "installed": False,
+                "skipped": True,
+                "version": installed_version,
+                "reason": "version check failed, keeping current",
+            }
+
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    method = None
+
+    if _install_gloc_from_github(bin_dir, target, target_version):
+        method = "github"
+    elif _install_gloc_from_cargo_binstall(bin_dir, target_version):
+        method = "cargo-binstall"
+    elif _install_gloc_from_cargo_install(bin_dir, target_version):
+        method = "cargo-install"
+
+    if method is None:
+        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
+
+    gloc_path.chmod(0o755)
+
+    resolved_version = _probe_gloc_version(gloc_path) or target_version or "unknown"
+    _write_gloc_version_stamp(bin_dir, resolved_version)
+
+    path_result = _ensure_gobby_bin_on_path()
+    if path_result.get("added"):
+        click.echo(
+            f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"
+        )
+
+    is_upgrade = installed_version is not None and installed_version != resolved_version
+    return {
+        "installed": True,
+        "upgraded": is_upgrade,
+        "version": resolved_version,
+        "method": method,
+    }

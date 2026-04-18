@@ -60,6 +60,42 @@ def test_get_gsqz_version(tmp_path):
             assert deps.get_gsqz_version() is None
 
 
+def test_get_ghook_version(tmp_path):
+    with patch.object(Path, "home", return_value=tmp_path):
+        stamp = tmp_path / ".gobby" / "bin" / ".ghook-version"
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text("0.2.0")
+        assert deps.get_ghook_version() == "0.2.0"
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        stamp.unlink()
+        ghook = tmp_path / ".gobby" / "bin" / "ghook"
+        ghook.write_text("")
+        ghook.chmod(0o755)
+        with patch("gobby.utils.deps._run_cmd", return_value="ghook 0.2.1"):
+            assert deps.get_ghook_version() == "0.2.1"
+        with patch("gobby.utils.deps._run_cmd", return_value=None):
+            assert deps.get_ghook_version() is None
+
+
+def test_get_gloc_version(tmp_path):
+    with patch.object(Path, "home", return_value=tmp_path):
+        stamp = tmp_path / ".gobby" / "bin" / ".gloc-version"
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text("0.1.1")
+        assert deps.get_gloc_version() == "0.1.1"
+
+    with patch.object(Path, "home", return_value=tmp_path):
+        stamp.unlink()
+        gloc = tmp_path / ".gobby" / "bin" / "gloc"
+        gloc.write_text("")
+        gloc.chmod(0o755)
+        with patch("gobby.utils.deps._run_cmd", return_value="gloc 0.1.2"):
+            assert deps.get_gloc_version() == "0.1.2"
+        with patch("gobby.utils.deps._run_cmd", return_value=None):
+            assert deps.get_gloc_version() is None
+
+
 def test_get_claude_code_version():
     with patch("gobby.utils.deps._run_cmd", return_value="claude 1.0.12"):
         assert deps.get_claude_code_version() == "1.0.12"
@@ -283,6 +319,8 @@ def test_collect_all_deps():
         patch("gobby.utils.deps.get_gobby_version", return_value="1"),
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
         patch("gobby.utils.deps.get_gsqz_version", return_value="3"),
+        patch("gobby.utils.deps.get_ghook_version", return_value="3.5"),
+        patch("gobby.utils.deps.get_gloc_version", return_value="3.6"),
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
         patch("gobby.utils.deps.get_gemini_cli_version", return_value="5"),
         patch("gobby.utils.deps.get_codex_cli_version", return_value="6"),
@@ -299,6 +337,8 @@ def test_collect_all_deps():
     ):
         res = deps.collect_all_deps()
         assert res["gobby"]["gobby"] == "1"
+        assert res["gobby"]["ghook"] == "3.5"
+        assert res["gobby"]["gloc"] == "3.6"
         assert res["dependencies"]["docker_running"] is True
         assert res["dependencies"]["embeddings_provider"] == "lmstudio"
 

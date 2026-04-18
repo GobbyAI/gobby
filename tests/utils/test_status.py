@@ -122,6 +122,10 @@ class TestStatusUtils:
                     "gcode_path": None,
                     "gsqz": None,
                     "gsqz_path": None,
+                    "ghook": "0.2.0",
+                    "ghook_path": "/Users/test/.gobby/bin/ghook",
+                    "gloc": "0.1.1",
+                    "gloc_path": "/Users/test/.gobby/bin/gloc",
                 },
                 "coding_clis": {
                     "claude": "1.0.12",
@@ -143,6 +147,8 @@ class TestStatusUtils:
         )
         assert "0.3.6" in msg
         assert "0.2.1" in msg
+        assert "0.2.0" in msg
+        assert "0.1.1" in msg
         assert "1.0.12" in msg
         assert "3.4" in msg
         assert "2.44.0" in msg

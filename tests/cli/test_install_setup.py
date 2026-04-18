@@ -93,10 +93,12 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gsqz")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gloc")
     @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
     def test_run_daemon_setup_success(
         self,
         mock_ide,
+        mock_gloc,
         mock_ghook,
         mock_gcode,
         mock_gsqz,
@@ -113,6 +115,7 @@ class TestRunDaemonSetup:
         mock_gsqz.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
+        mock_gloc.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ide.return_value = {"added": True}
 
         mock_run.return_value = MagicMock(returncode=0)
@@ -126,6 +129,7 @@ class TestRunDaemonSetup:
         mock_gsqz.assert_called_once()
         mock_gcode.assert_called_once()
         mock_ghook.assert_called_once()
+        mock_gloc.assert_called_once()
         mock_ide.assert_called_once()
 
     @patch("gobby.cli.utils.init_local_storage")
@@ -135,10 +139,12 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gsqz")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
+    @patch("gobby.cli.install_setup._install_gloc")
     @patch("gobby.cli.installers.ide_config.configure_ide_terminal_title")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
         mock_ide,
+        mock_gloc,
         mock_ghook,
         mock_gcode,
         mock_gsqz,
@@ -154,6 +160,7 @@ class TestRunDaemonSetup:
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_gsqz.return_value = {"skipped": True}
         mock_gcode.return_value = {"skipped": True}
+        mock_gloc.return_value = {"skipped": True}
         mock_ide.return_value = {"added": False}
         mock_run.return_value = MagicMock(returncode=0)
 
