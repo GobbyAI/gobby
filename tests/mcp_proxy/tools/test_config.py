@@ -562,3 +562,123 @@ class TestSetConfigBatch:
         assert result["success"] is False
         # Should not have persisted the invalid value
         assert config_store.get("daemon_port") is None
+
+
+class TestDeleteConfig:
+    """Tests for delete_config tool."""
+
+    @pytest.fixture
+    def config_registry_with_db(
+        self,
+        temp_db: LocalDatabase,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+    ) -> InternalToolRegistry:
+        """Create a config registry with db for secret-aware deletion tests."""
+        return create_config_registry(
+            config=config_state["config"],
+            config_store=config_store,
+            config_setter=lambda c: config_state.__setitem__("config", c),
+            db=temp_db,
+        )
+
+    def test_delete_config_removes_db_row(
+        self, config_registry, config_store: ConfigStore
+    ) -> None:
+        """Deleting a normal override removes its DB row."""
+        set_tool = config_registry.get_tool("set_config")
+        delete_tool = config_registry.get_tool("delete_config")
+
+        assert set_tool(key="daemon_port", value=61000)["success"] is True
+
+        result = delete_tool(key="daemon_port")
+
+        assert result["success"] is True
+        assert result["deleted"] is True
+        assert result["had_secret"] is False
+        assert "daemon_port" not in config_store.list_keys()
+
+    def test_delete_config_updates_in_memory_to_default(
+        self, config_registry, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Deleting an override restores the Pydantic default in memory."""
+        default_port = DaemonConfig().daemon_port
+        set_tool = config_registry.get_tool("set_config")
+        delete_tool = config_registry.get_tool("delete_config")
+
+        assert set_tool(key="daemon_port", value=61001)["success"] is True
+
+        result = delete_tool(key="daemon_port")
+
+        assert result["success"] is True
+        assert config_state["config"].daemon_port == default_port
+        assert config_state["config"].daemon_port != 61001
+
+    def test_delete_config_returns_error_for_missing_key(self, config_registry) -> None:
+        """Deleting a key with no DB override returns a not-found error."""
+        delete_tool = config_registry.get_tool("delete_config")
+
+        result = delete_tool(key="daemon_port")
+
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_delete_config_clears_secret(
+        self,
+        config_registry_with_db,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Deleting a secret override clears both the config row and secret blob."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
+            set_tool = config_registry_with_db.get_tool("set_config")
+            delete_tool = config_registry_with_db.get_tool("delete_config")
+
+            assert (
+                set_tool(key="embeddings.api_key", value="sk-delete-123", is_secret=True)[
+                    "success"
+                ]
+                is True
+            )
+
+            result = delete_tool(key="embeddings.api_key")
+
+            secret_store = SecretStore(temp_db)
+            assert result["success"] is True
+            assert result["had_secret"] is True
+            assert "embeddings.api_key" not in config_store.list_keys()
+            assert secret_store.get("api_key") is None
+            assert config_state["config"].embeddings.api_key is None
+
+    def test_delete_config_requires_db_for_secrets(
+        self,
+        config_registry_with_db,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Secret deletion fails cleanly when the registry has no DB access."""
+        with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
+            set_tool = config_registry_with_db.get_tool("set_config")
+            assert (
+                set_tool(key="embeddings.api_key", value="sk-delete-456", is_secret=True)[
+                    "success"
+                ]
+                is True
+            )
+
+            dbless_registry = create_config_registry(
+                config=config_state["config"],
+                config_store=config_store,
+                config_setter=lambda c: config_state.__setitem__("config", c),
+            )
+            delete_tool = dbless_registry.get_tool("delete_config")
+            result = delete_tool(key="embeddings.api_key")
+
+            secret_store = SecretStore(temp_db)
+            assert result["success"] is False
+            assert "database not available" in result["error"].lower()
+            assert "embeddings.api_key" in config_store.list_keys()
+            assert secret_store.get("api_key") == "sk-delete-456"
+            assert config_state["config"].embeddings.api_key == "sk-delete-456"
