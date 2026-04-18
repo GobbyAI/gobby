@@ -8,6 +8,165 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8]
+
+### Features
+
+#### Conductor pipeline
+
+- Add the front-half conductor pipeline so autonomous runs share the same ingest/dispatch path (#11975)
+- Emit synthetic `AFTER_TOOL` events for MCP discovery and schema tools so rule matchers see them like any other tool call
+
+#### Unified communications framework
+
+- Implement the core unified communications framework and database schema for multi-channel message routing
+
+#### Daemon-owned sandboxing
+
+- Move sandbox policy to daemon-owned runtimes so every CLI launch goes through one policy path (#11868)
+- Sandbox web chat and terminal runtimes (#11860)
+- Configure CLI sandbox defaults and then disable them until opt-in lands (#11860)
+- Add shared ghook and native binary resolution for sandboxed launches (#11860)
+- Stop daemon-owned Gemini/Qwen ACP from inheriting Seatbelt launch flags (#11924)
+- Add the sandbox compatibility harness and format it (#11866)
+
+#### ghook installer and schema mirroring
+
+- Add ghook public installer validation (#11935)
+- Mirror ghook schemas into the repo so installers can verify against a pinned source (#11875)
+
+#### Agent reasoning controls
+
+- Add reasoning controls to spawned agents (#11960)
+- Send Codex effort via `turn/start` so reasoning intensity survives the handoff (#11963)
+
+#### Voice
+
+- Add pluggable TTS providers and the VoxCPM provider (#11845)
+- Make VoxCPM the default voice provider (#11847)
+- Refine VoxCPM device fallback messaging (#11848)
+- Strengthen VoxCPM reference guidance (#11855)
+
+#### Web chat polish
+
+- Wire web chat act/auto approvals through the permission gate (#11816)
+- Restore provider act-mode approval gating (#11824)
+- Render protocol tags as collapsible tool calls in web chat (#11839)
+- Render `exec_command` like `bash` in web transcripts (#11818)
+- Render protocol events as system messages in web chat (#11857)
+- Normalize rendered protocol-only messages (#11919)
+- Preserve raw Codex MCP tool outputs so transcripts stay faithful (#11918)
+- Strip remaining Codex transcript protocol tags (#11826)
+- Bootstrap session titles before the first digest (#11819)
+- Align activity dropdown and Codex models (#11961)
+- Make the default agent the web chat default (#11841)
+- Detach a watched tmux session before chat swap (#11964)
+- Keep resumed web chats from expiring immediately (#11861)
+- Shrink the activity panel with the viewport (#11840)
+- Remove nested scroll from the activity tasks tab (#11864)
+- Remove activity tasks pagination (#11911)
+- Finish transcript and session control polish (#11932)
+- Remove the activity panel effect lint issue (#11932)
+
+#### Tasks, plans, and config
+
+- Per-phase LLM compile for multi-phase plan expansion (#11863)
+- Accept em-dash/en-dash/hyphen in phase headings (#11856)
+- Add the `delete_config` config tool (#11950)
+- Enforce lifecycle-only task updates (#11917)
+- Scope reopen-task blocking to claimed work (#11920)
+- Relax out-of-repo task close gates (#11949)
+- Clear close-task validation gates (#11947)
+
+### Fixes
+
+#### Sessions, tmux, and hooks
+
+- Stabilize session and MCP regression tests (#11974)
+- Normalize hook envelopes at ingress so every provider lands in the same shape (#11913)
+- Dedupe session-start session id injection (#11941)
+- Cover Qwen session-start dedupe (#11943)
+- Suppress websocket disconnect noise in tmux list handling (#11940)
+- Tighten chat session ownership and shutdown (#11939)
+- Restore swapped tmux attach actions in chat (#11915)
+- Drop stale paused tmux sessions from the activity panel (#11844)
+- Dispatcher honors bootstrap `bind_host` (#11853)
+- Inline `parse_tmux_socket_path` and drop the `gobby.*` import so hooks stay dependency-light (#11854)
+
+#### MCP proxy and tools
+
+- Flatten MCP tool proxy failures so errors surface with the real reason (#11928)
+- Flatten redundant MCP success wrappers in tool results (#11820)
+- Normalize redundant internal MCP success wrappers (#11922)
+- Self-heal tool embedding dimension drift (#11944)
+- Repair nightly memory cleanup cron session bootstrap and MCP schema discovery (#11959)
+- Make HTTP MCP shutdown cooperative (#11955)
+
+#### Codex and CLI versions
+
+- Correct managed CLI version reporting (#11956)
+- Restore `ruff format` and fix Codex `TomlValue` `None` (#11957)
+- Parse Codex config TOML (#11872)
+
+#### Conductor, webhooks, and embeddings
+
+- Add aiohttp for the webhook executor (#11971)
+- Avoid mypy `no-redef` in Chatterbox TTS (#11973)
+- Avoid mypy `no-redef` in Chatterbox torch import (#11972)
+- Report the configured embeddings provider in status (#11810)
+- Use the uv binary for voice dependency auto-install (#11962)
+
+#### Security and lint
+
+- Remove the insecure inbox jitter RNG (#11967)
+- Lazily export package symbols so import-time side effects stay bounded (#11965)
+- Resolve strict mypy errors (#11969)
+- Satisfy the app hook dependency lint (#11823)
+- Separate gate blocks from tool failure recovery (#11821)
+
+#### CodeRabbit triage
+
+- Address validated CodeRabbit findings (#11945)
+- Implement validated CodeRabbit findings batch (#11947)
+- Implement validated CodeRabbit fixes (#11953)
+- Address CodeRabbit follow-ups (#11937)
+
+### Refactors
+
+- Switch skill scanning to clawcare (#11968)
+- Normalize bundled MCP server storage (#11942)
+- Remove dead Gemini preflight session code (#11927)
+- Rename the conflicting integrations test folder (#11921)
+- Move design documents to the completed directory
+- Apply black formatting and add explicit type casting to project route responses
+- Format CLI options, clean up dependencies, and update version testing logic
+
+### Documentation
+
+- Add the claude-hooks-v2 parity plan (#11946)
+- Add the sandbox-tolerant hooks plan and rev1 (#11846, #11851)
+- Apply Rust review findings to rev1 (#11912)
+- Restructure rev1 phases into `### N.N` subheadings (#11859)
+- Note separator tolerance for phase headings in the plan skill (#11858)
+- Update the migration flattening 0.4.0 launch plan (#11952)
+
+### Tooling, tests, and packaging
+
+- Use mypy incremental in `pre-push-test`
+- Ruff format chat session
+- Remediate vulnerable transitive deps (#11966)
+- Bump `protobufjs` to 7.5.5 (GHSA-xq3m-2v4x-88gg) (#11958)
+- Bump `python-multipart` to >=0.0.26 (CVE-2026-24486) (#11822)
+- Make `cisco-ai-skill-scanner` gracefully optional (#11825)
+- Include `install/qwen/` in package data (#11843)
+- Add the `chrome-devtools` default MCP template (#11936)
+- Clear validation warnings (#11969)
+- Hard delete active expander surfaces (#11954)
+- Remove stale litellm and google tracing references (#11970)
+- Remove stale `elevenlabs_api_key` refs (#11951)
+- Remove the legacy model selector from settings modal (#11823)
+- Update the stale provider picker spec (#11841)
+
 ## [0.3.7]
 
 ### Features
