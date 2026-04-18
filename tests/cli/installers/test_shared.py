@@ -950,18 +950,7 @@ class TestEdgeCases:
         config_path = temp_dir / "config.toml"
         config_path.write_text('[mcp_servers.gobby]\ncommand = "uv"')
 
-        # We need to let the file be read and backup created, but fail on final write
-        # The final write uses open() in binary mode for tomli_w.dump
-        original_open = open
-
-        def mock_open_fn(path, mode="r", *args, **kwargs):
-            # Count calls to open - we need to fail on the final write
-            # which is the binary write mode for tomli_w
-            if "wb" in str(mode):
-                raise OSError("Permission denied")
-            return original_open(path, mode, *args, **kwargs)
-
-        with patch("builtins.open", mock_open_fn):
+        with patch.object(Path, "write_text", side_effect=[None, OSError("Permission denied")]):
             result = remove_mcp_server_toml(config_path)
 
         assert result["success"] is False

@@ -72,10 +72,19 @@ class WebChatRuntimeManager:
         if getattr(session, "session_type", None) != "web_chat":
             return None
 
-        if getattr(session, "sandbox_policy_hash", None) != self._sandbox_policy_hash:
+        stored_policy_hash = getattr(session, "sandbox_policy_hash", None)
+        if (
+            isinstance(stored_policy_hash, str)
+            and stored_policy_hash
+            and stored_policy_hash != self._sandbox_policy_hash
+        ):
             return web_chat_policy_mismatch_message()
 
-        if bool(getattr(session, "sandbox_enabled", False)) != self._sandbox_config.enabled:
+        stored_sandbox_enabled = getattr(session, "sandbox_enabled", None)
+        if (
+            isinstance(stored_sandbox_enabled, bool)
+            and stored_sandbox_enabled != self._sandbox_config.enabled
+        ):
             return web_chat_policy_mismatch_message()
 
         return None

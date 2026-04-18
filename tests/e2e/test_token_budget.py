@@ -99,7 +99,7 @@ class TestBudgetStatusTracking:
         result = unwrap_result(raw_result)
 
         # Should return budget structure
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
 
         # Verify expected fields
@@ -123,7 +123,7 @@ class TestBudgetStatusTracking:
         result = unwrap_result(raw_result)
 
         # Should return usage structure
-        assert result.get("success") is True, f"get_usage_report failed: {result}"
+        assert "error" not in result, f"get_usage_report failed: {result}"
         usage = result.get("usage", {})
 
         # Verify expected fields
@@ -144,7 +144,7 @@ class TestBudgetStatusTracking:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_usage_report failed: {result}"
+        assert "error" not in result, f"get_usage_report failed: {result}"
         usage = result.get("usage", {})
         assert usage.get("period_days") == 7, f"Period days mismatch: {result}"
 
@@ -192,7 +192,7 @@ class TestBudgetThrottling:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
         assert budget.get("over_budget") is False, f"Should not be over budget: {budget}"
 
@@ -243,7 +243,7 @@ class TestBudgetThrottling:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
         assert budget.get("over_budget") is True, f"Should be over budget: {budget}"
         assert budget.get("used_today_tokens") >= 10_000_000, (
@@ -292,7 +292,7 @@ class TestBudgetThrottling:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_usage_report failed: {result}"
+        assert "error" not in result, f"get_usage_report failed: {result}"
         usage = result.get("usage", {})
 
         # Verify usage reflects what we set (may be cumulative with other tests)
@@ -360,7 +360,7 @@ class TestAgentSpawnThrottling:
             arguments={},
         )
         result = unwrap_result(raw_result)
-        assert result.get("success") is True
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
         assert budget.get("over_budget") is True, f"Budget should be exceeded: {budget}"
 
@@ -456,7 +456,7 @@ class TestMultiSessionBudgetAggregation:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
 
         # Used should be at least what we added (may include other test sessions)

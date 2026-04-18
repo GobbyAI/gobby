@@ -576,6 +576,7 @@ class TestSessionMoreCoverage:
                 terminal_context=None,
                 workflow_name=None,
                 agent_depth=0,
+                sandbox_enabled=None,
             )
             # Should mark parent expired
             handler._session_manager.mark_session_expired.assert_called_with("parent-1")

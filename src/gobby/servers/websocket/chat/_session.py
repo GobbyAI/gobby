@@ -33,6 +33,19 @@ def _normalize_runtime_chat_mode(mode: str | None) -> str | None:
     return mode
 
 
+def _normalize_web_chat_provider(provider: Any) -> str | None:
+    """Normalize provider identifiers persisted on web-chat sessions."""
+    if not isinstance(provider, str):
+        return None
+
+    normalized = provider.strip().lower()
+    if normalized in {"", "inherit"}:
+        return None
+    if normalized in {"claude", "gemini", "qwen", "codex"}:
+        return normalized
+    return None
+
+
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
     """Build the non-duplicated identity preamble for web-chat sessions.
 
@@ -320,14 +333,18 @@ class ChatSessionMixin:
         # existing conversation. A stale frontend provider selection should not
         # silently re-route a restored session onto a different backend.
         pending_providers = getattr(self, "_pending_providers", {})
-        pending_provider = pending_providers.pop(session_key, None)
+        pending_provider = _normalize_web_chat_provider(pending_providers.pop(session_key, None))
         effective_provider = pending_provider
         if not effective_provider and existing_db_session:
-            effective_provider = getattr(existing_db_session, "source", None)
+            effective_provider = _normalize_web_chat_provider(
+                getattr(existing_db_session, "source", None)
+            )
         if not effective_provider:
-            effective_provider = provider
+            effective_provider = _normalize_web_chat_provider(provider)
         if not effective_provider and agent_body:
-            effective_provider = getattr(agent_body, "provider", None)
+            effective_provider = _normalize_web_chat_provider(
+                getattr(agent_body, "provider", None)
+            )
 
         daemon_cfg = getattr(self, "daemon_config", None)
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
@@ -473,17 +490,28 @@ class ChatSessionMixin:
                 )
 
         if existing_db_session and getattr(existing_db_session, "session_type", None) == "web_chat":
-            if runtime_manager is not None:
-                mismatch_reason = runtime_manager.policy_mismatch_reason(existing_db_session)
-            elif (
-                getattr(existing_db_session, "sandbox_policy_hash", None)
-                != current_web_chat_policy_hash
-                or bool(getattr(existing_db_session, "sandbox_enabled", False))
-                != current_web_chat_sandbox_enabled
+            mismatch_reason = None
+            stored_policy_hash = getattr(existing_db_session, "sandbox_policy_hash", None)
+            if (
+                isinstance(stored_policy_hash, str)
+                and stored_policy_hash
+                and stored_policy_hash != current_web_chat_policy_hash
             ):
                 mismatch_reason = web_chat_policy_mismatch_message()
-            else:
-                mismatch_reason = None
+
+            stored_sandbox_enabled = getattr(existing_db_session, "sandbox_enabled", None)
+            if (
+                mismatch_reason is None
+                and isinstance(stored_sandbox_enabled, bool)
+                and stored_sandbox_enabled != current_web_chat_sandbox_enabled
+            ):
+                mismatch_reason = web_chat_policy_mismatch_message()
+
+            if mismatch_reason and runtime_manager is not None:
+                runtime_mismatch_reason = runtime_manager.policy_mismatch_reason(existing_db_session)
+                if isinstance(runtime_mismatch_reason, str) and runtime_mismatch_reason:
+                    mismatch_reason = runtime_mismatch_reason
+
             if mismatch_reason:
                 if _has_meaningful_web_chat_history(existing_db_session):
                     raise RuntimeError(mismatch_reason)

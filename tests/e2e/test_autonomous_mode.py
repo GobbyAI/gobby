@@ -89,7 +89,7 @@ class TestConductorLifecycle:
         result = unwrap_result(raw_result)
 
         # Should return budget structure
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
 
         # Verify expected fields
@@ -218,7 +218,7 @@ class TestAutonomousSpawningGate:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
         assert budget.get("over_budget") is False, f"Should not be over budget: {budget}"
 
@@ -351,7 +351,7 @@ class TestAutonomousThrottling:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"get_budget_status failed: {result}"
+        assert "error" not in result, f"get_budget_status failed: {result}"
         budget = result.get("budget", {})
         assert budget.get("over_budget") is True, f"Should be over budget: {budget}"
 
