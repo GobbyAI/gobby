@@ -137,6 +137,12 @@ class GobbyDaemonTools:
             "connected": connected_count,
         }
         self.tool_proxy.record_servers_listed(session_id)
+        await self.tool_proxy.emit_synthetic_proxy_after_tool(
+            session_id=session_id,
+            tool_name="list_mcp_servers",
+            tool_input={"name_filter": name_filter} if name_filter else {},
+            result=result,
+        )
         return result
 
     # --- Tool Proxying ---
@@ -304,7 +310,14 @@ class GobbyDaemonTools:
 
     async def list_tools(self, server_name: str, session_id: str | None = None) -> dict[str, Any]:
         """List tools for a specific server, optionally filtered by workflow phase restrictions."""
-        return await self.tool_proxy.list_tools(server_name, session_id=session_id)
+        result = await self.tool_proxy.list_tools(server_name, session_id=session_id)
+        await self.tool_proxy.emit_synthetic_proxy_after_tool(
+            session_id=session_id,
+            tool_name="list_tools",
+            tool_input={"server_name": server_name},
+            result=result,
+        )
+        return result
 
     async def get_tool_schema(
         self,
@@ -313,11 +326,18 @@ class GobbyDaemonTools:
         session_id: str | None = None,
     ) -> dict[str, Any]:
         """Get tool schema."""
-        return await self.tool_proxy.get_tool_schema(
+        result = await self.tool_proxy.get_tool_schema(
             server_name,
             tool_name,
             session_id=session_id,
         )
+        await self.tool_proxy.emit_synthetic_proxy_after_tool(
+            session_id=session_id,
+            tool_name="get_tool_schema",
+            tool_input={"server_name": server_name, "tool_name": tool_name},
+            result=result,
+        )
+        return result
 
     async def read_mcp_resource(self, server_name: str, resource_uri: str) -> Any:
         """Read resource."""
