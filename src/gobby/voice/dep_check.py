@@ -13,6 +13,7 @@ import importlib
 import logging
 import shutil
 import sys
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -66,7 +67,7 @@ def _resolve_uv_install_command() -> list[str] | None:
     if uv_bin:
         return [uv_bin, "pip", "install", "--python", sys.executable]
 
-    if importlib.util.find_spec("uv") is not None:
+    if find_spec("uv") is not None:
         return [sys.executable, "-m", "uv", "pip", "install", "--python", sys.executable]
 
     return None

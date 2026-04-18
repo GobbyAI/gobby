@@ -178,7 +178,7 @@ def spawn_agent(
 
     daemon_url = get_daemon_url()
 
-    arguments = {
+    arguments: dict[str, str | bool] = {
         "prompt": prompt,
         "parent_session_id": parent_session_id,
         "isolation": "clone",
