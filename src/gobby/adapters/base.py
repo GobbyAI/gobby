@@ -15,6 +15,11 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
 
+def system_message_has_session_banner(system_message: str | None) -> bool:
+    """Return whether a system message already includes the Gobby session banner."""
+    return isinstance(system_message, str) and "Gobby Session ID:" in system_message
+
+
 def build_first_hook_session_metadata_lines(
     metadata: Mapping[str, Any],
     *,

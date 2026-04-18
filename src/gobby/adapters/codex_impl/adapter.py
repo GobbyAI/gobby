@@ -18,7 +18,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.adapters.base import BaseAdapter, build_first_hook_session_metadata_lines
+from gobby.adapters.base import (
+    BaseAdapter,
+    build_first_hook_session_metadata_lines,
+    system_message_has_session_banner,
+)
 from gobby.adapters.codex_impl.client import (
     CodexAppServerClient,
 )
@@ -1090,7 +1094,10 @@ class CodexHooksAdapter(BaseAdapter):
             if gobby_session_id:
                 context_lines = build_first_hook_session_metadata_lines(
                     response.metadata,
-                    include_session_id_line=not (session_start_hook and bool(response.system_message)),
+                    include_session_id_line=not (
+                        session_start_hook
+                        and system_message_has_session_banner(response.system_message)
+                    ),
                     include_tty=False,
                 )
                 if context_lines:

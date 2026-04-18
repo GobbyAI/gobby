@@ -992,3 +992,33 @@ class TestContinueInChatTerminalKill:
         assert response["delivered"] is True
         assert response["delivery_method"] == "tmux"
         assert response["message_id"] == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_rebroadcast_pending_interactions_skips_missing_interaction_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.servers.websocket.session_control import SessionControlMixin
+
+    websocket = MagicMock()
+    websocket.send = AsyncMock()
+
+    manager = MagicMock()
+    manager.rebroadcast = AsyncMock(
+        return_value=[
+            {"kind": "tool", "tool_name": "Write", "arguments": {}},
+            {"interaction_id": "int-1", "kind": "tool", "tool_name": "Write", "arguments": {}},
+        ]
+    )
+
+    host = MagicMock()
+    host._pending_interaction_manager = manager
+    host._chat_sessions = {"conv-1": MagicMock(db_session_id="db-sess-1")}
+
+    with caplog.at_level("WARNING"):
+        await SessionControlMixin._rebroadcast_pending_interactions(host, websocket, ["conv-1"])
+
+    websocket.send.assert_awaited_once()
+    payload = json.loads(websocket.send.await_args.args[0])
+    assert payload["tool_call_id"] == "int-1"
+    assert "Skipping pending interaction missing interaction_id" in caplog.text

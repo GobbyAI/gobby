@@ -99,7 +99,13 @@ class TestInstallGhookFromGithub:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gobby.cli.install_setup.urlopen", return_value=mock_resp):
+        with (
+            patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gobby-hooks-v0.1.1",
+            ),
+        ):
             assert _install_ghook_from_github(tmp_path, "aarch64-apple-darwin") is True
         assert (tmp_path / "ghook").exists()
 
@@ -126,6 +132,10 @@ class TestInstallGhookFromGithub:
 
         with (
             patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gobby-hooks-v0.1.1",
+            ),
             patch("gobby.cli.install_setup._GHOOK_BIN_NAME", "ghook.exe"),
         ):
             assert _install_ghook_from_github(tmp_path, "x86_64-pc-windows-msvc") is True

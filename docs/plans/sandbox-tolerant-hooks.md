@@ -1,5 +1,7 @@
 # Sandbox-compatible hooks across Claude / Codex / Gemini / QwenCode
 
+> **Superseded by [sandbox-tolerant-hooks-rev1.md](./sandbox-tolerant-hooks-rev1.md).** This doc is kept for history; rev1 is authoritative.
+
 ## Context
 
 Every Gobby adapter registers the same hook shape today: the CLI shells out to

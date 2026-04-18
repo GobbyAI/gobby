@@ -16,6 +16,19 @@ def test_normalize_stored_approval_key_ignores_malformed_call_tool_key() -> None
     assert normalize_stored_approval_key("call_tool:legacy") == ""
 
 
+@pytest.mark.parametrize(
+    ("raw_key", "expected"),
+    [
+        ("call_tool:legacy:gobby:do_thing", "mcp:gobby:do_thing"),
+        ("", ""),
+        ("call_tool:legacy", ""),
+        ("mcp__gobby-like__do_thing", "mcp:gobby-like:do_thing"),
+    ],
+)
+def test_normalize_stored_approval_key_cases(raw_key: str, expected: str) -> None:
+    assert normalize_stored_approval_key(raw_key) == expected
+
+
 def test_is_builtin_auto_exempt_allows_known_gobby_servers() -> None:
     assert is_builtin_auto_exempt("mcp__gobby__do_thing", {})
 

@@ -483,7 +483,7 @@ def _run_voice_install(
                 "pip",
                 "install",
                 "faster-whisper>=1.0.0",
-                "voxcpm",
+                "voxcpm>=0.1.0,<1.0.0",
                 "kokoro-onnx>=0.5.0",
             ],
             capture_output=True,

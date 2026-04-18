@@ -12,8 +12,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from claude_agent_sdk import PermissionResultAllow
-
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
@@ -43,7 +41,7 @@ from gobby.servers.tool_approvals import (
     find_out_of_repo_write_path,
     get_global_approval_rules,
     is_tool_auto_allowed,
-    load_project_approval_rules,
+    load_project_approval_rules_async,
     normalize_approved_tool_keys,
 )
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -1023,13 +1021,13 @@ class CodexWebChatBackend:
             tool_name,
             input_data,
             session_rules=normalize_approved_tool_keys(session._approved_tools),
-            project_rules=load_project_approval_rules(session.project_path),
+            project_rules=await load_project_approval_rules_async(session.project_path),
             global_rules=self._global_rules_for_session(session),
         ):
             return self._accept_response(method)
 
         approval = await session._wait_for_tool_approval(tool_name, input_data)
-        if isinstance(approval, PermissionResultAllow):
+        if isinstance(approval, dict) and approval.get("decision") == "accept":
             return self._accept_response(method)
         return self._decline_response(method)
 

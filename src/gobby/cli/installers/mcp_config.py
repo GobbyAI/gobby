@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 from shutil import copy2
-from typing import Any
+from typing import Any, cast
 
 from gobby.mcp_proxy.bundled import DEFAULT_EXTERNAL_MCP_SERVERS
 
@@ -48,12 +48,11 @@ def _remove_toml_table_block(existing_text: str, *, table_prefix: str) -> str:
             break
 
         block_end = headers[next_index].start() if next_index < len(headers) else len(existing_text)
+        block = existing_text[run_start:block_end]
         preserved_suffix = ""
-        if next_index < len(headers):
-            block = existing_text[run_start:block_end]
-            suffix_match = re.search(r"(?s)(?P<suffix>(?:[ \t]*\n|[ \t]*#.*\n)+)\Z", block)
-            if suffix_match:
-                preserved_suffix = suffix_match.group("suffix")
+        suffix_match = re.search(r"(?s)(?P<suffix>(?:[ \t]*\n|[ \t]*#.*\n)+)\Z", block)
+        if suffix_match:
+            preserved_suffix = suffix_match.group("suffix")
 
         rebuilt.append(existing_text[cursor:run_start])
         rebuilt.append(preserved_suffix)
@@ -504,7 +503,9 @@ def strip_mcp_tool_overrides_toml(config_path: Path, server_name: str = "gobby")
         return result
 
     # Remove the tools sub-table
-    del config["mcp_servers"][server_name]["tools"]
+    mcp_servers = cast(dict[str, Any], config["mcp_servers"])
+    server_config = cast(dict[str, Any], mcp_servers[server_name])
+    server_config.pop("tools", None)
 
     # Write updated config
     try:

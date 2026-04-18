@@ -19,6 +19,15 @@ def _load_toml_file(path: Path) -> dict[str, object]:
         return tomllib.load(f)
 
 
+def test_set_toml_value_raises_when_descending_through_scalar() -> None:
+    from gobby.cli.installers.codex import _load_toml_config, _set_toml_value
+
+    config = _load_toml_config('foo = "bar"\n')
+
+    with pytest.raises(ValueError, match="foo"):
+        _set_toml_value(config, "foo.bar", True)
+
+
 class TestInstallCodex:
     """Tests for install_codex function."""
 

@@ -241,3 +241,16 @@ class TestPrefixSpecIds:
         result = _prefix_spec_ids(spec, prefix="phase-0-")
         assert len(result["dependencies"]) == 1
         assert result["dependencies"][0]["task_id"] == "phase-0-t-2"
+
+    def test_generates_stable_execution_group_ids_when_missing(self) -> None:
+        spec = self._sample_spec()
+        spec["tasks"][0]["execution_group"] = None
+        spec["tasks"][1]["execution_group"] = None
+        spec["execution_groups"] = [{"mode": "parallel", "task_ids": ["t-1", "t-2"]}]
+
+        result = _prefix_spec_ids(spec, prefix="phase-0-")
+
+        assert result["execution_groups"][0]["id"] == "phase-0-execution-group-1"
+        assert {task["execution_group"] for task in result["tasks"]} == {
+            "phase-0-execution-group-1"
+        }

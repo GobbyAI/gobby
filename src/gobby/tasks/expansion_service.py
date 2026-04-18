@@ -95,6 +95,27 @@ def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
     def pfx(value: str) -> str:
         return f"{prefix}{value}" if value and not value.startswith(prefix) else value
 
+    raw_execution_groups = spec.get("execution_groups") or []
+    group_id_map: dict[str, str] = {}
+    task_fallback_groups: dict[str, str] = {}
+    execution_groups = []
+    for group_index, group in enumerate(raw_execution_groups, start=1):
+        raw_group_id = group.get("id")
+        resolved_group_id = pfx(raw_group_id) if raw_group_id else pfx(f"execution-group-{group_index}")
+        prefixed_task_ids = [pfx(tid) for tid in group.get("task_ids") or []]
+        execution_groups.append(
+            {
+                **group,
+                "id": resolved_group_id,
+                "task_ids": prefixed_task_ids,
+            }
+        )
+        if isinstance(raw_group_id, str) and raw_group_id:
+            group_id_map[raw_group_id] = resolved_group_id
+        else:
+            for prefixed_task_id in prefixed_task_ids:
+                task_fallback_groups[prefixed_task_id] = resolved_group_id
+
     phases = [
         {
             **phase,
@@ -106,28 +127,23 @@ def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
     tasks = [
         {
             **task_item,
-            "id": pfx(task_item["id"]),
+            "id": prefixed_task_id,
             "phase_id": pfx(task_item["phase_id"]),
             "execution_group": (
-                pfx(task_item["execution_group"])
-                if task_item.get("execution_group")
-                else task_item.get("execution_group")
+                group_id_map.get(raw_execution_group, pfx(raw_execution_group))
+                if isinstance(raw_execution_group, str) and raw_execution_group
+                else task_fallback_groups.get(prefixed_task_id, raw_execution_group)
             ),
         }
         for task_item in spec.get("tasks") or []
+        for prefixed_task_id, raw_execution_group in [
+            (pfx(task_item["id"]), task_item.get("execution_group"))
+        ]
     ]
     dependencies = [
         {"task_id": pfx(edge["task_id"]), "depends_on": pfx(edge["depends_on"])}
         for edge in spec.get("dependencies") or []
         if edge.get("task_id") and edge.get("depends_on")
-    ]
-    execution_groups = [
-        {
-            **group,
-            "id": pfx(group["id"]) if group.get("id") else group.get("id"),
-            "task_ids": [pfx(tid) for tid in group.get("task_ids") or []],
-        }
-        for group in spec.get("execution_groups") or []
     ]
     return {
         **spec,

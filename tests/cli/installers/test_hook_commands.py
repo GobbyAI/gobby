@@ -72,3 +72,9 @@ def test_gobby_hook_detection_accepts_ghook_marker() -> None:
     assert config_contains_gobby_hook(
         {"hooks": [{"type": "command", "command": "ghook --gobby-owned --cli=gemini"}]}
     )
+
+
+def test_gobby_hook_detection_ignores_scalar_metadata_values() -> None:
+    assert not config_contains_gobby_hook(
+        {"metadata": {"description": "ghook --gobby-owned is just documentation"}}
+    )

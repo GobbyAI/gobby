@@ -17,6 +17,7 @@ function createFallbackMessageId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `ws-${crypto.randomUUID()}`
   }
+  // Counter fallback is only used when randomUUID is unavailable.
   fallbackMessageIdCounter += 1
   return `ws-${fallbackMessageIdCounter}`
 }

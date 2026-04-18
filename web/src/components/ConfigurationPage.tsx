@@ -12,11 +12,13 @@ type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'tem
 type ApprovalRuleRow = { id: string; value: string }
 
 const BACKEND_SECRET_MASK = '********'
-let approvalRuleRowId = 0
 
 function createApprovalRuleRow(value = ''): ApprovalRuleRow {
-  approvalRuleRowId += 1
-  return { id: `approval-rule-${approvalRuleRowId}`, value }
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `project-approval-rule-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return { id, value }
 }
 
 function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {

@@ -293,10 +293,16 @@ class VectorStore:
     async def get_collection_dimension(self, collection_name: str | None = None) -> int | None:
         """Return the vector dimension for a collection when readable."""
         client = self._ensure_client()
-        info = await asyncio.to_thread(
-            client.get_collection,
-            collection_name or self._collection_name,
-        )
+        resolved_name = collection_name or self._collection_name
+        try:
+            info = await asyncio.to_thread(client.get_collection, resolved_name)
+        except Exception as exc:
+            logger.warning(
+                "Failed to read Qdrant collection dimension for '%s': %s",
+                resolved_name,
+                exc,
+            )
+            return None
         return _vector_size(info.config.params.vectors)
 
     async def ensure_collection(

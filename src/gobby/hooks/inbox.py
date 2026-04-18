@@ -47,9 +47,12 @@ def _quarantine_file(path: Path, *, reason: str, detail: str) -> bool:
     meta_path = quarantine_dir / f"{path.name}.meta.json"
 
     try:
-        target.write_text(path.read_text())
+        target.write_bytes(path.read_bytes())
         path.unlink(missing_ok=True)
-        meta_path.write_text(json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n")
+        meta_path.write_text(
+            json.dumps({"reason": reason, "detail": detail}, indent=2) + "\n",
+            encoding="utf-8",
+        )
     except Exception as exc:
         logger.error(
             "Failed to quarantine hook inbox file %s (reason=%s, detail=%s): %s",
@@ -76,8 +79,8 @@ def _quarantine_or_warn(path: Path, *, reason: str, detail: str) -> None:
 def _load_envelope(path: Path) -> dict[str, Any] | None:
     """Load and minimally validate a replay envelope from disk."""
     try:
-        raw = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         _quarantine_or_warn(path, reason="invalid_json", detail=str(exc))
         return None
 

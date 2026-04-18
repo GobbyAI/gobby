@@ -29,7 +29,11 @@ def config_contains_gobby_hook(node: Any) -> bool:
             value = node.get(field)
             if isinstance(value, str) and is_gobby_hook_command(value):
                 return True
-        return any(config_contains_gobby_hook(value) for value in node.values())
+        return any(
+            config_contains_gobby_hook(value)
+            for value in node.values()
+            if isinstance(value, (dict, list))
+        )
 
     return False
 

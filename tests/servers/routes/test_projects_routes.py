@@ -284,6 +284,94 @@ class TestProjectRoutes:
         )
         assert response.status_code == 400
 
+    def test_update_project_repo_path_migrates_approval_rules_and_preserves_metadata(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        old_repo = tmp_path / "old-repo"
+        new_repo = tmp_path / "new-repo"
+        old_repo.mkdir()
+        new_repo.mkdir()
+        project = project_manager.create(name="migrate-project", repo_path=str(old_repo))
+        project_file = old_repo / ".gobby" / "project.json"
+        project_file.parent.mkdir(parents=True, exist_ok=True)
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": project.id,
+                    "name": project.name,
+                    "created_at": project.created_at,
+                    "verification": {"lint": "uv run ruff check src/"},
+                    "tool_approvals": {"allow": ["tool:Write"]},
+                }
+            )
+        )
+
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={"repo_path": str(new_repo)},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["repo_path"] == str(new_repo)
+        assert data["approval_rules"] == ["tool:Write"]
+
+        migrated = json.loads((new_repo / ".gobby" / "project.json").read_text())
+        assert migrated["id"] == project.id
+        assert migrated["verification"]["lint"] == "uv run ruff check src/"
+        assert migrated["tool_approvals"]["allow"] == ["tool:Write"]
+
+        original = json.loads(project_file.read_text())
+        assert original["verification"]["lint"] == "uv run ruff check src/"
+        assert "tool_approvals" not in original
+
+    def test_update_project_repo_path_with_explicit_approval_rules_preserves_metadata(
+        self,
+        client: TestClient,
+        project_manager: LocalProjectManager,
+        tmp_path: Path,
+    ) -> None:
+        old_repo = tmp_path / "old-repo"
+        new_repo = tmp_path / "new-repo"
+        old_repo.mkdir()
+        new_repo.mkdir()
+        project = project_manager.create(name="migrate-project", repo_path=str(old_repo))
+        project_file = old_repo / ".gobby" / "project.json"
+        project_file.parent.mkdir(parents=True, exist_ok=True)
+        project_file.write_text(
+            json.dumps(
+                {
+                    "id": project.id,
+                    "name": project.name,
+                    "created_at": project.created_at,
+                    "verification": {"unit_tests": "uv run pytest tests/ -v"},
+                    "tool_approvals": {"allow": ["tool:Write"]},
+                }
+            )
+        )
+
+        response = client.put(
+            f"/api/projects/{project.id}",
+            json={"repo_path": str(new_repo), "approval_rules": ["mcp:third-party:*"]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["repo_path"] == str(new_repo)
+        assert data["approval_rules"] == ["mcp:third-party:*"]
+
+        migrated = json.loads((new_repo / ".gobby" / "project.json").read_text())
+        assert migrated["id"] == project.id
+        assert migrated["verification"]["unit_tests"] == "uv run pytest tests/ -v"
+        assert migrated["tool_approvals"]["allow"] == ["mcp:third-party:*"]
+
+        original = json.loads(project_file.read_text())
+        assert original["verification"]["unit_tests"] == "uv run pytest tests/ -v"
+        assert "tool_approvals" not in original
+
     def test_update_project_not_found(self, client: TestClient) -> None:
         """404 when updating nonexistent project."""
         response = client.put(

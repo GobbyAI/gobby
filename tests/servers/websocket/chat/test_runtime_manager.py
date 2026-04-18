@@ -288,3 +288,32 @@ class TestCodexBackend:
 
         assert assistant_text == "Recovered from transcript"
         sleep.assert_awaited_once_with(0.25)
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_accepts_decision_dict(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "accept_edits"
+        session._thread_id = "thread-1"
+        session._wait_for_tool_approval = AsyncMock(return_value={"decision": "accept"})
+        backend._sessions_by_thread["thread-1"] = session
+
+        with (
+            patch.object(
+                backend,
+                "_translate_approval_request",
+                return_value=("Write", {"file_path": "notes.md"}),
+            ),
+            patch(
+                "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+                return_value=None,
+            ),
+            patch(
+                "gobby.servers.websocket.chat.provider_backends.is_tool_auto_allowed",
+                return_value=False,
+            ),
+        ):
+            result = await backend.handle_approval_request("tools/call", {"threadId": "thread-1"})
+
+        assert result == backend._accept_response("tools/call")

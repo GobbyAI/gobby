@@ -76,7 +76,7 @@ def _inspect_reference_audio(reference_audio: Path) -> dict[str, Any]:
             channels = wav_file.getnchannels()
             sample_rate = wav_file.getframerate()
             frames = wav_file.getnframes()
-    except (wave.Error, EOFError):
+    except (wave.Error, EOFError, OSError):
         return details
 
     duration_seconds = 0.0

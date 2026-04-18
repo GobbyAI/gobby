@@ -136,7 +136,13 @@ class TestInstallGsqzFromGithub:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gobby.cli.install_setup.urlopen", return_value=mock_resp):
+        with (
+            patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gsqz-v0.1.0",
+            ),
+        ):
             assert _install_gsqz_from_github(tmp_path, "aarch64-apple-darwin") is True
         assert (tmp_path / "gsqz").exists()
 
@@ -161,14 +167,26 @@ class TestInstallGsqzFromGithub:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gobby.cli.install_setup.urlopen", return_value=mock_resp):
+        with (
+            patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gsqz-v0.1.0",
+            ),
+        ):
             assert _install_gsqz_from_github(tmp_path, "aarch64-apple-darwin") is True
         assert (tmp_path / "gsqz").exists()
 
     def test_network_failure(self, tmp_path: Path) -> None:
         from urllib.error import URLError
 
-        with patch("gobby.cli.install_setup.urlopen", side_effect=URLError("fail")):
+        with (
+            patch("gobby.cli.install_setup.urlopen", side_effect=URLError("fail")),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gsqz-v0.1.0",
+            ),
+        ):
             assert _install_gsqz_from_github(tmp_path, "aarch64-apple-darwin") is False
 
     def test_missing_binary_in_tarball(self, tmp_path: Path) -> None:
@@ -178,7 +196,13 @@ class TestInstallGsqzFromGithub:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gobby.cli.install_setup.urlopen", return_value=mock_resp):
+        with (
+            patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gsqz-v0.1.0",
+            ),
+        ):
             assert _install_gsqz_from_github(tmp_path, "aarch64-apple-darwin") is False
 
     def test_windows_exe(self, tmp_path: Path) -> None:
@@ -190,6 +214,10 @@ class TestInstallGsqzFromGithub:
 
         with (
             patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
+            patch(
+                "gobby.cli.install_setup._resolve_latest_release_tag",
+                return_value="gsqz-v0.1.0",
+            ),
             patch("gobby.cli.install_setup._GSQZ_BIN_NAME", "gsqz.exe"),
         ):
             assert _install_gsqz_from_github(tmp_path, "x86_64-pc-windows-msvc") is True

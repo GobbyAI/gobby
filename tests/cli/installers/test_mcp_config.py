@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.cli.installers.mcp_config import (
+    _remove_toml_table_block,
     configure_mcp_server_json,
     configure_mcp_server_toml,
     configure_project_mcp_server,
@@ -25,6 +26,19 @@ from gobby.cli.installers.mcp_config import (
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 
 pytestmark = pytest.mark.unit
+
+
+def test_remove_toml_table_block_preserves_trailing_comments_after_last_table() -> None:
+    content = (
+        '[model]\nname = "gpt-5"\n\n'
+        '[mcp_servers.gobby]\ncommand = "uv"\n'
+        '\n# trailing comment\n\n'
+    )
+
+    updated = _remove_toml_table_block(content, table_prefix="mcp_servers.gobby")
+
+    assert '[mcp_servers.gobby]' not in updated
+    assert updated.endswith('\n# trailing comment\n\n')
 
 
 # ---------------------------------------------------------------------------

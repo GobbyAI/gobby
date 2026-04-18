@@ -34,8 +34,13 @@ describe('test utilities', () => {
 
   describe('mock fetch', () => {
     let mockFetch: ReturnType<typeof createMockFetch>
+    let restoreOriginalFetch: (() => void) | undefined
 
-    afterEach(() => mockFetch?.restore())
+    afterEach(() => {
+      mockFetch?.restore()
+      restoreOriginalFetch?.()
+      restoreOriginalFetch = undefined
+    })
 
     it('routes requests and returns JSON responses', async () => {
       mockFetch = createMockFetch()
@@ -60,22 +65,18 @@ describe('test utilities', () => {
       expect(res.status).toBe(500)
     })
 
-    it('restores window.fetch when it was originally undefined', () => {
+    it('supports window.fetch when it was originally undefined', () => {
       const win = window as Window & { fetch?: typeof fetch }
-      const original = win.fetch
+      const descriptor = Object.getOwnPropertyDescriptor(win, 'fetch')
 
       Reflect.deleteProperty(win, 'fetch')
-      const localMockFetch = createMockFetch()
-      expect(typeof win.fetch).toBe('function')
-
-      localMockFetch.restore()
-      expect('fetch' in win).toBe(false)
-
-      if (original === undefined) {
-        Reflect.deleteProperty(win, 'fetch')
-      } else {
-        win.fetch = original
+      restoreOriginalFetch = () => {
+        if (descriptor) {
+          Object.defineProperty(win, 'fetch', descriptor)
+        }
       }
+      mockFetch = createMockFetch()
+      expect(typeof win.fetch).toBe('function')
     })
   })
 

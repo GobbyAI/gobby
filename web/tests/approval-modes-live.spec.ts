@@ -32,6 +32,7 @@ interface SessionListEntry {
   session_type?: string | null;
   agent_run_id?: string | null;
   can_proxy_attach?: boolean | null;
+  can_resume?: boolean | null;
 }
 
 function sanitizeToken(value: string): string {
@@ -300,7 +301,8 @@ async function loadInteractiveTerminalSession(
       session.session_type === "terminal" &&
       session.status === "paused" &&
       !session.agent_run_id &&
-      session.can_proxy_attach !== false,
+      session.can_proxy_attach === true &&
+      (session.can_resume == null || session.can_resume === true),
   );
 
   expect(

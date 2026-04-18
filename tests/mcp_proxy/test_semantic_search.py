@@ -807,3 +807,19 @@ class TestSearchTools:
 
         for ensure_call in mock_vs.ensure_collection.await_args_list:
             assert ensure_call.args[0] == SemanticToolSearch.TOOL_COLLECTION
+
+    @pytest.mark.asyncio
+    async def test_get_tool_collection_dimension_logs_lookup_failures(
+        self,
+        temp_db: LocalDatabase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_vs = AsyncMock()
+        mock_vs.get_collection_dimension.side_effect = RuntimeError("boom")
+        search = SemanticToolSearch(temp_db, vector_store=mock_vs)
+
+        with caplog.at_level("DEBUG"):
+            result = await search._get_tool_collection_dimension()
+
+        assert result is None
+        assert "Failed to read semantic tool collection dimension" in caplog.text

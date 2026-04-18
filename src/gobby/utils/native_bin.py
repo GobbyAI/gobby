@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -23,7 +24,11 @@ def resolve_native_bin(name: str) -> str | None:
     """Resolve a native binary, preferring ``~/.gobby/bin`` over ``PATH``."""
     local_path = local_native_bin_path(name)
     if local_path.exists():
-        return str(local_path)
+        if sys.platform == "win32":
+            if local_path.is_file():
+                return str(local_path)
+        elif local_path.is_file() and os.access(local_path, os.X_OK):
+            return str(local_path)
 
     resolved = shutil.which(name)
     if resolved:

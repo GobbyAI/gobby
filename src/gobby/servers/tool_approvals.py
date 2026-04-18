@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -322,20 +323,31 @@ def load_project_approval_rules(project_path: str | None) -> list[str]:
     return sanitize_approval_rules(str(item) for item in allow)
 
 
-def save_project_approval_rules(project_path: str, rules: Iterable[str]) -> list[str]:
-    """Write project-scoped approval rules to .gobby/project.json."""
-    normalized = sanitize_approval_rules(rules)
-    project_root = Path(project_path)
-    project_file = project_root / ".gobby" / "project.json"
-    project_file.parent.mkdir(parents=True, exist_ok=True)
+async def load_project_approval_rules_async(project_path: str | None) -> list[str]:
+    """Return project-scoped approval rules without blocking the event loop."""
+    return await asyncio.to_thread(load_project_approval_rules, project_path)
 
-    payload: dict[str, Any] = {}
-    if project_file.exists():
-        try:
-            payload = json.loads(project_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            payload = {}
 
+def _load_project_payload(project_path: str | None) -> dict[str, Any]:
+    """Load a project's ``project.json`` payload when it exists and is readable."""
+    if not project_path:
+        return {}
+
+    project_file = Path(project_path) / ".gobby" / "project.json"
+    if not project_file.exists():
+        return {}
+
+    try:
+        payload = json.loads(project_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Failed to read project approval rules from %s: %s", project_file, exc)
+        return {}
+
+    return payload if isinstance(payload, dict) else {}
+
+
+def _set_project_approval_rules(payload: dict[str, Any], normalized: list[str]) -> dict[str, Any]:
+    """Apply normalized approval rules to a project payload."""
     tool_approvals = payload.get(PROJECT_APPROVALS_KEY)
     if not isinstance(tool_approvals, dict):
         tool_approvals = {}
@@ -350,8 +362,72 @@ def save_project_approval_rules(project_path: str, rules: Iterable[str]) -> list
         else:
             payload.pop(PROJECT_APPROVALS_KEY, None)
 
+    return payload
+
+
+def save_project_approval_rules(project_path: str, rules: Iterable[str]) -> list[str]:
+    """Write project-scoped approval rules to .gobby/project.json."""
+    normalized = sanitize_approval_rules(rules)
+    project_root = Path(project_path)
+    project_file = project_root / ".gobby" / "project.json"
+    project_file.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = _set_project_approval_rules(_load_project_payload(project_path), normalized)
+
     project_file.write_text(f"{json.dumps(payload, indent=2, sort_keys=True)}\n", encoding="utf-8")
     return normalized
+
+
+def migrate_project_approval_rules(
+    source_project_path: str | None,
+    dest_project_path: str,
+    rules: Iterable[str] | None = None,
+) -> list[str]:
+    """Copy project metadata to a new repo path while updating approval rules there."""
+    source_payload = _load_project_payload(source_project_path)
+    dest_payload = _load_project_payload(dest_project_path)
+    normalized = (
+        sanitize_approval_rules(rules)
+        if rules is not None
+        else load_project_approval_rules(source_project_path)
+    )
+    merged_payload = _set_project_approval_rules(
+        dest_payload if dest_payload else dict(source_payload),
+        normalized,
+    )
+
+    project_file = Path(dest_project_path) / ".gobby" / "project.json"
+    project_file.parent.mkdir(parents=True, exist_ok=True)
+    project_file.write_text(
+        f"{json.dumps(merged_payload, indent=2, sort_keys=True)}\n",
+        encoding="utf-8",
+    )
+    return normalized
+
+
+def clear_project_approval_rules(project_path: str | None) -> None:
+    """Remove only the project-scoped approval rules from .gobby/project.json."""
+    if not project_path:
+        return
+
+    project_file = Path(project_path) / ".gobby" / "project.json"
+    if not project_file.exists():
+        return
+
+    payload = _load_project_payload(project_path)
+    tool_approvals = payload.get(PROJECT_APPROVALS_KEY)
+    if not isinstance(tool_approvals, dict):
+        return
+
+    payload = _set_project_approval_rules(payload, [])
+
+    try:
+        project_file.write_text(
+            f"{json.dumps(payload, indent=2, sort_keys=True)}\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.debug("Failed to persist cleared project approval rules to %s: %s", project_file, exc)
 
 
 def is_tool_auto_allowed(

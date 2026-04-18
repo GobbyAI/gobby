@@ -9,6 +9,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import uuid
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -400,7 +402,15 @@ def materialize_claude_settings(
     settings_dir.mkdir(parents=True, exist_ok=True)
     target = settings_dir / f"claude-{name}-{digest}.json"
     if not target.exists():
-        target.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        temp_path = target.with_name(f"{target.name}.tmp-{os.getpid()}-{uuid.uuid4().hex}")
+        try:
+            with open(temp_path, "wb") as handle:
+                handle.write(json.dumps(merged, indent=2).encode("utf-8") + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, target)
+        finally:
+            temp_path.unlink(missing_ok=True)
     return str(target)
 
 

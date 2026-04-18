@@ -109,6 +109,14 @@ class SessionControlMixin:
             try:
                 pending = await manager.rebroadcast(session.db_session_id)
                 for interaction in pending:
+                    interaction_id = interaction.get("interaction_id")
+                    if not isinstance(interaction_id, str) or not interaction_id:
+                        logger.warning(
+                            "Skipping pending interaction missing interaction_id for %s: %r",
+                            conv_id,
+                            interaction,
+                        )
+                        continue
                     msg = _json.dumps(
                         {
                             "type": "tool_status"
@@ -116,8 +124,8 @@ class SessionControlMixin:
                             else "pending_interaction",
                             "conversation_id": conv_id,
                             "interaction": interaction,
-                            "message_id": f"pending-interaction-{interaction['interaction_id']}",
-                            "tool_call_id": interaction["interaction_id"],
+                            "message_id": f"pending-interaction-{interaction_id}",
+                            "tool_call_id": interaction_id,
                             "status": "pending_approval",
                             "tool_name": interaction.get("tool_name"),
                             "arguments": interaction.get("arguments", {}),

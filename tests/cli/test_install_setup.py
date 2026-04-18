@@ -23,6 +23,7 @@ from gobby.cli.install_setup import (
     _install_gsqz_from_cargo_binstall,
     _install_gsqz_from_cargo_install,
     _install_gsqz_from_github,
+    _resolve_latest_release_tag,
     _write_gcode_version_stamp,
     _write_gsqz_version_stamp,
     ensure_daemon_config,
@@ -217,10 +218,50 @@ class TestGsqzHelpers:
         fake_resp.__enter__.return_value = fake_resp
         mock_urlopen.return_value = fake_resp
 
-        res = _install_gsqz_from_github(tmp_path, "target-triple")
+        with patch(
+            "gobby.cli.install_setup._resolve_latest_release_tag",
+            return_value="gsqz-v1.2.3",
+        ):
+            res = _install_gsqz_from_github(tmp_path, "target-triple")
         assert res is True
         assert (tmp_path / "gsqz").exists()
         assert (tmp_path / "gsqz").read_bytes() == b"fake!"
+
+    @patch("gobby.cli.install_setup.urlopen")
+    def test_resolve_latest_release_tag_prefers_matching_stable_prefix(self, mock_urlopen):
+        fake_resp = MagicMock()
+        fake_resp.read.return_value = json.dumps(
+            [
+                {
+                    "tag_name": "sdk-v9.9.9",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-04-17T00:00:00Z",
+                },
+                {
+                    "tag_name": "gsqz-v1.2.0",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-04-15T00:00:00Z",
+                },
+                {
+                    "tag_name": "gsqz-v1.3.0-rc1",
+                    "draft": False,
+                    "prerelease": True,
+                    "published_at": "2026-04-16T00:00:00Z",
+                },
+                {
+                    "tag_name": "gsqz-v1.2.3",
+                    "draft": False,
+                    "prerelease": False,
+                    "published_at": "2026-04-14T00:00:00Z",
+                },
+            ]
+        ).encode()
+        fake_resp.__enter__.return_value = fake_resp
+        mock_urlopen.return_value = fake_resp
+
+        assert _resolve_latest_release_tag(tag_prefix="gsqz-v") == "gsqz-v1.2.3"
 
     @patch("shutil.which", return_value="/bin/cargo-binstall")
     @patch("subprocess.run")

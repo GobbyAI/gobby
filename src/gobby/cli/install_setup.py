@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -56,16 +57,62 @@ def _build_release_download_url(
     *,
     version: str | None,
     tag_prefix: str,
+    resolved_tag: str | None = None,
 ) -> str:
     """Build the GitHub Releases download URL for a binary artifact."""
     archive_ext = _release_archive_extension(target)
     artifact_filename = f"{artifact_name}-{target}.{archive_ext}"
-    if version:
-        return (
-            "https://github.com/GobbyAI/gobby-cli/releases/download/"
-            f"{tag_prefix}{version}/{artifact_filename}"
-        )
-    return f"https://github.com/GobbyAI/gobby-cli/releases/latest/download/{artifact_filename}"
+    tag_name = resolved_tag or (f"{tag_prefix}{version}" if version else None)
+    if not tag_name:
+        raise ValueError(f"No matching stable release found for tag prefix {tag_prefix!r}")
+    return f"https://github.com/GobbyAI/gobby-cli/releases/download/{tag_name}/{artifact_filename}"
+
+
+def _parse_release_semver(version_text: str) -> tuple[int, ...] | None:
+    """Parse a simple semver string into a sortable tuple when possible."""
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:[-+].*)?", version_text)
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups(default="0"))
+
+
+def _resolve_latest_release_tag(*, tag_prefix: str) -> str:
+    """Resolve the newest stable GitHub release tag for a tag prefix."""
+    req = Request(
+        "https://api.github.com/repos/GobbyAI/gobby-cli/releases?per_page=100",
+        headers={
+            "User-Agent": "gobby-installer/1.0",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    with _urlopen_https(req, timeout=30) as resp:
+        releases = json.loads(resp.read().decode("utf-8"))
+
+    if not isinstance(releases, list):
+        raise ValueError("GitHub Releases API returned an unexpected payload")
+
+    stable_matches: list[tuple[str, str]] = []
+    semver_matches: list[tuple[tuple[int, ...], str, str]] = []
+    for release in releases:
+        if not isinstance(release, dict):
+            continue
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        tag_name = release.get("tag_name")
+        if not isinstance(tag_name, str) or not tag_name.startswith(tag_prefix):
+            continue
+        published_at = release.get("published_at")
+        published_sort = published_at if isinstance(published_at, str) else ""
+        stable_matches.append((tag_name, published_sort))
+        semver = _parse_release_semver(tag_name[len(tag_prefix) :])
+        if semver is not None:
+            semver_matches.append((semver, published_sort, tag_name))
+
+    if semver_matches:
+        return max(semver_matches, key=lambda item: (item[0], item[1]))[2]
+    if stable_matches:
+        return max(stable_matches, key=lambda item: item[1])[0]
+    raise ValueError(f"No matching stable release found for tag prefix {tag_prefix!r}")
 
 
 def _extract_binary_from_release_archive(
@@ -93,10 +140,10 @@ def _extract_binary_from_release_archive(
             with tarfile.open(fileobj=BytesIO(archive_bytes), mode="r:gz") as archive:
                 for member in archive.getmembers():
                     if member.name.endswith(f"/{binary_name}") or member.name == binary_name:
-                        fileobj = archive.extractfile(member)
-                        if fileobj is None:
+                        extracted_file = archive.extractfile(member)
+                        if extracted_file is None:
                             continue
-                        dest.write_bytes(fileobj.read())
+                        dest.write_bytes(extracted_file.read())
                         dest.chmod(0o755)
                         return True
     except (OSError, tarfile.TarError, zipfile.BadZipFile) as e:
@@ -119,13 +166,15 @@ def _download_release_binary(
 ) -> bool:
     """Download and extract a native binary from GitHub Releases."""
     archive_ext = _release_archive_extension(target)
-    url = _build_release_download_url(
-        artifact_name,
-        target,
-        version=version,
-        tag_prefix=tag_prefix,
-    )
     try:
+        resolved_tag = _resolve_latest_release_tag(tag_prefix=tag_prefix) if version is None else None
+        url = _build_release_download_url(
+            artifact_name,
+            target,
+            version=version,
+            tag_prefix=tag_prefix,
+            resolved_tag=resolved_tag,
+        )
         logger.info("Downloading %s from %s", label, url)
         req = Request(url, headers={"User-Agent": "gobby-installer/1.0"})
         with _urlopen_https(req, timeout=30) as resp:
@@ -137,7 +186,7 @@ def _download_release_binary(
             bin_dir=bin_dir,
             label=label,
         )
-    except (URLError, OSError) as e:
+    except (URLError, OSError, ValueError, json.JSONDecodeError) as e:
         logger.warning("%s: GitHub download failed: %s", label, e)
         return False
 

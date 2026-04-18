@@ -88,17 +88,17 @@ def canonical_project_id_for_server(name: str, project_id: str) -> str:
     return project_id
 
 
-def normalize_persisted_args(name: str, args: list[str] | None) -> list[str] | None:
+def normalize_persisted_args(name: str, args: list[str] | None) -> list[str]:
     """Strip runtime-only arguments before persisting server config."""
     if not args:
-        return args
+        return []
 
     normalized_name = name.lower()
     normalized_args = list(args)
     if normalized_name == CHROME_DEVTOOLS_SERVER_NAME:
         normalized_args = _strip_flag_args(normalized_args, "--executable-path")
 
-    return normalized_args or None
+    return normalized_args
 
 
 def normalize_bundled_server_config(config: MCPServerConfig) -> MCPServerConfig:

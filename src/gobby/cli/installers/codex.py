@@ -80,6 +80,11 @@ def _set_toml_value(config: TOMLDocument, key: str, value: Any) -> None:
         if isinstance(existing, (dict, Table)):
             current = existing
             continue
+        if existing is not None:
+            path_prefix = ".".join(parts[: index + 1])
+            raise ValueError(
+                f"Cannot set nested key {path_prefix!r}: existing value is a scalar"
+            )
 
         new_table = tomlkit.table()
         if index == 0:

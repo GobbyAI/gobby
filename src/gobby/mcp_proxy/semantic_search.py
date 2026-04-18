@@ -165,7 +165,12 @@ class SemanticToolSearch:
 
         try:
             existing_dim = await self._vector_store.get_collection_dimension(self.TOOL_COLLECTION)
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Failed to read semantic tool collection dimension for '%s': %s",
+                self.TOOL_COLLECTION,
+                exc,
+            )
             return None
 
         return existing_dim if isinstance(existing_dim, int) else None
@@ -253,6 +258,7 @@ class SemanticToolSearch:
         if not self._vector_store:
             logger.warning(f"No VectorStore configured - cannot store embedding for tool {tool_id}")
             return
+        vector_store = self._vector_store
 
         from datetime import UTC, datetime
 
@@ -268,7 +274,7 @@ class SemanticToolSearch:
         }
 
         async def _upsert() -> None:
-            await self._vector_store.upsert(
+            await vector_store.upsert(
                 memory_id=tool_id,
                 embedding=embedding,
                 payload=payload,
@@ -543,6 +549,7 @@ class SemanticToolSearch:
                 f"No VectorStore configured - tool search unavailable for query {query!r}"
             )
             return []
+        vector_store = self._vector_store
 
         # Embed the query
         query_embedding = await self.embed_text(query, is_query=True)
@@ -552,7 +559,7 @@ class SemanticToolSearch:
             filters["server_name"] = server_filter
 
         async def _search() -> list[tuple[str, float, dict[str, Any]]]:
-            return await self._vector_store.search_with_payload(
+            return await vector_store.search_with_payload(
                 query_embedding=query_embedding,
                 limit=top_k,
                 filters=filters,

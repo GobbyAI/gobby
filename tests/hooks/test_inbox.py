@@ -93,5 +93,22 @@ def test_load_envelope_skips_quarantine_failure_without_raising(
             envelope = _load_envelope(envelope_path)
 
     assert envelope is None
-    assert envelope_path.exists()
+    assert not envelope_path.exists()
+    assert (inbox_dir / "quarantine" / envelope_path.name).exists()
     assert "Skipping hook inbox file" in caplog.text
+
+
+def test_load_envelope_quarantines_non_utf8_files(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+    envelope_path.write_bytes(b"\xff\xfe\x00bad-json")
+
+    envelope = _load_envelope(envelope_path)
+
+    assert envelope is None
+    assert not envelope_path.exists()
+    quarantined = inbox_dir / "quarantine" / envelope_path.name
+    assert quarantined.read_bytes() == b"\xff\xfe\x00bad-json"
+    meta = json.loads((inbox_dir / "quarantine" / f"{envelope_path.name}.meta.json").read_text())
+    assert meta["reason"] == "invalid_json"

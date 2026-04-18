@@ -18,7 +18,11 @@ Claude Code Hook Types (12 total):
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.adapters.base import BaseAdapter, build_first_hook_session_metadata_lines
+from gobby.adapters.base import (
+    BaseAdapter,
+    build_first_hook_session_metadata_lines,
+    system_message_has_session_banner,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.llm.sdk_utils import compress_and_truncate
 
@@ -223,7 +227,10 @@ class ClaudeCodeAdapter(BaseAdapter):
             if gobby_session_id:
                 context_lines = build_first_hook_session_metadata_lines(
                     response.metadata,
-                    include_session_id_line=not (session_start_hook and bool(response.system_message)),
+                    include_session_id_line=not (
+                        session_start_hook
+                        and system_message_has_session_banner(response.system_message)
+                    ),
                 )
                 if context_lines:
                     additional_context_parts.append("\n".join(context_lines))

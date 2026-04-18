@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -271,3 +272,16 @@ async def test_close(tmp_path) -> None:
     await store.close()
     # Calling close again should not raise
     await store.close()
+
+
+@pytest.mark.asyncio
+async def test_get_collection_dimension_returns_none_on_client_error(caplog) -> None:
+    store = VectorStore(collection_name="test_memories", embedding_dim=4)
+    client = MagicMock()
+    client.get_collection.side_effect = RuntimeError("boom")
+
+    with patch.object(store, "_ensure_client", return_value=client):
+        dimension = await store.get_collection_dimension()
+
+    assert dimension is None
+    assert "Failed to read Qdrant collection dimension" in caplog.text
