@@ -414,7 +414,7 @@ class TestDepCheck:
 
     @pytest.mark.asyncio
     async def test_install_packages_returns_false_when_uv_is_unavailable(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, enable_log_propagation: None
     ) -> None:
         """Auto-install should fail cleanly when uv cannot be resolved."""
         from gobby.voice.dep_check import _install_packages
