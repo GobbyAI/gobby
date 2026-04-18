@@ -116,13 +116,13 @@ def init(
         if not shutil.which("clawhub"):
             click.echo("  Warning: clawhub CLI not found. Install: npm i -g clawhub")
 
-        # Check Cisco skill-scanner (skill safety scanning)
+        # Check ClawCare (skill safety scanning)
         try:
-            import skill_scanner  # noqa: F401
+            import clawcare  # noqa: F401
         except ImportError:
             click.echo(
-                "  Warning: cisco-ai-skill-scanner not found. "
-                "Install: uv add cisco-ai-skill-scanner"
+                "  Warning: clawcare not found. "
+                "Install: uv add clawcare"
             )
 
         # Show detected verification commands

@@ -288,7 +288,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/scan")
     def scan_skill(request_data: SkillScanRequest) -> dict[str, Any]:
-        """Run safety scan on skill content using Cisco skill-scanner."""
+        """Run safety scan on skill content using ClawCare."""
         try:
             from gobby.skills.scanner import scan_skill_content
 
@@ -300,7 +300,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
         except ImportError:
             raise HTTPException(
                 status_code=501,
-                detail="cisco-ai-skill-scanner not installed. Install with: uv add cisco-ai-skill-scanner",
+                detail="clawcare not installed. Install with: uv add clawcare",
             ) from None
         except Exception as e:
             logger.error(f"Failed to scan skill: {e}")

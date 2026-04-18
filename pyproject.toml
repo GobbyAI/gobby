@@ -46,7 +46,7 @@ dependencies = [
     "pygments>=2.20.0",
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
     "cryptography>=46.0.7",
-    "cisco-ai-skill-scanner>=0.1.1",
+    "clawcare>=0.9.0",
     # pyjwt <2.12.0 has CVE-2026-32597 (transitive via mcp)
     "pyjwt>=2.12.0",
     # Native SDK executors for autonomous mode
@@ -88,9 +88,6 @@ constraint-dependencies = [
     "tokenizers>=0.21",
     # authlib <1.6.11 has GHSA-jj8c-mmj3-mmgv (transitive via fastmcp)
     "authlib>=1.6.11",
-    # litellm <1.83.0 has CVE-2026-35029, CVE-2026-35030, GHSA-69x8-hrgq-fjj8
-    # (transitive via cisco-ai-skill-scanner)
-    "litellm>=1.83.0",
 ]
 
 [build-system]
