@@ -11,4 +11,4 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 class TestGeminiSandboxRunner(BaseSandboxRunnerTests):
     __test__ = True
-    runner = SandboxRunner(GEMINI_SPEC)
+    runner: SandboxRunner = SandboxRunner(GEMINI_SPEC)

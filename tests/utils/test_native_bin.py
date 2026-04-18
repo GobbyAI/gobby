@@ -28,12 +28,17 @@ def test_native_bin_name_is_unchanged_on_non_windows() -> None:
 
 
 def test_local_native_bin_path_prefers_gobby_home(temp_dir: Path) -> None:
-    with patch.object(Path, "home", return_value=temp_dir):
-        assert local_native_bin_path("ghook") == temp_dir / ".gobby" / "bin" / "ghook"
+    with (
+        patch.object(Path, "home", return_value=temp_dir),
+        patch("gobby.utils.native_bin.sys.platform", "linux"),
+    ):
+        assert local_native_bin_path("ghook") == (
+            temp_dir / ".gobby" / "bin" / native_bin_name("ghook")
+        )
 
 
 def test_resolve_native_bin_prefers_local_binary(temp_dir: Path) -> None:
-    local_bin = temp_dir / ".gobby" / "bin" / "ghook"
+    local_bin = temp_dir / ".gobby" / "bin" / native_bin_name("ghook")
     local_bin.parent.mkdir(parents=True)
     local_bin.write_text("")
     local_bin.chmod(0o755)
@@ -46,7 +51,7 @@ def test_resolve_native_bin_prefers_local_binary(temp_dir: Path) -> None:
 
 
 def test_resolve_native_bin_ignores_non_executable_local_file(temp_dir: Path) -> None:
-    local_bin = temp_dir / ".gobby" / "bin" / "ghook"
+    local_bin = temp_dir / ".gobby" / "bin" / native_bin_name("ghook")
     local_bin.parent.mkdir(parents=True)
     local_bin.write_text("")
     local_bin.chmod(0o644)
@@ -71,5 +76,6 @@ def test_resolve_native_bin_or_default_returns_name_when_missing(temp_dir: Path)
     with (
         patch.object(Path, "home", return_value=temp_dir),
         patch("gobby.utils.native_bin.shutil.which", return_value=None),
+        patch("gobby.utils.native_bin.sys.platform", "linux"),
     ):
-        assert resolve_native_bin_or_default("ghook") == "ghook"
+        assert resolve_native_bin_or_default("ghook") == native_bin_name("ghook")

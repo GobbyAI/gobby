@@ -346,6 +346,7 @@ _PROTOCOL_CHILD_RE = re.compile(
     r"\s*<(?P<tag>[\w:-]+)>(?P<body>.*?)</(?P=tag)\s*>",
     re.DOTALL,
 )
+_MAX_PROTOCOL_PARSE_DEPTH = 50
 
 _PROTOCOL_ATTR_RE = re.compile(r"""([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 _SYSTEM_BOOTSTRAP_PREFIX_RE = re.compile(
@@ -437,9 +438,9 @@ def _parse_protocol_attributes(attr_text: str) -> dict[str, str]:
     return attrs
 
 
-def _parse_protocol_payload(content: str) -> Any:
+def _parse_protocol_payload(content: str, depth: int = 0) -> Any:
     content = content.strip()
-    if not content or "<" not in content:
+    if not content or "<" not in content or depth >= _MAX_PROTOCOL_PARSE_DEPTH:
         return content
 
     parsed_children: dict[str, Any] = {}
@@ -453,7 +454,7 @@ def _parse_protocol_payload(content: str) -> Any:
 
         matched_child = True
         child_tag = match.group("tag")
-        child_value = _parse_protocol_payload(match.group("body"))
+        child_value = _parse_protocol_payload(match.group("body"), depth + 1)
         existing = parsed_children.get(child_tag)
         if existing is None:
             parsed_children[child_tag] = child_value
@@ -595,14 +596,20 @@ def _append_text_content_block(
 
     if last_block and last_block.type == "text" and isinstance(last_block.content, str):
         last_block.content += text
+        previous_block = None
     else:
         state.current_message.content_blocks.append(
             ContentBlock(type="text", content=text, source_line=source_line)
         )
+        previous_block = (
+            state.current_message.content_blocks[-2]
+            if len(state.current_message.content_blocks) >= 2
+            else None
+        )
 
     if (
-        last_block
-        and last_block.type == "tool_chain"
+        previous_block
+        and previous_block.type == "tool_chain"
         and state.current_message.content
         and text
         and not state.current_message.content[-1].isspace()

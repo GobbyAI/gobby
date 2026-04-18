@@ -256,6 +256,31 @@ class LocalMCPManager:
             )
 
     @staticmethod
+    def _merge_tools_for_servers(tool_sets: Iterable[list[Tool]]) -> list[Tool]:
+        """Union cached tool definitions by name without dropping disjoint tools."""
+        merged: dict[str, Tool] = {}
+        for tools in tool_sets:
+            for tool in tools:
+                existing = merged.get(tool.name)
+                if existing is None:
+                    merged[tool.name] = tool
+                    continue
+                merged[tool.name] = Tool(
+                    id=existing.id,
+                    mcp_server_id=existing.mcp_server_id,
+                    name=existing.name,
+                    description=existing.description or tool.description,
+                    input_schema=(
+                        existing.input_schema
+                        if existing.input_schema is not None
+                        else tool.input_schema
+                    ),
+                    created_at=existing.created_at,
+                    updated_at=max(existing.updated_at, tool.updated_at),
+                )
+        return [merged[name] for name in sorted(merged)]
+
+    @staticmethod
     def _choose_canonical_server(servers: list[MCPServer]) -> MCPServer:
         """Choose the canonical row to preserve when bundled rows are normalized."""
         for project_id in (GLOBAL_PROJECT_ID, *LEGACY_GLOBAL_PROJECT_IDS):
@@ -457,31 +482,33 @@ class LocalMCPManager:
                 continue
 
             canonical_source = self._choose_canonical_server(servers)
-            canonical_server = self._persist_server(
-                name=name,
-                transport=canonical_source.transport,
-                project_id=GLOBAL_PROJECT_ID,
-                url=canonical_source.url,
-                command=canonical_source.command,
-                args=normalize_persisted_args(name, canonical_source.args),
-                env=canonical_source.env,
-                headers=canonical_source.headers,
-                enabled=canonical_source.enabled,
-                description=canonical_source.description,
+            tools_to_preserve = self._merge_tools_for_servers(
+                self._load_tools_for_server_id(server.id) for server in servers
             )
 
-            tools_to_preserve = max(
-                (self._load_tools_for_server_id(server.id) for server in servers),
-                key=len,
-                default=[],
-            )
-            if tools_to_preserve and (len(servers) > 1 or canonical_source.id != canonical_server.id):
-                self._replace_tools_for_server_id(canonical_server.id, tools_to_preserve)
-                stats["tools_migrated"] += len(tools_to_preserve)
+            with self.db.transaction() as conn:
+                canonical_server = self._persist_server(
+                    name=name,
+                    transport=canonical_source.transport,
+                    project_id=GLOBAL_PROJECT_ID,
+                    url=canonical_source.url,
+                    command=canonical_source.command,
+                    args=normalize_persisted_args(name, canonical_source.args),
+                    env=canonical_source.env,
+                    headers=canonical_source.headers,
+                    enabled=canonical_source.enabled,
+                    description=canonical_source.description,
+                )
 
-            duplicate_ids = [server.id for server in servers if server.id != canonical_server.id]
-            for server_id in duplicate_ids:
-                self.db.execute("DELETE FROM mcp_servers WHERE id = ?", (server_id,))
+                if tools_to_preserve and (
+                    len(servers) > 1 or canonical_source.id != canonical_server.id
+                ):
+                    self._replace_tools_for_server_id(canonical_server.id, tools_to_preserve)
+                    stats["tools_migrated"] += len(tools_to_preserve)
+
+                duplicate_ids = [server.id for server in servers if server.id != canonical_server.id]
+                for server_id in duplicate_ids:
+                    conn.execute("DELETE FROM mcp_servers WHERE id = ?", (server_id,))
 
             if (
                 canonical_source.project_id != GLOBAL_PROJECT_ID

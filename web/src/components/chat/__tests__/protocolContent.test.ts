@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { splitProtocolContent } from '../protocolContent'
+import { hasProtocolToolContent, splitProtocolContent } from '../protocolContent'
 
 describe('protocolContent', () => {
   it('parses nested protocol payloads into a tool-call segment', () => {
@@ -15,5 +15,13 @@ describe('protocolContent', () => {
     expect(segment.call.tool_name).toBe('protocol_context')
     expect(segment.call.result?.content_type).toBe('text')
     expect(String(segment.call.result?.content)).toContain('/tmp/project')
+  })
+
+  it('treats unterminated protocol tags as plain text', () => {
+    const content = '<environment_context><workspace>'
+    const [segment] = splitProtocolContent(content, 'msg-2')
+
+    expect(segment).toEqual({ type: 'text', content })
+    expect(hasProtocolToolContent(content)).toBe(false)
   })
 })

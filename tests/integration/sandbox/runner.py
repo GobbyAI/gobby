@@ -17,6 +17,8 @@ from jsonschema.validators import validator_for
 from gobby.cli.installers.hook_commands import _GOBBY_OWNED_MARKER, build_hook_command
 from gobby.utils.native_bin import resolve_native_bin
 
+pytestmark = pytest.mark.integration
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HOOKS_DIR = REPO_ROOT / "src" / "gobby" / "install" / "shared" / "hooks"
 SCHEMA_PATH = REPO_ROOT / "schemas" / "diagnose-output.v1.schema.json"

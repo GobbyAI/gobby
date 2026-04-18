@@ -5,6 +5,7 @@ Consolidated from individual files.
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -951,7 +952,7 @@ class TestCodexTranscriptParser:
     @staticmethod
     def _function_call_output(
         call_id: str,
-        output: object,
+        output: Any,
         ts: str = "2024-06-15T10:30:00Z",
     ) -> str:
         """Build a Codex response_item/function_call_output envelope line."""

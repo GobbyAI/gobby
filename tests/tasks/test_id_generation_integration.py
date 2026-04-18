@@ -12,8 +12,6 @@ import pytest
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import LocalTaskManager
 
-pytestmark = pytest.mark.unit
-
 
 @pytest.fixture
 def task_manager(temp_db):

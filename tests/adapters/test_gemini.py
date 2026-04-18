@@ -576,6 +576,17 @@ class TestTranslateFromHookResponse:
         assert result["hookSpecificOutput"]["hookEventName"] == "SessionStart"
         assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
 
+    def test_session_start_normalizes_snake_case_hook_name(self, adapter) -> None:
+        """session_start should format like SessionStart for response routing."""
+        banner = "Gobby Session ID: #42 (uuid-123)"
+        response = HookResponse(decision="allow", system_message=banner)
+
+        result = adapter.translate_from_hook_response(response, hook_type="session_start")
+
+        assert "systemMessage" not in result
+        assert result["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+        assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
+
     def test_session_start_banner_and_metadata_include_session_id_once(self, adapter) -> None:
         """SessionStart does not duplicate the session ID between banner and metadata."""
         banner = "Gobby Session ID: #42 (uuid-123)"

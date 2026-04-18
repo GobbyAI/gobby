@@ -802,6 +802,12 @@ class TestLocalMCPManager:
             project_id=GLOBAL_PROJECT_ID,
         )
         mcp_manager.upsert(
+            name="global-not-bundled",
+            transport="http",
+            url="http://localhost:7000",
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        mcp_manager.upsert(
             name="project-only",
             transport="http",
             url="http://localhost:9000",
@@ -1081,6 +1087,88 @@ class TestLocalMCPManager:
         )
         assert len(migrated_tools) == 1
         assert migrated_tools[0].name == "inspect_page"
+
+    def test_normalize_bundled_servers_unions_disjoint_tool_sets(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Bundled normalization preserves the union of tool names across duplicates."""
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "legacy-context7-server",
+                "context7",
+                sample_project["id"],
+                "stdio",
+                "npx",
+                json.dumps(["-y", "@upstash/context7-mcp"]),
+                1,
+            ),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "legacy-context7-search",
+                "legacy-context7-server",
+                "search_docs",
+                "Search docs",
+                json.dumps({"type": "object"}),
+            ),
+        )
+
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "global-context7-server",
+                "context7",
+                GLOBAL_PROJECT_ID,
+                "stdio",
+                "npx",
+                json.dumps(["-y", "@upstash/context7-mcp"]),
+                1,
+            ),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "global-context7-resolve",
+                "global-context7-server",
+                "resolve_doc",
+                "Resolve doc",
+                json.dumps({"type": "object"}),
+            ),
+        )
+
+        mcp_manager.normalize_bundled_servers(["context7"])
+
+        tools = mcp_manager.get_cached_tools("context7", project_id=GLOBAL_PROJECT_ID)
+        global_server = mcp_manager.get_server("context7", project_id=GLOBAL_PROJECT_ID)
+        assert global_server is not None
+        assert {tool.name for tool in tools} == {"resolve_doc", "search_docs"}
+
+        legacy_row = temp_db.fetchone(
+            "SELECT * FROM mcp_servers WHERE id = ?",
+            ("legacy-context7-server",),
+        )
+        assert legacy_row is None
 
 
 class TestRefreshToolsIncremental:

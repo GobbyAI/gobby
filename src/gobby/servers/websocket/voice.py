@@ -706,11 +706,17 @@ class VoiceMixin:
         )
         logger.info("Voice model warmup triggered by client")
 
-    def _unload_voice_models(self) -> None:
+    async def _unload_voice_models(self) -> None:
         """Release voice models to reclaim memory.
 
         Called when the last web chat session is removed.
         """
+        task = self._voice_warmup_task
+        self._voice_warmup_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
         unloaded: list[str] = []
 
         if self._whisper_stt is not None:
@@ -724,7 +730,6 @@ class VoiceMixin:
             unloaded.append("TTS")
 
         self._reset_voice_warmup_state()
-        self._voice_warmup_task = None
 
         if not unloaded:
             return
@@ -741,7 +746,7 @@ class VoiceMixin:
 
         logger.info(f"Voice models unloaded ({', '.join(unloaded)}) — memory reclaimed")
 
-    def _check_voice_idle(self) -> None:
+    async def _check_voice_idle(self) -> None:
         """Unload voice models if no web chat sessions remain."""
         chat_sessions: dict[str, Any] = getattr(self, "_chat_sessions", {})
         if len(chat_sessions) > 0:
@@ -750,8 +755,9 @@ class VoiceMixin:
         models_loaded = (
             self._stt_warmup_status == _WARMUP_READY or self._tts_warmup_status == _WARMUP_READY
         )
-        if models_loaded:
-            self._unload_voice_models()
+        warmup_in_flight = self._voice_warmup_task is not None and not self._voice_warmup_task.done()
+        if models_loaded or warmup_in_flight:
+            await self._unload_voice_models()
 
     async def cleanup_voice(self) -> None:
         """Public voice cleanup hook for daemon and WebSocket shutdown paths."""
@@ -773,6 +779,6 @@ class VoiceMixin:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
 
-        self._unload_voice_models()
+        await self._unload_voice_models()
         self._voice_enabled.clear()
         logger.debug("Voice subsystem cleaned up")

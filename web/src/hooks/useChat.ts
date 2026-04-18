@@ -185,16 +185,69 @@ function isValidSessionType(value: unknown): value is "terminal" | "web_chat" {
   return value === "terminal" || value === "web_chat";
 }
 
-function findPendingProxyMessage(
+function enqueuePendingProxyMessage(
+  pendingQueues: Map<string, string[]>,
+  entry: PendingProxyMessage,
+): void {
+  const queue = pendingQueues.get(entry.sessionId) ?? [];
+  queue.push(entry.clientMessageId);
+  pendingQueues.set(entry.sessionId, queue);
+}
+
+function consumePendingProxyMessage(
   pending: Map<string, PendingProxyMessage>,
+  pendingQueues: Map<string, string[]>,
   sessionId: string,
 ): PendingProxyMessage | null {
-  for (const entry of pending.values()) {
-    if (entry.sessionId === sessionId) {
+  const queue = pendingQueues.get(sessionId);
+  if (!queue) {
+    return null;
+  }
+
+  while (queue.length > 0) {
+    const clientMessageId = queue.shift();
+    if (!clientMessageId) {
+      continue;
+    }
+    const entry = pending.get(clientMessageId) ?? null;
+    if (entry) {
+      if (queue.length === 0) {
+        pendingQueues.delete(sessionId);
+      } else {
+        pendingQueues.set(sessionId, queue);
+      }
       return entry;
     }
   }
+
+  pendingQueues.delete(sessionId);
   return null;
+}
+
+function removePendingProxyMessageFromQueue(
+  pendingQueues: Map<string, string[]>,
+  sessionId: string,
+  clientMessageId: string,
+): void {
+  const queue = pendingQueues.get(sessionId);
+  if (!queue) {
+    return;
+  }
+
+  const next = queue.filter((id) => id !== clientMessageId);
+  if (next.length === 0) {
+    pendingQueues.delete(sessionId);
+    return;
+  }
+  pendingQueues.set(sessionId, next);
+}
+
+function clearPendingProxyMessages(
+  pending: Map<string, PendingProxyMessage>,
+  pendingQueues: Map<string, string[]>,
+): void {
+  pending.clear();
+  pendingQueues.clear();
 }
 
 function normalizeSessionType(value: unknown): "terminal" | "web_chat" | null {
@@ -948,6 +1001,7 @@ export function useChat() {
   const pendingProxyMessagesRef = useRef<Map<string, PendingProxyMessage>>(
     new Map(),
   );
+  const pendingProxySessionQueuesRef = useRef<Map<string, string[]>>(new Map());
   const [isContinuingSession, setIsContinuingSession] = useState(false);
   const continuingSessionIdRef = useRef<string | null>(null);
   const continuationRollbackRef = useRef<ContinuationRollbackSnapshot | null>(
@@ -1136,7 +1190,10 @@ export function useChat() {
       observedSessionMetaRef.current = null;
       attachedSessionIdRef.current = null;
       attachedSessionMetaRef.current = null;
-      pendingProxyMessagesRef.current.clear();
+      clearPendingProxyMessages(
+        pendingProxyMessagesRef.current,
+        pendingProxySessionQueuesRef.current,
+      );
       sessionInteractionModeRef.current = "none";
       setObservedSessionId(null);
       setAttachedSessionId(null);
@@ -1854,7 +1911,10 @@ export function useChat() {
           const proxyCapable = canProxyAttachObservationMeta(meta);
           const nextMode =
             requestedMode === "proxy" && !proxyCapable ? "none" : requestedMode;
-          pendingProxyMessagesRef.current.clear();
+          clearPendingProxyMessages(
+            pendingProxyMessagesRef.current,
+            pendingProxySessionQueuesRef.current,
+          );
           setSessionInteractionMode(nextMode);
           sessionInteractionModeRef.current = nextMode;
           if (nextMode === "proxy") {
@@ -1948,7 +2008,10 @@ export function useChat() {
           attachedSessionIdRef.current = null;
           setAttachedSessionMeta(null);
           attachedSessionMetaRef.current = null;
-          pendingProxyMessagesRef.current.clear();
+          clearPendingProxyMessages(
+            pendingProxyMessagesRef.current,
+            pendingProxySessionQueuesRef.current,
+          );
           setProxyDeliveryNotice(null);
           setSessionInteractionMode("none");
           sessionInteractionModeRef.current = "none";
@@ -1977,8 +2040,9 @@ export function useChat() {
             renderedMessage.role === "user" &&
             smSessionId === attachedSessionIdRef.current &&
             sessionInteractionModeRef.current === "proxy"
-              ? findPendingProxyMessage(
+              ? consumePendingProxyMessage(
                   pendingProxyMessagesRef.current,
+                  pendingProxySessionQueuesRef.current,
                   smSessionId,
                 )
               : null;
@@ -2035,7 +2099,7 @@ export function useChat() {
             const pendingProxyMessage =
               pendingProxyMessagesRef.current.get(clientMessageId) ?? null;
             if (pendingProxyMessage) {
-              if (messageId) {
+              if (messageId && result.delivered !== false) {
                 setMessages((prev) => {
                   const messageIdx = prev.findIndex(
                     (message) =>
@@ -2053,8 +2117,13 @@ export function useChat() {
                   return updated;
                 });
                 pendingProxyMessage.currentMessageId = messageId;
+                removePendingProxyMessageFromQueue(
+                  pendingProxySessionQueuesRef.current,
+                  pendingProxyMessage.sessionId,
+                  clientMessageId,
+                );
+                pendingProxyMessagesRef.current.delete(clientMessageId);
               }
-              pendingProxyMessagesRef.current.delete(clientMessageId);
             }
           }
           setProxyDeliveryNotice(
@@ -2969,11 +3038,16 @@ export function useChat() {
         }
         const clientMessageId = uuid();
         const messageId = `user-${clientMessageId}`;
-        pendingProxyMessagesRef.current.set(clientMessageId, {
+        const pendingProxyMessage = {
           clientMessageId,
           currentMessageId: messageId,
           sessionId: proxySessionId,
-        });
+        };
+        pendingProxyMessagesRef.current.set(clientMessageId, pendingProxyMessage);
+        enqueuePendingProxyMessage(
+          pendingProxySessionQueuesRef.current,
+          pendingProxyMessage,
+        );
         setMessages((prev) => [
           ...prev,
           {
@@ -3457,7 +3531,10 @@ export function useChat() {
   const detachFromSession = useCallback(() => {
     if (!attachedSessionIdRef.current) return;
 
-    pendingProxyMessagesRef.current.clear();
+    clearPendingProxyMessages(
+      pendingProxyMessagesRef.current,
+      pendingProxySessionQueuesRef.current,
+    );
     attachedSessionIdRef.current = null;
     attachedSessionMetaRef.current = null;
     sessionInteractionModeRef.current = observedSessionIdRef.current

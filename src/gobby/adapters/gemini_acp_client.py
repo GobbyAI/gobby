@@ -206,10 +206,10 @@ class GeminiACPClient:
             cmd.extend(self._extra_args)
 
         env = os.environ.copy()
-        # Prevent inherited CLI hooks from registering nested daemon sessions.
-        env["GOBBY_HOOKS_DISABLED"] = "1"
         if self._env_overrides:
             env.update(self._env_overrides)
+        # Prevent inherited CLI hooks from registering nested daemon sessions.
+        env["GOBBY_HOOKS_DISABLED"] = "1"
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,

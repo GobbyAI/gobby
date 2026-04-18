@@ -1520,6 +1520,70 @@ describe("useChat", () => {
     );
   });
 
+  it("keeps optimistic proxy mapping when the ack has no message id", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.observeSession?.("sess-proxy", "proxy");
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "attach_to_session_result",
+        session_id: "sess-proxy",
+        external_id: "proxy-ext",
+        source: "claude",
+        title: "Proxy session",
+        status: "active",
+        model: "sonnet",
+        ref: "#2312",
+        session_type: "terminal",
+        messages: [],
+        total_count: 0,
+      });
+    });
+
+    act(() => {
+      result.current.sendMessage("queued message");
+    });
+
+    const sentMsg = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
+    );
+
+    act(() => {
+      ws.simulateMessage({
+        type: "send_to_cli_session_result",
+        session_id: "sess-proxy",
+        delivered: false,
+        delivery_method: "hook_piggyback",
+        client_message_id: sentMsg.client_message_id,
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe(`user-${sentMsg.client_message_id}`);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_message",
+        session_id: "sess-proxy",
+        message: {
+          id: "db-msg-later",
+          role: "user",
+          content: "queued message",
+          timestamp: "2026-04-17T20:01:00Z",
+        },
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe("db-msg-later");
+  });
+
   it("restores attached terminal chat mode from attach metadata", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

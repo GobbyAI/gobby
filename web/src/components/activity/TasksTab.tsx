@@ -556,7 +556,12 @@ export const TasksTab = memo(function TasksTab({
     const hasVisibleSelection = visibleRows.some(
       (row) => row.node.task.id === selectedTaskIdRef.current,
     );
-    if (!hasVisibleSelection && !userSelectedRef.current) {
+    if (!hasVisibleSelection) {
+      userSelectedRef.current = false;
+      if (selectedTaskIdRef.current !== null) {
+        setSelectedTaskId(null);
+        return;
+      }
       setSelectedTaskId(visibleRows[0].node.task.id);
     }
   }, [visibleRows]);

@@ -122,7 +122,7 @@ async def _reap_remaining_child_processes(timeout: float = 1.0) -> None:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
 
-        gone, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout)
+        gone, alive = await asyncio.to_thread(psutil.wait_procs, children, timeout=timeout)
         logger.debug(
             "Child process termination sweep complete",
             extra={"terminated": len(gone), "remaining": len(alive)},

@@ -112,7 +112,7 @@ describe("TasksTab", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: taskList });
-    mockFetch.mockJsonResponse(/\/api\/tasks\/task-review$/, {
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
       task: {
         ...taskList[0],
         description: "Review approved task detail",
@@ -193,6 +193,12 @@ describe("TasksTab", () => {
 
   it("auto-selects the first visible task and keeps the detail pane open", async () => {
     render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getAllByText("Review approved task")[0]);
 
     await waitFor(() => {
       expect(screen.getByText("Review approved task detail")).toBeTruthy();

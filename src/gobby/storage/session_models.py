@@ -71,7 +71,7 @@ class Session:
     approved_tools_json: str | None = None
     # Session type: 'terminal' (CLI) or 'web_chat' (browser UI)
     session_type: str = "terminal"
-    sandbox_enabled: bool = False
+    sandbox_enabled: bool | None = False
     sandbox_policy_hash: str | None = None
 
     @classmethod
@@ -126,7 +126,9 @@ class Session:
             if "approved_tools_json" in row.keys()
             else None,
             session_type=row["session_type"] if "session_type" in row.keys() else "terminal",
-            sandbox_enabled=bool(row["sandbox_enabled"])
+            sandbox_enabled=(
+                bool(row["sandbox_enabled"]) if row["sandbox_enabled"] is not None else None
+            )
             if "sandbox_enabled" in row.keys()
             else False,
             sandbox_policy_hash=row["sandbox_policy_hash"]
@@ -175,22 +177,13 @@ class Session:
 
     @property
     def has_terminal_liveness(self) -> bool:
-        """Best-effort liveness signal for tmux-backed terminal sessions."""
+        """Best-effort durable liveness signal for tmux-backed terminal sessions."""
         if not self.terminal_context:
             return False
 
         tmux_pane = self.terminal_context.get("tmux_pane")
         if isinstance(tmux_pane, str) and tmux_pane:
             return True
-
-        parent_pid = self.terminal_context.get("parent_pid")
-        if isinstance(parent_pid, int) and not isinstance(parent_pid, bool):
-            return parent_pid > 0
-        if isinstance(parent_pid, str):
-            try:
-                return int(parent_pid) > 0
-            except ValueError:
-                return False
 
         return False
 
@@ -212,6 +205,7 @@ class Session:
             "source": self.source,
             "project_id": self.project_id,
             "title": self.title,
+            "title_source": self.title_source,
             "status": self.status,
             "transcript_path": self.transcript_path,
             "summary_path": self.summary_path,
@@ -259,6 +253,7 @@ class Session:
             "source": self.source,
             "project_id": self.project_id,
             "title": self.title,
+            "title_source": self.title_source,
             "status": self.status,
             "git_branch": self.git_branch,
             "model": self.model,

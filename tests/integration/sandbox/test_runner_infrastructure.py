@@ -24,8 +24,7 @@ def test_load_diagnose_schema_points_at_mirrored_contract() -> None:
 
 def test_build_diagnose_command_swaps_owned_marker() -> None:
     runner = SandboxRunner(CODEX_SPEC)
-    if runner.ghook_binary_path is None:
-        pytest.skip("sandbox runner requires a local ghook binary")
+    runner.ghook_binary_path = "/usr/bin/ghook"
 
     command = runner.build_diagnose_command()
 

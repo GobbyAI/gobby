@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -173,6 +174,7 @@ async def drain_hook_inbox_loop(
     app: Any,
     is_shutdown_requested: Callable[[], bool],
     interval_seconds: int = 60,
+    jitter_seconds: float = 5.0,
 ) -> None:
     """Background loop that replays pending hook inbox envelopes."""
     try:
@@ -186,7 +188,11 @@ async def drain_hook_inbox_loop(
 
     while not is_shutdown_requested():
         try:
-            await asyncio.sleep(interval_seconds)
+            sleep_seconds = max(
+                0.0,
+                interval_seconds + random.uniform(-jitter_seconds, jitter_seconds),
+            )
+            await asyncio.sleep(sleep_seconds)
             replayed = await drain_hook_inbox_once(app)
             if replayed > 0:
                 logger.info("Hook inbox replayed %s pending envelope(s)", replayed)

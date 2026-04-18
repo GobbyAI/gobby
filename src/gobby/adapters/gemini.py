@@ -331,7 +331,8 @@ class GeminiAdapter(BaseAdapter):
             result["reason"] = response.reason
 
         hook_event_name = self._response_hook_event_name(hook_type)
-        session_start_hook = hook_type == "SessionStart"
+        resolved_hook_type = hook_event_name or hook_type
+        session_start_hook = resolved_hook_type == "SessionStart"
 
         # Build hookSpecificOutput based on hook type
         hook_specific: dict[str, Any] = {}
@@ -352,7 +353,7 @@ class GeminiAdapter(BaseAdapter):
         # Add session/terminal context for hooks that support additionalContext
         # Parity with Claude Code: inject on SessionStart, BeforeAgent, BeforeTool, AfterTool
         hooks_with_context = {"SessionStart", "BeforeAgent", "BeforeTool", "AfterTool"}
-        if hook_type in hooks_with_context and response.metadata:
+        if resolved_hook_type in hooks_with_context and response.metadata:
             session_id = response.metadata.get("session_id")
 
             if session_id:
@@ -366,15 +367,15 @@ class GeminiAdapter(BaseAdapter):
                 if context_lines:
                     context_parts.append("\n".join(context_lines))
 
-        if hook_type in hooks_with_context and context_parts and hook_event_name:
+        if resolved_hook_type in hooks_with_context and context_parts and hook_event_name:
             hook_specific["hookEventName"] = hook_event_name
 
         # Handle BeforeModel-specific output (llm_request modification)
-        if hook_type == "BeforeModel" and response.modify_args:
+        if resolved_hook_type == "BeforeModel" and response.modify_args:
             hook_specific["llm_request"] = response.modify_args
 
         # Handle BeforeToolSelection-specific output (toolConfig modification)
-        if hook_type == "BeforeToolSelection" and response.modify_args:
+        if resolved_hook_type == "BeforeToolSelection" and response.modify_args:
             hook_specific["toolConfig"] = response.modify_args
 
         if context_parts:

@@ -226,7 +226,7 @@ def test_lmstudio_info_exception():
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider():
+def test_get_configured_embedding_provider() -> None:
     config = MagicMock()
     config.database_path = "/tmp/gobby-hub.db"
     config.embeddings.api_base = None
@@ -244,7 +244,7 @@ def test_get_configured_embedding_provider():
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_falls_back_to_api_base():
+def test_get_configured_embedding_provider_falls_back_to_api_base() -> None:
     config = MagicMock()
     config.database_path = "/tmp/gobby-hub.db"
     config.embeddings.api_base = "http://localhost:1234/v1"

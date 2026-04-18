@@ -246,7 +246,7 @@ async def _maybe_hold_open(
         approved_tools_json = getattr(db_session, "approved_tools_json", None)
         try:
             raw_session_rules = json.loads(approved_tools_json) if approved_tools_json else []
-        except (TypeError, ValueError):
+        except (TypeError, json.JSONDecodeError):
             raw_session_rules = []
         session_rules = normalize_approved_tool_keys(raw_session_rules)
         project_rules = load_project_approval_rules(project_path)

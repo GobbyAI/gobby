@@ -342,7 +342,7 @@ def _build_heuristic_title(prompt_text: Any) -> str | None:
         candidate = " ".join(words[:7])
 
     candidate = _truncate_title(candidate)
-    if not candidate or len(candidate) < 3:
+    if not candidate or len(candidate) < 2:
         return None
 
     return candidate[0].upper() + candidate[1:]

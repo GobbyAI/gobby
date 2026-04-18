@@ -889,8 +889,10 @@ class ExpansionService:
             raw = await self._generate_raw_spec_for_phase(run, task, section)
             if not (raw.get("tasks") or []):
                 raise ValueError(f"Phase {section['number']} spec produced no tasks")
-            normalized = self._normalize_native_compiled_spec(
-                raw, task=task, plan_file=run.plan_file
+            normalized = (
+                self.normalize_compiled_spec(raw, task=task, plan_file=run.plan_file)
+                if "subtasks" in raw
+                else self._normalize_native_compiled_spec(raw, task=task, plan_file=run.plan_file)
             )
             if len(normalized["tasks"]) > max_subtasks:
                 raise ValueError(

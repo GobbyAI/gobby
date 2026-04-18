@@ -176,7 +176,7 @@ class LocalSessionManager:
                         json.dumps(terminal_context) if terminal_context else None,
                         workflow_name,
                         session_type,
-                        int(bool(sandbox_enabled)),
+                        None if sandbox_enabled is None else int(bool(sandbox_enabled)),
                         sandbox_policy_hash,
                         now,
                         now,

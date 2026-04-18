@@ -857,7 +857,17 @@ class ChatMessagingMixin:
         if not session.has_pending_approval:
             manager = getattr(self, "_pending_interaction_manager", None)
             if manager and isinstance(tool_call_id, str) and tool_call_id:
-                resolved = await manager.resolve(tool_call_id, decision)
+                try:
+                    resolved = await manager.resolve(tool_call_id, decision)
+                except Exception:
+                    logger.exception(
+                        "Failed to resolve pending interaction",
+                        extra={
+                            "tool_call_id": tool_call_id,
+                            "conversation_id": conversation_id,
+                        },
+                    )
+                    resolved = False
                 if resolved:
                     return
             logger.warning(f"tool_approval_response but no pending approval for {conversation_id}")

@@ -118,6 +118,9 @@ class TestBuildHeuristicTitle:
     def test_rejects_titles_that_truncate_to_too_short(self) -> None:
         assert _build_heuristic_title("A") is None
 
+    def test_allows_two_character_titles(self) -> None:
+        assert _build_heuristic_title("PR") == "PR"
+
 
 class TestBootstrapSessionTitle:
     """Tests for bootstrap_session_title helper."""

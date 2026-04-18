@@ -56,7 +56,30 @@ class TestSession:
         assert d["machine_id"] == "machine-1"
         assert d["source"] == "gemini"
         assert d["title"] == "Test Session"
+        assert d["title_source"] is None
         assert d["status"] == "active"
+
+    def test_to_dict_and_brief_include_title_source(self) -> None:
+        session = Session(
+            id="sess-title-source",
+            external_id="ext-title-source",
+            machine_id="machine-1",
+            source="gemini",
+            project_id="proj-1",
+            title="Titled Session",
+            title_source="manual",
+            status="active",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch=None,
+            parent_session_id=None,
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:05:00Z",
+        )
+
+        assert session.to_dict()["title_source"] == "manual"
+        assert session.to_brief()["title_source"] == "manual"
 
     def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self) -> None:
         """Paused tmux sessions remain attachable while terminal liveness metadata exists."""
@@ -81,6 +104,29 @@ class TestSession:
 
         assert session.can_proxy_attach is True
         assert session.to_dict()["can_proxy_attach"] is True
+
+    def test_parent_pid_does_not_count_as_terminal_liveness(self) -> None:
+        session = Session(
+            id="sess-parent-pid-only",
+            external_id="ext-parent-pid-only",
+            machine_id="machine-1",
+            source="qwen",
+            project_id="proj-1",
+            title="Stale pid session",
+            status="paused",
+            transcript_path=None,
+            summary_path=None,
+            summary_markdown=None,
+            git_branch="main",
+            parent_session_id=None,
+            created_at="2026-04-16T00:00:00Z",
+            updated_at="2026-04-16T00:05:00Z",
+            terminal_context={"parent_pid": 12345},
+            session_type="terminal",
+        )
+
+        assert session.has_terminal_liveness is False
+        assert session.can_proxy_attach is False
 
 
 class TestLocalSessionManager:
@@ -165,6 +211,38 @@ class TestLocalSessionManager:
 
         assert session.sandbox_enabled is True
         assert session.sandbox_policy_hash == "policy-abc"
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.sandbox_enabled is True
+        assert reloaded.sandbox_policy_hash == "policy-abc"
+
+    def test_register_preserves_unknown_sandbox_metadata_as_null(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="unknown-sandbox-session",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            sandbox_enabled=None,
+            sandbox_policy_hash=None,
+        )
+
+        row = session_manager.db.fetchone(
+            "SELECT sandbox_enabled, sandbox_policy_hash FROM sessions WHERE id = ?",
+            (session.id,),
+        )
+        assert row is not None
+        assert row["sandbox_enabled"] is None
+        assert row["sandbox_policy_hash"] is None
+
+        reloaded = session_manager.get(session.id)
+        assert reloaded is not None
+        assert reloaded.sandbox_enabled is None
+        assert reloaded.sandbox_policy_hash is None
 
     def test_register_upserts_on_conflict(
         self,

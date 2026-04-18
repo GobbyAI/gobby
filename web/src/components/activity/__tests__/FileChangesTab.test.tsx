@@ -37,6 +37,7 @@ describe('FileChangesTab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /first\.ts/i }))
     fireEvent.click(screen.getByRole('button', { name: /second\.ts/i }))
+    expect(fetchDiff).toHaveBeenCalledTimes(2)
 
     expect(resolveSecond).toBeDefined()
     resolveSecond!('second diff')

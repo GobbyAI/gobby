@@ -35,6 +35,7 @@ const INLINE_WRAPPER_PROTOCOL_TAGS = [
 const PROTOCOL_CHILD_RE = /\s*<(?<tag>[\w:-]+)>(?<body>.*?)<\/\k<tag>\s*>/sy
 const PROTOCOL_ATTR_RE = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
 const MAX_PROTOCOL_PARSE_DEPTH = 10
+const MAX_PROTOCOL_CONTENT_LENGTH = 200_000
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -48,7 +49,7 @@ const protocolToolTagPattern = buildTagPattern(PROTOCOL_TOOL_TAGS)
 const inlineWrapperTagPattern = buildTagPattern(INLINE_WRAPPER_PROTOCOL_TAGS)
 
 const protocolToolRe = new RegExp(
-  `<(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>(?<body>[\\s\\S]*?)(?:<\\/\\k<tag>\\s*>|$)`,
+  `<(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>(?<body>(?:[^<]|<(?!\\/\\k<tag>\\s*>))*)<\\/\\k<tag>\\s*>`,
   'gi',
 )
 
@@ -68,6 +69,10 @@ function sanitizeVisibleProtocolText(content: string): string {
   return content
     .replace(inlineWrapperProtocolTagRe, '')
     .replace(/\n{3,}/g, '\n\n')
+}
+
+function shouldParseProtocolContent(content: string): boolean {
+  return content.includes('<') && content.length <= MAX_PROTOCOL_CONTENT_LENGTH
 }
 
 function parseProtocolAttributes(attrText: string): Record<string, string> | undefined {
@@ -149,7 +154,7 @@ export function splitProtocolContent(
   content: string,
   idPrefix: string,
 ): ProtocolContentSegment[] {
-  if (!content.includes('<')) {
+  if (!shouldParseProtocolContent(content)) {
     return content ? [{ type: 'text', content }] : []
   }
 
@@ -195,7 +200,7 @@ export function splitProtocolContent(
 }
 
 export function hasProtocolToolContent(content: string): boolean {
-  if (!content.includes('<')) {
+  if (!shouldParseProtocolContent(content)) {
     return false
   }
 

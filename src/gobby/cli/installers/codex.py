@@ -10,6 +10,7 @@ import logging
 import os
 import tempfile
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,6 +34,17 @@ from .shared import (
 )
 
 logger = logging.getLogger(__name__)
+
+type TomlValue = (
+    str
+    | int
+    | float
+    | bool
+    | datetime
+    | None
+    | list["TomlValue"]
+    | dict[str, "TomlValue"]
+)
 
 
 def _get_hooks_dir() -> Path:
@@ -71,7 +83,7 @@ def _insert_top_level_table(config: TOMLDocument, table_name: str, table_value: 
         config[key] = value
 
 
-def _set_toml_value(config: TOMLDocument, key: str, value: Any) -> None:
+def _set_toml_value(config: TOMLDocument, key: str, value: TomlValue) -> None:
     """Set a dotted TOML key inside a parsed config dict."""
     parts = key.split(".")
     current: TOMLDocument | Table | dict[str, Any] = config

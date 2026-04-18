@@ -136,8 +136,8 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
                   value={rule.value}
                   onChange={(e) =>
                     setApprovalRules((prev) =>
-                      prev.map((value, i) =>
-                        i === index ? { ...value, value: e.target.value } : value,
+                      prev.map((ruleItem, i) =>
+                        i === index ? { ...ruleItem, value: e.target.value } : ruleItem,
                       ),
                     )
                   }

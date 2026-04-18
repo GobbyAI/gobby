@@ -105,3 +105,12 @@ class TestVoiceWarmup:
 
         # Idempotent shutdown should remain safe after state is cleared.
         await mixin.cleanup_voice()
+
+    @pytest.mark.asyncio
+    async def test_check_voice_idle_cancels_inflight_warmup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+        mixin._voice_warmup_task = asyncio.create_task(asyncio.sleep(60))
+
+        await mixin._check_voice_idle()
+
+        assert mixin._voice_warmup_task is None

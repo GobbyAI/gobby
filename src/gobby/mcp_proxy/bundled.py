@@ -72,7 +72,7 @@ DEFAULT_EXTERNAL_MCP_SERVERS: list[dict[str, Any]] = [
 ]
 
 BUNDLED_EXTERNAL_MCP_SERVER_NAMES = frozenset(
-    server["name"] for server in DEFAULT_EXTERNAL_MCP_SERVERS
+    server["name"].lower() for server in DEFAULT_EXTERNAL_MCP_SERVERS
 )
 
 
