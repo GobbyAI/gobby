@@ -199,6 +199,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # tool_block_pending is reserved for real tool execution failures.
                 if is_before_tool and variables.get("_last_blocked_tool"):
                     if _is_pipeline_direct_mcp_event(event):
+                        # Synthetic pipeline MCP events clear block state so the next real user tool starts from 0.
                         variables["consecutive_tool_blocks"] = 0
                         variables["_last_blocked_tool"] = ""
                     else:
@@ -207,12 +208,16 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         if tool_name == last_blocked:
                             count = variables.get("consecutive_tool_blocks", 0) + 1
                             variables["consecutive_tool_blocks"] = count
-                            if count >= 2:
+                            max_attempts = int(
+                                variables.get("max_consecutive_blocked_tool_attempts", 5)
+                            )
+                            total_attempts = count + 1
+                            if total_attempts >= max_attempts:
                                 resp = HookResponse(
                                     decision="block",
                                     reason=(
                                         "Rule enforced by Gobby: [consecutive-tool-block]\n"
-                                        f"You have attempted {tool_name} {count + 1} times consecutively "
+                                        f"You have attempted {tool_name} {total_attempts} times consecutively "
                                         "without addressing the error.\n"
                                         "STOP retrying the same action. Read the previous error messages "
                                         "and take a DIFFERENT action to resolve the underlying issue first."

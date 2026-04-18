@@ -1153,7 +1153,7 @@ class TestConsecutiveToolBlocks:
     async def test_short_circuit_fires_at_threshold(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """At count >= 2, engine should short-circuit block without evaluating rules."""
+        """At the configured threshold, engine should short-circuit without evaluating rules."""
 
         # Insert a rule with set_variable to prove it never runs
         _insert_rule(
@@ -1170,14 +1170,15 @@ class TestConsecutiveToolBlocks:
 
         engine = RuleEngine(db)
         variables: dict[str, Any] = {
-            "consecutive_tool_blocks": 1,
+            "consecutive_tool_blocks": 3,
             "_last_blocked_tool": "Edit",
+            "max_consecutive_blocked_tool_attempts": 5,
         }
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "block"
-        assert "3 times consecutively" in response.reason
+        assert "5 times consecutively" in response.reason
         assert "STOP retrying" in response.reason
         # Rule should NOT have been evaluated — no side effect
         assert variables.get("rule_ran") is None

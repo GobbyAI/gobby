@@ -201,6 +201,7 @@ class TestRequireErrorTriage:
 
         assert body.when is not None
         assert "errors_resolved" in body.when
+        assert "session_edited_files" in body.when
 
 
 class TestRequireTaskClose:
@@ -724,11 +725,12 @@ class TestConsecutiveBlockScoping:
     """
 
     @pytest.mark.asyncio
-    async def test_same_tool_retried_3x_escalates(self, db) -> None:
-        """Same tool retried 3 times should hit the hardcoded escalation block."""
+    async def test_same_tool_retried_5x_escalates(self, db) -> None:
+        """Same tool retried 5 times should hit the configured escalation block."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "_last_blocked_tool": "TodoWrite",
+            "max_consecutive_blocked_tool_attempts": 5,
         }
 
         # Attempt 1: counter goes to 1, no escalation yet
@@ -745,16 +747,38 @@ class TestConsecutiveBlockScoping:
         # Re-set blocked-tool tracking (simulates the rule blocking it again)
         variables["_last_blocked_tool"] = "TodoWrite"
 
-        # Attempt 2: counter goes to 2 → escalation block
+        # Attempt 2: counter goes to 2, still below threshold
         event2 = _make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "TodoWrite"},
         )
         response2 = await engine.evaluate(event2, "sess-1", variables)
         assert variables.get("consecutive_tool_blocks") == 2
-        assert response2.decision == "block"
-        assert "TodoWrite" in response2.reason
-        assert "3 times" in response2.reason
+        assert response2.decision == "allow"
+
+        variables["_last_blocked_tool"] = "TodoWrite"
+
+        # Attempt 3: counter goes to 3, still below threshold
+        event3 = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "TodoWrite"},
+        )
+        response3 = await engine.evaluate(event3, "sess-1", variables)
+        assert variables.get("consecutive_tool_blocks") == 3
+        assert response3.decision == "allow"
+
+        variables["_last_blocked_tool"] = "TodoWrite"
+
+        # Attempt 4: counter goes to 4 → escalation block on the 5th total attempt
+        event4 = _make_event(
+            HookEventType.BEFORE_TOOL,
+            data={"tool_name": "TodoWrite"},
+        )
+        response4 = await engine.evaluate(event4, "sess-1", variables)
+        assert variables.get("consecutive_tool_blocks") == 4
+        assert response4.decision == "block"
+        assert "TodoWrite" in response4.reason
+        assert "5 times" in response4.reason
 
     @pytest.mark.asyncio
     async def test_different_tool_resets_counter(self, db) -> None:
