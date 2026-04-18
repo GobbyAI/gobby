@@ -258,6 +258,24 @@ class TestSyncBundledPipelines:
             result = sync_bundled_pipelines(db)
             assert result["synced"] == 0
 
+    @pytest.mark.integration
+    def test_sync_with_real_bundled_pipelines(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        from gobby.workflows.sync import sync_bundled_pipelines
+
+        result = sync_bundled_pipelines(db)
+
+        assert result["success"] is True
+        assert result["synced"] + result["skipped"] + result["updated"] >= 1
+        assert result["errors"] == []
+
+        rows = manager.list_all(workflow_type="pipeline")
+        names = [row.name for row in rows]
+        assert "orchestrator" in names
+        assert "front-half-orchestrator" in names
+        assert "delivery-orchestrator" in names
+
     def test_skips_yaml_without_name(self, db: LocalDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync import sync_bundled_pipelines
 

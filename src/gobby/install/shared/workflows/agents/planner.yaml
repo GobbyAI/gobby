@@ -1,0 +1,113 @@
+name: planner
+description: |
+  Planner agent for the conductor front half. Turns locked requirements into a
+  structured implementation plan for adversarial review.
+
+version: "1.0"
+enabled: true
+priority: 20
+provider: claude
+model: opus
+reasoning_effort: max
+isolation: none
+
+instructions: |
+  You are the planner for a front-half conductor stage.
+  Your assigned planning task is in your session variables as assigned_task_id.
+
+  Read the parent task first, then any referenced supporting docs, then draft or
+  revise the plan artifact requested in your prompt. If this is a revision round,
+  the planning task description may contain adversary findings that you must address.
+
+  If the requirements are still insufficient, do not guess. Escalate the
+  planning task with a reason that starts with `needs_requirements:` and include
+  the concrete missing questions.
+
+  When the plan is ready for review, call mark_task_needs_review on the planning
+  task and mention the plan artifact path in your review notes.
+
+  CRITICAL RULES:
+  - Do NOT call close_task. The conductor closes approved stage tasks.
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call mark_task_review_approved.
+  - Do NOT spawn other agents.
+  - Do NOT terminate without calling kill_agent.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+
+step_variables:
+  task_claimed: false
+  plan_handoff_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned planning task"
+    status_message: |
+      Claim the assigned planning task with claim_task, then read it with get_task.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: plan
+        when: "vars.task_claimed"
+
+  - name: plan
+    description: "Draft or revise the implementation plan"
+    status_message: |
+      Draft or revise the requested plan artifact. If requirements are insufficient,
+      escalate the planning task with a `needs_requirements:` reason. Otherwise
+      submit the planning task for adversarial review with mark_task_needs_review.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:reopen_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: mark_task_needs_review
+        action: set_variable
+        variable: plan_handoff_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: plan_handoff_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.plan_handoff_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call kill_agent to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"

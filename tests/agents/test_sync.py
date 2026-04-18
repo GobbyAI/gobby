@@ -196,6 +196,7 @@ class TestSyncBundledAgents:
         # At least one bundled agent should be synced (some may be skipped
         # due to name collision with bundled workflows)
         assert result["synced"] + result["skipped"] + result["updated"] >= 1
+        assert result["errors"] == []
 
         # Verify agents are in workflow_definitions
         mgr = LocalWorkflowDefinitionManager(db)
@@ -204,3 +205,12 @@ class TestSyncBundledAgents:
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
         assert any(n in names for n in ("default", "developer", "qa-reviewer"))
+        assert all(
+            n in names
+            for n in (
+                "requirements-analyst",
+                "planner",
+                "plan-adversary",
+                "test-architect",
+            )
+        )
