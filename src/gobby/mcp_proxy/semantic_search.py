@@ -357,7 +357,7 @@ class SemanticToolSearch:
         Generate embedding for text using the shared embedding router.
 
         Routes to local in-process model (local/ prefix) or cloud API
-        (LiteLLM) based on the configured embedding_model.
+        (OpenAI-compatible endpoint) based on the configured embedding_model.
 
         Args:
             text: Text to embed

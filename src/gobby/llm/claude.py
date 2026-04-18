@@ -1,16 +1,14 @@
 """
 Claude implementation of LLMProvider.
 
-Supports two authentication modes:
-- subscription: Uses Claude Agent SDK via Claude CLI (requires CLI installed)
-- api_key: Uses LiteLLM with anthropic/ prefix (BYOK, no CLI needed)
+Uses the Claude Agent SDK via the Claude CLI.
 """
 
 import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -26,9 +24,6 @@ from gobby.config.app import DaemonConfig
 from gobby.llm.base import LLMProvider
 from gobby.utils.json_helpers import extract_json_from_text
 
-# Type alias for auth mode
-AuthMode = Literal["subscription", "api_key"]
-
 # Headless settings file — zeroes out all hooks so internal LLM calls
 # don't trigger session registration or title synthesis cascades.
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
@@ -37,45 +32,23 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeLLMProvider(LLMProvider):
-    """
-    Claude implementation of LLMProvider.
-
-    Supports two authentication modes:
-    - subscription (default): Uses Claude Agent SDK via Claude CLI
-    - api_key: Uses LiteLLM with anthropic/ prefix (BYOK, no CLI needed)
-
-    The auth_mode is determined by:
-    1. Constructor parameter (highest priority)
-    2. Config file: llm_providers.claude.auth_mode
-    3. Default: "subscription"
-    """
+    """Claude implementation of LLMProvider using the Claude Agent SDK."""
 
     @property
     def provider_name(self) -> str:
         """Return provider name."""
         return "claude"
 
-    @property
-    def auth_mode(self) -> AuthMode:
-        """Return current authentication mode."""
-        return self._auth_mode
-
-    def __init__(
-        self,
-        config: DaemonConfig,
-        auth_mode: AuthMode | None = None,
-    ):
+    def __init__(self, config: DaemonConfig):
         """
         Initialize ClaudeLLMProvider.
 
         Args:
             config: Client configuration.
-            auth_mode: Authentication mode override. If None, uses config or default.
         """
         self.config = config
         self.logger = logger
 
-        self._auth_mode: AuthMode = "subscription"
         self._claude_cli_path = self._find_cli_path()
 
         # Resolve default model from provider config → global config.

@@ -1,8 +1,8 @@
 """
 LLM Provider Abstraction for Gobby Client.
 
-This module provides interfaces and implementations for different LLM providers
-(Claude, Codex, Gemini, LiteLLM) to make the client CLI-agnostic.
+This module provides interfaces and implementations for Gobby's LLM providers
+to make the client CLI-agnostic.
 
 Usage:
     service = create_llm_service(config)

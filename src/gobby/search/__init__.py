@@ -3,7 +3,7 @@ Unified search backend abstraction.
 
 Provides a unified search layer with multiple backends:
 - FTS5 (default) - SQLite full-text search, always available
-- Embedding - LiteLLM-based semantic search (OpenAI, Ollama, etc.)
+- Embedding - OpenAI-compatible semantic search (OpenAI, Ollama, etc.)
 - Unified - Orchestrates between backends with automatic fallback
 
 Basic usage (FTS5):

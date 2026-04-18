@@ -1,7 +1,7 @@
 """
 LLM SDK auto-instrumentation via OpenLLMetry.
 
-Activates OpenTelemetry instrumentors for Anthropic, OpenAI, and Google GenAI SDKs.
+Activates OpenTelemetry instrumentors for Anthropic and OpenAI SDKs.
 Each LLM call automatically emits a child span with gen_ai.* semantic convention attributes.
 """
 
@@ -21,10 +21,6 @@ _INSTRUMENTOR_MAP: dict[str, tuple[str, str]] = {
     "openai": (
         "opentelemetry.instrumentation.openai",
         "OpenAIInstrumentor",
-    ),
-    "google-genai": (
-        "opentelemetry.instrumentation.google_genai",
-        "GoogleGenAiInstrumentor",
     ),
 }
 
