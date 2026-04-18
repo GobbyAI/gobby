@@ -391,7 +391,7 @@ class TestDepCheck:
         proc.returncode = 0
 
         with patch("gobby.voice.dep_check.shutil.which", return_value=None):
-            with patch("gobby.voice.dep_check.importlib.util.find_spec", return_value=object()):
+            with patch("gobby.voice.dep_check.find_spec", return_value=object()):
                 with patch(
                     "gobby.voice.dep_check.asyncio.create_subprocess_exec",
                     new_callable=AsyncMock,
@@ -420,7 +420,7 @@ class TestDepCheck:
         from gobby.voice.dep_check import _install_packages
 
         with patch("gobby.voice.dep_check.shutil.which", return_value=None):
-            with patch("gobby.voice.dep_check.importlib.util.find_spec", return_value=None):
+            with patch("gobby.voice.dep_check.find_spec", return_value=None):
                 with patch(
                     "gobby.voice.dep_check.asyncio.create_subprocess_exec",
                     new_callable=AsyncMock,
