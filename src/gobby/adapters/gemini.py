@@ -379,7 +379,9 @@ class GeminiAdapter(BaseAdapter):
             hook_specific["toolConfig"] = response.modify_args
 
         if context_parts:
-            hook_specific["additionalContext"] = compress_and_truncate("\n\n".join(context_parts))[0]
+            hook_specific["additionalContext"] = compress_and_truncate("\n\n".join(context_parts))[
+                0
+            ]
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:

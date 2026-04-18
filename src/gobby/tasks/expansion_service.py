@@ -101,7 +101,9 @@ def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
     execution_groups = []
     for group_index, group in enumerate(raw_execution_groups, start=1):
         raw_group_id = group.get("id")
-        resolved_group_id = pfx(raw_group_id) if raw_group_id else pfx(f"execution-group-{group_index}")
+        resolved_group_id = (
+            pfx(raw_group_id) if raw_group_id else pfx(f"execution-group-{group_index}")
+        )
         prefixed_task_ids = [pfx(tid) for tid in group.get("task_ids") or []]
         execution_groups.append(
             {

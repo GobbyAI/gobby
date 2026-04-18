@@ -161,7 +161,11 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
             output["reason"] = resp["reason"]
     else:
         specific: PreToolUseHookSpecificOutput | None = None
-        if resp.get("modified_input") is not None or resp.get("context") or resp.get("auto_approve"):
+        if (
+            resp.get("modified_input") is not None
+            or resp.get("context")
+            or resp.get("auto_approve")
+        ):
             specific = PreToolUseHookSpecificOutput(
                 hookEventName="PreToolUse",
             )

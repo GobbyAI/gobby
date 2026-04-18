@@ -145,13 +145,19 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     400, "Project has no repo_path for project-scoped approval rules"
                 )
             if repo_path_changed and original_repo_path:
-                migrate_project_approval_rules(original_repo_path, updated.repo_path, approval_rules)
+                migrate_project_approval_rules(
+                    original_repo_path, updated.repo_path, approval_rules
+                )
             else:
                 save_project_approval_rules(updated.repo_path, approval_rules)
         elif repo_path_changed and updated.repo_path and migrated_rules:
             migrate_project_approval_rules(original_repo_path, updated.repo_path)
 
-        if repo_path_changed and original_repo_path and (approval_rules is not None or migrated_rules):
+        if (
+            repo_path_changed
+            and original_repo_path
+            and (approval_rules is not None or migrated_rules)
+        ):
             clear_project_approval_rules(original_repo_path)
 
         return _project_to_response(server, updated)

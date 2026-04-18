@@ -161,8 +161,7 @@ def resolve_chrome_devtools_executable_path() -> str | None:
         path_candidates.extend(
             [
                 Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-                Path.home()
-                / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 Path(
                     "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
                 ),
@@ -191,9 +190,7 @@ def resolve_chrome_devtools_executable_path() -> str | None:
                     Path(root) / "Microsoft/Edge/Application/msedge.exe",
                 ]
             )
-        glob_patterns.append(
-            ".cache/puppeteer-browsers/chrome/*/chrome-win*/chrome.exe"
-        )
+        glob_patterns.append(".cache/puppeteer-browsers/chrome/*/chrome-win*/chrome.exe")
     else:
         path_candidates.extend(
             [

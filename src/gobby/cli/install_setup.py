@@ -167,7 +167,9 @@ def _download_release_binary(
     """Download and extract a native binary from GitHub Releases."""
     archive_ext = _release_archive_extension(target)
     try:
-        resolved_tag = _resolve_latest_release_tag(tag_prefix=tag_prefix) if version is None else None
+        resolved_tag = (
+            _resolve_latest_release_tag(tag_prefix=tag_prefix) if version is None else None
+        )
         url = _build_release_download_url(
             artifact_name,
             target,

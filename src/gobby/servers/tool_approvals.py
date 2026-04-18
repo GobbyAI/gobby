@@ -427,7 +427,9 @@ def clear_project_approval_rules(project_path: str | None) -> None:
             encoding="utf-8",
         )
     except OSError as exc:
-        logger.debug("Failed to persist cleared project approval rules to %s: %s", project_file, exc)
+        logger.debug(
+            "Failed to persist cleared project approval rules to %s: %s", project_file, exc
+        )
 
 
 def is_tool_auto_allowed(

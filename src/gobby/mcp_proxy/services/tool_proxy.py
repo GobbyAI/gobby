@@ -255,7 +255,9 @@ class ToolProxyService:
     def _resolve_tool_event_context(
         self,
         effective_session_id: str,
-    ) -> tuple["HookManager | None", Any | None, Any | None, Any, dict[str, Any], str | None, str | None]:
+    ) -> tuple[
+        "HookManager | None", Any | None, Any | None, Any, dict[str, Any], str | None, str | None
+    ]:
         """Resolve shared session metadata for synthetic tool lifecycle events."""
         from gobby.hooks.events import SessionSource
         from gobby.utils.project_context import get_project_context

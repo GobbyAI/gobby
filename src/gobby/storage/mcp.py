@@ -450,9 +450,7 @@ class LocalMCPManager:
 
         runtime_servers = [MCPServer.from_row(row) for row in project_rows]
         bundled_names = {
-            server.name
-            for server in runtime_servers
-            if is_bundled_external_mcp_server(server.name)
+            server.name for server in runtime_servers if is_bundled_external_mcp_server(server.name)
         }
         for name, servers in sorted(bundled_groups.items()):
             if name in bundled_names:
@@ -506,7 +504,9 @@ class LocalMCPManager:
                     self._replace_tools_for_server_id(canonical_server.id, tools_to_preserve)
                     stats["tools_migrated"] += len(tools_to_preserve)
 
-                duplicate_ids = [server.id for server in servers if server.id != canonical_server.id]
+                duplicate_ids = [
+                    server.id for server in servers if server.id != canonical_server.id
+                ]
                 for server_id in duplicate_ids:
                     conn.execute("DELETE FROM mcp_servers WHERE id = ?", (server_id,))
 

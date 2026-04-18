@@ -35,16 +35,7 @@ from .shared import (
 
 logger = logging.getLogger(__name__)
 
-type TomlValue = (
-    str
-    | int
-    | float
-    | bool
-    | datetime
-    | None
-    | list["TomlValue"]
-    | dict[str, "TomlValue"]
-)
+type TomlValue = str | int | float | bool | datetime | list["TomlValue"] | dict[str, "TomlValue"]
 
 
 def _get_hooks_dir() -> Path:
@@ -94,9 +85,7 @@ def _set_toml_value(config: TOMLDocument, key: str, value: TomlValue) -> None:
             continue
         if existing is not None:
             path_prefix = ".".join(parts[: index + 1])
-            raise ValueError(
-                f"Cannot set nested key {path_prefix!r}: existing value is a scalar"
-            )
+            raise ValueError(f"Cannot set nested key {path_prefix!r}: existing value is a scalar")
 
         new_table = tomlkit.table()
         if index == 0:

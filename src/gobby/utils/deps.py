@@ -327,7 +327,9 @@ def get_configured_embedding_provider() -> str | None:
         if provider is not None:
             return provider
     except Exception:
-        logger.debug("Failed to resolve configured embeddings provider from persisted config", exc_info=True)
+        logger.debug(
+            "Failed to resolve configured embeddings provider from persisted config", exc_info=True
+        )
     return _infer_embedding_provider_from_api_base(api_base)
 
 

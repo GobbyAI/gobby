@@ -755,7 +755,9 @@ class VoiceMixin:
         models_loaded = (
             self._stt_warmup_status == _WARMUP_READY or self._tts_warmup_status == _WARMUP_READY
         )
-        warmup_in_flight = self._voice_warmup_task is not None and not self._voice_warmup_task.done()
+        warmup_in_flight = (
+            self._voice_warmup_task is not None and not self._voice_warmup_task.done()
+        )
         if models_loaded or warmup_in_flight:
             await self._unload_voice_models()
 
