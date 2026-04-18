@@ -55,6 +55,9 @@ class CodexAppServerClient:
         self,
         codex_command: str = "codex",
         on_notification: NotificationHandler | None = None,
+        config_overrides: tuple[str, ...] | list[str] | None = None,
+        enabled_features: tuple[str, ...] | list[str] | None = None,
+        disabled_features: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         """
         Initialize the Codex app-server client.
@@ -62,9 +65,15 @@ class CodexAppServerClient:
         Args:
             codex_command: Path to the codex binary (default: "codex")
             on_notification: Optional callback for all notifications
+            config_overrides: Optional `-c key=value` overrides for app-server startup
+            enabled_features: Optional feature names to pass with `--enable`
+            disabled_features: Optional feature names to pass with `--disable`
         """
         self._codex_command = codex_command
         self._on_notification = on_notification
+        self._config_overrides = tuple(config_overrides or ())
+        self._enabled_features = tuple(enabled_features or ())
+        self._disabled_features = tuple(disabled_features or ())
 
         self._process: subprocess.Popen[str] | None = None
         self._state = CodexConnectionState.DISCONNECTED
@@ -132,10 +141,17 @@ class CodexAppServerClient:
             env = os.environ.copy()
             # Prevent installed Codex hooks from registering nested daemon sessions.
             env["GOBBY_HOOKS_DISABLED"] = "1"
+            command = [self._codex_command, "app-server"]
+            for override in self._config_overrides:
+                command.extend(["-c", override])
+            for feature in self._enabled_features:
+                command.extend(["--enable", feature])
+            for feature in self._disabled_features:
+                command.extend(["--disable", feature])
 
             # Start the subprocess
             self._process = subprocess.Popen(  # nosec B603 # hardcoded argument list
-                [self._codex_command, "app-server"],
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

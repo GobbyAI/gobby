@@ -143,13 +143,16 @@ class TestProviderModelsRoute:
             "gpt-5.4-mini",
             "gpt-5.3-codex",
             "gpt-5.3-codex-spark",
+            "gpt-5.2",
         ]
         assert [m["label"] for m in codex] == [
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
             "spark-5.3",
+            "gpt-5.2",
         ]
+        assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
 
         # Each entry should have source field
         for p in data["providers"]:
@@ -198,7 +201,13 @@ class TestProviderModelsRoute:
         provider_model_catalog = MagicMock()
         provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
             "source": "live",
-            "models": [{"value": f"{provider}-model", "label": f"{provider}-label"}],
+            "models": (
+                [
+                    {"value": "gpt-5.4", "label": "gpt-5.4"},
+                ]
+                if provider == "codex"
+                else [{"value": f"{provider}-model", "label": f"{provider}-label"}]
+            ),
         }
         server = SimpleNamespace(
             services=SimpleNamespace(
@@ -219,7 +228,7 @@ class TestProviderModelsRoute:
         assert providers["claude"]["models"][0]["value"] == "claude-model"
         assert providers["gemini"]["models"][0]["value"] == "gemini-model"
         assert providers["qwen"]["models"][0]["value"] == "qwen-model"
-        assert providers["codex"]["models"][0]["value"] == "codex-model"
+        assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
         assert providers["codex"]["source"] == "live"
 
     def test_includes_local_claude_model_when_configured(self) -> None:
@@ -265,12 +274,14 @@ class TestProviderModelsRoute:
             "gpt-5.4-mini",
             "gpt-5.3-codex",
             "gpt-5.3-codex-spark",
+            "gpt-5.2",
         ]
         assert [m["label"] for m in providers["codex"]["models"]] == [
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
             "spark-5.3",
+            "gpt-5.2",
         ]
 
     def test_current_catalog_keeps_cli_supported_gemini_preview_models(self) -> None:
@@ -319,4 +330,41 @@ class TestProviderModelsRoute:
             "gpt-5.4-mini",
             "gpt-5.3-codex",
             "gpt-5.3-codex-spark",
+            "gpt-5.2",
         ]
+
+    def test_filters_codex_models_to_documented_web_chat_surface(self) -> None:
+        app = FastAPI()
+        provider_model_catalog = MagicMock()
+
+        def snapshot(provider: str) -> dict[str, object]:
+            if provider != "codex":
+                return {"source": "live", "models": [{"value": f"{provider}-model"}]}
+            return {
+                "source": "live",
+                "models": [
+                    {"value": "gpt-5.4", "label": "gpt-5.4"},
+                    {"value": "gpt-5.2", "label": "gpt-5.2"},
+                    {"value": "gpt-5.1-codex-max", "label": "gpt-5.1-codex-max"},
+                    {"value": "gpt-5.1-codex", "label": "gpt-5.1-codex", "hidden": True},
+                ],
+            }
+
+        provider_model_catalog.get_provider_snapshot.side_effect = snapshot
+        server = SimpleNamespace(
+            services=SimpleNamespace(
+                config=DaemonConfig(),
+                provider_model_catalog=provider_model_catalog,
+            )
+        )
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        with patch(
+            "gobby.servers.routes.providers.shutil.which",
+            side_effect=lambda b: f"/usr/local/bin/{b}",
+        ):
+            response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        assert [m["value"] for m in providers["codex"]["models"]] == ["gpt-5.4", "gpt-5.2"]

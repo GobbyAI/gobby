@@ -167,7 +167,7 @@ interface ActivityPanelProps {
   isMobile?: boolean;
 }
 
-interface TabMenuProps {
+interface ActivityDropdownProps {
   tabs: ActivityTabConfig[];
   activeTab: ActivityTab;
   activeTabConfig: ActivityTabConfig;
@@ -177,7 +177,7 @@ interface TabMenuProps {
   wrapperRef: React.Ref<HTMLDivElement>;
 }
 
-function TabMenu({
+function ActivityDropdown({
   tabs,
   activeTab,
   activeTabConfig,
@@ -185,7 +185,7 @@ function TabMenu({
   onToggle,
   onSelect,
   wrapperRef,
-}: TabMenuProps) {
+}: ActivityDropdownProps) {
   return (
     <div className="activity-panel-mobile-select-wrap" ref={wrapperRef}>
       <button
@@ -367,7 +367,7 @@ export function ActivityPanel({
       <div className="activity-panel-mobile-overlay">
         <div className="activity-panel">
           <div className="activity-panel-tabs">
-            <TabMenu
+            <ActivityDropdown
               tabs={TABS}
               activeTab={activeTab}
               activeTabConfig={activeTabConfig}
@@ -410,7 +410,7 @@ export function ActivityPanel({
         }}
       >
         <div className="activity-panel-tabs">
-          <TabMenu
+          <ActivityDropdown
             tabs={TABS}
             activeTab={activeTab}
             activeTabConfig={activeTabConfig}

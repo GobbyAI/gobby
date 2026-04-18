@@ -51,6 +51,10 @@ const catalog: ProviderModelEntry[] = [
       {
         value: "gpt-5.4",
         label: "gpt-5.4",
+        reasoning: {
+          supported_efforts: ["low", "medium", "high", "xhigh"],
+          default_effort: "medium",
+        },
       },
       {
         value: "gpt-5.4-mini",
@@ -59,6 +63,11 @@ const catalog: ProviderModelEntry[] = [
       {
         value: "gpt-5.3-codex-spark",
         label: "gpt-5.3-codex-spark",
+      },
+      {
+        value: "gpt-5.1-codex",
+        label: "gpt-5.1-codex",
+        hidden: true,
       },
     ],
   },
@@ -146,6 +155,16 @@ describe("providerModels", () => {
       { value: "medium", label: "Medium" },
       { value: "high", label: "High" },
       { value: "max", label: "Max" },
+    ]);
+  });
+
+  it("renders Codex xhigh reasoning as Extra-High", () => {
+    expect(getReasoningOptionsForModel(catalog, "codex", "gpt-5.4")).toEqual([
+      { value: "auto", label: "Auto" },
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+      { value: "xhigh", label: "Extra-High" },
     ]);
   });
 

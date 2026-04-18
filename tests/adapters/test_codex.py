@@ -305,6 +305,56 @@ class TestCodexAppServerClientStart:
         await client.stop()
 
     @pytest.mark.asyncio
+    async def test_start_appends_config_overrides_and_features(self):
+        """Start forwards optional app-server config flags when configured."""
+        client = CodexAppServerClient(
+            config_overrides=("model='gpt-5.4'", "sandbox='workspace-write'"),
+            enabled_features=("fast_mode",),
+            disabled_features=("guardian_approval",),
+        )
+
+        mock_process = MagicMock()
+        mock_process.stdin = MagicMock()
+        mock_process.stdout = MagicMock()
+        mock_process.stderr = MagicMock()
+        mock_process.poll.return_value = None
+
+        def mock_readline():
+            return (
+                json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex/1.0"}}) + "\n"
+            )
+
+        mock_process.stdout.readline = mock_readline
+
+        with patch(
+            "gobby.adapters.codex_impl.client.subprocess.Popen", return_value=mock_process
+        ) as mock_popen:
+
+            async def run_start():
+                try:
+                    await asyncio.wait_for(client.start(), timeout=0.5)
+                except TimeoutError:
+                    pass
+
+            await run_start()
+
+            args = mock_popen.call_args
+            assert args[0][0] == [
+                "codex",
+                "app-server",
+                "-c",
+                "model='gpt-5.4'",
+                "-c",
+                "sandbox='workspace-write'",
+                "--enable",
+                "fast_mode",
+                "--disable",
+                "guardian_approval",
+            ]
+
+        await client.stop()
+
+    @pytest.mark.asyncio
     async def test_start_when_already_connected(self):
         """Start returns early when already connected."""
         client = CodexAppServerClient()
