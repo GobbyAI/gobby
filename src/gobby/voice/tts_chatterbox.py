@@ -41,13 +41,13 @@ def _auto_device() -> str:
 
 def _coerce_conditioning_audio(value: Any) -> Any:
     """Cast Chatterbox conditioning audio to float32 for MPS compatibility."""
-    torch_module: Any | None
+    torch_module: Any | None = None
     try:
-        import torch as imported_torch
+        import torch
     except ImportError:  # pragma: no cover - torch is required when this is used
-        torch_module = None
+        pass
     else:
-        torch_module = imported_torch
+        torch_module = torch
 
     if isinstance(value, np.ndarray):
         if np.issubdtype(value.dtype, np.floating) and value.dtype != np.float32:
