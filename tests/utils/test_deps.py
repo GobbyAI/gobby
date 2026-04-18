@@ -38,10 +38,11 @@ def test_get_gcode_version(tmp_path):
     # Fallback to CLI
     with patch.object(Path, "home", return_value=tmp_path):
         stamp.unlink()
-        with patch("gobby.utils.deps._run_cmd", return_value="gcode 0.2.2"):
-            assert deps.get_gcode_version() == "0.2.2"
-        with patch("gobby.utils.deps._run_cmd", return_value=None):
-            assert deps.get_gcode_version() is None
+        with patch("gobby.utils.deps.resolve_native_bin", return_value="/usr/bin/gcode"):
+            with patch("gobby.utils.deps._run_cmd", return_value="gcode 0.2.2"):
+                assert deps.get_gcode_version() == "0.2.2"
+            with patch("gobby.utils.deps._run_cmd", return_value=None):
+                assert deps.get_gcode_version() is None
 
 
 def test_get_gsqz_version(tmp_path):
@@ -54,10 +55,11 @@ def test_get_gsqz_version(tmp_path):
     # Fallback to CLI
     with patch.object(Path, "home", return_value=tmp_path):
         stamp.unlink()
-        with patch("gobby.utils.deps._run_cmd", return_value="gsqz 1.1.1"):
-            assert deps.get_gsqz_version() == "1.1.1"
-        with patch("gobby.utils.deps._run_cmd", return_value=None):
-            assert deps.get_gsqz_version() is None
+        with patch("gobby.utils.deps.resolve_native_bin", return_value="/usr/bin/gsqz"):
+            with patch("gobby.utils.deps._run_cmd", return_value="gsqz 1.1.1"):
+                assert deps.get_gsqz_version() == "1.1.1"
+            with patch("gobby.utils.deps._run_cmd", return_value=None):
+                assert deps.get_gsqz_version() is None
 
 
 def test_get_ghook_version(tmp_path):
