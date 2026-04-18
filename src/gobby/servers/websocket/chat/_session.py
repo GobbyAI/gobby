@@ -342,9 +342,7 @@ class ChatSessionMixin:
         if not effective_provider:
             effective_provider = _normalize_web_chat_provider(provider)
         if not effective_provider and agent_body:
-            effective_provider = _normalize_web_chat_provider(
-                getattr(agent_body, "provider", None)
-            )
+            effective_provider = _normalize_web_chat_provider(getattr(agent_body, "provider", None))
 
         daemon_cfg = getattr(self, "daemon_config", None)
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
@@ -508,7 +506,9 @@ class ChatSessionMixin:
                 mismatch_reason = web_chat_policy_mismatch_message()
 
             if mismatch_reason and runtime_manager is not None:
-                runtime_mismatch_reason = runtime_manager.policy_mismatch_reason(existing_db_session)
+                runtime_mismatch_reason = runtime_manager.policy_mismatch_reason(
+                    existing_db_session
+                )
                 if isinstance(runtime_mismatch_reason, str) and runtime_mismatch_reason:
                     mismatch_reason = runtime_mismatch_reason
 
