@@ -41,19 +41,20 @@ def _auto_device() -> str:
 
 def _coerce_conditioning_audio(value: Any) -> Any:
     """Cast Chatterbox conditioning audio to float32 for MPS compatibility."""
+    torch_module: Any | None
     try:
-        import torch
+        import torch as torch_module
     except ImportError:  # pragma: no cover - torch is required when this is used
-        torch = None
+        torch_module = None
 
     if isinstance(value, np.ndarray):
         if np.issubdtype(value.dtype, np.floating) and value.dtype != np.float32:
             return value.astype(np.float32, copy=False)
         return value
 
-    if torch is not None and torch.is_tensor(value):
-        if value.dtype.is_floating_point and value.dtype != torch.float32:
-            return value.to(dtype=torch.float32)
+    if torch_module is not None and torch_module.is_tensor(value):
+        if value.dtype.is_floating_point and value.dtype != torch_module.float32:
+            return value.to(dtype=torch_module.float32)
         return value
 
     if isinstance(value, list):
