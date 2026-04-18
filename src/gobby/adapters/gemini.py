@@ -223,7 +223,7 @@ class GeminiAdapter(BaseAdapter):
             # ... other hook-specific fields
         }
 
-        Note: The hook_dispatcher.py wraps this in:
+        Note: Gobby's ghook-managed hook command wraps this in:
         {
             "source": "gemini",
             "hook_type": "SessionStart",
@@ -231,7 +231,7 @@ class GeminiAdapter(BaseAdapter):
         }
 
         Args:
-            native_event: Raw payload from Gemini CLI's hook_dispatcher.py
+            native_event: Raw payload from Gemini CLI's ghook-managed hook command
 
         Returns:
             Unified HookEvent with normalized fields.
@@ -398,7 +398,7 @@ class GeminiAdapter(BaseAdapter):
         and returns response in Gemini's expected format.
 
         Args:
-            native_event: Raw payload from Gemini CLI's hook_dispatcher.py
+            native_event: Raw payload from Gemini CLI's ghook-managed hook command
             hook_manager: HookManager instance for processing.
 
         Returns:

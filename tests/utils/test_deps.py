@@ -127,7 +127,7 @@ def test_coding_cli_hooks_status(tmp_path):
         claude.parent.mkdir()
         gemini.parent.mkdir()
 
-        claude.write_text("hook_dispatcher.py")
+        claude.write_text("ghook --gobby-owned --cli=claude")
         gemini.write_text("other text")
 
         result = deps.get_coding_cli_hooks_status()
@@ -139,7 +139,7 @@ def test_coding_cli_hooks_status(tmp_path):
 def test_check_hooks_in_file(tmp_path):
     f = tmp_path / "settings.json"
     assert deps._check_hooks_in_file(f) is False
-    f.write_text("hook_dispatcher.py")
+    f.write_text("ghook --gobby-owned --cli=codex")
     assert deps._check_hooks_in_file(f) is True
 
 

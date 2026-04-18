@@ -379,11 +379,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 adapter = QwenAdapter(hook_manager=hook_manager)
             elif source == "codex":
                 # Always use CodexHooksAdapter for HTTP hook requests from
-                # hook_dispatcher.py.  app.state.codex_adapter is the
+                # Gobby-managed hook commands. app.state.codex_adapter is the
                 # WebSocket-oriented CodexAdapter whose translate_to_hook_event
                 # expects JSON-RPC format ("method"/"params"), not the
-                # hooks.json format ("hook_type"/"input_data") that the
-                # dispatcher sends.  Using the wrong adapter silently drops
+                # hooks.json format ("hook_type"/"input_data") that these
+                # hook commands send. Using the wrong adapter silently drops
                 # every hook — no terminal_context, no rule enforcement, no
                 # stop gates.
                 adapter = CodexHooksAdapter(hook_manager=hook_manager)

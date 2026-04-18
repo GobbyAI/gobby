@@ -6,14 +6,14 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from gobby.utils.native_bin import local_native_bin_path
+from gobby.utils.native_bin import resolve_native_bin_or_default
 
 _GOBBY_OWNED_MARKER = "--gobby-owned"
 
 
 def is_gobby_hook_command(command: str) -> bool:
     """Return whether a command string belongs to Gobby-managed hooks."""
-    return _GOBBY_OWNED_MARKER in command or "hook_dispatcher.py" in command
+    return _GOBBY_OWNED_MARKER in command
 
 
 def config_contains_gobby_hook(node: Any) -> bool:
@@ -39,24 +39,13 @@ def config_contains_gobby_hook(node: Any) -> bool:
 
 
 def build_hook_command_prefix(
-    hooks_dir: Path,
+    _hooks_dir: Path,
     *,
     ghook_bin: str | None = None,
-    uv_bin: str | None = None,
 ) -> str:
     """Build the shared command prefix for hook templates."""
-    resolved_ghook = ghook_bin
-    if resolved_ghook is None:
-        local_ghook = local_native_bin_path("ghook")
-        if local_ghook.exists():
-            resolved_ghook = str(local_ghook)
-
-    if resolved_ghook:
-        return f"{shlex.quote(resolved_ghook)} {_GOBBY_OWNED_MARKER}"
-
-    resolved_uv = uv_bin if uv_bin is not None else "uv"
-    dispatcher = hooks_dir / "hook_dispatcher.py"
-    return f"{shlex.quote(resolved_uv)} run {shlex.quote(str(dispatcher.resolve()))}"
+    resolved_ghook = ghook_bin or resolve_native_bin_or_default("ghook")
+    return f"{shlex.quote(resolved_ghook)} {_GOBBY_OWNED_MARKER}"
 
 
 def build_hook_command(
@@ -65,10 +54,9 @@ def build_hook_command(
     hooks_dir: Path,
     *,
     ghook_bin: str | None = None,
-    uv_bin: str | None = None,
 ) -> str:
     """Build the full hook command for a CLI hook type."""
-    prefix = build_hook_command_prefix(hooks_dir, ghook_bin=ghook_bin, uv_bin=uv_bin)
+    prefix = build_hook_command_prefix(hooks_dir, ghook_bin=ghook_bin)
     return f"{prefix} --cli={cli_name} --type={hook_type}"
 
 
@@ -78,7 +66,6 @@ def rewrite_hook_template_commands(
     cli_name: str,
     hooks_dir: Path,
     ghook_bin: str | None = None,
-    uv_bin: str | None = None,
 ) -> dict[str, Any]:
     """Rewrite all template command hooks to the current preferred hook command."""
     hooks = hooks_config.get("hooks")
@@ -91,7 +78,6 @@ def rewrite_hook_template_commands(
             hook_type,
             hooks_dir,
             ghook_bin=ghook_bin,
-            uv_bin=uv_bin,
         )
         _rewrite_commands(hook_config, command)
 

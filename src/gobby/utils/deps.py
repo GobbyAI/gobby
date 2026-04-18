@@ -142,7 +142,7 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     """Check which coding CLIs have gobby hooks installed.
 
     Returns dict mapping CLI name to whether hooks are installed.
-    Detects by checking if hook_dispatcher.py is referenced in config.
+    Detects by checking for the ``--gobby-owned`` marker in config.
     """
     result: dict[str, bool] = {}
 
@@ -162,7 +162,7 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
 
 
 def _check_hooks_in_file(path: Path) -> bool:
-    """Check if a settings/hooks file references gobby's hook_dispatcher."""
+    """Check if a settings/hooks file references a Gobby-managed hook command."""
     if not path.exists():
         return False
     try:

@@ -87,7 +87,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         }
 
         Args:
-            native_event: Raw payload from Claude Code's hook_dispatcher.py
+            native_event: Raw payload from Claude Code's ghook-managed hook command
 
         Returns:
             Unified HookEvent with normalized fields.
@@ -262,7 +262,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         """Main entry point for HTTP endpoint.
 
         Args:
-            native_event: Raw payload from Claude Code's hook_dispatcher.py
+            native_event: Raw payload from Claude Code's ghook-managed hook command
             hook_manager: HookManager instance for processing.
 
         Returns:

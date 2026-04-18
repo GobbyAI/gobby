@@ -307,7 +307,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             hooks=cast(Any, sdk_hooks) if sdk_hooks else None,
             # Prevent user/project settings from merging in — the programmatic
             # hooks above are sufficient. Without this, SDK 0.1.56+ merges
-            # ~/.claude/settings.json hooks which fire hook_dispatcher.py,
+            # ~/.claude/settings.json hooks which fire Gobby-managed hook commands,
             # creating ghost claude_sdk sessions on every hook call.
             # Note: [""] not [] — empty list is falsy, SDK skips the flag.
             # [""] produces --setting-sources "" which CLI parses as no sources.

@@ -49,7 +49,7 @@ def _install_file(source: Path, target: Path, executable: bool = False) -> None:
 
 
 def install_global_hooks() -> list[str]:
-    """Install shared hook files to ~/.gobby/hooks/ for global hook dispatch.
+    """Install shared hook helper files to ~/.gobby/hooks/ for global hook dispatch.
 
     Always copies files (never symlinks) since global hooks must work
     regardless of whether the source repo is available.
@@ -65,7 +65,6 @@ def install_global_hooks() -> list[str]:
     installed: list[str] = []
 
     hook_files = {
-        "hook_dispatcher.py": True,  # Make executable
         "validate_settings.py": True,  # Make executable
         "statusline_handler.py": True,  # Make executable
     }
@@ -89,9 +88,8 @@ def clean_project_hooks(settings_file: Path) -> list[str]:
 
     When hooks are installed globally, project-level hooks cause duplicates
     because CLIs merge both levels. This identifies gobby hooks by checking
-    if any command string in the hook entry references ``hook_dispatcher.py``,
-    which works across all CLI config formats (Claude settings.json, Gemini
-    settings.json, Codex hooks.json).
+    for the literal ``--gobby-owned`` marker in registered hook commands
+    across all supported CLI config formats.
 
     Args:
         settings_file: Path to the project-level JSON config file

@@ -273,8 +273,10 @@ def hooks_status(json_format: bool) -> None:
 
     # Check global install status
     global_hooks_dir = Path.home() / ".gobby" / "hooks"
-    global_dispatcher = global_hooks_dir / "hook_dispatcher.py"
-    global_installed = global_dispatcher.exists()
+    global_installed = any(
+        (global_hooks_dir / filename).exists()
+        for filename in ("validate_settings.py", "statusline_handler.py")
+    )
 
     # Check per-project disable status
     project_json_path = Path.cwd() / ".gobby" / "project.json"

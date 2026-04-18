@@ -374,10 +374,10 @@ class TestHooksStatus:
         mock_hooks_config.pre_merge = empty_stage
         mock_hooks.return_value = mock_hooks_config
 
-        # Create dispatcher so global_installed=True
+        # Create shared hook helper so global_installed=True
         hooks_dir = tmp_path / ".gobby" / "hooks"
         hooks_dir.mkdir(parents=True)
-        (hooks_dir / "hook_dispatcher.py").write_text("x")
+        (hooks_dir / "validate_settings.py").write_text("x")
 
         with (
             patch("pathlib.Path.home", return_value=tmp_path),

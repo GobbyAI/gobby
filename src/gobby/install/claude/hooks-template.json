@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=session-start"
+            "command": "ghook --gobby-owned --cli=claude --type=session-start"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=session-end"
+            "command": "ghook --gobby-owned --cli=claude --type=session-end"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=user-prompt-submit"
+            "command": "ghook --gobby-owned --cli=claude --type=user-prompt-submit"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=pre-tool-use"
+            "command": "ghook --gobby-owned --cli=claude --type=pre-tool-use"
           }
         ]
       }
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=post-tool-use"
+            "command": "ghook --gobby-owned --cli=claude --type=post-tool-use"
           }
         ]
       }
@@ -58,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=pre-compact"
+            "command": "ghook --gobby-owned --cli=claude --type=pre-compact"
           }
         ]
       }
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=notification"
+            "command": "ghook --gobby-owned --cli=claude --type=notification"
           }
         ]
       }
@@ -78,7 +78,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=stop"
+            "command": "ghook --gobby-owned --cli=claude --type=stop"
           }
         ]
       }
@@ -88,7 +88,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=subagent-start"
+            "command": "ghook --gobby-owned --cli=claude --type=subagent-start"
           }
         ]
       }
@@ -98,7 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=subagent-stop"
+            "command": "ghook --gobby-owned --cli=claude --type=subagent-stop"
           }
         ]
       }
@@ -109,7 +109,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=claude --type=permission-request"
+            "command": "ghook --gobby-owned --cli=claude --type=permission-request"
           }
         ]
       }

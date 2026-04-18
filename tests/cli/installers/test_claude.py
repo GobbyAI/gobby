@@ -50,7 +50,11 @@ class TestInstallClaude:
         }
         (claude_dir / "hooks-template.json").write_text(json.dumps(hooks_template))
 
-        return install_dir
+        with patch(
+            "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+            return_value="/usr/local/bin/ghook",
+        ):
+            yield install_dir
 
     @pytest.fixture
     def mock_home_dir(self, temp_dir: Path) -> Path:
@@ -89,7 +93,13 @@ class TestInstallClaude:
         }
         mock_mcp_config.return_value = {"success": True, "added": True}
 
-        with patch.object(Path, "home", return_value=mock_home_dir):
+        with (
+            patch.object(Path, "home", return_value=mock_home_dir),
+            patch(
+                "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+                return_value="/custom/bin/ghook",
+            ),
+        ):
             result = install_claude(temp_project, mode="project")
 
         assert result["success"] is True
@@ -441,12 +451,13 @@ class TestInstallClaude:
 
         assert result["success"] is True
 
-        # Verify $HOOKS_DIR was replaced
+        # Verify commands were rewritten to the ghook format
         with open(temp_project / ".claude" / "settings.json") as f:
             settings = json.load(f)
 
         command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        assert str((mock_home_dir / ".gobby" / "hooks").resolve()) in command
+        assert "--gobby-owned" in command
+        assert "--cli=claude --type=SessionStart" in command
         assert "$HOOKS_DIR" not in command
 
     @patch("gobby.cli.installers.claude.get_install_dir")
@@ -1096,7 +1107,7 @@ class TestCleanProjectHooks:
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "python hook_dispatcher.py --type=session-start",
+                                "command": "ghook --gobby-owned --cli=claude --type=session-start",
                             }
                         ]
                     }
@@ -1107,7 +1118,7 @@ class TestCleanProjectHooks:
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "python hook_dispatcher.py --type=pre-tool-use",
+                                "command": "ghook --gobby-owned --cli=claude --type=pre-tool-use",
                             }
                         ],
                     }
@@ -1140,7 +1151,7 @@ class TestCleanProjectHooks:
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "python hook_dispatcher.py --type=session-start",
+                                "command": "ghook --gobby-owned --cli=claude --type=session-start",
                             }
                         ]
                     }
@@ -1211,7 +1222,7 @@ class TestCleanProjectHooks:
         mock_shared_content.return_value = {"plugins": []}
         mock_cli_content.return_value = {"commands": []}
         mock_mcp_config.return_value = {"success": True, "added": True}
-        mock_global_hooks.return_value = ["hook_dispatcher.py"]
+        mock_global_hooks.return_value = ["validate_settings.py"]
 
         # Create project-level hooks that should be cleaned
         project_claude = temp_project / ".claude"
@@ -1223,7 +1234,7 @@ class TestCleanProjectHooks:
                         "hooks": [
                             {
                                 "type": "command",
-                                "command": "python hook_dispatcher.py --type=session-start",
+                                "command": "ghook --gobby-owned --cli=claude --type=session-start",
                             }
                         ]
                     }
