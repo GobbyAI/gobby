@@ -17,7 +17,11 @@ resolution-markers = [
 ]
 
 [manifest]
-constraints = [{ name = "tokenizers", specifier = ">=0.21" }]
+constraints = [
+    { name = "authlib", specifier = ">=1.6.11" },
+    { name = "litellm", specifier = ">=1.83.0" },
+    { name = "tokenizers", specifier = ">=0.21" },
+]
 
 [[package]]
 name = "aiofile"
@@ -282,14 +286,14 @@ wheels = [
 
 [[package]]
 name = "authlib"
-version = "1.6.9"
+version = "1.6.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/98/00d3dd826d46959ad8e32af2dbb2398868fd9fd0683c26e56d0789bd0e68/authlib-1.6.9.tar.gz", hash = "sha256:d8f2421e7e5980cc1ddb4e32d3f5fa659cfaf60d8eaf3281ebed192e4ab74f04", size = 165134, upload-time = "2026-03-02T07:44:01.998Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/10/b325d58ffe86815b399334a101e63bc6fa4e1953921cb23703b48a0a0220/authlib-1.6.11.tar.gz", hash = "sha256:64db35b9b01aeccb4715a6c9a6613a06f2bd7be2ab9d2eb89edd1dfc7580a38f", size = 165359, upload-time = "2026-04-16T07:22:50.279Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/23/b65f568ed0c22f1efacb744d2db1a33c8068f384b8c9b482b52ebdbc3ef6/authlib-1.6.9-py2.py3-none-any.whl", hash = "sha256:f08b4c14e08f0861dc18a32357b33fbcfd2ea86cfe3fe149484b4d764c4a0ac3", size = 244197, upload-time = "2026-03-02T07:44:00.307Z" },
+    { url = "https://files.pythonhosted.org/packages/57/2f/55fca558f925a51db046e5b929deb317ddb05afed74b22d89f4eca578980/authlib-1.6.11-py2.py3-none-any.whl", hash = "sha256:c8687a9a26451c51a34a06fa17bb97cb15bba46a6a626755e2d7f50da8bff3e3", size = 244469, upload-time = "2026-04-16T07:22:48.413Z" },
 ]
 
 [[package]]
@@ -612,7 +616,7 @@ wheels = [
 
 [[package]]
 name = "cisco-ai-skill-scanner"
-version = "2.0.5"
+version = "2.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
@@ -638,9 +642,9 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "yara-x" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/f5/7be03597cc27c6d666d1ccdd6eb828a35cf22c6f0d21607e9ef8db7e70c9/cisco_ai_skill_scanner-2.0.5.tar.gz", hash = "sha256:2b4990d62ae74d51fea5a130d436fac0e2fb3b74f8d53b267ce2333fe28d909c", size = 921251, upload-time = "2026-03-24T16:00:02.75Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/68/f8/b7410bf89c0760040b21d08767d8467bee490d5cb7900bd1938a0ab6e360/cisco_ai_skill_scanner-2.0.4.tar.gz", hash = "sha256:8a36ffd85e9ebde7699ca217e8bc908165616a6986217c01ed20c3fb9b2828f7", size = 920748, upload-time = "2026-03-13T17:19:25.684Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/6a/7539adc41bcd32c99d0f60c64a321c98cdfb98f140ec50e80d0fa71dd423/cisco_ai_skill_scanner-2.0.5-py3-none-any.whl", hash = "sha256:321c13d7b0b6ca5f73ed252aedf0be0cf36cb20bca4be8929665e783cdce41db", size = 426964, upload-time = "2026-03-24T16:00:01.153Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/c0/90b74836fd9a9e5b6530cbd1b3fe778266e863e9a8bc214db96d08c0e0ee/cisco_ai_skill_scanner-2.0.4-py3-none-any.whl", hash = "sha256:8ac399d4542870fad7b09027b9d45f0668788dfff3a5a95603c6f195430a5d74", size = 426899, upload-time = "2026-03-13T17:19:23.771Z" },
 ]
 
 [[package]]
@@ -1475,7 +1479,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9.0" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyjwt", specifier = ">=2.12.0" },
-    { name = "python-multipart", specifier = ">=0.0.22" },
+    { name = "python-multipart", specifier = ">=0.0.26" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "qdrant-client", specifier = ">=1.12.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
@@ -2330,13 +2334,12 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.80.16"
+version = "1.83.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "click" },
     { name = "fastuuid" },
-    { name = "grpcio" },
     { name = "httpx" },
     { name = "importlib-metadata" },
     { name = "jinja2" },
@@ -2347,9 +2350,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/cc/03bf7849c62587db0fb7c46f427d6a49290750752d3189a0bd95d4b78587/litellm-1.80.16.tar.gz", hash = "sha256:f96233649f99ab097f7d8a3ff9898680207b9eea7d2e23f438074a3dbcf50cca", size = 13384256, upload-time = "2026-01-13T08:52:23.067Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/92/6ce9737554994ca8e536e5f4f6a87cc7c4774b656c9eb9add071caf7d54b/litellm-1.83.0.tar.gz", hash = "sha256:860bebc76c4bb27b4cf90b4a77acd66dba25aced37e3db98750de8a1766bfb7a", size = 17333062, upload-time = "2026-03-31T05:08:25.331Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/4d/73fdb12223bdb01889134eb75525fcc768b1724255f2b87072dd6743c6e1/litellm-1.80.16-py3-none-any.whl", hash = "sha256:21be641b350561b293b831addb25249676b72ebff973a5a1d73b5d7cf35bcd1d", size = 11682530, upload-time = "2026-01-13T08:52:19.951Z" },
+    { url = "https://files.pythonhosted.org/packages/19/2c/a670cc050fcd6f45c6199eb99e259c73aea92edba8d5c2fc1b3686d36217/litellm-1.83.0-py3-none-any.whl", hash = "sha256:88c536d339248f3987571493015784671ba3f193a328e1ea6780dbebaa2094a8", size = 15610306, upload-time = "2026-03-31T05:08:21.987Z" },
 ]
 
 [[package]]

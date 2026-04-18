@@ -40,8 +40,8 @@ dependencies = [
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "qdrant-client>=1.12.0",
-    # python-multipart <0.0.22 has CVE-2026-24486 - pin to fixed version
-    "python-multipart>=0.0.22",
+    # python-multipart <0.0.26 has CVE-2026-24486, CVE-2026-40347 - pin to fixed version
+    "python-multipart>=0.0.26",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
     # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
@@ -84,7 +84,14 @@ Issues = "https://github.com/GobbyAI/gobby/issues"
 [tool.uv]
 # tokenizers 0.20.3 fails to build from sdist on Python 3.14
 # (missing project.version in pyproject.toml). Force >=0.21.
-constraint-dependencies = ["tokenizers>=0.21"]
+constraint-dependencies = [
+    "tokenizers>=0.21",
+    # authlib <1.6.11 has GHSA-jj8c-mmj3-mmgv (transitive via fastmcp)
+    "authlib>=1.6.11",
+    # litellm <1.83.0 has CVE-2026-35029, CVE-2026-35030, GHSA-69x8-hrgq-fjj8
+    # (transitive via cisco-ai-skill-scanner)
+    "litellm>=1.83.0",
+]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
