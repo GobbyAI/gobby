@@ -305,6 +305,56 @@ class TestCodexAppServerClientStart:
         await client.stop()
 
     @pytest.mark.asyncio
+    async def test_start_appends_config_overrides_and_features(self):
+        """Start forwards optional app-server config flags when configured."""
+        client = CodexAppServerClient(
+            config_overrides=("model='gpt-5.4'", "sandbox='workspace-write'"),
+            enabled_features=("fast_mode",),
+            disabled_features=("guardian_approval",),
+        )
+
+        mock_process = MagicMock()
+        mock_process.stdin = MagicMock()
+        mock_process.stdout = MagicMock()
+        mock_process.stderr = MagicMock()
+        mock_process.poll.return_value = None
+
+        def mock_readline():
+            return (
+                json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex/1.0"}}) + "\n"
+            )
+
+        mock_process.stdout.readline = mock_readline
+
+        with patch(
+            "gobby.adapters.codex_impl.client.subprocess.Popen", return_value=mock_process
+        ) as mock_popen:
+
+            async def run_start():
+                try:
+                    await asyncio.wait_for(client.start(), timeout=0.5)
+                except TimeoutError:
+                    pass
+
+            await run_start()
+
+            args = mock_popen.call_args
+            assert args[0][0] == [
+                "codex",
+                "app-server",
+                "-c",
+                "model='gpt-5.4'",
+                "-c",
+                "sandbox='workspace-write'",
+                "--enable",
+                "fast_mode",
+                "--disable",
+                "guardian_approval",
+            ]
+
+        await client.stop()
+
+    @pytest.mark.asyncio
     async def test_start_when_already_connected(self):
         """Start returns early when already connected."""
         client = CodexAppServerClient()
@@ -679,6 +729,50 @@ class TestCodexAppServerClientTurnManagement:
             assert params["input"][1]["url"] == "https://example.com/img.png"
             assert params["input"][2]["type"] == "localImage"
             assert params["input"][2]["path"] == "/local/path.jpg"
+
+    @pytest.mark.asyncio
+    async def test_start_turn_with_effort(self):
+        """start_turn sends effort for per-turn reasoning overrides."""
+        client = CodexAppServerClient()
+
+        mock_result = {
+            "turn": {
+                "id": "turn-effort",
+                "status": "inProgress",
+                "items": [],
+            }
+        }
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ) as mock_send:
+            await client.start_turn("thr-1", "Help me refactor", effort="xhigh")
+
+            params = mock_send.call_args[0][1]
+            assert params["effort"] == "xhigh"
+            assert "reasoningEffort" not in params
+
+    @pytest.mark.asyncio
+    async def test_start_turn_maps_legacy_reasoning_effort_override(self):
+        """start_turn keeps legacy callers working by mapping reasoningEffort."""
+        client = CodexAppServerClient()
+
+        mock_result = {
+            "turn": {
+                "id": "turn-legacy-effort",
+                "status": "inProgress",
+                "items": [],
+            }
+        }
+
+        with patch.object(
+            client, "_send_request", new_callable=AsyncMock, return_value=mock_result
+        ) as mock_send:
+            await client.start_turn("thr-1", "Help me refactor", reasoningEffort="high")
+
+            params = mock_send.call_args[0][1]
+            assert params["effort"] == "high"
+            assert "reasoningEffort" not in params
 
     @pytest.mark.asyncio
     async def test_interrupt_turn(self):
@@ -1912,20 +2006,18 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["hookEventName"] == "UserPromptSubmit"
         assert "Session info" in hso["additionalContext"]
 
-    def test_system_message_both_visible_and_model_facing_for_session_start(self) -> None:
-        """SessionStart puts system_message in both systemMessage and additionalContext."""
+    def test_system_message_routes_only_to_additional_context_for_session_start(self) -> None:
+        """SessionStart keeps the banner in startup context only once."""
         from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", system_message="Session banner")
         result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
 
-        # Visible to user
-        assert result["systemMessage"] == "Session banner"
-        # Also fed to model
+        assert "systemMessage" not in result
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "SessionStart"
-        assert "Session banner" in hso["additionalContext"]
+        assert hso["additionalContext"].count("Session banner") == 1
 
     def test_pre_tool_use_combines_system_message_and_context(self) -> None:
         """PreToolUse combines system_message and context_parts in systemMessage."""
@@ -1964,6 +2056,32 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert hso["hookEventName"] == "SessionStart"
         ctx = hso["additionalContext"]
         assert "Gobby Session ID: #100 (abc-123)" in ctx
+        assert "codex-ext-id" in ctx
+        assert "proj-1" in ctx
+
+    def test_session_start_banner_and_metadata_include_session_id_once(self) -> None:
+        """SessionStart does not duplicate the session ID between banner and metadata."""
+        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        banner = "Gobby Session ID: #100 (abc-123)"
+        response = HookResponse(
+            decision="allow",
+            system_message=banner,
+            metadata={
+                "session_id": "abc-123",
+                "session_ref": "#100",
+                "external_id": "codex-ext-id",
+                "_first_hook_for_session": True,
+                "project_id": "proj-1",
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SessionStart")
+
+        assert "systemMessage" not in result
+        ctx = result["hookSpecificOutput"]["additionalContext"]
+        assert ctx.count(banner) == 1
         assert "codex-ext-id" in ctx
         assert "proj-1" in ctx
 

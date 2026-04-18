@@ -9,7 +9,8 @@ class VoiceConfig(BaseModel):
     """Configuration for voice chat (STT + TTS).
 
     STT uses local Whisper (faster-whisper) for privacy and low latency.
-    TTS uses local Kokoro ONNX for streaming speech synthesis.
+    TTS routes through a configurable provider such as Chatterbox, Kokoro,
+    or VoxCPM.
     """
 
     enabled: bool = Field(
@@ -24,11 +25,21 @@ class VoiceConfig(BaseModel):
     )
     tts_provider: str = Field(
         default="chatterbox",
-        description="TTS provider: 'chatterbox' (voice cloning) or 'kokoro' (fixed voices).",
+        description=(
+            "TTS provider: 'chatterbox' (voice cloning), 'kokoro' (fixed voices), "
+            "or 'voxcpm' (voice cloning with optional reference_text)."
+        ),
     )
     tts_reference_audio: str = Field(
         default="~/.gobby/voice/reference.wav",
-        description="Path to voice clone reference audio (10-20s WAV, for Chatterbox).",
+        description="Path to voice clone reference audio (10-20s WAV for supported providers).",
+    )
+    tts_reference_text: str | None = Field(
+        default=None,
+        description=(
+            "Optional transcript of the reference audio. Providers that support "
+            "higher-fidelity cloning can use it; others ignore it."
+        ),
     )
     tts_temperature: float = Field(
         default=0.55,
@@ -38,7 +49,10 @@ class VoiceConfig(BaseModel):
     )
     tts_device: str = Field(
         default="auto",
-        description="TTS compute device: 'auto', 'cuda', 'mps', 'cpu'.",
+        description=(
+            "Requested TTS compute device: 'auto', 'cuda', 'mps', 'cpu'. "
+            "Providers may ignore explicit selection if the upstream runtime does not support it."
+        ),
     )
     # --- Kokoro-specific settings (legacy) ---
     tts_voice: str = Field(
@@ -62,6 +76,39 @@ class VoiceConfig(BaseModel):
     tts_voices_path: str = Field(
         default="~/.gobby/models/voices-v1.0.bin",
         description="Path to the Kokoro voices file.",
+    )
+    # --- VoxCPM-specific settings ---
+    tts_voxcpm_model: str = Field(
+        default="openbmb/VoxCPM2",
+        description="VoxCPM model id or local model directory.",
+    )
+    tts_voxcpm_cfg_value: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=10.0,
+        description="VoxCPM guidance scale (recommended 1.0-3.0).",
+    )
+    tts_voxcpm_inference_timesteps: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="VoxCPM inference timesteps.",
+    )
+    tts_voxcpm_load_denoiser: bool = Field(
+        default=False,
+        description="Load VoxCPM's optional denoiser pipeline during model initialization.",
+    )
+    tts_voxcpm_denoise: bool = Field(
+        default=False,
+        description="Denoise prompt/reference audio before VoxCPM synthesis when available.",
+    )
+    tts_voxcpm_local_files_only: bool = Field(
+        default=False,
+        description="Only use local model files for VoxCPM; do not download from HuggingFace.",
+    )
+    tts_voxcpm_optimize: bool = Field(
+        default=True,
+        description="Enable VoxCPM runtime optimization/warmup behavior.",
     )
     stt_enabled: bool = Field(
         default=True,

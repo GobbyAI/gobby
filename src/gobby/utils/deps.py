@@ -6,11 +6,17 @@ Each function returns None if the tool is not installed/available.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
 from typing import Any
+
+from gobby.cli.installers.hook_commands import is_gobby_hook_command
+from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
+
+logger = logging.getLogger(__name__)
 
 
 def _run_cmd(args: list[str], timeout: int = 5) -> str | None:
@@ -44,35 +50,59 @@ def get_gobby_version() -> str | None:
         return None
 
 
+def _read_version_stamp(stamp_name: str) -> str | None:
+    """Read a version stamp from ``~/.gobby/bin`` when present."""
+    stamp = Path.home() / ".gobby" / "bin" / stamp_name
+    if not stamp.exists():
+        return None
+    try:
+        value = stamp.read_text().strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def _extract_version_token(output: str) -> str | None:
+    """Extract the trailing version token from a ``--version`` style output."""
+    parts = output.split()
+    return parts[-1] if parts else output
+
+
+def _get_native_binary_version(binary_name: str, stamp_name: str | None = None) -> str | None:
+    """Get a managed native binary version from a stamp file or resolved CLI."""
+    if stamp_name:
+        stamped_version = _read_version_stamp(stamp_name)
+        if stamped_version:
+            return stamped_version
+
+    binary_path = resolve_native_bin(binary_name)
+    if not binary_path:
+        return None
+
+    output = _run_cmd([binary_path, "--version"])
+    if output:
+        return _extract_version_token(output)
+    return None
+
+
 def get_gcode_version() -> str | None:
     """Get gcode version from stamp file or CLI."""
-    stamp = Path.home() / ".gobby" / "bin" / ".gcode-version"
-    if stamp.exists():
-        try:
-            return stamp.read_text().strip()
-        except OSError:
-            pass
-    output = _run_cmd(["gcode", "--version"])
-    if output:
-        # "gcode 0.2.1" → "0.2.1"
-        parts = output.split()
-        return parts[-1] if parts else output
-    return None
+    return _get_native_binary_version("gcode", ".gcode-version")
 
 
 def get_gsqz_version() -> str | None:
     """Get gsqz version from stamp file or CLI."""
-    stamp = Path.home() / ".gobby" / "bin" / ".gsqz-version"
-    if stamp.exists():
-        try:
-            return stamp.read_text().strip()
-        except OSError:
-            pass
-    output = _run_cmd(["gsqz", "--version"])
-    if output:
-        parts = output.split()
-        return parts[-1] if parts else output
-    return None
+    return _get_native_binary_version("gsqz", ".gsqz-version")
+
+
+def get_ghook_version() -> str | None:
+    """Get ghook version from stamp file or CLI."""
+    return _get_native_binary_version("ghook", ".ghook-version")
+
+
+def get_gloc_version() -> str | None:
+    """Get gloc version from stamp file or CLI."""
+    return _get_native_binary_version("gloc", ".gloc-version")
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +167,7 @@ def _check_hooks_in_file(path: Path) -> bool:
         return False
     try:
         content = path.read_text()
-        return "hook_dispatcher.py" in content
+        return is_gobby_hook_command(content)
     except Exception:
         return False
 
@@ -283,6 +313,51 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     return {"running": running}
 
 
+def _normalize_embedding_provider(provider: Any) -> str | None:
+    """Normalize a configured embeddings provider value."""
+    if not isinstance(provider, str):
+        return None
+    normalized = provider.strip().lower()
+    if normalized in {"lmstudio", "ollama", "openai", "none"}:
+        return normalized
+    return None
+
+
+def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
+    """Infer a local embeddings provider from the configured API base."""
+    if not isinstance(api_base, str):
+        return None
+    api_base_lower = api_base.lower()
+    if ":1234" in api_base_lower:
+        return "lmstudio"
+    if ":11434" in api_base_lower:
+        return "ollama"
+    return None
+
+
+def get_configured_embedding_provider() -> str | None:
+    """Get the configured embeddings provider from persisted config."""
+    api_base = None
+    try:
+        from gobby.config.app import load_config
+        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.database import LocalDatabase
+
+        config = load_config()
+        api_base = getattr(getattr(config, "embeddings", None), "api_base", None)
+        db_path = Path(config.database_path).expanduser()
+        with LocalDatabase(db_path) as db:
+            store = ConfigStore(db)
+            provider = _normalize_embedding_provider(store.get("embeddings.provider"))
+        if provider is not None:
+            return provider
+    except Exception:
+        logger.debug(
+            "Failed to resolve configured embeddings provider from persisted config", exc_info=True
+        )
+    return _infer_embedding_provider_from_api_base(api_base)
+
+
 # ---------------------------------------------------------------------------
 # Config cross-reference (detect mismatches)
 # ---------------------------------------------------------------------------
@@ -351,15 +426,22 @@ def collect_all_deps() -> dict[str, Any]:
 
     Returns structured dict with all sections.
     """
-    gobby_home = Path.home() / ".gobby" / "bin"
+
+    def _local_binary_path(name: str) -> str | None:
+        path = local_native_bin_path(name)
+        return str(path) if path.exists() else None
 
     return {
         "gobby": {
             "gobby": get_gobby_version(),
             "gcode": get_gcode_version(),
-            "gcode_path": str(gobby_home / "gcode") if (gobby_home / "gcode").exists() else None,
+            "gcode_path": _local_binary_path("gcode"),
             "gsqz": get_gsqz_version(),
-            "gsqz_path": str(gobby_home / "gsqz") if (gobby_home / "gsqz").exists() else None,
+            "gsqz_path": _local_binary_path("gsqz"),
+            "ghook": get_ghook_version(),
+            "ghook_path": _local_binary_path("ghook"),
+            "gloc": get_gloc_version(),
+            "gloc_path": _local_binary_path("gloc"),
         },
         "coding_clis": {
             "claude": get_claude_code_version(),
@@ -374,6 +456,7 @@ def collect_all_deps() -> dict[str, Any]:
             "git": get_git_version(),
             "node": get_node_version(),
             "tailscale": get_tailscale_info(),
+            "embeddings_provider": get_configured_embedding_provider(),
             "ollama": get_ollama_info(),
             "lmstudio": get_lmstudio_info(),
         },

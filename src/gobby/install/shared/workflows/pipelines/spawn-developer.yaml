@@ -33,9 +33,9 @@ steps:
       tool: spawn_agent
       arguments:
         prompt: "Work on task ${{ inputs.task_id }}. Claim it, implement, test, commit, and submit for review."
-        agent_definition: developer
+        agent: developer
+        task_id: "${{ inputs.task_id }}"
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"
         worktree_id: "${{ inputs.worktree_id }}"
-        session_variables:
-          assigned_task_id: "${{ inputs.task_id }}"
+        parent_session_id: "${{ session_id }}"

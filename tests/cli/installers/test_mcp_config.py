@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.cli.installers.mcp_config import (
+    _remove_toml_table_block,
     configure_mcp_server_json,
     configure_mcp_server_toml,
     configure_project_mcp_server,
@@ -22,8 +23,22 @@ from gobby.cli.installers.mcp_config import (
     remove_project_mcp_server,
     strip_mcp_tool_overrides_toml,
 )
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 
 pytestmark = pytest.mark.unit
+
+
+def test_remove_toml_table_block_preserves_trailing_comments_after_last_table() -> None:
+    content = (
+        '[model]\nname = "gpt-5"\n\n'
+        '[mcp_servers.gobby]\ncommand = "uv"\n'
+        '\n# trailing comment\n\n'
+    )
+
+    updated = _remove_toml_table_block(content, table_prefix="mcp_servers.gobby")
+
+    assert '[mcp_servers.gobby]' not in updated
+    assert updated.endswith('\n# trailing comment\n\n')
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +335,22 @@ class TestRemoveMCPServerTOML:
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
 
+    def test_preserves_comments(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            "# top comment\n"
+            '[mcp_servers.gobby]\ncommand = "uv"\n\n'
+            "# keep this comment\n"
+            '[mcp_servers.other]\ncommand = "node"\n'
+        )
+
+        result = remove_mcp_server_toml(config)
+
+        assert result["success"] is True
+        content = config.read_text()
+        assert "# top comment" in content
+        assert "# keep this comment" in content
+
 
 # ---------------------------------------------------------------------------
 # strip_mcp_tool_overrides_toml
@@ -449,6 +480,23 @@ class TestStripMCPToolOverridesTOML:
             result = strip_mcp_tool_overrides_toml(config)
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
+
+    def test_preserves_comments(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            "# top comment\n"
+            '[mcp_servers.gobby]\ncommand = "uv"\n'
+            "# keep server comment\n\n"
+            "[mcp_servers.gobby.tools.call_tool]\n"
+            'approval_mode = "approve"\n'
+        )
+
+        result = strip_mcp_tool_overrides_toml(config)
+
+        assert result["success"] is True
+        content = config.read_text()
+        assert "# top comment" in content
+        assert "# keep server comment" in content
 
 
 # ---------------------------------------------------------------------------
@@ -623,6 +671,21 @@ class TestInstallDefaultMCPServers:
         assert result["success"] is True
         assert len(result["servers_added"]) > 0
         assert "github" in result["servers_added"]
+        assert "playwright" in result["servers_added"]
+        assert "chrome-devtools" in result["servers_added"]
+        mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
+
+        config = json.loads(mcp_path.read_text())
+        playwright_server = next(server for server in config["servers"] if server["name"] == "playwright")
+        assert playwright_server["args"] == ["-y", "@playwright/mcp@latest"]
+        chrome_server = next(
+            server for server in config["servers"] if server["name"] == "chrome-devtools"
+        )
+        assert chrome_server["args"] == [
+            "-y",
+            CHROME_DEVTOOLS_NPM_PACKAGE,
+            "--no-usage-statistics",
+        ]
 
     def test_skips_existing_servers(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"
@@ -635,6 +698,8 @@ class TestInstallDefaultMCPServers:
                         {"name": "linear", "transport": "stdio", "command": "npx"},
                         {"name": "brave-search", "transport": "stdio", "command": "npx"},
                         {"name": "context7", "transport": "stdio", "command": "npx"},
+                        {"name": "playwright", "transport": "stdio", "command": "npx"},
+                        {"name": "chrome-devtools", "transport": "stdio", "command": "npx"},
                     ]
                 }
             )
@@ -653,8 +718,9 @@ class TestInstallDefaultMCPServers:
             mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 0
             result = install_default_mcp_servers()
         assert result["success"] is True
-        assert len(result["servers_skipped"]) == 4
+        assert len(result["servers_skipped"]) == 6
         assert len(result["servers_added"]) == 0
+        mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
 
     def test_read_error(self, tmp_path: Path) -> None:
         mcp_path = tmp_path / ".gobby" / ".mcp.json"

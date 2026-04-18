@@ -1408,6 +1408,15 @@ class TestEdgeCases:
     ) -> None:
         """Test status command with rich daemon data."""
         mock_load_config.return_value = mock_daemon_config
+        mock_collect_deps.return_value = {
+            "gobby": {},
+            "coding_clis": {},
+            "dependencies": {
+                "embeddings_provider": "lmstudio",
+                "ollama": {"version": "0.1.30", "running": True},
+                "lmstudio": {"running": True},
+            },
+        }
         mock_fetch_status.return_value = {
             "process": {"memory_rss_mb": 128.5, "cpu_percent": 2.5},
             "sessions": {"active": 3, "paused": 0},
@@ -1430,6 +1439,7 @@ class TestEdgeCases:
                 result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
+            assert "LM Studio (running)" in result.output
             mock_fetch_status.assert_called_once_with(mock_daemon_config.daemon_port, timeout=3.0)
 
 

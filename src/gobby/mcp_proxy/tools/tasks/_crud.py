@@ -411,44 +411,48 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except ValueError as e:
             return {"error": str(e)}
 
-        # Block closing tasks via update_task - must use close_task for proper workflow
-        if status is not None and status.lower() == "closed":
+        # Block lifecycle changes via update_task - must use dedicated task tools
+        if status is not None:
+            normalized_status = status.lower().strip().replace("-", "_")
+            if normalized_status == "closed":
+                return {
+                    "error": "Cannot set status to 'closed' via update_task. "
+                    "Use close_task(task_id, commit_sha='...') to properly close tasks with commit linking."
+                }
+            if normalized_status == "in_progress":
+                return {
+                    "error": "Cannot set status to 'in_progress' via update_task. "
+                    "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
+                }
+            if normalized_status == "open":
+                return {
+                    "error": "Cannot set status to 'open' via update_task. "
+                    "Use reopen_task(task_id, reason='...') to properly reopen tasks with metadata cleanup."
+                }
+            if normalized_status in ("review", "needs_review"):
+                return {
+                    "error": "Cannot set status to 'needs_review' via update_task. "
+                    "Use mark_task_needs_review(task_id, session_id='...') to properly route tasks for review."
+                }
+            if normalized_status in ("approved", "review_approved"):
+                return {
+                    "error": "Cannot set status to 'review_approved' via update_task. "
+                    "Use mark_task_review_approved(task_id, session_id='...') to properly approve tasks after QA review."
+                }
+            if normalized_status == "escalated":
+                return {
+                    "error": "Cannot set status to 'escalated' via update_task. "
+                    "Use escalate_task(task_id, reason='...') to properly escalate tasks for human intervention."
+                }
             return {
-                "error": "Cannot set status to 'closed' via update_task. "
-                "Use close_task(task_id, commit_sha='...') to properly close tasks with commit linking."
+                "error": "Cannot set status via update_task. "
+                "Use lifecycle-specific task tools instead."
             }
 
-        # Block claiming tasks via update_task - must use claim_task for proper workflow
-        if status is not None and status.lower() == "in_progress":
-            return {
-                "error": "Cannot set status to 'in_progress' via update_task. "
-                "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
-            }
         if assignee is not None:
             return {
                 "error": "Cannot set assignee via update_task. "
                 "Use claim_task(task_id, session_id='...') to properly claim tasks with session tracking."
-            }
-
-        # Block reopening tasks via update_task - must use reopen_task for proper workflow
-        if status is not None and status.lower() == "open":
-            return {
-                "error": "Cannot set status to 'open' via update_task. "
-                "Use reopen_task(task_id, reason='...') to properly reopen tasks with metadata cleanup."
-            }
-
-        # Block needs_review status via update_task - must use mark_task_needs_review for proper workflow
-        if status is not None and status.lower() in ("review", "needs_review"):
-            return {
-                "error": "Cannot set status to 'needs_review' via update_task. "
-                "Use mark_task_needs_review(task_id, session_id='...') to properly route tasks for review."
-            }
-
-        # Block review_approved status via update_task - must use mark_task_review_approved for proper workflow
-        if status is not None and status.lower() in ("approved", "review_approved"):
-            return {
-                "error": "Cannot set status to 'review_approved' via update_task. "
-                "Use mark_task_review_approved(task_id, session_id='...') to properly approve tasks after QA review."
             }
 
         # Build kwargs only for non-None values to avoid overwriting with NULL

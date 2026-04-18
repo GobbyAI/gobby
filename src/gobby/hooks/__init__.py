@@ -36,32 +36,56 @@ Example:
     ```
 """
 
-# Core coordinator and components
-from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import (
-    EVENT_TYPE_CLI_SUPPORT,
-    HookEvent,
-    HookEventType,
-    HookResponse,
-    SessionSource,
-)
-from gobby.hooks.health_monitor import HealthMonitor
-from gobby.hooks.hook_manager import HookManager
-from gobby.hooks.session_coordinator import SessionCoordinator
-from gobby.hooks.webhooks import WebhookDispatcher
+from __future__ import annotations
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.hooks.event_handlers import EventHandlers as EventHandlers
+    from gobby.hooks.events import EVENT_TYPE_CLI_SUPPORT as EVENT_TYPE_CLI_SUPPORT
+    from gobby.hooks.events import HookEvent as HookEvent
+    from gobby.hooks.events import HookEventType as HookEventType
+    from gobby.hooks.events import HookResponse as HookResponse
+    from gobby.hooks.events import SessionSource as SessionSource
+    from gobby.hooks.health_monitor import HealthMonitor as HealthMonitor
+    from gobby.hooks.hook_manager import HookManager as HookManager
+    from gobby.hooks.session_coordinator import SessionCoordinator as SessionCoordinator
+    from gobby.hooks.webhooks import WebhookDispatcher as WebhookDispatcher
 
 __all__ = [
-    # Core coordinator
     "HookManager",
-    # Extracted components (for advanced usage/testing)
     "EventHandlers",
     "SessionCoordinator",
     "HealthMonitor",
     "WebhookDispatcher",
-    # Unified hook event models
     "HookEventType",
     "SessionSource",
     "HookEvent",
     "HookResponse",
     "EVENT_TYPE_CLI_SUPPORT",
 ]
+
+_EXPORTS = {
+    "EVENT_TYPE_CLI_SUPPORT": ("gobby.hooks.events", "EVENT_TYPE_CLI_SUPPORT"),
+    "EventHandlers": ("gobby.hooks.event_handlers", "EventHandlers"),
+    "HealthMonitor": ("gobby.hooks.health_monitor", "HealthMonitor"),
+    "HookEvent": ("gobby.hooks.events", "HookEvent"),
+    "HookEventType": ("gobby.hooks.events", "HookEventType"),
+    "HookManager": ("gobby.hooks.hook_manager", "HookManager"),
+    "HookResponse": ("gobby.hooks.events", "HookResponse"),
+    "SessionCoordinator": ("gobby.hooks.session_coordinator", "SessionCoordinator"),
+    "SessionSource": ("gobby.hooks.events", "SessionSource"),
+    "WebhookDispatcher": ("gobby.hooks.webhooks", "WebhookDispatcher"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        module_name, attr_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    value = getattr(import_module(module_name), attr_name)
+    globals()[name] = value
+    return value

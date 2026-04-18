@@ -65,7 +65,7 @@ async def test_handle_plan_approval_request_changes_legacy_sends_mode_changed():
 
 @pytest.mark.asyncio
 async def test_handle_plan_approval_approve_legacy_sends_mode_changed():
-    """Verify existing behavior for approve (legacy path) to ensure parity."""
+    """Verify approve keeps the session in plan mode until explicit exit."""
 
     class MockHost(SessionControlMixin):
         def __init__(self):
@@ -95,13 +95,12 @@ async def test_handle_plan_approval_approve_legacy_sends_mode_changed():
 
     await SessionControlMixin._handle_plan_approval_response(host, websocket, data)
 
-    # Verify existing behavior
     session.approve_plan.assert_called_once()
-    session.set_chat_mode.assert_called_once_with("accept_edits")
+    session.set_chat_mode.assert_not_called()
     session.sync_sdk_permission_mode.assert_awaited_once()
 
     websocket.send.assert_called_once()
     sent_data = json.loads(websocket.send.call_args[0][0])
     assert sent_data["type"] == "mode_changed"
-    assert sent_data["mode"] == "accept_edits"
+    assert sent_data["mode"] == "plan"
     assert sent_data["reason"] == "plan_approved"

@@ -40,10 +40,6 @@ def config_key_to_secret_name(key: str) -> str:
     """Convert a dotted config key to a secret store name.
 
     Uses the last segment of the dotted key as the natural secret name.
-
-    Examples:
-        ``voice.elevenlabs_api_key`` -> ``elevenlabs_api_key``
-        ``secrets.openai_api_key`` -> ``openai_api_key``
     """
     return key.rsplit(".", 1)[-1]
 

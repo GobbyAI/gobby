@@ -441,6 +441,10 @@ class TestCreateWebChatSession:
     def test_create_web_chat_session_success(self, client, mock_server) -> None:
         session = _make_session(source="claude", model="sonnet", chat_mode="plan")
         mock_server.session_manager.create_web_chat_session.return_value = session
+        mock_server.services = MagicMock()
+        mock_server.services.web_chat_runtime_manager = MagicMock()
+        mock_server.services.web_chat_runtime_manager.sandbox_config.enabled = True
+        mock_server.services.web_chat_runtime_manager.sandbox_policy_hash = "hash-123"
 
         with patch("gobby.utils.machine_id.get_machine_id", return_value="machine-123"):
             response = client.post(
@@ -466,6 +470,8 @@ class TestCreateWebChatSession:
             title="Web Chat",
             model="sonnet",
             chat_mode="plan",
+            sandbox_enabled=True,
+            sandbox_policy_hash="hash-123",
         )
         mock_server.session_manager.update_model.assert_not_called()
         mock_server.session_manager.update_chat_mode.assert_not_called()
@@ -1104,6 +1110,11 @@ class TestRenameSession:
         data = response.json()
         assert data["status"] == "success"
         assert data["title"] == "New Title"
+        mock_server.session_manager.update_title.assert_called_once_with(
+            "sess-abc123",
+            "New Title",
+            title_source="manual",
+        )
 
     def test_rename_empty_title(self, client, mock_server) -> None:
         """Returns 400 when title is empty."""

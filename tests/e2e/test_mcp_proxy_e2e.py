@@ -179,10 +179,8 @@ class TestMCPProxyToolInvocation:
         # (HTTP 4xx/5xx reserved for transport/configuration errors)
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
-        assert data.get("success") is False, "Wrapper propagates inner result success status"
-        result = data.get("result", {})
-        assert result.get("success") is False, "Tool result should indicate failure"
-        assert "not found" in result.get("error", "").lower()
+        assert data.get("success") is False, "Tool result should indicate failure"
+        assert "not found" in data.get("error", "").lower()
 
 
 class TestMCPProxyConcurrency:

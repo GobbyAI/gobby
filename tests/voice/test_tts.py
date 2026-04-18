@@ -141,6 +141,7 @@ class TestVoiceConfigTTS:
     def test_tts_defaults(self):
         config = VoiceConfig()
         assert config.tts_enabled is True
+        assert config.tts_reference_text is None
         assert config.tts_voice == "af_heart"
         assert config.tts_speed == 1.0
         assert config.tts_language == "en-us"

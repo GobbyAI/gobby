@@ -12,8 +12,10 @@ import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.telemetry.instruments import inc_counter
@@ -39,11 +41,20 @@ class AgentSpawnRequest(BaseModel):
     isolation: Literal["none", "worktree", "clone"] | None = None
     provider: str | None = None
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
     workflow: str | None = None
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
     max_turns: int | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
 
 
 class AgentSpawnResponse(BaseModel):
@@ -56,6 +67,8 @@ class AgentSpawnResponse(BaseModel):
     isolation: str | None = None
     branch_name: str | None = None
     pid: int | None = None
+    message: str | None = None
+    reasoning: dict[str, Any] | None = None
     error: str | None = None
 
 
@@ -82,6 +95,15 @@ class LaunchDefaultsRequest(BaseModel):
     web_chat: bool = False
     isolation: Literal["none", "worktree", "clone"] = "none"
     model: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_required: bool | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +114,8 @@ _BUILT_IN_DEFAULTS: dict[str, Any] = {
     "agent_name": "default",
     "isolation": "inherit",
     "model": None,
+    "reasoning_effort": None,
+    "reasoning_required": False,
 }
 
 # Semaphore to cap concurrent batch spawns
@@ -230,7 +254,30 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
         # Handle web_chat mode — return conversation_id for frontend to open
         if req.web_chat:
-            conversation_id = str(uuid.uuid4())
+            session_manager = server.services.session_manager
+            if session_manager is None:
+                return AgentSpawnResponse(success=False, error="Session manager unavailable")
+
+            from gobby.utils.machine_id import get_machine_id
+
+            runtime_manager = server.services.web_chat_runtime_manager
+            if runtime_manager is not None:
+                sandbox_enabled = runtime_manager.sandbox_config.enabled
+                sandbox_policy_hash = runtime_manager.sandbox_policy_hash
+            else:
+                sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
+                sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
+
+            conversation = session_manager.create_web_chat_session(
+                machine_id=get_machine_id() or "web",
+                project_id=effective_project_id,
+                source=req.provider or "claude",
+                title=task.title,
+                model=req.model,
+                sandbox_enabled=sandbox_enabled,
+                sandbox_policy_hash=sandbox_policy_hash,
+            )
+            conversation_id = conversation.id
             task_updated = False
 
             # Update task ownership/status conservatively.
@@ -243,13 +290,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                             req.task_id,
                             current_owner,
                         )
-                    elif task.status == "open":
-                        task_manager.update_task(
-                            req.task_id, status="in_progress", assignee=conversation_id
-                        )
-                        task_updated = True
                     else:
-                        task_manager.update_task(req.task_id, assignee=conversation_id)
+                        task_manager.claim_task(req.task_id, conversation_id)
                         task_updated = True
                 else:
                     logger.info(
@@ -333,12 +375,15 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             workflow=effective_workflow,
             provider=req.provider,
             model=req.model,
+            reasoning_effort=req.reasoning_effort,
+            reasoning_required=req.reasoning_required,
             timeout=req.timeout,
             max_turns=req.max_turns,
             parent_session_id=parent_session_id,
             initial_variables=initial_variables,
             session_manager=server.services.session_manager,
             db=server.services.database,
+            daemon_config=server.services.config,
         )
 
         if result.get("success"):
@@ -358,6 +403,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 isolation=result.get("isolation"),
                 branch_name=result.get("branch_name"),
                 pid=result.get("pid"),
+                message=result.get("message"),
+                reasoning=result.get("reasoning"),
             )
         else:
             return AgentSpawnResponse(
@@ -469,6 +516,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 "agent_name": request.agent_name,
                 "isolation": request.isolation,
                 "model": request.model,
+                "reasoning_effort": request.reasoning_effort,
+                "reasoning_required": bool(request.reasoning_required),
             }
             store.set(key, existing, source="web_ui")
             return {"status": "success", "category": request.category}

@@ -430,17 +430,19 @@ class ChatMessagingMixin:
                     session_info_msg["agent_name"] = agent_name
                     await websocket.send(json.dumps(session_info_msg))
                 except Exception as e:
-                    logger.error(f"Failed to start chat session: {e}")
-                    await websocket.send(
-                        json.dumps(
-                            _base_msg(
-                                type="chat_error",
-                                message_id=assistant_message_id,
-                                conversation_id=conversation_id,
-                                error="Failed to start chat session. Please try again.",
-                            )
-                        )
+                    logger.exception(
+                        "Failed to start chat session for conversation %s",
+                        conversation_id,
                     )
+                    error_payload = _base_msg(
+                        type="chat_error",
+                        message_id=assistant_message_id,
+                        conversation_id=conversation_id,
+                        error="Failed to start chat session. Please try again.",
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        error_payload["error_detail"] = f"{type(e).__name__}: {e}"
+                    await websocket.send(json.dumps(error_payload))
                     return
 
             if reasoning_effort is not None:
@@ -842,6 +844,7 @@ class ChatMessagingMixin:
         approval decision to unblock the pending tool approval callback.
         """
         conversation_id = data.get("conversation_id")
+        tool_call_id = data.get("tool_call_id")
         decision = data.get("decision", "reject")
         if decision not in ("approve", "reject", "approve_always"):
             decision = "reject"
@@ -852,6 +855,21 @@ class ChatMessagingMixin:
             return
 
         if not session.has_pending_approval:
+            manager = getattr(self, "_pending_interaction_manager", None)
+            if manager and isinstance(tool_call_id, str) and tool_call_id:
+                try:
+                    resolved = await manager.resolve(tool_call_id, decision)
+                except Exception:
+                    logger.exception(
+                        "Failed to resolve pending interaction",
+                        extra={
+                            "tool_call_id": tool_call_id,
+                            "conversation_id": conversation_id,
+                        },
+                    )
+                    resolved = False
+                if resolved:
+                    return
             logger.warning(f"tool_approval_response but no pending approval for {conversation_id}")
             return
 

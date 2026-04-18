@@ -34,8 +34,13 @@ describe('test utilities', () => {
 
   describe('mock fetch', () => {
     let mockFetch: ReturnType<typeof createMockFetch>
+    let restoreOriginalFetch: (() => void) | undefined
 
-    afterEach(() => mockFetch?.restore())
+    afterEach(() => {
+      mockFetch?.restore()
+      restoreOriginalFetch?.()
+      restoreOriginalFetch = undefined
+    })
 
     it('routes requests and returns JSON responses', async () => {
       mockFetch = createMockFetch()
@@ -58,6 +63,20 @@ describe('test utilities', () => {
       mockFetch.mockErrorResponse('/api/fail', 500, 'Server Error')
       const res = await fetch('/api/fail')
       expect(res.status).toBe(500)
+    })
+
+    it('supports window.fetch when it was originally undefined', () => {
+      const win = window as Window & { fetch?: typeof fetch }
+      const descriptor = Object.getOwnPropertyDescriptor(win, 'fetch')
+
+      Reflect.deleteProperty(win, 'fetch')
+      restoreOriginalFetch = () => {
+        if (descriptor) {
+          Object.defineProperty(win, 'fetch', descriptor)
+        }
+      }
+      mockFetch = createMockFetch()
+      expect(typeof win.fetch).toBe('function')
     })
   })
 

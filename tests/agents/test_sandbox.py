@@ -2,6 +2,9 @@
 Tests for Sandbox Configuration Models.
 """
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,11 +13,15 @@ from gobby.agents.sandbox import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
     GeminiSandboxResolver,
+    QwenSandboxResolver,
     ResolvedSandboxPaths,
     SandboxConfig,
     SandboxResolver,
+    coerce_sandbox_config,
     compute_sandbox_paths,
     get_sandbox_resolver,
+    materialize_claude_settings,
+    materialize_claude_settings_async,
 )
 
 pytestmark = pytest.mark.unit
@@ -182,6 +189,14 @@ class TestSandboxConfig:
         # Original should be unchanged (deep copy)
         assert "/new" not in original.extra_read_paths
         assert "/new" in copy.extra_read_paths
+
+    def test_coerce_sandbox_config_invalid_object_mode_defaults_to_permissive(self) -> None:
+        """Invalid object-like sandbox modes should be normalized before model construction."""
+        config = coerce_sandbox_config(SimpleNamespace(enabled=True, mode="broken"))
+
+        assert config is not None
+        assert config.enabled is True
+        assert config.mode == "permissive"
 
 
 @pytest.mark.unit
@@ -394,11 +409,14 @@ class TestClaudeSandboxResolver:
 
         settings = json.loads(args[1])
         # Verify full sandbox structure
+        assert settings["allowManagedPermissionRulesOnly"] is True
         assert "sandbox" in settings
         assert settings["sandbox"]["enabled"] is True
-        assert settings["sandbox"]["autoAllowBashIfSandboxed"] is True
+        assert settings["sandbox"]["autoAllowBashIfSandboxed"] is False
+        assert settings["sandbox"]["allowUnsandboxedCommands"] is False
         assert "network" in settings["sandbox"]
-        assert settings["sandbox"]["network"]["allowLocalBinding"] is True
+        assert settings["sandbox"]["network"]["allowLocalBinding"] is False
+        assert settings["sandbox"]["network"]["allowedDomains"] == []
 
     def test_returns_empty_env(self) -> None:
         """Test that Claude resolver always returns empty env dict."""
@@ -413,6 +431,59 @@ class TestClaudeSandboxResolver:
 
         args, env = resolver.resolve(config, paths)
         assert env == {}
+
+    def test_materialize_claude_settings_merges_base_hooks(self, tmp_path) -> None:
+        """Generated runtime settings should preserve base settings and add sandbox config."""
+        base_settings = tmp_path / "headless.json"
+        base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+
+        settings_path = materialize_claude_settings(
+            base_settings_path=base_settings,
+            config=SandboxConfig(enabled=True),
+            workspace_path="/project",
+            name="test",
+        )
+
+        assert settings_path is not None
+        payload = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+        assert payload["hooks"]["SessionStart"] == []
+        assert payload["sandbox"]["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_materialize_claude_settings_async_matches_sync_output(self, tmp_path) -> None:
+        """Async wrapper should preserve sync helper behavior while moving work off-loop."""
+        base_settings = tmp_path / "headless.json"
+        base_settings.write_text('{"hooks":{"SessionStart":[]}}', encoding="utf-8")
+
+        settings_path = await materialize_claude_settings_async(
+            base_settings_path=base_settings,
+            config=SandboxConfig(enabled=True),
+            workspace_path="/project",
+            name="test-async",
+        )
+
+        assert settings_path is not None
+        payload = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+        assert payload["hooks"]["SessionStart"] == []
+        assert payload["sandbox"]["enabled"] is True
+
+    def test_materialize_claude_settings_logs_invalid_base_settings(
+        self, tmp_path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Invalid base settings should warn and still fall back to an empty payload."""
+        base_settings = tmp_path / "headless.json"
+        base_settings.write_text("{invalid", encoding="utf-8")
+
+        with caplog.at_level("WARNING"):
+            settings_path = materialize_claude_settings(
+                base_settings_path=base_settings,
+                config=SandboxConfig(enabled=True),
+                workspace_path="/project",
+                name="test-invalid",
+            )
+
+        assert settings_path is not None
+        assert "Failed to read Claude base settings for runtime sandbox overlay" in caplog.text
 
 
 @pytest.mark.unit
@@ -570,7 +641,7 @@ class TestGeminiSandboxResolver:
         assert env["SEATBELT_PROFILE"] == "permissive-open"
 
     def test_restrictive_sets_exact_seatbelt_profile(self) -> None:
-        """Test restrictive mode sets SEATBELT_PROFILE to restrictive-closed."""
+        """Test restrictive mode sets SEATBELT_PROFILE to restrictive-open."""
         resolver = GeminiSandboxResolver()
         config = SandboxConfig(enabled=True, mode="restrictive")
         paths = ResolvedSandboxPaths(
@@ -581,7 +652,21 @@ class TestGeminiSandboxResolver:
         )
 
         args, env = resolver.resolve(config, paths)
-        assert env["SEATBELT_PROFILE"] == "restrictive-closed"
+        assert env["SEATBELT_PROFILE"] == "restrictive-open"
+
+    def test_network_disabled_uses_proxied_profile(self) -> None:
+        """Test disabled network maps to the documented proxied Seatbelt profile."""
+        resolver = GeminiSandboxResolver()
+        config = SandboxConfig(enabled=True, mode="permissive", allow_network=False)
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=False,
+        )
+
+        _args, env = resolver.resolve(config, paths)
+        assert env["SEATBELT_PROFILE"] == "permissive-proxied"
 
     def test_permissive_returns_both_args_and_env(self) -> None:
         """Test permissive mode returns both -s flag and SEATBELT_PROFILE."""
@@ -598,6 +683,29 @@ class TestGeminiSandboxResolver:
         assert args == ["-s"]
         assert "SEATBELT_PROFILE" in env
         assert len(env) == 1  # Only SEATBELT_PROFILE
+
+
+@pytest.mark.unit
+class TestQwenSandboxResolver:
+    """Tests for QwenSandboxResolver."""
+
+    def test_cli_name(self) -> None:
+        resolver = QwenSandboxResolver()
+        assert resolver.cli_name == "qwen"
+
+    def test_qwen_matches_gemini_seatbelt_profiles(self) -> None:
+        resolver = QwenSandboxResolver()
+        config = SandboxConfig(enabled=True, mode="restrictive", allow_network=False)
+        paths = ResolvedSandboxPaths(
+            workspace_path="/project",
+            read_paths=[],
+            write_paths=["/project"],
+            allow_external_network=False,
+        )
+
+        args, env = resolver.resolve(config, paths)
+        assert args == ["-s"]
+        assert env["SEATBELT_PROFILE"] == "restrictive-proxied"
 
 
 @pytest.mark.unit
@@ -618,6 +726,11 @@ class TestGetSandboxResolver:
         """Test that 'gemini' returns GeminiSandboxResolver."""
         resolver = get_sandbox_resolver("gemini")
         assert isinstance(resolver, GeminiSandboxResolver)
+
+    def test_returns_qwen_resolver(self) -> None:
+        """Test that 'qwen' returns QwenSandboxResolver."""
+        resolver = get_sandbox_resolver("qwen")
+        assert isinstance(resolver, QwenSandboxResolver)
 
     def test_unknown_cli_raises_value_error(self) -> None:
         """Test that unknown CLI raises ValueError."""

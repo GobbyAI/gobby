@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
+import shutil
 import sys
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -31,7 +33,12 @@ _TTS_DEPS: dict[str, list[tuple[str, str]]] = {
     "kokoro": [
         ("kokoro-onnx", "kokoro_onnx"),
     ],
+    "voxcpm": [
+        ("voxcpm", "voxcpm"),
+    ],
 }
+
+_AUTO_INSTALL_TTS_PROVIDERS = {"chatterbox", "kokoro"}
 
 # Guard against concurrent install attempts
 _install_lock = asyncio.Lock()
@@ -54,19 +61,36 @@ def _check_imports(deps: list[tuple[str, str]]) -> list[str]:
     return missing
 
 
+def _resolve_uv_install_command() -> list[str] | None:
+    """Return a uv command that installs into the current interpreter's env."""
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        return [uv_bin, "pip", "install", "--python", sys.executable]
+
+    if find_spec("uv") is not None:
+        return [sys.executable, "-m", "uv", "pip", "install", "--python", sys.executable]
+
+    return None
+
+
 async def _install_packages(packages: list[str]) -> bool:
     """Install packages via uv pip install. Returns True on success.
 
     Bounded by ``VOICE_PIP_TIMEOUT_SECONDS`` — if the install hangs, the
     subprocess is killed and reaped, and the function returns False.
     """
+    command = _resolve_uv_install_command()
+    if command is None:
+        logger.error(
+            "Failed to install voice packages: uv is not available as a binary "
+            "and not importable in %s",
+            sys.executable,
+        )
+        return False
+
     logger.info(f"Installing voice packages: {', '.join(packages)}")
     proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "uv",
-        "pip",
-        "install",
+        *command,
         *packages,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -137,6 +161,13 @@ async def ensure_tts_deps(config: VoiceConfig) -> bool:
     missing = _check_imports(deps)
     if not missing:
         return True
+
+    if provider not in _AUTO_INSTALL_TTS_PROVIDERS:
+        logger.info(
+            "Skipping auto-install for TTS provider '%s'; install dependencies manually",
+            provider,
+        )
+        return False
 
     async with _install_lock:
         missing = _check_imports(deps)

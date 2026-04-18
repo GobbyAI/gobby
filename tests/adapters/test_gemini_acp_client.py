@@ -31,6 +31,7 @@ pytestmark = pytest.mark.unit
 def _mock_process(
     stdout_lines: list[str] | None = None,
     returncode: int | None = None,
+    stderr_text: str = "",
 ) -> AsyncMock:
     """Create a mock asyncio.subprocess.Process.
 
@@ -63,6 +64,7 @@ def _mock_process(
 
     # stderr
     proc.stderr = MagicMock()
+    proc.stderr.read = AsyncMock(return_value=stderr_text.encode())
 
     # wait / terminate / kill
     proc.wait = AsyncMock()
@@ -239,6 +241,20 @@ class TestStart:
         assert session_req["params"]["mcpServers"] == []
 
     @pytest.mark.asyncio
+    async def test_start_keeps_hooks_disabled_even_with_env_overrides(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ) as mock_exec:
+                client = GeminiACPClient(env_overrides={"GOBBY_HOOKS_DISABLED": "0"})
+                await client.start()
+
+                assert mock_exec.call_args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
+
+    @pytest.mark.asyncio
     async def test_start_with_resume_uses_load_session(self) -> None:
         proc = _mock_process(stdout_lines=_resume_handshake_lines("prev-123"))
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
@@ -339,6 +355,22 @@ class TestStart:
 
             call_args = mock_exec.call_args
             assert call_args[0][0] == "/custom/gemini"
+
+    @pytest.mark.asyncio
+    async def test_start_includes_stderr_when_initialize_hits_eof(self) -> None:
+        proc = _mock_process(returncode=1, stderr_text="auth failed\ntry again\n")
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                with pytest.raises(
+                    RuntimeError,
+                    match="EOF while waiting for initialize response; stderr: auth failed try again",
+                ):
+                    await client.start(auto_session=False)
 
 
 # ---------------------------------------------------------------------------

@@ -259,7 +259,7 @@ class TestWorktreeLifecycle:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True
+        assert "error" not in result, f"delete_worktree failed: {result}"
         assert result.get("already_deleted") is True
 
 
@@ -279,7 +279,7 @@ class TestCloneMergeWorkflow:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"list_clones failed: {result}"
+        assert "error" not in result, f"list_clones failed: {result}"
         assert isinstance(result.get("clones"), list)
         assert result.get("count", -1) >= 0
 

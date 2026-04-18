@@ -1,4 +1,3 @@
-import React, { forwardRef } from "react";
 import {
   describe,
   it,
@@ -32,12 +31,6 @@ vi.mock("../../../hooks/useWebSocketEvent", () => ({
   },
 }));
 
-interface TaskTreeNode {
-  id: string;
-  task: { title: string };
-  children?: TaskTreeNode[];
-}
-
 beforeAll(() => {
   globalThis.ResizeObserver = class {
     observe() {}
@@ -45,54 +38,6 @@ beforeAll(() => {
     disconnect() {}
   } as unknown as typeof ResizeObserver;
 });
-
-function renderNodes(nodes: TaskTreeNode[]): React.ReactNode {
-  return nodes.map((node) => (
-    <div key={node.id}>
-      <div>{node.task.title}</div>
-      {node.children?.length ? renderNodes(node.children) : null}
-    </div>
-  ));
-}
-
-function flattenNodes(nodes: TaskTreeNode[]): TaskTreeNode[] {
-  return nodes.flatMap((node) => [node, ...flattenNodes(node.children ?? [])]);
-}
-
-vi.mock("react-arborist", () => ({
-  Tree: forwardRef(function TreeMock(
-    {
-      data,
-      height,
-      searchTerm,
-      searchMatch,
-    }: {
-      data: TaskTreeNode[];
-      height?: number;
-      searchTerm?: string;
-      searchMatch?: (node: { data: TaskTreeNode }, term: string) => boolean;
-    },
-    ref: React.ForwardedRef<unknown>,
-  ) {
-    const visibleNodes = React.useMemo(() => {
-      const flattened = flattenNodes(data);
-      if (!searchTerm || !searchMatch) {
-        return flattened;
-      }
-      return flattened.filter((node) =>
-        searchMatch({ data: node }, searchTerm),
-      );
-    }, [data, searchMatch, searchTerm]);
-
-    React.useImperativeHandle(ref, () => ({ visibleNodes }));
-
-    return (
-      <div data-testid="task-tree" data-height={height ?? ""}>
-        {renderNodes(data)}
-      </div>
-    );
-  }),
-}));
 
 vi.mock("../../chat/artifacts/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
@@ -167,6 +112,15 @@ describe("TasksTab", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: taskList });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+      task: {
+        ...taskList[0],
+        description: "Review approved task detail",
+        category: null,
+        validation_criteria: null,
+        closed_at: null,
+      },
+    });
   });
 
   afterEach(() => {
@@ -176,46 +130,80 @@ describe("TasksTab", () => {
     wsHandler = null;
   });
 
-  it("includes review-approved tasks by default and paginates the list in batches of ten", async () => {
+  it("includes review-approved tasks by default and shows all active tasks without pagination", async () => {
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
       expect(screen.getByText("Open task 2")).toBeTruthy();
-      expect(screen.getByText("Load more")).toBeTruthy();
+      expect(screen.getByText("Open task 10")).toBeTruthy();
     });
 
-    expect(screen.queryByText("Open task 10")).toBeNull();
     expect(screen.queryByText("Closed task")).toBeNull();
-    expect(screen.getByTestId("task-tree")).toHaveAttribute(
-      "data-height",
-      "300",
-    );
+    expect(screen.queryByText("Load more")).toBeNull();
 
-    fireEvent.click(screen.getByText("Load more"));
-
-    expect(screen.getByText("Open task 10")).toBeTruthy();
+    const tasksPane = screen.getByTestId("task-tree");
+    expect(tasksPane).toHaveClass("activity-tasks-pane", "overflow-y-auto");
+    expect(tasksPane.firstElementChild).toHaveAttribute("role", "treeitem");
+    expect(screen.getAllByRole("treeitem")).toHaveLength(11);
   });
 
-  it("resyncs the visible tree height when search changes the arborist-visible rows", async () => {
+  it("limits closed tasks to the 20 most recently closed entries", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      tasks: Array.from({ length: 25 }, (_, index) => ({
+        id: `closed-${index + 1}`,
+        ref: `#${700 + index}`,
+        title: `Closed task ${index + 1}`,
+        status: "closed",
+        priority: 2,
+        task_type: "task",
+        parent_task_id: null,
+        created_at: `2026-03-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
+        updated_at: `2026-03-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
+        seq_num: 700 + index,
+        path_cache: String(700 + index),
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      })),
+    });
+
     render(<TasksTab projectId="proj-1" />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("task-tree")).toHaveAttribute(
-        "data-height",
-        "300",
-      );
+      expect(screen.getByText("No tasks match filters")).toBeTruthy();
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Search..."), {
-      target: { value: "Open task 10" },
-    });
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByLabelText("Closed"));
 
     await waitFor(() => {
-      expect(screen.getByTestId("task-tree")).toHaveAttribute(
-        "data-height",
-        "30",
-      );
+      expect(screen.getByText("Closed task 1")).toBeTruthy();
+      expect(screen.getByText("Closed task 20")).toBeTruthy();
+      expect(screen.queryByText("Closed task 21")).toBeNull();
+      expect(screen.queryByText("Closed task 25")).toBeNull();
+      expect(screen.getAllByRole("treeitem")).toHaveLength(20);
+    });
+  });
+
+  it("auto-selects the first visible task and keeps the detail pane open", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getAllByText("Review approved task")[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task detail")).toBeTruthy();
+      expect(screen.queryByText("Task not found")).toBeNull();
+      expect(screen.queryByText("Close")).toBeNull();
     });
   });
 
@@ -395,5 +383,70 @@ describe("TasksTab", () => {
     });
 
     expect(screen.queryByText("Other project task")).toBeNull();
+  });
+
+  it("assigns a task to the active main chat from the row actions menu", async () => {
+    mockFetch.mockJsonResponse("/api/tasks/task-review/claim", {
+      task: {
+        ...taskList[0],
+        assignee: "main-chat-1",
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    const initialTaskListFetches = mockFetch.fn.mock.calls.filter(([url]) =>
+      String(url).includes("/api/tasks?"),
+    ).length;
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Task actions" })[0]);
+
+    const assignButton = await screen.findByRole("button", {
+      name: "Assign to Main Chat",
+    });
+    fireEvent.click(assignButton);
+
+    await waitFor(() => {
+      const claimCall = mockFetch.fn.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes("/api/tasks/task-review/claim") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+
+      expect(claimCall).toBeTruthy();
+      expect(claimCall?.[1]).toMatchObject({
+        method: "POST",
+        body: JSON.stringify({ session_id: "main-chat-1", force: true }),
+      });
+    });
+
+    const finalTaskListFetches = mockFetch.fn.mock.calls.filter(([url]) =>
+      String(url).includes("/api/tasks?"),
+    ).length;
+    expect(finalTaskListFetches).toBe(initialTaskListFetches);
+  });
+
+  it("shows an inline error when assigning a task to the main chat fails", async () => {
+    mockFetch.mockErrorResponse("/api/tasks/task-review/claim", 500, "Server Error");
+
+    render(<TasksTab projectId="proj-1" chatSessionId="main-chat-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Task actions" })[0]);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Assign to Main Chat" }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(
+      "Failed to assign task to main chat: Failed to claim task (500)",
+    );
   });
 });

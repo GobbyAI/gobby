@@ -830,12 +830,8 @@ class TestUpdateTaskCommand:
                 "gt-abc123",
                 "--title",
                 "New title",
-                "--status",
-                "in_progress",
                 "--priority",
                 "1",
-                "--assignee",
-                "alice",
             ],
         )
 
@@ -843,9 +839,19 @@ class TestUpdateTaskCommand:
         mock_manager.update_task.assert_called_once()
         call_kwargs = mock_manager.update_task.call_args.kwargs
         assert call_kwargs["title"] == "New title"
-        assert call_kwargs["status"] == "in_progress"
         assert call_kwargs["priority"] == 1
-        assert call_kwargs["assignee"] == "alice"
+
+    def test_update_task_rejects_status_option(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--status", "in_progress"])
+
+        assert result.exit_code != 0
+        assert "No such option: --status" in result.output
+
+    def test_update_task_rejects_assignee_option(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--assignee", "alice"])
+
+        assert result.exit_code != 0
+        assert "No such option: --assignee" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1626,9 +1632,12 @@ class TestValidateCommandExtended:
             assert result.exit_code == 0
             assert "Exceeded max retries" in result.output
             mock_manager.update_task.assert_called()
-            # Verify status update
             call_kwargs = mock_manager.update_task.call_args.kwargs
-            assert call_kwargs["status"] == "escalated"
+            assert "Exceeded max retries (3)" in call_kwargs["validation_feedback"]
+            mock_manager.escalate_task.assert_called_once_with(
+                mock_task.id,
+                reason="exceeded_validation_retries (3)",
+            )
 
 
 class TestSuggestCommandExtended:

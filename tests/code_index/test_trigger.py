@@ -40,14 +40,9 @@ async def test_single_file_triggers_gcode(trigger: CodeIndexTrigger, tmp_path: P
     mock_proc = _make_mock_proc()
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
     ):
-        # Create the fake binary at the patched path
-        gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-        gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-        gcode_bin.touch()
-
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
         await asyncio.sleep(0.1)
 
@@ -69,13 +64,9 @@ async def test_multiple_files_batched(trigger: CodeIndexTrigger, tmp_path: Path)
     mock_proc = _make_mock_proc()
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
     ):
-        gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-        gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-        gcode_bin.touch()
-
         trigger._schedule_file("/src/a.py", "proj-1", "/repo")
         trigger._schedule_file("/src/b.py", "proj-1", "/repo")
         trigger._schedule_file("/src/c.py", "proj-1", "/repo")
@@ -95,13 +86,9 @@ async def test_same_file_deduped(trigger: CodeIndexTrigger, tmp_path: Path) -> N
     mock_proc = _make_mock_proc()
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
     ):
-        gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-        gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-        gcode_bin.touch()
-
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
@@ -123,13 +110,9 @@ async def test_debounce_timer_resets(trigger: CodeIndexTrigger, tmp_path: Path) 
     mock_proc = _make_mock_proc()
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
     ):
-        gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-        gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-        gcode_bin.touch()
-
         trigger._schedule_file("/src/a.py", "proj-1", "/repo")
 
         # Wait less than debounce time, then add another file
@@ -157,13 +140,9 @@ async def test_different_projects_independent(trigger: CodeIndexTrigger, tmp_pat
     mock_proc = _make_mock_proc()
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec,
     ):
-        gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-        gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-        gcode_bin.touch()
-
         trigger._schedule_file("/repo1/a.py", "proj-1", "/repo1")
         trigger._schedule_file("/repo2/b.py", "proj-2", "/repo2")
 
@@ -181,13 +160,9 @@ async def test_gcode_failure_does_not_propagate(trigger: CodeIndexTrigger, tmp_p
     mock_proc = _make_mock_proc(returncode=1)
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc),
     ):
-        gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-        gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-        gcode_bin.touch()
-
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
 
         # Should not raise
@@ -202,7 +177,7 @@ async def test_no_gcode_warns_and_skips(trigger: CodeIndexTrigger, tmp_path: Pat
     """Missing gcode binary logs warning and skips indexing."""
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value=None),
         patch("asyncio.create_subprocess_exec") as mock_exec,
     ):
         trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
@@ -228,14 +203,11 @@ async def test_flush_cancel_before_subprocess_assignment_is_clean(
     trigger: CodeIndexTrigger, tmp_path: Path
 ) -> None:
     """Cancellation before create_subprocess_exec assigns proc should not raise UnboundLocalError."""
-    gcode_bin = tmp_path / ".gobby" / "bin" / "gcode"
-    gcode_bin.parent.mkdir(parents=True, exist_ok=True)
-    gcode_bin.touch()
     trigger._pending["proj-1"] = {"/src/foo.py"}
     trigger._root_paths["proj-1"] = "/repo"
 
     with (
-        patch("gobby.code_index.trigger.Path.home", return_value=tmp_path),
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", side_effect=asyncio.CancelledError),
     ):
         with pytest.raises(asyncio.CancelledError):

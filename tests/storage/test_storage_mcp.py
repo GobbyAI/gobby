@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 from gobby.storage.database import LocalDatabase
 from gobby.storage.mcp import LocalMCPManager
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID, LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -179,6 +180,35 @@ class TestLocalMCPManager:
         # Should be same server with updated URL
         assert server2.id == server1.id
         assert server2.url == "http://new-url"
+
+    def test_upsert_bundled_server_uses_global_project_and_strips_runtime_args(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Bundled servers are stored globally and never persist runtime-only browser paths."""
+        server = mcp_manager.upsert(
+            name="chrome-devtools",
+            transport="stdio",
+            command="npx",
+            args=[
+                "-y",
+                CHROME_DEVTOOLS_NPM_PACKAGE,
+                "--executable-path=/tmp/chrome",
+                "--no-usage-statistics",
+            ],
+            project_id=sample_project["id"],
+        )
+
+        assert server.project_id == GLOBAL_PROJECT_ID
+        assert server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
+
+        project_row = temp_db.fetchone(
+            "SELECT * FROM mcp_servers WHERE name = ? AND project_id = ?",
+            ("chrome-devtools", sample_project["id"]),
+        )
+        assert project_row is None
 
     def test_get_server(
         self,
@@ -758,6 +788,39 @@ class TestLocalMCPManager:
         all_servers = mcp_manager.list_all_servers(enabled_only=False)
         assert len(all_servers) == 2
 
+    def test_list_runtime_servers_includes_global_bundled_servers(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        """Runtime server listing includes bundled global servers for project contexts."""
+        mcp_manager.upsert(
+            name="context7",
+            transport="stdio",
+            command="npx",
+            args=["-y", "@upstash/context7-mcp"],
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        mcp_manager.upsert(
+            name="global-not-bundled",
+            transport="http",
+            url="http://localhost:7000",
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        mcp_manager.upsert(
+            name="project-only",
+            transport="http",
+            url="http://localhost:9000",
+            project_id=sample_project["id"],
+        )
+
+        project_servers = mcp_manager.list_servers(project_id=sample_project["id"])
+        runtime_servers = mcp_manager.list_runtime_servers(project_id=sample_project["id"])
+
+        assert [server.name for server in project_servers] == ["project-only"]
+        runtime_names = {server.name for server in runtime_servers}
+        assert runtime_names == {"context7", "project-only"}
+
     def test_update_server_nonexistent(
         self,
         mcp_manager: LocalMCPManager,
@@ -955,6 +1018,157 @@ class TestLocalMCPManager:
         result = mcp_manager.remove_server("REMOVECASE", project_id=sample_project["id"])
         assert result is True
         assert mcp_manager.get_server("removecase", project_id=sample_project["id"]) is None
+
+    def test_normalize_bundled_servers_migrates_tools_from_legacy_project_rows(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Legacy project rows are collapsed into a canonical global bundled row."""
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "legacy-chrome-server",
+                "chrome-devtools",
+                sample_project["id"],
+                "stdio",
+                "npx",
+                json.dumps(
+                    [
+                        "-y",
+                        CHROME_DEVTOOLS_NPM_PACKAGE,
+                        "--executable-path=/tmp/chrome",
+                        "--no-usage-statistics",
+                    ]
+                ),
+                1,
+            ),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "legacy-chrome-tool",
+                "legacy-chrome-server",
+                "inspect_page",
+                "Inspect the current page",
+                json.dumps({"type": "object"}),
+            ),
+        )
+
+        stats = mcp_manager.normalize_bundled_servers(["chrome-devtools"])
+
+        assert stats["normalized"] == 1
+        assert stats["duplicates_removed"] == 1
+        assert stats["tools_migrated"] == 1
+
+        global_server = mcp_manager.get_server("chrome-devtools", project_id=GLOBAL_PROJECT_ID)
+        assert global_server is not None
+        assert global_server.project_id == GLOBAL_PROJECT_ID
+        assert global_server.args == ["-y", CHROME_DEVTOOLS_NPM_PACKAGE, "--no-usage-statistics"]
+
+        legacy_row = temp_db.fetchone(
+            "SELECT * FROM mcp_servers WHERE id = ?",
+            ("legacy-chrome-server",),
+        )
+        assert legacy_row is None
+
+        migrated_tools = mcp_manager.get_cached_tools(
+            "chrome-devtools",
+            project_id=GLOBAL_PROJECT_ID,
+        )
+        assert len(migrated_tools) == 1
+        assert migrated_tools[0].name == "inspect_page"
+
+    def test_normalize_bundled_servers_unions_disjoint_tool_sets(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Bundled normalization preserves the union of tool names across duplicates."""
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "legacy-context7-server",
+                "context7",
+                sample_project["id"],
+                "stdio",
+                "npx",
+                json.dumps(["-y", "@upstash/context7-mcp"]),
+                1,
+            ),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "legacy-context7-search",
+                "legacy-context7-server",
+                "search_docs",
+                "Search docs",
+                json.dumps({"type": "object"}),
+            ),
+        )
+
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "global-context7-server",
+                "context7",
+                GLOBAL_PROJECT_ID,
+                "stdio",
+                "npx",
+                json.dumps(["-y", "@upstash/context7-mcp"]),
+                1,
+            ),
+        )
+        temp_db.execute(
+            """
+            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                "global-context7-resolve",
+                "global-context7-server",
+                "resolve_doc",
+                "Resolve doc",
+                json.dumps({"type": "object"}),
+            ),
+        )
+
+        mcp_manager.normalize_bundled_servers(["context7"])
+
+        tools = mcp_manager.get_cached_tools("context7", project_id=GLOBAL_PROJECT_ID)
+        global_server = mcp_manager.get_server("context7", project_id=GLOBAL_PROJECT_ID)
+        assert global_server is not None
+        assert {tool.name for tool in tools} == {"resolve_doc", "search_docs"}
+
+        legacy_row = temp_db.fetchone(
+            "SELECT * FROM mcp_servers WHERE id = ?",
+            ("legacy-context7-server",),
+        )
+        assert legacy_row is None
 
 
 class TestRefreshToolsIncremental:

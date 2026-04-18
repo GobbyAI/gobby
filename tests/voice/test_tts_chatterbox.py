@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -353,6 +354,83 @@ class TestAutoDevice:
 
 class TestDepCheck:
     @pytest.mark.asyncio
+    async def test_install_packages_prefers_uv_binary(self) -> None:
+        """Use the uv executable when available on PATH."""
+        from gobby.voice.dep_check import _install_packages
+
+        proc = MagicMock()
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.returncode = 0
+
+        with patch("gobby.voice.dep_check.shutil.which", return_value="/opt/homebrew/bin/uv"):
+            with patch(
+                "gobby.voice.dep_check.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ) as create_mock:
+                assert await _install_packages(["chatterbox-tts"]) is True
+
+        create_mock.assert_awaited_once_with(
+            "/opt/homebrew/bin/uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "chatterbox-tts",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    @pytest.mark.asyncio
+    async def test_install_packages_falls_back_to_uv_module(self) -> None:
+        """Fallback to python -m uv when no uv binary is on PATH."""
+        from gobby.voice.dep_check import _install_packages
+
+        proc = MagicMock()
+        proc.communicate = AsyncMock(return_value=(b"", b""))
+        proc.returncode = 0
+
+        with patch("gobby.voice.dep_check.shutil.which", return_value=None):
+            with patch("gobby.voice.dep_check.find_spec", return_value=object()):
+                with patch(
+                    "gobby.voice.dep_check.asyncio.create_subprocess_exec",
+                    new_callable=AsyncMock,
+                    return_value=proc,
+                ) as create_mock:
+                    assert await _install_packages(["kokoro-onnx"]) is True
+
+        create_mock.assert_awaited_once_with(
+            sys.executable,
+            "-m",
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "kokoro-onnx",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    @pytest.mark.asyncio
+    async def test_install_packages_returns_false_when_uv_is_unavailable(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Auto-install should fail cleanly when uv cannot be resolved."""
+        from gobby.voice.dep_check import _install_packages
+
+        with patch("gobby.voice.dep_check.shutil.which", return_value=None):
+            with patch("gobby.voice.dep_check.find_spec", return_value=None):
+                with patch(
+                    "gobby.voice.dep_check.asyncio.create_subprocess_exec",
+                    new_callable=AsyncMock,
+                ) as create_mock:
+                    assert await _install_packages(["faster-whisper"]) is False
+
+        create_mock.assert_not_called()
+        assert "uv is not available as a binary" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_ensure_stt_deps_disabled(self) -> None:
         """When voice is disabled, returns False without checking."""
         from gobby.voice.dep_check import ensure_stt_deps
@@ -408,12 +486,27 @@ class TestDepCheck:
             ):
                 assert await ensure_tts_deps(config) is True
 
+    @pytest.mark.asyncio
+    async def test_ensure_tts_deps_skips_voxcpm_auto_install(self) -> None:
+        """VoxCPM must not be auto-installed into the daemon runtime."""
+        from gobby.voice.dep_check import ensure_tts_deps
 
-class TestVoiceConfigChatterbox:
-    def test_chatterbox_defaults(self) -> None:
+        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="voxcpm")
+
+        with patch("gobby.voice.dep_check._check_imports", return_value=["voxcpm"]):
+            with patch(
+                "gobby.voice.dep_check._install_packages", new_callable=AsyncMock
+            ) as install_mock:
+                assert await ensure_tts_deps(config) is False
+        install_mock.assert_not_called()
+
+
+class TestVoiceConfigTTSDefaults:
+    def test_provider_defaults_to_chatterbox(self) -> None:
         config = VoiceConfig()
         assert config.tts_provider == "chatterbox"
         assert config.tts_reference_audio == "~/.gobby/voice/reference.wav"
+        assert config.tts_reference_text is None
         assert config.tts_temperature == 0.55
         assert config.tts_device == "auto"
 

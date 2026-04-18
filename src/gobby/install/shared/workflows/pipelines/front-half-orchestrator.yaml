@@ -1,0 +1,128 @@
+name: front-half-orchestrator
+type: pipeline
+version: "1.0"
+description: |
+  Tick-based front-half conductor pipeline.
+
+  Each run performs one pass over the front-half stages for a parent task:
+  requirements -> planning -> expansion -> test architecture.
+  The heavy lifting lives in gobby-tasks-ops:front_half_tick; this pipeline
+  only dispatches the indicated agent when needed.
+
+outputs:
+  front_half_complete: "${{ steps.tick.output.front_half_complete if steps.tick.output else false }}"
+  current_stage: "${{ steps.tick.output.current_stage if steps.tick.output else '' }}"
+  next_action: "${{ steps.tick.output.next_action if steps.tick.output else '' }}"
+  plan_file: "${{ steps.tick.output.artifacts.plan_file if steps.tick.output else '' }}"
+  test_architecture_file: "${{ steps.tick.output.artifacts.test_architecture_file if steps.tick.output else '' }}"
+
+inputs:
+  task_id: null
+  max_planning_rounds: 3
+  auto_dispatch_requirements: false
+  requirements_agent: "requirements-analyst"
+  planner_agent: "planner"
+  adversary_agent: "plan-adversary"
+  test_architect_agent: "test-architect"
+  requirements_provider: null
+  requirements_model: null
+  planner_provider: null
+  planner_model: null
+  adversary_provider: null
+  adversary_model: null
+  test_architect_provider: null
+  test_architect_model: null
+  expansion_provider: null
+  expansion_model: null
+
+steps:
+  - id: reentry_check
+    mcp:
+      server: gobby-workflows
+      tool: list_pipeline_executions
+      arguments:
+        pipeline_name: "front-half-orchestrator"
+        status: "running"
+
+  - id: reentry_gate
+    condition: "${{ len(reentry_check.output.executions) > 1 }}"
+    mcp:
+      server: gobby-workflows
+      tool: fail_pipeline
+      arguments:
+        message: "Skipped: another front-half-orchestrator execution is already running"
+
+  - id: tick
+    mcp:
+      server: gobby-tasks-ops
+      tool: front_half_tick
+      arguments:
+        task_id: "${{ inputs.task_id }}"
+        max_planning_rounds: "${{ inputs.max_planning_rounds }}"
+        auto_dispatch_requirements: "${{ inputs.auto_dispatch_requirements }}"
+        expansion_provider: "${{ inputs.expansion_provider }}"
+        expansion_model: "${{ inputs.expansion_model }}"
+
+  - id: dispatch_requirements
+    condition: "${{ steps.tick.output.next_action == 'spawn_requirements_analyst' }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        prompt: "${{ steps.tick.output.dispatch.prompt }}"
+        agent: "${{ inputs.requirements_agent }}"
+        task_id: "${{ steps.tick.output.dispatch.task_id }}"
+        provider: "${{ inputs.requirements_provider }}"
+        model: "${{ inputs.requirements_model }}"
+        parent_session_id: "${{ session_id }}"
+
+  - id: dispatch_planner
+    condition: "${{ steps.tick.output.next_action == 'spawn_planner' }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        prompt: "${{ steps.tick.output.dispatch.prompt }}"
+        agent: "${{ inputs.planner_agent }}"
+        task_id: "${{ steps.tick.output.dispatch.task_id }}"
+        provider: "${{ inputs.planner_provider }}"
+        model: "${{ inputs.planner_model }}"
+        parent_session_id: "${{ session_id }}"
+
+  - id: dispatch_adversary
+    condition: "${{ steps.tick.output.next_action == 'spawn_plan_adversary' }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        prompt: "${{ steps.tick.output.dispatch.prompt }}"
+        agent: "${{ inputs.adversary_agent }}"
+        task_id: "${{ steps.tick.output.dispatch.task_id }}"
+        provider: "${{ inputs.adversary_provider }}"
+        model: "${{ inputs.adversary_model }}"
+        parent_session_id: "${{ session_id }}"
+
+  - id: dispatch_test_architect
+    condition: "${{ steps.tick.output.next_action == 'spawn_test_architect' }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        prompt: "${{ steps.tick.output.dispatch.prompt }}"
+        agent: "${{ inputs.test_architect_agent }}"
+        task_id: "${{ steps.tick.output.dispatch.task_id }}"
+        provider: "${{ inputs.test_architect_provider }}"
+        model: "${{ inputs.test_architect_model }}"
+        parent_session_id: "${{ session_id }}"
+
+  - id: tick_result
+    mcp:
+      server: gobby-workflows
+      tool: pipeline_eval
+      arguments:
+        data:
+          front_half_complete: "${{ steps.tick.output.front_half_complete if steps.tick.output else false }}"
+          current_stage: "${{ steps.tick.output.current_stage if steps.tick.output else '' }}"
+          next_action: "${{ steps.tick.output.next_action if steps.tick.output else '' }}"
+          plan_file: "${{ steps.tick.output.artifacts.plan_file if steps.tick.output else '' }}"
+          test_architecture_file: "${{ steps.tick.output.artifacts.test_architecture_file if steps.tick.output else '' }}"

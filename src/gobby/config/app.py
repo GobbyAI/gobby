@@ -23,6 +23,7 @@ from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.conductor import ConductorConfig
 from gobby.config.cron import CronConfig
+from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.extensions import HookExtensionsConfig
 from gobby.config.features import (
     ChatConfig,
@@ -384,6 +385,14 @@ class DaemonConfig(BaseModel):
     llm_providers: LLMProvidersConfig = Field(
         default_factory=LLMProvidersConfig,
         description="Multi-provider LLM configuration",
+    )
+    web_chat_sandbox: DaemonOwnedSandboxConfig = Field(
+        default_factory=DaemonOwnedSandboxConfig,
+        description="Daemon-owned sandbox defaults for web chat runtimes.",
+    )
+    agent_sandbox: DaemonOwnedSandboxConfig = Field(
+        default_factory=DaemonOwnedSandboxConfig,
+        description="Daemon-owned sandbox defaults for spawned agent runtimes.",
     )
     communications: CommunicationsConfig = Field(
         default_factory=CommunicationsConfig,

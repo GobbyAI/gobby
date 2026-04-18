@@ -48,7 +48,6 @@ This directory implements agent spawning, process management, isolation, and lif
 - `constants.py` — Agent-related constants (depth limits, timeouts)
 - `sandbox.py` — Sandbox configuration for agent processes
 - `codex_session.py` — Codex CLI session adapter
-- `gemini_session.py` — Gemini CLI session adapter
 
 ## Agent Spawn Flow
 

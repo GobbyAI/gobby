@@ -14,6 +14,7 @@ from typing import Any
 
 from gobby.cli.utils import get_install_dir
 
+from .hook_commands import rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -114,20 +115,16 @@ def install_gemini(project_path: Path, mode: str = "global") -> dict[str, Any]:
     with open(source_hooks_template) as f:
         gobby_settings_str = f.read()
 
-    # Resolve uv path dynamically to avoid PATH issues in Gemini CLI
-    uv_path = which("uv")
-    if not uv_path:
-        uv_path = "uv"  # Fallback
-
     # Replace $HOOKS_DIR with absolute hooks directory path
     gobby_settings_str = gobby_settings_str.replace("$HOOKS_DIR", str(hooks_dir.resolve()))
 
-    # Also replace "uv run" with absolute uv path if found
-    # The template uses "uv run" by default
-    if uv_path != "uv":
-        gobby_settings_str = gobby_settings_str.replace("uv run", f"{uv_path} run")
-
     gobby_settings = json.loads(gobby_settings_str)
+    rewrite_hook_template_commands(
+        gobby_settings,
+        cli_name="gemini",
+        hooks_dir=hooks_dir,
+        uv_bin=which("uv") or "uv",
+    )
 
     # Ensure hooks section exists
     if "hooks" not in existing_settings:

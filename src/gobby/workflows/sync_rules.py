@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.utils.native_bin import resolve_native_bin
 from gobby.workflows.definitions import RuleDefinitionBody
 
 logger = logging.getLogger(__name__)
@@ -212,13 +213,7 @@ def resolve_sync_placeholders(definition_json: str) -> str:
 
 def _resolve_gsqz_bin() -> str:
     """Resolve the gsqz binary path."""
-    gobby_home = Path.home() / ".gobby" / "bin" / "gsqz"
-    if gobby_home.exists():
-        return str(gobby_home)
-    which_gsqz = shutil.which("gsqz")
-    if which_gsqz:
-        return which_gsqz
-    return "gsqz"
+    return resolve_native_bin("gsqz") or "gsqz"
 
 
 def _sync_single_rule(

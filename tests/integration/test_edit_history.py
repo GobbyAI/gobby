@@ -44,7 +44,7 @@ def test_edit_history_flow(temp_db) -> None:
     )
 
     # 4. Claim the task (EventHandlers checks for claimed tasks)
-    task_manager.update_task(task.id, assignee=session.id, status="in_progress")
+    task_manager.claim_task(task.id, session.id)
 
     # 5. Simulate Edit Tool execution
     # Ensure tool name is in EDIT_TOOLS (case insensitive test)

@@ -212,7 +212,16 @@ def _create_in_progress_task(
         task_type="task",
         project_id=project_id,
     )
-    task_manager.update_task(task.id, status="in_progress", assignee=assignee)
+    task_manager.db.execute(
+        """
+        UPDATE tasks
+        SET status = 'in_progress',
+            lifecycle_stage = 'in_progress',
+            assignee = ?
+        WHERE id = ?
+        """,
+        (assignee, task.id),
+    )
     return task.id
 
 
@@ -303,7 +312,16 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         task_type="task",
         project_id=PROJECT_ID,
     )
-    task_manager.update_task(task.id, status="needs_review", assignee="sess-does-not-exist")
+    task_manager.db.execute(
+        """
+        UPDATE tasks
+        SET status = 'needs_review',
+            lifecycle_stage = 'needs_review',
+            assignee = 'sess-does-not-exist'
+        WHERE id = ?
+        """,
+        (task.id,),
+    )
 
     recovered = await heartbeat_with_tasks.check_stale_tasks()
     assert recovered == 1

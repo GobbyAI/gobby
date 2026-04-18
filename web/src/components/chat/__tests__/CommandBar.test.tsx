@@ -4,11 +4,12 @@ import { render, screen } from "@testing-library/react";
 import { CommandBar } from "../CommandBar";
 
 describe("CommandBar", () => {
-  it("renders the active viewed-session title in the selector without inline session controls", () => {
+  it("renders the active viewed-session title in the selector without lower-bar state duplicated up top", () => {
     render(
       <CommandBar
         sessionRef="#42"
         title="Viewed web chat"
+        sessionSource="codex"
         onOpenPalette={vi.fn()}
         onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}
@@ -24,6 +25,7 @@ describe("CommandBar", () => {
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
       "Viewed web chat",
     );
+    expect(screen.queryByText("Watching live")).toBeNull();
     expect(screen.queryByText("Attach")).toBeNull();
     expect(screen.queryByText("Detach")).toBeNull();
   });

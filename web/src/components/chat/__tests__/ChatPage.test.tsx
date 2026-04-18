@@ -4,9 +4,18 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ChatState, ConversationState, VoiceProps } from "../../../types/chat";
 import { ChatPage } from "../ChatPage";
 
-const { clearArtifactsSpy, scrollToBottomSpy } = vi.hoisted(() => ({
+const {
+  clearArtifactsSpy,
+  scrollToBottomSpy,
+  setIsPinnedSpy,
+  togglePanelSpy,
+  isMobileState,
+} = vi.hoisted(() => ({
   clearArtifactsSpy: vi.fn(),
   scrollToBottomSpy: vi.fn(),
+  setIsPinnedSpy: vi.fn(),
+  togglePanelSpy: vi.fn(),
+  isMobileState: { value: false },
 }));
 
 vi.mock("../MessageList", async () => {
@@ -31,23 +40,54 @@ vi.mock("../ChatInput", () => ({
     disabled,
     disabledPlaceholder,
     disabledAriaLabel,
+    modeDisabled,
+    attachmentsDisabled,
+    agentPickerDisabled,
+    worktreePickerDisabled,
     provider,
     currentModel,
+    currentReasoning,
+    providerPickerDisabledReason,
+    onToggleActivityPanel,
+    isActivityPanelPinned,
   }: {
     proxyDeliveryNotice?: string | null;
     disabled?: boolean;
     disabledPlaceholder?: string;
     disabledAriaLabel?: string;
+    modeDisabled?: boolean;
+    attachmentsDisabled?: boolean;
+    agentPickerDisabled?: boolean;
+    worktreePickerDisabled?: boolean;
     provider?: string | null;
     currentModel?: string;
+    currentReasoning?: string;
+    providerPickerDisabledReason?: string | null;
+    onToggleActivityPanel?: () => void;
+    isActivityPanelPinned?: boolean;
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
       <span data-testid="chat-input-placeholder">{disabledPlaceholder ?? ""}</span>
       <span data-testid="chat-input-aria-label">{disabledAriaLabel ?? ""}</span>
       <span data-testid="chat-input-notice">{proxyDeliveryNotice ?? ""}</span>
+      <span data-testid="chat-input-mode-disabled">{String(Boolean(modeDisabled))}</span>
+      <span data-testid="chat-input-attachments-disabled">{String(Boolean(attachmentsDisabled))}</span>
+      <span data-testid="chat-input-agent-disabled">{String(Boolean(agentPickerDisabled))}</span>
+      <span data-testid="chat-input-worktree-disabled">{String(Boolean(worktreePickerDisabled))}</span>
       <span data-testid="chat-input-provider">{provider ?? ""}</span>
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
+      <span data-testid="chat-input-reasoning">{currentReasoning ?? ""}</span>
+      <span data-testid="chat-input-provider-disabled-reason">{providerPickerDisabledReason ?? ""}</span>
+      {onToggleActivityPanel && (
+        <button
+          type="button"
+          data-testid="chat-input-panel-toggle"
+          onClick={onToggleActivityPanel}
+        >
+          {isActivityPanelPinned ? "Hide panel" : "Show panel"}
+        </button>
+      )}
     </div>
   ),
 }));
@@ -74,9 +114,13 @@ vi.mock("../../activity/ActivityPanel", () => ({
   ActivityPanel: ({
     onSwapSession,
     chatSessionId,
+    onApprovePlan,
+    onRequestPlanChanges,
   }: {
     onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
     chatSessionId?: string | null
+    onApprovePlan?: () => void
+    onRequestPlanChanges?: (feedback: string) => void
   }) => (
     <div data-testid="activity-panel">
       <span data-testid="activity-panel-chat-session-id">
@@ -108,6 +152,20 @@ vi.mock("../../activity/ActivityPanel", () => ({
       >
         Swap Autonomous
       </button>
+      <button
+        type="button"
+        data-testid="approve-plan"
+        onClick={() => onApprovePlan?.()}
+      >
+        Approve Plan
+      </button>
+      <button
+        type="button"
+        data-testid="request-plan-changes"
+        onClick={() => onRequestPlanChanges?.("Needs changes")}
+      >
+        Request Changes
+      </button>
     </div>
   ),
 }));
@@ -118,20 +176,19 @@ vi.mock("../VoiceStatusBar", () => ({
 
 vi.mock("../AgentStatusBar", () => ({
   AgentStatusBar: ({
-    viewingMeta,
     isAttached,
     onAttach,
     onResume,
     onDetach,
+    onTogglePanel,
   }: {
-    viewingMeta: { title?: string | null; source: string };
     isAttached?: boolean;
     onAttach?: () => void;
     onResume?: () => void;
     onDetach?: () => void;
+    onTogglePanel?: () => void;
   }) => (
     <div data-testid="agent-status-bar">
-      <span>{viewingMeta.title ?? viewingMeta.source}</span>
       <span data-testid="agent-status-attached">{String(Boolean(isAttached))}</span>
       {onAttach && (
         <button type="button" data-testid="agent-status-attach" onClick={onAttach}>
@@ -148,12 +205,17 @@ vi.mock("../AgentStatusBar", () => ({
           Detach
         </button>
       )}
+      {onTogglePanel && (
+        <button type="button" data-testid="agent-status-panel-toggle" onClick={onTogglePanel}>
+          Toggle Panel
+        </button>
+      )}
     </div>
   ),
 }));
 
 vi.mock("../../../hooks/useIsMobile", () => ({
-  useIsMobile: () => false,
+  useIsMobile: () => isMobileState.value,
 }));
 
 vi.mock("../../../hooks/useArtifacts", () => ({
@@ -176,9 +238,10 @@ vi.mock("../../activity/useActivityPanel", () => ({
     isPinned: false,
     panelWidth: 320,
     setActiveTab: vi.fn(),
-    setIsPinned: vi.fn(),
+    setIsPinned: setIsPinnedSpy,
     setPanelWidth: vi.fn(),
     showTab: vi.fn(),
+    togglePanel: togglePanelSpy,
   }),
 }));
 
@@ -270,6 +333,7 @@ function createVoice(): VoiceProps {
 describe("ChatPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isMobileState.value = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -384,13 +448,12 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-status-bar")).toHaveTextContent(
-        "Observed Terminal",
-      );
+      expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
       expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
         "true",
       );
+      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -404,6 +467,49 @@ describe("ChatPage", () => {
       statusBar.compareDocumentPosition(chatInput) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("locks CLI-owned footer controls while proxy-attached and shows attached session settings", async () => {
+    render(
+      <ChatPage
+        chat={createChat({
+          provider: "claude",
+          attachedSessionId: "terminal-9",
+          sessionInteractionMode: "proxy",
+          activeAgent: "default",
+          currentBranch: "feature/local",
+          viewingSessionMeta: {
+            ref: "#59",
+            source: "codex",
+            title: "Attached Terminal",
+            status: "active",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            externalId: "term-59",
+            sessionType: "terminal",
+            gitBranch: "feature/attached",
+          },
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("chat-input-disabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("chat-input-mode-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-attachments-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-agent-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-worktree-disabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("chat-input-provider")).toHaveTextContent("codex");
+    expect(screen.getByTestId("chat-input-model")).toHaveTextContent("gpt-5.4");
+    expect(screen.getByTestId("chat-input-reasoning")).toHaveTextContent("high");
+    expect(screen.getByTestId("chat-input-provider-disabled-reason")).toHaveTextContent(
+      "Attached session owns provider, model, and reasoning",
+    );
   });
 
   it("treats a read-only swapped terminal as the main session for the activity panel", async () => {
@@ -448,6 +554,68 @@ describe("ChatPage", () => {
               status: "active",
               model: "claude-sonnet-4-6",
               externalId: "term-52",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+    });
+
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-attach")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows only Resume for swapped terminals that cannot proxy attach", async () => {
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-resume-only",
+            viewingSessionMeta: {
+              ref: "#153",
+              source: "gemini",
+              title: "Resume Only Terminal",
+              status: "handoff_ready",
+              canProxyAttach: false,
+              model: "gemini-2.5-pro",
+              externalId: "term-153",
+              sessionType: "terminal",
+            },
+            sessionInteractionMode: "observe",
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+        />,
+      );
+    });
+
+    expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-status-attach")).toBeNull();
+    expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
+  });
+
+  it("keeps Attach available for live handoff tmux sessions across providers", async () => {
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            viewingSessionId: "terminal-live-handoff",
+            viewingSessionMeta: {
+              ref: "#154",
+              source: "qwen",
+              title: "Live Handoff Terminal",
+              status: "handoff_ready",
+              canProxyAttach: true,
+              model: "qwen3-coder",
+              externalId: "term-154",
               sessionType: "terminal",
             },
             sessionInteractionMode: "observe",
@@ -527,7 +695,12 @@ describe("ChatPage", () => {
 
     fireEvent.click(screen.getByTestId("agent-status-resume"));
 
-    expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1");
+    expect(continueSessionInChat).toHaveBeenCalledWith("terminal-2", "proj-1", {
+      provider: "claude",
+      model: "sonnet",
+      reasoningEffort: "auto",
+      chatMode: null,
+    });
   });
 
   it("normalizes the input chip to a valid model for the active provider", async () => {
@@ -559,6 +732,23 @@ describe("ChatPage", () => {
         "sonnet",
       );
     });
+  });
+
+  it("renders the activity-panel toggle inside the chat input when the input is visible", async () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("chat-input-panel-toggle"));
+    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
   it("keeps non-autonomous terminal swaps in observe mode", async () => {
@@ -612,5 +802,50 @@ describe("ChatPage", () => {
     expect(continueSessionInChat).not.toHaveBeenCalled();
     expect(viewSession).toHaveBeenCalledWith("terminal-auto");
     expect(observeSession).toHaveBeenCalledWith("terminal-auto", "observe");
+  });
+
+  it("keeps the activity panel open after plan approval on desktop", async () => {
+    const onApprovePlan = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          planPendingApproval: true,
+          onApprovePlan,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("approve-plan"));
+    });
+
+    expect(onApprovePlan).toHaveBeenCalledTimes(1);
+    expect(setIsPinnedSpy).not.toHaveBeenCalled();
+  });
+
+  it("closes the activity panel after plan changes are requested on mobile", async () => {
+    isMobileState.value = true;
+    const onRequestPlanChanges = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          planPendingApproval: true,
+          onRequestPlanChanges,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("request-plan-changes"));
+    });
+
+    expect(onRequestPlanChanges).toHaveBeenCalledWith("Needs changes");
+    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
   });
 });

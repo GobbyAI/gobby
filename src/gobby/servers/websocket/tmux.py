@@ -13,6 +13,8 @@ import logging
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from uuid import uuid4
 
+from websockets.exceptions import ConnectionClosed
+
 from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
@@ -199,7 +201,10 @@ class TmuxMixin:
         if request_id:
             response["request_id"] = request_id
 
-        await websocket.send(json.dumps(response))
+        try:
+            await websocket.send(json.dumps(response))
+        except ConnectionClosed:
+            logger.debug("Client disconnected before tmux session list response was sent")
 
     async def _handle_tmux_attach(self, websocket: Any, data: dict[str, Any]) -> None:
         """Attach to a tmux session via PTY relay."""

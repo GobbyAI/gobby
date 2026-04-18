@@ -27,6 +27,8 @@ const sessions = [
     parent_session_id: null,
     session_type: "terminal",
     terminal_context: { session_name: "dev" },
+    sandbox_enabled: false,
+    sandbox_policy_hash: null,
   },
   {
     id: CURRENT_DB_SESSION_ID,
@@ -51,6 +53,8 @@ const sessions = [
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
+    sandbox_enabled: true,
+    sandbox_policy_hash: "policy-web",
   },
   {
     id: "web-other",
@@ -75,6 +79,8 @@ const sessions = [
     parent_session_id: null,
     session_type: "web_chat",
     terminal_context: null,
+    sandbox_enabled: true,
+    sandbox_policy_hash: "policy-web",
   },
 ];
 
@@ -211,7 +217,7 @@ test("activity panel shows non-current web chats with a web badge", async ({
     if (path === "/api/sessions") {
       const status = url.searchParams.get("status");
       const body =
-        status === "paused"
+        status === "paused" || status === "handoff_ready"
           ? { sessions: [] }
           : { sessions, total: sessions.length };
       await route.fulfill({
@@ -263,4 +269,5 @@ test("activity panel shows non-current web chats with a web badge", async ({
   );
   await expect(page.locator(".session-kind-badge--tmux")).toHaveText("tmux");
   await expect(page.locator(".session-kind-badge--web")).toHaveText("web");
+  await expect(page.locator(".session-kind-badge--sandbox")).toHaveText("SB");
 });

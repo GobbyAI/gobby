@@ -83,6 +83,22 @@ def _extract_session_id(payload: Any) -> str | None:
     return None
 
 
+def _compact_stderr(data: bytes | str | None, *, limit: int = 300) -> str | None:
+    """Return a compact single-line stderr snippet for startup diagnostics."""
+    if data is None:
+        return None
+    if isinstance(data, bytes):
+        text = data.decode(errors="replace")
+    else:
+        text = data
+    compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    if not compact:
+        return None
+    if len(compact) > limit:
+        return f"{compact[: limit - 3]}..."
+    return compact
+
+
 @dataclass
 class StreamEvent:
     """A normalized event from the provider ACP stream.
@@ -122,12 +138,16 @@ class GeminiACPClient:
         cli_name: str = "gemini",
         display_name: str = "Gemini",
         prompt_timeout_env: str = ACP_PROMPT_TIMEOUT_ENV,
+        extra_args: list[str] | None = None,
+        env_overrides: dict[str, str] | None = None,
     ) -> None:
         self._cli_path = cli_path
         self._cwd = cwd
         self._request_timeout = request_timeout
         self._cli_name = cli_name
         self._display_name = display_name
+        self._extra_args = list(extra_args or [])
+        self._env_overrides = dict(env_overrides or {})
         self._prompt_timeout = _resolve_timeout(
             prompt_timeout,
             env_name=prompt_timeout_env,
@@ -182,8 +202,12 @@ class GeminiACPClient:
         cmd = [path, "--acp"]
         if model:
             cmd.extend(["--model", model])
+        if self._extra_args:
+            cmd.extend(self._extra_args)
 
         env = os.environ.copy()
+        if self._env_overrides:
+            env.update(self._env_overrides)
         # Prevent inherited CLI hooks from registering nested daemon sessions.
         env["GOBBY_HOOKS_DISABLED"] = "1"
 
@@ -316,7 +340,11 @@ class GeminiACPClient:
                     f"after {self._request_timeout:.1f}s"
                 ) from exc
             if not line:
-                raise RuntimeError(f"EOF while waiting for {method} response")
+                message = f"EOF while waiting for {method} response"
+                stderr_text = await self._read_exit_stderr()
+                if stderr_text:
+                    message = f"{message}; stderr: {stderr_text}"
+                raise RuntimeError(message)
 
             line_str = line.decode().strip()
             if not line_str:
@@ -344,6 +372,21 @@ class GeminiACPClient:
                 if normalized.event_type == "init":
                     pending_session_id = _extract_session_id(normalized.data)
             logger.debug(f"Skipping notification during {method}: {data.get('method', 'unknown')}")
+
+    async def _read_exit_stderr(self) -> str | None:
+        """Read stderr when the subprocess has already exited."""
+        if not self._process or not self._process.stderr or self._process.returncode is None:
+            return None
+
+        try:
+            stderr_data = await asyncio.wait_for(self._process.stderr.read(), timeout=0.1)
+        except TimeoutError:
+            return None
+        except Exception:
+            logger.debug("%s ACP stderr read failed", self._display_name, exc_info=True)
+            return None
+
+        return _compact_stderr(stderr_data)
 
     async def send(
         self,

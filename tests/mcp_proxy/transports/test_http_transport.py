@@ -1,7 +1,8 @@
 """Tests for HTTP transport connection.
 
 Exercises the real HTTPTransportConnection code paths. Only the MCP SDK's
-streamablehttp_client and ClientSession are mocked (external I/O).
+streamable_http_client, create_mcp_http_client, and ClientSession are mocked
+(external I/O).
 """
 
 from __future__ import annotations
@@ -47,18 +48,26 @@ def _mock_session() -> AsyncMock:
 
 
 @asynccontextmanager
-async def _fake_streamablehttp(url: str, headers: dict | None = None):
-    """Async context manager mimicking streamablehttp_client."""
+async def _fake_streamable_http(url: str, http_client: Any | None = None):
+    """Async context manager mimicking streamable_http_client."""
     read = MagicMock()
     write = MagicMock()
     yield read, write, None
 
 
 @asynccontextmanager
-async def _fake_streamablehttp_error(url: str, headers: dict | None = None):
-    """streamablehttp_client that raises on entry."""
+async def _fake_streamable_http_error(url: str, http_client: Any | None = None):
+    """streamable_http_client that raises on entry."""
     raise ConnectionError("refused")
     yield  # noqa: E501 — unreachable but needed for generator syntax
+
+
+def _mock_http_client() -> AsyncMock:
+    """Create a mock AsyncClient that manages itself as an async context manager."""
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = False
+    return client
 
 
 # ---------------------------------------------------------------------------
@@ -130,26 +139,29 @@ class TestHTTPConnectAlreadyConnected:
 class TestHTTPConnectSuccess:
     @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.transports.http.ClientSession")
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_full_connect_lifecycle(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         mock_client_session_cls: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """Test that connect() goes through CONNECTING -> CONNECTED."""
         mock_session = _mock_session()
+        mock_http_client = _mock_http_client()
+        mock_http_client_factory.return_value = mock_http_client
 
-        # streamablehttp_client is used as `async with streamablehttp_client(...)`
-        # which means it returns an async context manager
         mock_read = MagicMock()
         mock_write = MagicMock()
 
         @asynccontextmanager
-        async def fake_client(url, headers=None):
+        async def fake_client(url, http_client=None):
+            assert http_client is mock_http_client
             yield mock_read, mock_write, None
 
-        mock_streamable.side_effect = fake_client
+        mock_streamable_http.side_effect = fake_client
 
         # ClientSession(read, write) returns context manager yielding session
         mock_session_instance = AsyncMock()
@@ -168,24 +180,28 @@ class TestHTTPConnectSuccess:
 
     @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.transports.http.ClientSession")
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_connect_passes_url_and_headers(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         mock_client_session_cls: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
-        """Verify url and headers from config are passed to streamablehttp_client."""
+        """Verify url and headers are passed through the managed HTTP client path."""
         captured_args: dict[str, Any] = {}
         mock_session = _mock_session()
+        mock_http_client = _mock_http_client()
+        mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def capture_client(url, headers=None):
+        async def capture_client(url, http_client=None):
             captured_args["url"] = url
-            captured_args["headers"] = headers
+            captured_args["http_client"] = http_client
             yield MagicMock(), MagicMock(), None
 
-        mock_streamable.side_effect = capture_client
+        mock_streamable_http.side_effect = capture_client
 
         mock_session_instance = AsyncMock()
         mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session)
@@ -194,8 +210,9 @@ class TestHTTPConnectSuccess:
 
         await conn.connect()
 
+        mock_http_client_factory.assert_called_once_with(headers={"Authorization": "Bearer tok"})
         assert captured_args["url"] == "http://localhost:8080/mcp"
-        assert captured_args["headers"] == {"Authorization": "Bearer tok"}
+        assert captured_args["http_client"] is mock_http_client
 
         await conn.disconnect()
 
@@ -208,21 +225,26 @@ class TestHTTPConnectSuccess:
 class TestHTTPConnectReconnect:
     @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.transports.http.ClientSession")
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_reconnect_cleans_old_task(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         mock_client_session_cls: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """If _owner_task already exists, connect() calls disconnect() first."""
         mock_session = _mock_session()
+        mock_http_client = _mock_http_client()
+        mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def fake_client(url, headers=None):
+        async def fake_client(url, http_client=None):
+            assert http_client is mock_http_client
             yield MagicMock(), MagicMock(), None
 
-        mock_streamable.side_effect = fake_client
+        mock_streamable_http.side_effect = fake_client
 
         mock_session_instance = AsyncMock()
         mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session)
@@ -355,20 +377,23 @@ class TestHTTPRunConnection:
             await conn._run_connection()
 
     @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_connection_exception_wraps_as_mcp_error(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """Non-MCPError exceptions get wrapped in MCPError."""
+        mock_http_client_factory.return_value = _mock_http_client()
 
         @asynccontextmanager
-        async def failing_client(url, headers=None):
+        async def failing_client(url, http_client=None):
             raise OSError("network down")
             yield  # noqa
 
-        mock_streamable.side_effect = failing_client
+        mock_streamable_http.side_effect = failing_client
 
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
@@ -382,21 +407,24 @@ class TestHTTPRunConnection:
         assert conn.state == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_mcp_error_not_double_wrapped(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """If exception is already MCPError, it's stored directly."""
         original = MCPError("original error")
+        mock_http_client_factory.return_value = _mock_http_client()
 
         @asynccontextmanager
-        async def failing_client(url, headers=None):
+        async def failing_client(url, http_client=None):
             raise original
             yield  # noqa
 
-        mock_streamable.side_effect = failing_client
+        mock_streamable_http.side_effect = failing_client
 
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
@@ -406,24 +434,27 @@ class TestHTTPRunConnection:
         assert conn._connection_error is original
 
     @pytest.mark.asyncio
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_empty_error_message_uses_type_name(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """Exceptions with empty str() get a type-name-based message."""
+        mock_http_client_factory.return_value = _mock_http_client()
 
         class SilentError(Exception):
             def __str__(self) -> str:
                 return ""
 
         @asynccontextmanager
-        async def failing_client(url, headers=None):
+        async def failing_client(url, http_client=None):
             raise SilentError()
             yield  # noqa
 
-        mock_streamable.side_effect = failing_client
+        mock_streamable_http.side_effect = failing_client
 
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
@@ -436,21 +467,26 @@ class TestHTTPRunConnection:
 
     @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.transports.http.ClientSession")
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_finally_clears_session_and_state(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         mock_client_session_cls: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """The finally block always resets _session, _session_context, and state."""
         mock_session = _mock_session()
+        mock_http_client = _mock_http_client()
+        mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def fake_client(url, headers=None):
+        async def fake_client(url, http_client=None):
+            assert http_client is mock_http_client
             yield MagicMock(), MagicMock(), None
 
-        mock_streamable.side_effect = fake_client
+        mock_streamable_http.side_effect = fake_client
 
         mock_session_instance = AsyncMock()
         mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session)
@@ -508,7 +544,7 @@ class TestHTTPCleanupOwnerTask:
 
     @pytest.mark.asyncio
     async def test_running_task_is_cancelled(self, conn: HTTPTransportConnection) -> None:
-        """A running task gets cancelled and awaited."""
+        """A running task is cancelled if it does not exit after the grace period."""
 
         async def long_running() -> None:
             await asyncio.sleep(100)
@@ -518,7 +554,11 @@ class TestHTTPCleanupOwnerTask:
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
 
-        await conn._cleanup_owner_task()
+        async def mock_wait(tasks, timeout=None):
+            return set(), set(tasks)
+
+        with patch.object(asyncio, "wait", side_effect=mock_wait):
+            await conn._cleanup_owner_task()
 
         assert conn._owner_task is None
         assert task.cancelled()
@@ -540,18 +580,20 @@ class TestHTTPCleanupOwnerTask:
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
 
-        # We need to trigger the TimeoutError path in _cleanup_owner_task.
-        # The code does: task.cancel() then await asyncio.wait_for(task, timeout=2.0)
-        # We patch asyncio.wait_for at the module level to raise TimeoutError directly.
+        async def mock_wait(tasks, timeout=None):
+            return set(), set(tasks)
+
         call_count = 0
 
         async def mock_wait_for(fut, timeout=None):
             nonlocal call_count
             call_count += 1
-            # The cleanup calls wait_for on the owner task - make it timeout
             raise TimeoutError()
 
-        with patch.object(asyncio, "wait_for", side_effect=mock_wait_for):
+        with (
+            patch.object(asyncio, "wait", side_effect=mock_wait),
+            patch.object(asyncio, "wait_for", side_effect=mock_wait_for),
+        ):
             await conn._cleanup_owner_task()
 
         assert conn._owner_task is None
@@ -604,22 +646,52 @@ class TestHTTPDisconnect:
         assert conn._session_ready is None
 
     @pytest.mark.asyncio
+    async def test_disconnect_waits_for_owner_task_to_exit(
+        self, conn: HTTPTransportConnection
+    ) -> None:
+        """disconnect() lets the owner task unwind before falling back to cancellation."""
+        task_finished = asyncio.Event()
+        conn._disconnect_event = asyncio.Event()
+        conn._session_ready = asyncio.Event()
+
+        async def cooperative_task() -> None:
+            assert conn._disconnect_event is not None
+            await conn._disconnect_event.wait()
+            task_finished.set()
+
+        task = asyncio.create_task(cooperative_task())
+        conn._owner_task = task
+
+        await conn.disconnect()
+
+        assert task_finished.is_set()
+        assert task.done()
+        assert not task.cancelled()
+        assert conn.state == ConnectionState.DISCONNECTED
+        assert conn._owner_task is None
+
+    @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.transports.http.ClientSession")
-    @patch("gobby.mcp_proxy.transports.http.streamablehttp_client")
+    @patch("gobby.mcp_proxy.transports.http.create_mcp_http_client")
+    @patch("gobby.mcp_proxy.transports.http.streamable_http_client")
     async def test_full_connect_then_disconnect(
         self,
-        mock_streamable: MagicMock,
+        mock_streamable_http: MagicMock,
+        mock_http_client_factory: MagicMock,
         mock_client_session_cls: MagicMock,
         conn: HTTPTransportConnection,
     ) -> None:
         """Integration: connect, verify connected, disconnect, verify disconnected."""
         mock_session = _mock_session()
+        mock_http_client = _mock_http_client()
+        mock_http_client_factory.return_value = mock_http_client
 
         @asynccontextmanager
-        async def fake_client(url, headers=None):
+        async def fake_client(url, http_client=None):
+            assert http_client is mock_http_client
             yield MagicMock(), MagicMock(), None
 
-        mock_streamable.side_effect = fake_client
+        mock_streamable_http.side_effect = fake_client
 
         mock_session_instance = AsyncMock()
         mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session)

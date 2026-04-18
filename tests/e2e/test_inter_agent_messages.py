@@ -107,7 +107,7 @@ class TestInterAgentMessagingE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert result.get("success") is True, f"send_message failed: {result}"
+        assert "error" not in result, f"send_message failed: {result}"
         assert "message" in result, f"No message in result: {result}"
         parent_to_child_msg_id = result["message"]["id"]
         assert parent_to_child_msg_id is not None
@@ -119,7 +119,7 @@ class TestInterAgentMessagingE2E:
             arguments={"target_session_id": child_session_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("success") is True, f"deliver_pending_messages failed: {result}"
+        assert "error" not in result, f"deliver_pending_messages failed: {result}"
         messages = result.get("messages", [])
         assert len(messages) >= 1, "Child should have received at least 1 message"
 
@@ -146,7 +146,7 @@ class TestInterAgentMessagingE2E:
             },
         )
         result = unwrap_result(raw_result)
-        assert result.get("success") is True, f"send_message failed: {result}"
+        assert "error" not in result, f"send_message failed: {result}"
         assert "message" in result, f"No message in result: {result}"
         child_to_parent_msg_id = result["message"]["id"]
         assert child_to_parent_msg_id is not None
@@ -158,7 +158,7 @@ class TestInterAgentMessagingE2E:
             arguments={"target_session_id": parent_session_id},
         )
         result = unwrap_result(raw_result)
-        assert result.get("success") is True, f"deliver_pending_messages (parent) failed: {result}"
+        assert "error" not in result, f"deliver_pending_messages (parent) failed: {result}"
         parent_messages = result.get("messages", [])
         assert len(parent_messages) >= 1, "Parent should have received at least 1 message"
 
@@ -212,7 +212,7 @@ class TestInterAgentMessagingE2E:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True
+        assert "error" not in result, f"deliver_pending_messages failed: {result}"
         assert result.get("messages", []) == []
         assert result.get("count", 0) == 0
 

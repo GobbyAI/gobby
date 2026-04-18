@@ -176,6 +176,7 @@ def validate_task_cmd(
             "validation_feedback": result.feedback,
         }
         MAX_RETRIES = 3
+        escalation_reason: str | None = None
 
         if result.status == "valid":
             manager.close_task(resolved.id, reason="Completed via validation")
@@ -199,19 +200,15 @@ def validate_task_cmd(
                 ) + f"\n\nCreated fix task: {fix_task.id}"
                 click.echo(f"Created fix task: {fix_task.id}")
             else:
-                from datetime import UTC, datetime
-
-                validation_updates["status"] = "escalated"
-                validation_updates["escalated_at"] = datetime.now(UTC).isoformat()
-                validation_updates["escalation_reason"] = (
-                    f"exceeded_validation_retries ({MAX_RETRIES})"
-                )
+                escalation_reason = f"exceeded_validation_retries ({MAX_RETRIES})"
                 validation_updates["validation_feedback"] = (
                     result.feedback or ""
                 ) + f"\n\nExceeded max retries ({MAX_RETRIES}). Escalated for human intervention."
                 click.echo("Exceeded max retries. Task ESCALATED for human intervention.")
 
         manager.update_task(resolved.id, **validation_updates)
+        if escalation_reason is not None:
+            manager.escalate_task(resolved.id, reason=escalation_reason)
 
     except Exception as e:
         click.echo(f"Validation error: {e}", err=True)

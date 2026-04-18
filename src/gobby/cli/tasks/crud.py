@@ -578,16 +578,12 @@ def show_task(task_id: str) -> None:
 @click.command("update")
 @click.argument("task_id", metavar="TASK")
 @click.option("--title", "-T", help="New title")
-@click.option("--status", "-s", help="New status")
 @click.option("--priority", type=int, help="New priority")
-@click.option("--assignee", "-a", help="New assignee")
 @click.option("--parent", "parent_task_id", help="Parent task (#N, path, or UUID)")
 def update_task(
     task_id: str,
     title: str | None,
-    status: str | None,
     priority: int | None,
-    assignee: str | None,
     parent_task_id: str | None,
 ) -> None:
     """Update a task.
@@ -612,12 +608,8 @@ def update_task(
     kwargs: dict[str, Any] = {}
     if title is not None:
         kwargs["title"] = title
-    if status is not None:
-        kwargs["status"] = status
     if priority is not None:
         kwargs["priority"] = priority
-    if assignee is not None:
-        kwargs["assignee"] = assignee
     if resolved_parent_id is not None:
         kwargs["parent_task_id"] = resolved_parent_id
 

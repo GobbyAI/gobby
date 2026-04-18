@@ -82,7 +82,7 @@ Ask: "What task or epic should the orchestrator target? Enter a ref (#N) or 'new
 
 Ask: "How should subtasks be created?"
 - **(a) Run expand-task pipeline now** — Will block until expansion completes (~2-5 min)
-- **(b) Provide a plan file** — Path to .md plan file for the expander to use
+- **(b) Provide a plan file** — Path to a .md plan file for the expansion run to use
 - **(c) Skip** — Subtasks already exist under this epic
 
 If (a): Run expand-task pipeline with `wait_for_completion: true`:

@@ -1,7 +1,7 @@
 """Embedding-based search backend.
 
 This module provides embedding-based semantic search using cosine similarity.
-It stores embeddings in memory and uses LiteLLM for embedding generation.
+It stores embeddings in memory and uses an OpenAI-compatible embeddings API.
 """
 
 from __future__ import annotations
@@ -40,15 +40,15 @@ def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
 
 
 class EmbeddingBackend:
-    """Embedding-based search backend using LiteLLM.
+    """Embedding-based search backend using an OpenAI-compatible API.
 
     This backend generates embeddings for indexed items and uses
     cosine similarity for search. Embeddings are stored in memory.
 
-    Supports all providers supported by LiteLLM:
+    Supports OpenAI-compatible providers such as:
     - OpenAI (text-embedding-3-small)
-    - Ollama (openai/nomic-embed-text with api_base)
-    - Azure, Gemini, Mistral, etc.
+    - Ollama (nomic-embed-text with api_base)
+    - LM Studio and other local routers
 
     Example:
         backend = EmbeddingBackend(
@@ -68,7 +68,7 @@ class EmbeddingBackend:
         """Initialize embedding backend.
 
         Args:
-            model: LiteLLM model string
+            model: Embedding model name exposed by the target endpoint
             api_base: Optional API base URL for custom endpoints
             api_key: Optional API key (uses env var if not set)
         """

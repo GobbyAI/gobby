@@ -13,6 +13,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
@@ -89,6 +90,8 @@ class TestGetConfigValues:
         assert "secret_keys" in data
         assert data["values"]["daemon_port"] == 60887
         assert "websocket" in data["values"]
+        assert "web_chat_sandbox" in data["values"]
+        assert "agent_sandbox" in data["values"]
 
     def test_values_contain_expected_keys(
         self, client: TestClient, real_config: DaemonConfig
@@ -132,6 +135,31 @@ class TestSaveConfigValues:
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+    def test_save_daemon_owned_sandbox_values_to_config_store(
+        self, client: TestClient, temp_db
+    ) -> None:
+        """Daemon-owned sandbox config should persist through the config store."""
+        response = client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "web_chat_sandbox": {
+                        "enabled": False,
+                        "extra_write_paths": ["/tmp/web-chat-cache"],
+                    },
+                    "agent_sandbox": {
+                        "extra_read_paths": ["/tmp/agent-read"],
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        store = ConfigStore(temp_db)
+        assert store.get("web_chat_sandbox.enabled") is False
+        assert store.get("web_chat_sandbox.extra_write_paths") == ["/tmp/web-chat-cache"]
+        assert store.get("agent_sandbox.extra_read_paths") == ["/tmp/agent-read"]
 
     def test_save_invalid_values_returns_400(self, client: TestClient) -> None:
         """Invalid config values cause a 400."""
@@ -257,6 +285,61 @@ class TestSaveTemplate:
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# UI settings + approval rules
+# ---------------------------------------------------------------------------
+
+
+class TestUISettingsPostPlanMode:
+    def test_ui_settings_round_trip_includes_post_plan_mode(
+        self, client: TestClient, temp_db
+    ) -> None:
+        response = client.put(
+            "/api/config/ui-settings",
+            json={
+                "fontSize": 18,
+                "defaultChatMode": "plan",
+                "postPlanChatMode": "bypass",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+
+        get_response = client.get("/api/config/ui-settings")
+        assert get_response.status_code == 200
+        assert get_response.json()["fontSize"] == 18
+        assert get_response.json()["defaultChatMode"] == "plan"
+        assert get_response.json()["postPlanChatMode"] == "bypass"
+
+        store = ConfigStore(temp_db)
+        assert store.get("ui_settings.postPlanChatMode") == "bypass"
+
+
+class TestGlobalToolApprovalRules:
+    def test_get_global_tool_approval_rules_defaults(self, client: TestClient) -> None:
+        response = client.get("/api/config/tool-approvals/global")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["rules"] == list(DEFAULT_GLOBAL_APPROVAL_RULES)
+        assert data["default_rules"] == list(DEFAULT_GLOBAL_APPROVAL_RULES)
+        assert "mcp:gobby*:*" in data["built_in_exemptions"]
+
+    def test_save_global_tool_approval_rules_normalizes(self, client: TestClient, temp_db) -> None:
+        response = client.put(
+            "/api/config/tool-approvals/global",
+            json={
+                "rules": [" tool:Write ", "tool:Write", "", "mcp:third-party:*"],
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["rules"] == ["tool:Write", "mcp:third-party:*"]
+
+        store = ConfigStore(temp_db)
+        assert store.get("tool_approvals.global_rules") == ["tool:Write", "mcp:third-party:*"]
 
     def test_save_invalid_yaml_syntax(self, client: TestClient) -> None:
         response = client.put(
@@ -671,23 +754,23 @@ class TestSecretAwareConfig:
         """PUT with a secret-pattern key encrypts via SecretStore."""
         response = client.put(
             "/api/config/values",
-            json={"values": {"voice": {"elevenlabs_api_key": "sk-test-789"}}},
+            json={"values": {"service": {"provider_api_key": "sk-test-789"}}},
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
         # Verify the config_store has the $secret: reference
         store = ConfigStore(temp_db)
-        raw = store.get("voice.elevenlabs_api_key")
+        raw = store.get("service.provider_api_key")
         assert raw is not None
         assert raw.startswith("$secret:")
 
         # Verify it's flagged as secret
-        assert "voice.elevenlabs_api_key" in store.get_secret_keys()
+        assert "service.provider_api_key" in store.get_secret_keys()
 
         # Verify the actual value is encrypted in secrets table
         secret_store = SecretStore(temp_db)
-        decrypted = secret_store.get("elevenlabs_api_key")
+        decrypted = secret_store.get("provider_api_key")
         assert decrypted == "sk-test-789"
 
     def test_put_masked_value_skipped(self, client: TestClient, temp_db, mock_machine_id) -> None:
@@ -695,34 +778,34 @@ class TestSecretAwareConfig:
         # First set a secret
         store = ConfigStore(temp_db)
         secret_store = SecretStore(temp_db)
-        store.set_secret("voice.elevenlabs_api_key", "sk-original", secret_store)
+        store.set_secret("service.provider_api_key", "sk-original", secret_store)
 
         # Now PUT with masked value
         response = client.put(
             "/api/config/values",
-            json={"values": {"voice": {"elevenlabs_api_key": "********"}}},
+            json={"values": {"service": {"provider_api_key": "********"}}},
         )
         assert response.status_code == 200
 
         # Original secret should be unchanged
-        decrypted = secret_store.get("elevenlabs_api_key")
+        decrypted = secret_store.get("provider_api_key")
         assert decrypted == "sk-original"
 
     def test_put_empty_secret_clears(self, client: TestClient, temp_db, mock_machine_id) -> None:
         """PUT with empty string for a secret key clears it."""
         store = ConfigStore(temp_db)
         secret_store = SecretStore(temp_db)
-        store.set_secret("voice.elevenlabs_api_key", "sk-to-delete", secret_store)
+        store.set_secret("service.provider_api_key", "sk-to-delete", secret_store)
 
         response = client.put(
             "/api/config/values",
-            json={"values": {"voice": {"elevenlabs_api_key": ""}}},
+            json={"values": {"service": {"provider_api_key": ""}}},
         )
         assert response.status_code == 200
 
         # Secret should be cleared
-        assert store.get("voice.elevenlabs_api_key") is None
-        assert secret_store.get("elevenlabs_api_key") is None
+        assert store.get("service.provider_api_key") is None
+        assert secret_store.get("provider_api_key") is None
 
     def test_get_values_masks_set_secret(
         self, client: TestClient, temp_db, mock_machine_id
@@ -745,13 +828,13 @@ class TestSecretAwareConfig:
         """Export bundle includes config_secret_keys list."""
         store = ConfigStore(temp_db)
         secret_store = SecretStore(temp_db)
-        store.set_secret("voice.elevenlabs_api_key", "sk-export", secret_store)
+        store.set_secret("service.provider_api_key", "sk-export", secret_store)
 
         response = client.post("/api/config/export")
         assert response.status_code == 200
         data = response.json()
         assert "config_secret_keys" in data
-        assert "voice.elevenlabs_api_key" in data["config_secret_keys"]
+        assert "service.provider_api_key" in data["config_secret_keys"]
 
     def test_import_restores_secret_flags(self, client: TestClient, temp_db) -> None:
         """Import with config_secret_keys restores is_secret flags."""
@@ -760,15 +843,15 @@ class TestSecretAwareConfig:
             json={
                 "config_store": {
                     "daemon_port": 9999,
-                    "voice.elevenlabs_api_key": "$secret:elevenlabs_api_key",
+                    "service.provider_api_key": "$secret:provider_api_key",
                 },
-                "config_secret_keys": ["voice.elevenlabs_api_key"],
+                "config_secret_keys": ["service.provider_api_key"],
             },
         )
         assert response.status_code == 200
 
         store = ConfigStore(temp_db)
-        assert "voice.elevenlabs_api_key" in store.get_secret_keys()
+        assert "service.provider_api_key" in store.get_secret_keys()
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -243,6 +243,7 @@ class TestContinueInChatTerminalKill:
             project_id=None,
             resume_session_id=None,
             provider=None,
+            reasoning_effort=None,
         ):
             return mock_chat_session
 
@@ -288,7 +289,10 @@ class TestContinueInChatTerminalKill:
             session_type="web_chat",
             status="active",
             title="CLI Session",
+            terminal_context={},
             project_id="proj-1",
+            sandbox_enabled=True,
+            sandbox_policy_hash=ANY,
         )
         session_manager.update_parent_session_id.assert_not_called()
 
@@ -334,6 +338,7 @@ class TestContinueInChatTerminalKill:
             project_id=None,
             resume_session_id=None,
             provider=None,
+            reasoning_effort=None,
         ):
             return mock_chat_session
 
@@ -430,14 +435,21 @@ class TestContinueInChatTerminalKill:
             captured["project_id"] = project_id
             captured["resume_session_id"] = resume_session_id
             captured["reasoning_effort"] = reasoning_effort
+            mock_chat_session.reasoning_effort = reasoning_effort
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
 
-        with patch(
-            "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.get_by_session",
+                return_value=None,
+            ),
         ):
             await SessionControlMixin._handle_continue_in_chat(
                 host,
@@ -479,7 +491,7 @@ class TestContinueInChatTerminalKill:
         source_session.title = "Terminal Session"
         source_session.chat_mode = "accept_edits"
         source_session.model = "gpt-5.4"
-        source_session.terminal_context = None
+        source_session.terminal_context = {"parent_pid": 29084, "tmux_pane": "%155"}
 
         converted_session = MagicMock()
         converted_session.id = "source-uuid"
@@ -515,14 +527,21 @@ class TestContinueInChatTerminalKill:
             captured["project_id"] = project_id
             captured["resume_session_id"] = resume_session_id
             captured["reasoning_effort"] = reasoning_effort
+            mock_chat_session.reasoning_effort = reasoning_effort
             return mock_chat_session
 
         host._create_chat_session = fake_create_chat_session
 
-        with patch(
-            "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.get_by_session",
+                return_value=None,
+            ),
         ):
             await SessionControlMixin._handle_continue_in_chat(
                 host,
@@ -544,7 +563,10 @@ class TestContinueInChatTerminalKill:
             session_type="web_chat",
             status="active",
             title="Terminal Session",
+            terminal_context={},
             project_id="proj-1",
+            sandbox_enabled=True,
+            sandbox_policy_hash=ANY,
         )
         session_manager.update_parent_session_id.assert_not_called()
 
@@ -555,6 +577,193 @@ class TestContinueInChatTerminalKill:
         assert response["db_session_id"] == "source-uuid"
         assert response["session_type"] == "web_chat"
         assert response["model"] == "gpt-5.4"
+
+    @pytest.mark.asyncio
+    async def test_continue_in_chat_applies_requested_chat_mode_and_reasoning(self) -> None:
+        """Requested mode/reasoning should override stale defaults during resume."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "terminal"
+        source_session.external_id = None
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "codex"
+        source_session.title = "Terminal Session"
+        source_session.chat_mode = "plan"
+        source_session.model = "gpt-5.4"
+        source_session.terminal_context = None
+
+        converted_session = MagicMock()
+        converted_session.id = "source-uuid"
+        converted_session.session_type = "web_chat"
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.update = MagicMock(return_value=converted_session)
+        session_manager.update_parent_session_id = MagicMock()
+
+        mock_chat_session = MagicMock()
+        mock_chat_session.db_session_id = "source-uuid"
+        mock_chat_session.seq_num = 88
+        mock_chat_session.chat_mode = "plan"
+        mock_chat_session.reasoning_effort = None
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+
+        captured: dict[str, object] = {}
+
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+            reasoning_effort=None,
+        ):
+            captured["conversation_id"] = conv_id
+            captured["provider"] = provider
+            captured["model"] = model
+            captured["project_id"] = project_id
+            captured["resume_session_id"] = resume_session_id
+            captured["reasoning_effort"] = reasoning_effort
+            mock_chat_session.reasoning_effort = reasoning_effort
+            return mock_chat_session
+
+        host._create_chat_session = fake_create_chat_session
+
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.get_by_session",
+                return_value=None,
+            ),
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv-id",
+                    "chat_mode": "accept_edits",
+                    "reasoning_effort": "high",
+                },
+            )
+
+        assert captured["reasoning_effort"] == "high"
+        session_manager.update.assert_called_once_with(
+            "source-uuid",
+            source="codex",
+            model="gpt-5.4",
+            chat_mode="accept_edits",
+            session_type="web_chat",
+            status="active",
+            title="Terminal Session",
+            terminal_context={},
+            project_id="proj-1",
+            sandbox_enabled=True,
+            sandbox_policy_hash=ANY,
+        )
+        assert mock_chat_session.chat_mode == "accept_edits"
+        assert mock_chat_session.reasoning_effort == "high"
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["chat_mode"] == "accept_edits"
+        assert response["reasoning_effort"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_continue_in_chat_drops_sdk_resume_when_web_chat_policy_mismatches(self) -> None:
+        """Web-chat continuations should fork instead of SDK-resuming across policy changes."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.session_type = "web_chat"
+        source_session.external_id = "sdk-session-123"
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "claude"
+        source_session.title = "Old Web Chat"
+        source_session.chat_mode = "plan"
+        source_session.model = "sonnet"
+        source_session.terminal_context = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(side_effect=lambda session_id: source_session if session_id == "source-uuid" else None)
+        session_manager.update = MagicMock()
+        session_manager.update_parent_session_id = MagicMock()
+
+        mock_chat_session = MagicMock()
+        mock_chat_session.db_session_id = "new-db-id"
+        mock_chat_session.seq_num = 88
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+        host.web_chat_runtime_manager = MagicMock()
+        host.web_chat_runtime_manager.policy_mismatch_reason.return_value = (
+            "This chat was created under a different sandbox policy. Continue it in a new chat."
+        )
+        host.web_chat_runtime_manager.sandbox_config.enabled = True
+        host.web_chat_runtime_manager.sandbox_policy_hash = "policy-new"
+
+        captured: dict[str, object] = {}
+
+        async def fake_create_chat_session(
+            conv_id,
+            model=None,
+            project_id=None,
+            resume_session_id=None,
+            provider=None,
+            reasoning_effort=None,
+        ):
+            captured["conversation_id"] = conv_id
+            captured["resume_session_id"] = resume_session_id
+            captured["provider"] = provider
+            return mock_chat_session
+
+        host._create_chat_session = fake_create_chat_session
+
+        with patch(
+            "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv-id",
+                },
+            )
+
+        assert captured["conversation_id"] == "new-conv-id"
+        assert captured["resume_session_id"] is None
+        session_manager.update_parent_session_id.assert_called_once_with("new-db-id", "source-uuid")
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["resumed"] is False
+        assert response["resume_notice"] == (
+            "This chat was created under a different sandbox policy. Continue it in a new chat."
+        )
 
     @pytest.mark.asyncio
     async def test_attach_to_session_returns_extended_metadata(self) -> None:
@@ -603,9 +812,56 @@ class TestContinueInChatTerminalKill:
         response = json.loads(payload)
         assert response["type"] == "attach_to_session_result"
         assert response["session_type"] == "terminal"
+        assert response["can_proxy_attach"] is True
         assert response["workflow_name"] == "release-checks"
         assert response["agent_run_id"] == "run-auto-1"
         assert response["agent_name"] == "code-reviewer"
+
+    @pytest.mark.asyncio
+    async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:
+        """Live tmux metadata should keep resume-only terminal rows attachable."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-456"
+        source_session.seq_num = 43
+        source_session.source = "gemini"
+        source_session.title = "Handoff Session"
+        source_session.status = "handoff_ready"
+        source_session.model = "gemini-2.5-pro"
+        source_session.chat_mode = "plan"
+        source_session.git_branch = "main"
+        source_session.context_window = 1_000_000
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {"tmux_pane": "%9"}
+        source_session.workflow_name = None
+        source_session.agent_run_id = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {}}
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_attach_to_session(
+            host,
+            ws,
+            {"session_id": "source-uuid"},
+        )
+
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "attach_to_session_result"
+        assert response["status"] == "handoff_ready"
+        assert response["can_proxy_attach"] is True
 
     @pytest.mark.asyncio
     async def test_attach_to_session_rejects_web_chat_sessions(self) -> None:
@@ -736,3 +992,33 @@ class TestContinueInChatTerminalKill:
         assert response["delivered"] is True
         assert response["delivery_method"] == "tmux"
         assert response["message_id"] == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_rebroadcast_pending_interactions_skips_missing_interaction_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.servers.websocket.session_control import SessionControlMixin
+
+    websocket = MagicMock()
+    websocket.send = AsyncMock()
+
+    manager = MagicMock()
+    manager.rebroadcast = AsyncMock(
+        return_value=[
+            {"kind": "tool", "tool_name": "Write", "arguments": {}},
+            {"interaction_id": "int-1", "kind": "tool", "tool_name": "Write", "arguments": {}},
+        ]
+    )
+
+    host = MagicMock()
+    host._pending_interaction_manager = manager
+    host._chat_sessions = {"conv-1": MagicMock(db_session_id="db-sess-1")}
+
+    with caplog.at_level("WARNING"):
+        await SessionControlMixin._rebroadcast_pending_interactions(host, websocket, ["conv-1"])
+
+    websocket.send.assert_awaited_once()
+    payload = json.loads(websocket.send.await_args.args[0])
+    assert payload["tool_call_id"] == "int-1"
+    assert "Skipping pending interaction missing interaction_id" in caplog.text

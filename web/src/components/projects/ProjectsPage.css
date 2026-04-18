@@ -780,3 +780,19 @@
   color: white;
   border-color: #991b1b;
 }
+
+.projects-settings-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.projects-settings-rule-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.projects-settings-rule-row .projects-settings-delete {
+  min-width: 96px;
+}

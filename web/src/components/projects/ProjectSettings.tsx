@@ -1,9 +1,23 @@
 import { useState, useCallback } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
 
+type ApprovalRuleRow = { id: string; value: string }
+
+function createApprovalRuleRow(value = ''): ApprovalRuleRow {
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `project-approval-rule-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return { id, value }
+}
+
+function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
+  return rules.map((rule) => createApprovalRuleRow(rule))
+}
+
 interface ProjectSettingsProps {
   project: ProjectWithStats
-  onSave: (fields: Record<string, string | null>) => Promise<boolean>
+  onSave: (fields: Record<string, string | string[] | null>) => Promise<boolean>
   onDelete: () => Promise<boolean>
 }
 
@@ -11,6 +25,9 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
   const [githubUrl, setGithubUrl] = useState(project.github_url ?? '')
   const [githubRepo, setGithubRepo] = useState(project.github_repo ?? '')
   const [linearTeamId, setLinearTeamId] = useState(project.linear_team_id ?? '')
+  const [approvalRules, setApprovalRules] = useState<ApprovalRuleRow[]>(
+    () => toApprovalRuleRows(project.approval_rules ?? []),
+  )
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -25,6 +42,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
       github_url: githubUrl || null,
       github_repo: githubRepo || null,
       linear_team_id: linearTeamId || null,
+      approval_rules: approvalRules.map((rule) => rule.value.trim()).filter(Boolean),
     })
     setSaving(false)
     setMessage(ok
@@ -32,7 +50,7 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
       : { type: 'error', text: 'Failed to save settings' }
     )
     if (ok) setTimeout(() => setMessage(null), 3000)
-  }, [githubUrl, githubRepo, linearTeamId, onSave])
+  }, [approvalRules, githubUrl, githubRepo, linearTeamId, onSave])
 
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) {
@@ -101,6 +119,56 @@ export function ProjectSettings({ project, onSave, onDelete }: ProjectSettingsPr
           )}
         </div>
       </div>
+
+      {project.repo_path && (
+        <div className="projects-settings-section">
+          <h3 className="projects-settings-heading">Tool Approvals</h3>
+          <p className="projects-settings-desc">
+            Project-scoped auto-allow rules live in <code>.gobby/project.json</code>.
+          </p>
+
+          <div className="projects-settings-rules">
+            {approvalRules.map((rule, index) => (
+              <div key={rule.id} className="projects-settings-rule-row">
+                <input
+                  type="text"
+                  className="projects-settings-input"
+                  value={rule.value}
+                  onChange={(e) =>
+                    setApprovalRules((prev) =>
+                      prev.map((ruleItem, i) =>
+                        i === index ? { ...ruleItem, value: e.target.value } : ruleItem,
+                      ),
+                    )
+                  }
+                  placeholder="tool:Write or mcp:gobby-tasks:*"
+                />
+                <button
+                  type="button"
+                  className="projects-settings-delete"
+                  onClick={() =>
+                    setApprovalRules((prev) => prev.filter((_, i) => i !== index))
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="projects-settings-actions">
+            <button
+              type="button"
+              className="projects-settings-save"
+              onClick={() =>
+                setApprovalRules((prev) => [...prev, createApprovalRuleRow('')])
+              }
+            >
+              Add Rule
+            </button>
+          </div>
+        </div>
+      )}
 
       {!isProtected && (
         <div className="projects-settings-section projects-settings-danger">

@@ -177,11 +177,11 @@ class LinearSyncService:
             if existing:
                 # Update existing task
                 gobby_status = self.map_linear_status_to_gobby(state_name)
-                self.task_manager.update_task(
+                self.task_manager.reconcile_task_state(
                     existing["id"],
+                    status=gobby_status,
                     title=title,
                     description=description,
-                    status=gobby_status,
                     priority=priority_val,
                 )
                 task = self.task_manager.get_task(existing["id"])
@@ -353,11 +353,11 @@ class LinearSyncService:
                 gobby_status = self.map_linear_status_to_gobby(state_name)
                 priority_val = issue.get("priority", 2)
 
-                self.task_manager.update_task(
+                self.task_manager.reconcile_task_state(
                     task_id,
+                    status=gobby_status,
                     title=issue.get("title", ""),
                     description=issue.get("description", ""),
-                    status=gobby_status,
                     priority=priority_val,
                 )
                 stats["updated"] += 1

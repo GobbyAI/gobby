@@ -68,7 +68,8 @@ class TestCanUseTool:
         await task
 
         assert isinstance(result, PermissionResultAllow)
-        assert session.chat_mode == "accept_edits"
+        assert session.chat_mode == "plan"
+        assert session._plan_approved is True
 
     @pytest.mark.asyncio
     async def test_exit_plan_mode_blocking_rejection(self, session: ChatSession) -> None:
@@ -187,43 +188,63 @@ class TestCanUseTool:
 class TestNeedsToolApproval:
     def test_bypass_mode(self, session: ChatSession) -> None:
         session.chat_mode = "bypass"
-        assert not session._needs_tool_approval("Write")
+        assert not session._needs_tool_approval("Write", {"file_path": "main.py"})
 
     def test_accept_edits_mode(self, session: ChatSession) -> None:
         session.chat_mode = "accept_edits"
-        assert not session._needs_tool_approval("Write")
-        assert not session._needs_tool_approval("Edit")
-        assert not session._needs_tool_approval("NotebookEdit")
-        assert not session._needs_tool_approval("exec_command")
-        assert not session._needs_tool_approval("mcp__gobby__list_tools")  # Safe MCP
-        assert session._needs_tool_approval("SomeRandomTool")  # Needs approval
+        assert session._needs_tool_approval("Write", {"file_path": "main.py"})
+        assert session._needs_tool_approval("Edit", {"file_path": "main.py"})
+        assert session._needs_tool_approval("NotebookEdit", {"notebook_path": "main.ipynb"})
+        assert session._needs_tool_approval("exec_command", {"command": "pytest"})
+        assert not session._needs_tool_approval("Read", {"file_path": "main.py"})
+        assert not session._needs_tool_approval("mcp__gobby__list_tools", {})
 
-    def test_normal_mode_config_disabled(self, session: ChatSession) -> None:
+    def test_normal_mode_default_read_allowlist(self, session: ChatSession) -> None:
         session.chat_mode = "normal"
-        config = MagicMock()
-        config.enabled = False
-        session._tool_approval_config = config
-        assert not session._needs_tool_approval("Write")
+        assert not session._needs_tool_approval("Read", {"file_path": "main.py"})
+        assert not session._needs_tool_approval("Glob", {"pattern": "**/*.py"})
+        assert not session._needs_tool_approval("Grep", {"pattern": "ChatMode"})
+        assert not session._needs_tool_approval("Ls", {"path": "."})
+        assert session._needs_tool_approval("Write", {"file_path": "main.py"})
 
-    def test_normal_mode_config_enabled_policies(self, session: ChatSession) -> None:
+    def test_normal_mode_shared_allowlists(self, session: ChatSession) -> None:
         session.chat_mode = "normal"
-        config = MagicMock()
-        config.enabled = True
-        config.default_policy = "ask"
+        session._approved_tools = {"tool:Write", "mcp:third-party:search_docs"}
+        assert not session._needs_tool_approval("Write", {"file_path": "main.py"})
+        assert not session._needs_tool_approval(
+            "mcp__third-party__search_docs",
+            {},
+        )
+        assert not session._needs_tool_approval("mcp__gobby__do_thing", {})
+        assert session._needs_tool_approval("mcp__other__do_thing", {})
 
-        # Add an auto policy for mcp__gobby__*
-        policy = MagicMock()
-        policy.server_pattern = "gobby"
-        policy.tool_pattern = "*"
-        policy.policy = "auto"
-        config.policies = [policy]
+    def test_normal_mode_gsqz_passthrough_requires_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
 
-        session._tool_approval_config = config
+        assert session._needs_tool_approval(
+            "Bash",
+            {
+                "command": "/Users/josh/.gobby/bin/gsqz -- 'printf %s ok > /tmp/gsqz-approval.txt'",
+            },
+        )
 
-        # Test tool matching policy
-        assert not session._needs_tool_approval("mcp__gobby__do_thing")
-        # Test tool hitting default policy
-        assert session._needs_tool_approval("mcp__other__do_thing")
+    def test_normal_mode_safe_gsqz_input_skips_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert not session._needs_tool_approval(
+            "Bash",
+            {
+                "command": "env GOBBY_LEVEL=standard /Users/josh/.gobby/bin/gsqz input --level standard --stats",
+            },
+        )
+
+    def test_normal_mode_gsqz_version_skips_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert not session._needs_tool_approval(
+            "Bash",
+            {"command": "/Users/josh/.gobby/bin/gsqz --version"},
+        )
 
 
 class TestDangerousPatterns:
@@ -295,8 +316,8 @@ class TestWaitForToolApproval:
         result = await session._wait_for_tool_approval("Bash", {"command": "ls"})
 
         assert isinstance(result, PermissionResultAllow)
-        assert "Bash" in session._approved_tools
-        session._on_approved_tools_persist.assert_called_once_with({"Bash"})
+        assert "tool:Bash" in session._approved_tools
+        session._on_approved_tools_persist.assert_called_once_with({"tool:Bash"})
 
 
 class TestConsumePlanModeContext:

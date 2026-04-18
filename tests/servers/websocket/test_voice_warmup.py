@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -73,3 +74,43 @@ class TestVoiceWarmup:
         assert status["voice_ready"] is False
         assert status["tts_warmup_status"] == "error"
         assert status["tts_warmup_error"] == "chatterbox missing"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_voice_unloads_models_and_cancels_tasks(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+
+        mixin._stt_warmup_status = "ready"
+        mixin._tts_warmup_status = "ready"
+        mock_stt = MagicMock()
+        mock_tts = MagicMock()
+        mixin._whisper_stt = mock_stt
+        mixin._tts_provider = mock_tts
+        mixin._voice_warmup_task = asyncio.create_task(asyncio.sleep(60))
+        background_task = asyncio.create_task(asyncio.sleep(60))
+        mixin._background_tasks.add(background_task)
+        mixin._voice_enabled["conv-1"] = True
+
+        await mixin.cleanup_voice()
+
+        assert mixin._voice_warmup_task is None
+        assert background_task.cancelled()
+        mock_stt.unload.assert_called_once()
+        mock_tts.unload.assert_called_once()
+        assert mixin._whisper_stt is None
+        assert mixin._tts_provider is None
+        assert mixin._background_tasks == set()
+        assert mixin._voice_enabled == {}
+        assert mixin._stt_warmup_status == "idle"
+        assert mixin._tts_warmup_status == "idle"
+
+        # Idempotent shutdown should remain safe after state is cleared.
+        await mixin.cleanup_voice()
+
+    @pytest.mark.asyncio
+    async def test_check_voice_idle_cancels_inflight_warmup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
+        mixin._voice_warmup_task = asyncio.create_task(asyncio.sleep(60))
+
+        await mixin._check_voice_idle()
+
+        assert mixin._voice_warmup_task is None

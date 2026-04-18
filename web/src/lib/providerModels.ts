@@ -572,7 +572,7 @@ function versionScore(versionParts: number[]): number {
 function formatReasoningLabel(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (normalized === "xhigh") {
-    return "Max";
+    return "Extra-High";
   }
   return titleCase(normalized);
 }

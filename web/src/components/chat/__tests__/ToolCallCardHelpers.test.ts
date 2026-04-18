@@ -4,7 +4,10 @@ import { classifyTool } from '../../../types/chat'
 import {
   buildChainSummary,
   computeLineDiff,
+  extractResultContent,
+  extractResultMetadata,
   formatToolName,
+  getToolDisplayName,
   getLanguageFromPath,
   getToolSummary,
   parseGrepOutput,
@@ -126,6 +129,26 @@ describe('getToolSummary', () => {
       arguments: { command: 'echo hello' },
     })
     expect(getToolSummary(call)).toBe('echo hello')
+  })
+
+  it('returns protocol tag summaries for protocol tool calls', () => {
+    const call = makeCall({
+      id: '1',
+      tool_name: 'protocol_context',
+      tool_type: 'protocol',
+      arguments: { tag: 'environment_context' },
+    })
+    expect(getToolSummary(call)).toBe('environment_context')
+    expect(getToolDisplayName(call)).toBe('Protocol')
+  })
+
+  it('returns cmd-based command summaries for exec_command', () => {
+    const call = makeCall({
+      id: '1',
+      tool_name: 'exec_command',
+      arguments: { cmd: 'git status --short' },
+    })
+    expect(getToolSummary(call)).toBe('git status --short')
   })
 
   it('returns pattern for Grep without path', () => {
@@ -255,6 +278,99 @@ describe('getToolSummary', () => {
       arguments: {},
     })
     expect(getToolSummary(call)).toBeNull()
+  })
+})
+
+describe('extractResultContent', () => {
+  it('flattens MCP proxy envelopes to a single success object', () => {
+    const result = {
+      content: {
+        success: true,
+        result: { success: true },
+        response_time_ms: 42,
+      },
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      success: true,
+      response_time_ms: 42,
+    })
+  })
+
+  it('parses and flattens stringified MCP proxy envelopes', () => {
+    const result = {
+      content: '{"success":true,"result":{"task_id":"#11820"},"response_time_ms":42}',
+      content_type: 'text',
+      truncated: false,
+      metadata: { source: 'mcp' },
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      task_id: '#11820',
+      response_time_ms: 42,
+    })
+    expect(extractResultMetadata(result)).toEqual({
+      source: 'mcp',
+      response_time_ms: 42,
+    })
+  })
+
+  it('flattens legacy Codex output-wrapped MCP envelopes', () => {
+    const result = {
+      content: {
+        output: {
+          success: true,
+          result: { success: true },
+          response_time_ms: 42,
+        },
+      },
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      success: true,
+      response_time_ms: 42,
+    })
+  })
+
+  it('flattens legacy Codex output-wrapped MCP failures', () => {
+    const result = {
+      content: {
+        output: {
+          success: false,
+          result: {
+            success: false,
+            error: 'Rule enforced by Gobby: [consecutive-tool-block]',
+            error_code: 'TOOL_BLOCKED',
+          },
+          response_time_ms: 1.59,
+        },
+      },
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual({
+      success: false,
+      error: 'Rule enforced by Gobby: [consecutive-tool-block]',
+      error_code: 'TOOL_BLOCKED',
+      response_time_ms: 1.59,
+    })
+  })
+
+  it('leaves non-envelope results untouched', () => {
+    const payload = { success: true, result: { success: true } }
+    const result = {
+      content: payload,
+      content_type: 'json',
+      truncated: false,
+    }
+
+    expect(extractResultContent(result)).toEqual(payload)
+    expect(extractResultMetadata(result)).toBeUndefined()
   })
 })
 
@@ -491,5 +607,25 @@ describe('buildChainSummary', () => {
       makeCall({ id: '2', tool_name: 'mcp__gobby__call_tool' }),
     ]
     expect(buildChainSummary(calls)).toBe('list_tools, call_tool')
+  })
+
+  it('canonicalizes exec_command groups as Bash', () => {
+    const calls = [
+      makeCall({ id: '1', tool_name: 'exec_command' }),
+      makeCall({ id: '2', tool_name: 'exec_command' }),
+    ]
+    expect(buildChainSummary(calls)).toBe('2 Bash')
+  })
+})
+
+describe('getToolDisplayName', () => {
+  it('canonicalizes exec_command to Bash', () => {
+    const call = makeCall({ id: '1', tool_name: 'exec_command' })
+    expect(getToolDisplayName(call)).toBe('Bash')
+  })
+
+  it('preserves non-shell tool names', () => {
+    const call = makeCall({ id: '1', tool_name: 'Read' })
+    expect(getToolDisplayName(call)).toBe('Read')
   })
 })

@@ -14,7 +14,6 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -187,6 +186,7 @@ def create_validation_registry(
             "validation_status": result.status,
             "validation_feedback": result.feedback,
         }
+        escalation_reason: str | None = None
 
         if result.status == "valid":
             # Success: Close task
@@ -214,15 +214,15 @@ def create_validation_registry(
                 )
             else:
                 # Exceeded retries: Escalate the task
-                updates["status"] = "escalated"
-                updates["escalated_at"] = datetime.now(UTC).isoformat()
-                updates["escalation_reason"] = f"exceeded_validation_retries ({max_retries})"
+                escalation_reason = f"exceeded_validation_retries ({max_retries})"
                 updates["validation_feedback"] = (
                     feedback_str
                     + f"\n\nExceeded max retries ({max_retries}). Escalated for human intervention."
                 )
 
         task_manager.update_task(task.id, **updates)
+        if escalation_reason is not None:
+            task_manager.escalate_task(task.id, reason=escalation_reason)
 
         return {
             "success": True,

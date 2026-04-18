@@ -1,6 +1,5 @@
 import { cn } from '../lib/utils'
 import type { Settings, Theme, VoiceInputMode } from '../hooks/useSettings'
-import { MODEL_OPTIONS } from '../hooks/useSettings'
 import { useVoiceCapabilities } from '../hooks/useVoiceCapabilities'
 import type { ChatMode } from '../types/chat'
 import { CHAT_MODES } from '../types/chat'
@@ -11,9 +10,9 @@ interface SettingsProps {
   onClose: () => void
   settings: Settings
   onFontSizeChange: (size: number) => void
-  onModelChange: (model: string) => void
   onThemeChange: (theme: Theme) => void
   onDefaultChatModeChange: (mode: ChatMode) => void
+  onPostPlanChatModeChange: (mode: 'normal' | 'bypass') => void
   onSttEnabledChange: (enabled: boolean) => void
   onTtsEnabledChange: (enabled: boolean) => void
   onVoiceInputModeChange: (mode: VoiceInputMode) => void
@@ -25,9 +24,9 @@ export function Settings({
   onClose,
   settings,
   onFontSizeChange,
-  onModelChange,
   onThemeChange,
   onDefaultChatModeChange,
+  onPostPlanChatModeChange,
   onSttEnabledChange,
   onTtsEnabledChange,
   onVoiceInputModeChange,
@@ -52,22 +51,6 @@ export function Settings({
         </div>
 
         <div className="settings-content">
-          <div className="setting-item">
-            <label htmlFor="model-select">Model</label>
-            <select
-              id="model-select"
-              value={settings.model}
-              onChange={(e) => onModelChange(e.target.value)}
-              className="model-select"
-            >
-              {MODEL_OPTIONS.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div className="setting-item">
             <label htmlFor="font-size">
               Font Size: {settings.fontSize}px
@@ -111,6 +94,22 @@ export function Settings({
                   key={m.id}
                   className={`theme-option${settings.defaultChatMode === m.id ? ' active' : ''}`}
                   onClick={() => onDefaultChatModeChange(m.id)}
+                  title={m.description}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="setting-item">
+            <label>After Approved Plan</label>
+            <div className="theme-selector">
+              {CHAT_MODES.filter((m) => m.id === 'normal' || m.id === 'bypass').map((m) => (
+                <button
+                  key={m.id}
+                  className={`theme-option${settings.postPlanChatMode === m.id ? ' active' : ''}`}
+                  onClick={() => onPostPlanChatModeChange(m.id as 'normal' | 'bypass')}
                   title={m.description}
                 >
                   {m.label}

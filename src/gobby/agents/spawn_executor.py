@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.sandbox import (
+    CodexSandboxResolver,
     GeminiSandboxResolver,
     SandboxConfig,
     compute_sandbox_paths,
@@ -62,6 +63,11 @@ class SpawnRequest:
     model: str | None = None  # Model override (e.g., gemini-3-pro-preview)
     api_base: str | None = None  # API base URL for local model endpoints
     api_token: str | None = None  # Auth token for the endpoint
+    requested_reasoning_effort: str | None = None
+    effective_reasoning_effort: str | None = None
+    reasoning_required: bool = False
+    reasoning_status: str = "not_requested"
+    reasoning_message: str | None = None
 
     # Sandbox configuration
     sandbox_config: SandboxConfig | None = None
@@ -147,6 +153,12 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         title=request.title,
         agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -161,6 +173,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         session_id=gobby_session_id,
         auto_approve=True,
         model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
     )
 
     # Resolve sandbox config if provided
@@ -265,6 +278,12 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         title=request.title,
         agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -276,6 +295,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         prompt=request.prompt,
         auto_approve=True,
         model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
     )
 
     # Resolve sandbox config if provided
@@ -377,6 +397,12 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         title=request.title,
         agent_name=request.agent_name,
         timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
     )
 
     gobby_session_id = spawn_context.session_id
@@ -386,6 +412,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         prompt=request.prompt,
         auto_approve=True,
         model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
     )
 
     sandbox_args: list[str] = []
@@ -464,8 +491,15 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
             project_id=request.project_id,
             machine_id=request.machine_id or "unknown",
             workflow_name=request.workflow,
+            agent_name=request.agent_name,
             initial_variables=request.initial_variables,
             git_branch=request.branch_name,
+            sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+            requested_reasoning_effort=request.requested_reasoning_effort,
+            effective_reasoning_effort=request.effective_reasoning_effort,
+            reasoning_required=request.reasoning_required,
+            reasoning_status=request.reasoning_status,
+            reasoning_message=request.reasoning_message,
         )
     except FileNotFoundError as e:
         return SpawnResult(
@@ -490,6 +524,15 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     codex_session_id = spawn_context.env_vars["GOBBY_CODEX_EXTERNAL_ID"]
 
     # Build command with session context injected into prompt
+    sandbox_args: list[str] = []
+    if request.sandbox_config and request.sandbox_config.enabled:
+        resolver = CodexSandboxResolver()
+        paths = compute_sandbox_paths(
+            config=request.sandbox_config,
+            workspace_path=request.cwd,
+        )
+        sandbox_args, _ = resolver.resolve(request.sandbox_config, paths)
+
     cmd = build_codex_command_with_resume(
         codex_external_id=codex_session_id,
         prompt=request.prompt,
@@ -497,6 +540,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         gobby_session_id=gobby_session_id,
         working_directory=request.cwd,
         model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=sandbox_args,
     )
 
     # Spawn in terminal

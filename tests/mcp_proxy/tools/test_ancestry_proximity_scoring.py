@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.task_readiness import (
     _get_ancestry_chain,
     create_readiness_registry,
 )
+from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -146,6 +147,17 @@ class TestComputeProximityBoost:
         assert _compute_proximity_boost([], []) == 0
 
 
+def _claim_task(task_manager: LocalTaskManager, project_id: str, task_id: str) -> None:
+    session_manager = LocalSessionManager(task_manager.db)
+    session = session_manager.register(
+        external_id="readiness-ext",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+    )
+    task_manager.claim_task(task_id, session.id)
+
+
 class TestSuggestNextTaskProximityScoring:
     """Integration tests for proximity scoring in suggest_next_task."""
 
@@ -167,7 +179,7 @@ class TestSuggestNextTaskProximityScoring:
         )  # Creates competing task in different branch
 
         # Set task_a1 as in_progress
-        task_manager.update_task(task_a1.id, status="in_progress")
+        _claim_task(task_manager, project_id, task_a1.id)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": project_id}
@@ -191,7 +203,7 @@ class TestSuggestNextTaskProximityScoring:
             project_id, "Child of Active", task_type="task", parent_task_id=in_progress.id
         )
 
-        task_manager.update_task(in_progress.id, status="in_progress")
+        _claim_task(task_manager, project_id, in_progress.id)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": project_id}
@@ -238,7 +250,7 @@ class TestSuggestNextTaskProximityScoring:
         )  # High priority but different branch
 
         # Set task_a1 as in_progress
-        task_manager.update_task(task_a1.id, status="in_progress")
+        _claim_task(task_manager, project_id, task_a1.id)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": project_id}
@@ -267,7 +279,7 @@ class TestSuggestNextTaskProximityScoring:
         )
 
         # Set tree1_task1 as in_progress
-        task_manager.update_task(tree1_task1.id, status="in_progress")
+        _claim_task(task_manager, project_id, tree1_task1.id)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": project_id}
@@ -293,7 +305,7 @@ class TestSuggestNextTaskProximityScoring:
             project_id, "Task 2", task_type="task", parent_task_id=epic.id
         )  # Creates sibling task
 
-        task_manager.update_task(task1.id, status="in_progress")
+        _claim_task(task_manager, project_id, task1.id)
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": project_id}

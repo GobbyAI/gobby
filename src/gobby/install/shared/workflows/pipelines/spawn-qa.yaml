@@ -33,9 +33,9 @@ steps:
       tool: spawn_agent
       arguments:
         prompt: "Review task ${{ inputs.task_id }}. Check the implementation, run tests, validate quality, and approve or reject."
-        agent_definition: qa-reviewer
+        agent: qa-reviewer
+        task_id: "${{ inputs.task_id }}"
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"
         worktree_id: "${{ inputs.worktree_id }}"
-        session_variables:
-          assigned_task_id: "${{ inputs.task_id }}"
+        parent_session_id: "${{ session_id }}"

@@ -3,9 +3,11 @@
 import asyncio
 import logging
 import os
+import signal
 import subprocess  # nosec B404 # subprocess needed for daemon restart
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
@@ -18,6 +20,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _restart_lock: asyncio.Lock | None = None
+_SERVICE_RESTART_HELPER = (
+    "from gobby.servers.routes.admin._lifecycle import _run_service_restart_helper; "
+    "import sys; _run_service_restart_helper(int(sys.argv[1]), int(sys.argv[2]))"
+)
+_DIRECT_RESTART_HELPER = (
+    "from gobby.servers.routes.admin._lifecycle import _run_direct_restart_helper; "
+    "import sys; _run_direct_restart_helper(int(sys.argv[1]))"
+)
 
 
 def _get_restart_lock() -> asyncio.Lock:
@@ -25,6 +35,138 @@ def _get_restart_lock() -> asyncio.Lock:
     if _restart_lock is None:
         _restart_lock = asyncio.Lock()
     return _restart_lock
+
+
+def _wait_for_process_exit(pid: int, *, timeout: float, interval: float = 0.1) -> bool:
+    """Wait for a process to disappear."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(interval)
+    return False
+
+
+def _append_restart_helper_log(message: str) -> None:
+    """Best-effort log for detached restart helpers."""
+    try:
+        log_dir = Path(os.environ.get("GOBBY_HOME", os.path.expanduser("~/.gobby"))) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with (log_dir / "admin-restart.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        logger.debug("Failed to write admin restart helper log", exc_info=True)
+
+
+def _force_stop_process(pid: int) -> None:
+    """Escalate from SIGTERM to SIGKILL for a stuck standalone daemon."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    if _wait_for_process_exit(pid, timeout=5.0):
+        return
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+
+    _wait_for_process_exit(pid, timeout=0.5)
+
+
+def _run_service_restart_helper(current_pid: int, port: int) -> None:
+    """Finish a service-managed restart after the current daemon exits."""
+    try:
+        from gobby.cli.daemon import _wait_for_daemon_health
+        from gobby.cli.installers.service import service_restart
+
+        exited = _wait_for_process_exit(current_pid, timeout=30.0)
+
+        # Avoid an unnecessary second restart when launchd/systemd already replaced us.
+        if exited and _wait_for_daemon_health(port, timeout=3.0, interval=0.25) is not None:
+            return
+
+        result = service_restart()
+        if not result.get("success"):
+            _append_restart_helper_log(
+                f"Admin restart service handoff failed: {result.get('error', 'unknown error')}"
+            )
+            return
+
+        if _wait_for_daemon_health(port, timeout=30.0, interval=0.5) is None:
+            _append_restart_helper_log(
+                "Admin restart service handoff completed, but daemon never became healthy"
+            )
+    except Exception as exc:
+        _append_restart_helper_log(f"Admin restart service helper crashed: {exc!r}")
+
+
+def _run_direct_restart_helper(current_pid: int) -> None:
+    """Finish a standalone restart by launching a fresh daemon process."""
+    try:
+        if not _wait_for_process_exit(current_pid, timeout=30.0):
+            _force_stop_process(current_pid)
+
+        # Give the old daemon time to release sockets/PID-file state before
+        # the replacement process starts, or restart races can fail the handoff.
+        time.sleep(2.0)
+
+        gobby_home = Path(os.environ.get("GOBBY_HOME", os.path.expanduser("~/.gobby")))
+        pid_file = gobby_home / "gobby.pid"
+        try:
+            pid_file.unlink()
+        except FileNotFoundError:
+            pass
+
+        log_dir = gobby_home / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with (
+            (log_dir / "gobby-client.log").open("a", encoding="utf-8") as log_file,
+            (log_dir / "gobby-client-error.log").open("a", encoding="utf-8") as err_file,
+        ):
+            proc = subprocess.Popen(  # nosec B603
+                [sys.executable, "-m", "gobby.runner"],
+                stdout=log_file,
+                stderr=err_file,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=os.environ.copy(),
+            )
+        pid_file.write_text(str(proc.pid), encoding="utf-8")
+    except Exception as exc:
+        _append_restart_helper_log(f"Admin restart direct helper crashed: {exc!r}")
+
+
+def _should_restart_via_service_manager() -> bool:
+    """Use the OS service manager when it owns the daemon."""
+    try:
+        from gobby.cli.installers.service import get_service_status
+
+        status = get_service_status()
+    except Exception:
+        logger.warning("Failed to read service status for admin restart", exc_info=True)
+        return False
+
+    return bool(status.get("installed") and status.get("enabled"))
+
+
+def _spawn_restart_helper(*, current_pid: int, port: int, service_managed: bool) -> None:
+    """Launch a detached helper that completes restart after this process exits."""
+    helper = _SERVICE_RESTART_HELPER if service_managed else _DIRECT_RESTART_HELPER
+    helper_args = [str(current_pid), str(port)] if service_managed else [str(current_pid)]
+    subprocess.Popen(  # nosec B603
+        [sys.executable, "-c", helper, *helper_args],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        env=os.environ.copy(),
+    )
 
 
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -79,86 +221,23 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         try:
             await restart_lock.acquire()
-            logger.info("Restart requested via HTTP endpoint")
+            service_managed = _should_restart_via_service_manager()
+            logger.info(
+                "Restart requested via HTTP endpoint (service_managed=%s)",
+                service_managed,
+            )
 
             current_pid = os.getpid()
-            port = server.port
 
             # Write shutdown source in the parent before spawning restarter
             from gobby.runner_maintenance import write_shutdown_source
 
             write_shutdown_source("http_restart")
 
-            # Inline Python script for the detached restarter process.
-            # It waits for the current daemon PID to exit, then spawns a new one.
-            restarter_script = f"""
-import os, sys, time, signal, subprocess
-pid = {current_pid}
-port = {port}
-python = {sys.executable!r}
-
-# Wait for current daemon to exit (up to 30s)
-for _ in range(300):
-    try:
-        os.kill(pid, 0)
-        time.sleep(0.1)
-    except ProcessLookupError:
-        break
-else:
-    # Graceful stop: SIGTERM first, then SIGKILL after 5s
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    else:
-        for _ in range(50):  # 5s grace
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.1)
-            except ProcessLookupError:
-                break
-        else:
-            try:
-                os.kill(pid, signal.SIGKILL)
-                time.sleep(0.5)
-            except ProcessLookupError:
-                pass
-
-# Wait for port release
-time.sleep(2.0)
-
-# Clean up stale PID file
-gobby_home = os.environ.get("GOBBY_HOME", os.path.expanduser("~/.gobby"))
-pid_file = os.path.join(gobby_home, "gobby.pid")
-try:
-    os.unlink(pid_file)
-except FileNotFoundError:
-    pass
-
-# Start new daemon
-import json
-log_dir = os.path.join(gobby_home, "logs")
-os.makedirs(log_dir, exist_ok=True)
-with open(os.path.join(log_dir, "gobby-client.log"), "a") as log_file, \\
-     open(os.path.join(log_dir, "gobby-client-error.log"), "a") as err_file:
-    proc = subprocess.Popen(
-        [python, "-m", "gobby.runner"],
-        stdout=log_file, stderr=err_file,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-        env=os.environ.copy(),
-    )
-with open(pid_file, "w") as f:
-    f.write(str(proc.pid))
-"""
-            # Spawn the restarter as a fully detached subprocess
-            subprocess.Popen(  # nosec B603
-                [sys.executable, "-c", restarter_script],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                env=os.environ.copy(),
+            _spawn_restart_helper(
+                current_pid=current_pid,
+                port=server.port,
+                service_managed=service_managed,
             )
 
             # Schedule shutdown of the current daemon

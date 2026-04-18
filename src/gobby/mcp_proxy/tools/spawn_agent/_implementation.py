@@ -16,7 +16,8 @@ from gobby.agents.isolation import (
     SpawnConfig,
     get_isolation_handler,
 )
-from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.reasoning import resolve_spawn_reasoning
+from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
@@ -56,14 +57,11 @@ async def spawn_agent_impl(
     workflow: str | None = None,
     provider: str | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
+    reasoning_required: bool | None = None,
     # Limits
     timeout: float | None = None,
     max_turns: int | None = None,
-    # Sandbox
-    sandbox: bool | None = None,
-    sandbox_mode: Literal["permissive", "restrictive"] | None = None,
-    sandbox_allow_network: bool | None = None,
-    sandbox_extra_paths: list[str] | None = None,
     # Context
     parent_session_id: str | None = None,
     project_path: str | None = None,
@@ -97,10 +95,6 @@ async def spawn_agent_impl(
         model: Model to use
         timeout: Timeout in seconds
         max_turns: Maximum conversation turns
-        sandbox: Enable sandbox (True/False/None)
-        sandbox_mode: Sandbox mode (permissive/restrictive)
-        sandbox_allow_network: Allow network access
-        sandbox_extra_paths: Extra paths for sandbox write access
         parent_session_id: Parent session ID
         project_path: Project path override
         initial_variables: Pre-built initial variables from factory (merged with impl's own)
@@ -132,6 +126,27 @@ async def spawn_agent_impl(
     effective_model = model
     if effective_model is None and agent_body:
         effective_model = agent_body.model
+
+    requested_reasoning_effort = reasoning_effort
+    if requested_reasoning_effort is None and agent_body:
+        requested_reasoning_effort = agent_body.reasoning_effort
+    effective_reasoning_required = reasoning_required
+    if effective_reasoning_required is None and agent_body:
+        effective_reasoning_required = agent_body.reasoning_required
+
+    reasoning = resolve_spawn_reasoning(
+        provider=effective_provider,
+        model=effective_model,
+        requested_effort=requested_reasoning_effort,
+        reasoning_required=effective_reasoning_required,
+        daemon_config=daemon_config,
+    )
+    if reasoning.reasoning_required and reasoning.effective_effort is None:
+        return {
+            "success": False,
+            "error": reasoning.message or "Requested reasoning is not supported",
+            "reasoning": reasoning.to_dict(),
+        }
 
     # Resolve api_base/api_token from agent definition (with ${ENV_VAR} expansion)
     effective_api_base: str | None = None
@@ -197,22 +212,8 @@ async def spawn_agent_impl(
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
 
-    # Build sandbox config from tool params (no agent_def.sandbox in simplified model)
-    effective_sandbox_config: SandboxConfig | None = None
-
-    sandbox_enabled = sandbox
-    if sandbox_enabled is True or (
-        sandbox_enabled is None
-        and (sandbox_mode is not None or sandbox_allow_network is not None or sandbox_extra_paths)
-    ):
-        effective_sandbox_config = SandboxConfig(
-            enabled=True,
-            mode=sandbox_mode or "permissive",
-            allow_network=sandbox_allow_network if sandbox_allow_network is not None else True,
-            extra_write_paths=sandbox_extra_paths or [],
-        )
-    elif sandbox_enabled is False:
-        effective_sandbox_config = SandboxConfig(enabled=False)
+    # Daemon-owned agent sandboxes inherit from config-store defaults only.
+    effective_sandbox_config: SandboxConfig = agent_sandbox_config(daemon_config)
 
     # 2. Resolve project context
     ctx = get_project_context(Path(project_path) if project_path else None)
@@ -350,36 +351,6 @@ async def spawn_agent_impl(
                 logger.warning(f"Cleanup after prepare failure also failed: {cleanup_err}")
             return {"success": False, "error": f"Failed to prepare environment: {e}"}
 
-    # 7b. Add main repo path to sandbox read AND write paths for worktree isolation
-    if (
-        effective_isolation == "worktree"
-        and effective_sandbox_config
-        and effective_sandbox_config.enabled
-        and isolation_ctx.extra.get("main_repo_path")
-    ):
-        main_repo_path = isolation_ctx.extra["main_repo_path"]
-        main_repo_path_str = str(main_repo_path)
-        existing_read_paths = list(effective_sandbox_config.extra_read_paths or [])
-        existing_write_paths = list(effective_sandbox_config.extra_write_paths or [])
-        paths_updated = False
-        if main_repo_path_str not in existing_read_paths:
-            existing_read_paths.append(main_repo_path_str)
-            paths_updated = True
-        if main_repo_path_str not in existing_write_paths:
-            existing_write_paths.append(main_repo_path_str)
-            paths_updated = True
-        if paths_updated:
-            effective_sandbox_config = SandboxConfig(
-                enabled=effective_sandbox_config.enabled,
-                mode=effective_sandbox_config.mode,
-                allow_network=effective_sandbox_config.allow_network,
-                extra_read_paths=existing_read_paths,
-                extra_write_paths=existing_write_paths,
-            )
-            logger.debug(
-                f"Added main repo path {main_repo_path} to sandbox read/write paths for worktree"
-            )
-
     # 8. Build enhanced prompt with isolation context
     enhanced_prompt = handler.build_context_prompt(prompt, isolation_ctx)
 
@@ -391,6 +362,15 @@ async def spawn_agent_impl(
     effective_initial_variables: dict[str, Any] = {}
     if initial_variables:
         effective_initial_variables.update(initial_variables)
+    if reasoning.status != "not_requested":
+        effective_initial_variables.update(
+            {
+                "_requested_reasoning_effort": reasoning.requested_effort,
+                "_effective_reasoning_effort": reasoning.effective_effort,
+                "_reasoning_required": reasoning.reasoning_required,
+                "_reasoning_status": reasoning.status,
+            }
+        )
     if resolved_task_id:
         effective_initial_variables["assigned_task_id"] = (
             f"#{task_seq_num}" if task_seq_num else resolved_task_id
@@ -442,6 +422,11 @@ async def spawn_agent_impl(
         model=effective_model,
         api_base=effective_api_base,
         api_token=effective_api_token,
+        requested_reasoning_effort=reasoning.requested_effort,
+        effective_reasoning_effort=reasoning.effective_effort,
+        reasoning_required=reasoning.reasoning_required,
+        reasoning_status=reasoning.status,
+        reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
         timeout_seconds=effective_timeout,
     )
@@ -606,7 +591,11 @@ async def spawn_agent_impl(
 
     # 13. Return response with isolation metadata
     if not spawn_result.success:
-        return {"success": False, "error": spawn_result.error or "Failed to spawn agent"}
+        return {
+            "success": False,
+            "error": spawn_result.error or "Failed to spawn agent",
+            "reasoning": reasoning.to_dict(),
+        }
 
     return {
         "success": True,
@@ -620,4 +609,5 @@ async def spawn_agent_impl(
         "clone_id": isolation_ctx.clone_id,
         "pid": spawn_result.pid,
         "message": spawn_result.message,
+        "reasoning": reasoning.to_dict(),
     }

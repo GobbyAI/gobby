@@ -224,7 +224,7 @@ class TestCloneLifecycle:
         )
         result = unwrap_result(raw_result)
 
-        assert result.get("success") is True, f"list_clones failed: {result}"
+        assert "error" not in result, f"list_clones failed: {result}"
         assert isinstance(result.get("clones"), list)
         # Count may be 0 or more depending on previous test state
         assert result.get("count", -1) >= 0

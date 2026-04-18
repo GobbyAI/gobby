@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
 
 logger = logging.getLogger(__name__)
@@ -19,10 +20,58 @@ logger = logging.getLogger(__name__)
 # Well-known system session ID — bootstrapped at DB init.
 # Used as the default parent for pipelines and cron jobs that have no caller session.
 SYSTEM_SESSION_ID = "00000000-0000-0000-0000-000000000001"
+SYSTEM_SESSION_PROJECT_ID = PERSONAL_PROJECT_ID
+SYSTEM_SESSION_EXTERNAL_ID = "system"
+SYSTEM_SESSION_MACHINE_ID = "system"
+SYSTEM_SESSION_SOURCE = "system"
+SYSTEM_SESSION_TITLE = "_system"
+
+
+def ensure_system_session(db: DatabaseProtocol) -> None:
+    """Ensure the bootstrapped root session for cron/pipeline work exists."""
+    existing = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    if existing is not None:
+        return
+
+    project = db.fetchone("SELECT id FROM projects WHERE id = ?", (SYSTEM_SESSION_PROJECT_ID,))
+    if project is None:
+        raise RuntimeError(
+            "Missing required _personal project for system session bootstrap "
+            f"({SYSTEM_SESSION_PROJECT_ID})"
+        )
+
+    now = datetime.now(UTC).isoformat()
+    db.execute(
+        """
+        INSERT OR IGNORE INTO sessions (
+            id, external_id, machine_id, source, project_id, title,
+            status, agent_depth, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+        """,
+        (
+            SYSTEM_SESSION_ID,
+            SYSTEM_SESSION_EXTERNAL_ID,
+            SYSTEM_SESSION_MACHINE_ID,
+            SYSTEM_SESSION_SOURCE,
+            SYSTEM_SESSION_PROJECT_ID,
+            SYSTEM_SESSION_TITLE,
+            now,
+            now,
+        ),
+    )
+
+    recreated = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
+    if recreated is None:
+        raise RuntimeError(f"Failed to recreate missing system session {SYSTEM_SESSION_ID}")
+
+    logger.warning("Recreated missing system session %s", SYSTEM_SESSION_ID)
 
 
 class LocalSessionManager:
     """Manager for local session storage."""
+
+    _VALID_TITLE_SOURCES: ClassVar[set[str]] = {"heuristic", "llm", "manual"}
 
     def __init__(self, db: DatabaseProtocol):
         """Initialize with database connection."""
@@ -55,6 +104,8 @@ class LocalSessionManager:
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         session_type: str = "terminal",
+        sandbox_enabled: bool | None = None,
+        sandbox_policy_hash: str | None = None,
     ) -> Session:
         """
         Register a new session or return existing one.
@@ -79,6 +130,9 @@ class LocalSessionManager:
             Session instance
         """
         now = datetime.now(UTC).isoformat()
+
+        if parent_session_id == SYSTEM_SESSION_ID:
+            ensure_system_session(self.db)
 
         # Check if this exact session already exists (daemon restart case)
         existing = self.find_by_external_id(
@@ -108,6 +162,8 @@ class LocalSessionManager:
                     transcript_path = COALESCE(?, transcript_path),
                     git_branch = COALESCE(?, git_branch),
                     parent_session_id = COALESCE(?, parent_session_id),
+                    sandbox_enabled = COALESCE(?, sandbox_enabled),
+                    sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
                     status = 'active',
                     updated_at = ?
                 WHERE id = ?
@@ -117,6 +173,8 @@ class LocalSessionManager:
                     transcript_path,
                     git_branch,
                     parent_session_id,
+                    sandbox_enabled,
+                    sandbox_policy_hash,
                     now,
                     existing.id,
                 ),
@@ -144,13 +202,14 @@ class LocalSessionManager:
                 self.db.execute(
                     """
                     INSERT INTO sessions (
-                        id, external_id, machine_id, source, project_id, title,
+                        id, external_id, machine_id, source, project_id, title, title_source,
                         transcript_path, git_branch, parent_session_id,
                         agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, session_type, status, created_at, updated_at, seq_num,
+                        workflow_name, session_type, sandbox_enabled, sandbox_policy_hash,
+                        status, created_at, updated_at, seq_num,
                         had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
                     """,
                     (
                         session_id,
@@ -167,6 +226,8 @@ class LocalSessionManager:
                         json.dumps(terminal_context) if terminal_context else None,
                         workflow_name,
                         session_type,
+                        None if sandbox_enabled is None else int(bool(sandbox_enabled)),
+                        sandbox_policy_hash,
                         now,
                         now,
                         next_seq_num,
@@ -199,6 +260,8 @@ class LocalSessionManager:
         title: str | None = None,
         model: str | None = None,
         chat_mode: str | None = None,
+        sandbox_enabled: bool,
+        sandbox_policy_hash: str,
     ) -> Session:
         """Create a new web-chat session with a temporary runtime identity.
 
@@ -219,6 +282,8 @@ class LocalSessionManager:
             project_id=project_id,
             title=title,
             session_type="web_chat",
+            sandbox_enabled=sandbox_enabled,
+            sandbox_policy_hash=sandbox_policy_hash,
         )
         if model is None and chat_mode is None:
             return session
@@ -531,28 +596,58 @@ class LocalSessionManager:
             (tools_json, session_id),
         )
 
-    def update_title(self, session_id: str, title: str) -> Session | None:
+    def update_title(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        title_source: str | None = None,
+    ) -> Session | None:
         """Update session title."""
         current = self.get(session_id)
         if current is None:
             return None
-        if current.title == title:
+        if title_source is not None and title_source not in self._VALID_TITLE_SOURCES:
+            raise ValueError(
+                f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
+            )
+
+        title_changed = current.title != title
+        source_changed = title_source is not None and current.title_source != title_source
+        if not title_changed and not source_changed:
             return current
 
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-            (title, now, session_id),
-        )
+        values: dict[str, Any] = {"updated_at": now}
+        if title_changed:
+            values["title"] = title
+        if source_changed:
+            values["title_source"] = title_source
+        self.db.safe_update("sessions", values, "id = ?", (session_id,))
         updated = self.get(session_id)
         if updated is None:
             return None
 
-        for listener in list(self._title_listeners):
+        if title_changed:
             try:
-                listener(session_id, title)
+                from gobby.workflows.summary_actions import schedule_tmux_window_rename
+
+                schedule_tmux_window_rename(updated, title)
             except Exception:
-                logger.warning("Title listener failed for session %s", session_id, exc_info=True)
+                logger.warning(
+                    "Failed to schedule tmux title update for session %s",
+                    session_id,
+                    exc_info=True,
+                )
+
+        if title_changed:
+            for listener in list(self._title_listeners):
+                try:
+                    listener(session_id, title)
+                except Exception:
+                    logger.warning(
+                        "Title listener failed for session %s", session_id, exc_info=True
+                    )
 
         return updated
 
@@ -629,6 +724,8 @@ class LocalSessionManager:
 
     def update_parent_session_id(self, session_id: str, parent_session_id: str) -> Session | None:
         """Update parent session ID."""
+        if parent_session_id == SYSTEM_SESSION_ID:
+            ensure_system_session(self.db)
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",
@@ -650,9 +747,12 @@ class LocalSessionManager:
         transcript_path: str | None = None,
         status: str | None = None,
         title: str | None = None,
+        title_source: str | None = None,
         git_branch: str | None = None,
         terminal_context: dict[str, Any] | None = None,
         project_id: str | None = None,
+        sandbox_enabled: bool | None = None,
+        sandbox_policy_hash: str | None = None,
     ) -> Session | None:
         """
         Update multiple session fields at once.
@@ -667,9 +767,12 @@ class LocalSessionManager:
             transcript_path: New transcript path (optional)
             status: New status (optional)
             title: New title (optional)
+            title_source: New title provenance (optional)
             git_branch: New git branch (optional)
             terminal_context: New terminal context (optional)
             project_id: New project ID (optional)
+            sandbox_enabled: Whether the session runtime is sandboxed (optional)
+            sandbox_policy_hash: Stable daemon-owned sandbox policy hash (optional)
 
         Returns:
             Updated Session or None if not found
@@ -700,12 +803,22 @@ class LocalSessionManager:
             values["status"] = status
         if title is not None:
             values["title"] = title
+        if title_source is not None:
+            if title_source not in self._VALID_TITLE_SOURCES:
+                raise ValueError(
+                    f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
+                )
+            values["title_source"] = title_source
         if git_branch is not None:
             values["git_branch"] = git_branch
         if terminal_context is not None:
             values["terminal_context"] = json.dumps(terminal_context)
         if project_id is not None:
             values["project_id"] = project_id
+        if sandbox_enabled is not None:
+            values["sandbox_enabled"] = int(sandbox_enabled)
+        if sandbox_policy_hash is not None:
+            values["sandbox_policy_hash"] = sandbox_policy_hash
 
         if not values:
             return self.get(session_id)

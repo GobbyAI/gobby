@@ -556,12 +556,12 @@ class TestSpawnAgentTaskResolution:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# spawn_agent sandbox
+# spawn_agent sandbox defaults
 # ═══════════════════════════════════════════════════════════════════════
 
 
 class TestSpawnAgentSandbox:
-    """Tests for spawn_agent sandbox parameters."""
+    """Tests for daemon-owned agent sandbox defaults."""
 
     @pytest.fixture
     def mock_runner(self):
@@ -578,10 +578,22 @@ class TestSpawnAgentSandbox:
         )
 
     @pytest.mark.asyncio
-    async def test_sandbox_params_create_sandbox_config(self, mock_runner, agent_body) -> None:
+    async def test_agent_sandbox_defaults_come_from_daemon_config(
+        self, mock_runner, agent_body
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            db=MagicMock(),
+            daemon_config=MagicMock(
+                agent_sandbox=MagicMock(
+                    enabled=False,
+                    extra_read_paths=["/tmp/agent-read"],
+                    extra_write_paths=["/tmp/agent-write"],
+                )
+            ),
+        )
 
         with (
             patch(
@@ -621,126 +633,31 @@ class TestSpawnAgentSandbox:
                 {
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
-                    "sandbox": True,
-                    "sandbox_mode": "restrictive",
-                    "sandbox_allow_network": False,
                 },
             )
 
             assert result["success"] is True
             spawn_request = mock_execute.call_args[0][0]
             assert spawn_request.sandbox_config is not None
-            assert spawn_request.sandbox_config.enabled is True
-            assert spawn_request.sandbox_config.mode == "restrictive"
-            assert spawn_request.sandbox_config.allow_network is False
+            assert spawn_request.sandbox_config.enabled is False
+            assert spawn_request.sandbox_config.extra_read_paths == ["/tmp/agent-read"]
+            assert spawn_request.sandbox_config.extra_write_paths == ["/tmp/agent-write"]
 
     @pytest.mark.asyncio
-    async def test_sandbox_extra_paths_passed_to_config(self, mock_runner, agent_body):
+    async def test_spawn_agent_schema_no_longer_exposes_sandbox_knobs(
+        self, mock_runner, agent_body
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+        schema = registry.get_schema("spawn_agent")
 
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
-                return_value=agent_body,
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
-            ) as mock_ctx,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-            ) as mock_get_handler,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
-            ) as mock_execute,
-        ):
-            mock_ctx.return_value = {
-                "id": "proj-123",
-                "project_path": "/path/to/project",
-            }
-            mock_handler = MagicMock()
-            mock_handler.prepare_environment = AsyncMock(
-                return_value=IsolationContext(cwd="/path/to/project")
-            )
-            mock_handler.build_context_prompt.return_value = "Test prompt"
-            mock_get_handler.return_value = mock_handler
-
-            mock_execute.return_value = MagicMock(
-                success=True,
-                run_id="run-123",
-                child_session_id="child-456",
-                status="pending",
-            )
-
-            result = await registry.call(
-                "spawn_agent",
-                {
-                    "prompt": "Test prompt",
-                    "parent_session_id": "parent-789",
-                    "sandbox": True,
-                    "sandbox_extra_paths": ["/tmp/data", "/opt/tools"],
-                },
-            )
-
-            assert result["success"] is True
-            spawn_request = mock_execute.call_args[0][0]
-            assert spawn_request.sandbox_config is not None
-            assert "/tmp/data" in spawn_request.sandbox_config.extra_write_paths
-            assert "/opt/tools" in spawn_request.sandbox_config.extra_write_paths
-
-    @pytest.mark.asyncio
-    async def test_sandbox_disabled_when_param_false(self, mock_runner, agent_body):
-        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
-
-        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
-
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
-                return_value=agent_body,
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
-            ) as mock_ctx,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
-            ) as mock_get_handler,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
-            ) as mock_execute,
-        ):
-            mock_ctx.return_value = {
-                "id": "proj-123",
-                "project_path": "/path/to/project",
-            }
-            mock_handler = MagicMock()
-            mock_handler.prepare_environment = AsyncMock(
-                return_value=IsolationContext(cwd="/path/to/project")
-            )
-            mock_handler.build_context_prompt.return_value = "Test prompt"
-            mock_get_handler.return_value = mock_handler
-
-            mock_execute.return_value = MagicMock(
-                success=True,
-                run_id="run-123",
-                child_session_id="child-456",
-                status="pending",
-            )
-
-            result = await registry.call(
-                "spawn_agent",
-                {
-                    "prompt": "Test prompt",
-                    "parent_session_id": "parent-789",
-                    "sandbox": False,
-                },
-            )
-
-            assert result["success"] is True
-            spawn_request = mock_execute.call_args[0][0]
-            if spawn_request.sandbox_config is not None:
-                assert spawn_request.sandbox_config.enabled is False
+        assert schema is not None
+        properties = schema["inputSchema"]["properties"]
+        assert "sandbox" not in properties
+        assert "sandbox_mode" not in properties
+        assert "sandbox_allow_network" not in properties
+        assert "sandbox_extra_paths" not in properties
 
 
 # ═══════════════════════════════════════════════════════════════════════

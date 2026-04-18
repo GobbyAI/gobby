@@ -11,6 +11,16 @@ from fastapi import APIRouter
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
+_SUPPORTED_WEB_CHAT_CODEX_MODELS = frozenset(
+    {
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+    }
+)
+
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
 _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
@@ -37,10 +47,31 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
     ],
     "qwen": [],
     "codex": [
-        {"value": "gpt-5.4", "label": "codex-5.4"},
-        {"value": "gpt-5.4-mini", "label": "mini-5.4"},
-        {"value": "gpt-5.3-codex", "label": "codex-5.3"},
-        {"value": "gpt-5.3-codex-spark", "label": "spark-5.3"},
+        {
+            "value": "gpt-5.4",
+            "label": "codex-5.4",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+        },
+        {
+            "value": "gpt-5.4-mini",
+            "label": "mini-5.4",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+        },
+        {
+            "value": "gpt-5.3-codex",
+            "label": "codex-5.3",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+        },
+        {
+            "value": "gpt-5.3-codex-spark",
+            "label": "spark-5.3",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+        },
+        {
+            "value": "gpt-5.2",
+            "label": "gpt-5.2",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+        },
     ],
 }
 
@@ -123,6 +154,21 @@ def _provider_health(
     return health.available, health.startup_error
 
 
+def _filter_models_for_web_chat(
+    provider: str, models: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Keep the model picker aligned with the documented web-chat-safe surface."""
+    visible_models = [model for model in models if not bool(model.get("hidden", False))]
+    if provider != "codex":
+        return visible_models
+
+    return [
+        model
+        for model in visible_models
+        if str(model.get("value") or "").strip() in _SUPPORTED_WEB_CHAT_CODEX_MODELS
+    ]
+
+
 async def _probe_providers() -> list[tuple[str, str | None]]:
     """Probe provider binaries concurrently.
 
@@ -176,11 +222,12 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         for name, path in probed:
             available, startup_error = _provider_health(server, name, path)
             models, source = model_catalog.get(name, fallback_entry)
+            filtered_models = _filter_models_for_web_chat(name, models)
             result.append(
                 {
                     "provider": name,
                     "available": available,
-                    "models": models,
+                    "models": filtered_models,
                     "source": source,
                     "startup_error": startup_error,
                 }

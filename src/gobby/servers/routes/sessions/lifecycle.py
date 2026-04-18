@@ -371,7 +371,11 @@ def register_lifecycle_routes(
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            result = server.session_manager.update_title(session_id, title)
+            result = server.session_manager.update_title(
+                session_id,
+                title,
+                title_source="manual",
+            )
             if result is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 

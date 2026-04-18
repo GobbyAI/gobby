@@ -23,7 +23,7 @@ class LLMTracingConfig(BaseModel):
         description="Capture prompt/completion content in spans (privacy-first default: off)",
     )
     providers: list[str] = Field(
-        default_factory=lambda: ["anthropic", "openai", "google-genai"],
+        default_factory=lambda: ["anthropic", "openai"],
         description="LLM providers to instrument",
     )
 

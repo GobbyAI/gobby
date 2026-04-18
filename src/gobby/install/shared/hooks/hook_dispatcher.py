@@ -35,13 +35,47 @@ from typing import Any
 
 import aiofiles
 
-from gobby.sessions.tmux_context import parse_tmux_socket_path
+
+# NOTE: This dispatcher runs in an isolated PEP-723 `uv run` environment
+# (see the script header above — only httpx, pyyaml, aiofiles are declared).
+# The gobby package is NOT importable here. Keep this file self-contained:
+# do not add `from gobby.<anything>` imports. Inline helpers instead.
+def parse_tmux_socket_path(tmux_env: str | None) -> str | None:
+    """Extract the tmux socket path from the ``TMUX`` env var.
+
+    Mirrors ``gobby.sessions.tmux_context.parse_tmux_socket_path`` — must
+    stay in sync. Inlined here because the dispatcher cannot import from
+    the gobby package at runtime.
+    """
+    if not isinstance(tmux_env, str):
+        return None
+    socket_path = tmux_env.split(",", 1)[0].strip()
+    return socket_path or None
+
 
 # Default daemon configuration
 DEFAULT_DAEMON_PORT = 60887
+DEFAULT_BIND_HOST = "localhost"
 DEFAULT_BOOTSTRAP_PATH = "~/.gobby/bootstrap.yaml"
 
+# Wildcard listen-addresses that can't be dialed — normalize to loopback.
+_UNROUTABLE_BIND_HOSTS: frozenset[str] = frozenset({"0.0.0.0", "::", "::0"})
+
 _cached_daemon_url: str | None = None
+
+
+def _resolve_daemon_host(bind_host: str) -> str:
+    """Normalize a daemon bind_host for client dialing.
+
+    Wildcard listen-addresses (``0.0.0.0``, ``::``, ``::0``) aren't dialable —
+    map to ``127.0.0.1``. IPv6 literals get bracketed for URL syntax.
+    Everything else (``localhost``, hostnames, IPv4 literals) passes through.
+    """
+    if bind_host in _UNROUTABLE_BIND_HOSTS:
+        return "127.0.0.1"
+    if ":" in bind_host and not bind_host.startswith("["):
+        return f"[{bind_host}]"
+    return bind_host
 
 
 # ── CLI Configuration Registry ──────────────────────────────────────────
@@ -145,18 +179,23 @@ def detect_cli(args: argparse.Namespace) -> CLIConfig:
 async def get_daemon_url() -> str:
     """Get the daemon HTTP URL from bootstrap config.
 
-    Reads daemon_port from ~/.gobby/bootstrap.yaml if it exists,
-    otherwise uses the default port 60887. Result is cached
-    for the lifetime of the process to avoid redundant file I/O.
+    Reads ``daemon_port`` and ``bind_host`` from ``~/.gobby/bootstrap.yaml``
+    when present; otherwise falls back to ``localhost:60887``. Wildcard
+    listen-addresses in ``bind_host`` are normalized to ``127.0.0.1`` for
+    dialing. Result is cached for the lifetime of the process.
 
     Returns:
-        Full daemon URL like http://localhost:60887
+        Full daemon URL like ``http://localhost:60887`` or
+        ``http://127.0.0.1:60887`` (when bind_host is a wildcard).
     """
     global _cached_daemon_url
     if _cached_daemon_url is not None:
         return _cached_daemon_url
 
     bootstrap_path = Path(DEFAULT_BOOTSTRAP_PATH).expanduser()
+
+    port: int = DEFAULT_DAEMON_PORT
+    bind_host: str = DEFAULT_BIND_HOST
 
     if bootstrap_path.exists():
         try:
@@ -166,12 +205,12 @@ async def get_daemon_url() -> str:
                 content = await f.read()
             config = yaml.safe_load(content) or {}
             port = config.get("daemon_port", DEFAULT_DAEMON_PORT)
+            bind_host = config.get("bind_host", DEFAULT_BIND_HOST)
         except Exception:
-            port = DEFAULT_DAEMON_PORT
-    else:
-        port = DEFAULT_DAEMON_PORT
+            pass  # Fall back to defaults on any read/parse error.
 
-    _cached_daemon_url = f"http://localhost:{port}"
+    host = _resolve_daemon_host(bind_host)
+    _cached_daemon_url = f"http://{host}:{port}"
     return _cached_daemon_url
 
 

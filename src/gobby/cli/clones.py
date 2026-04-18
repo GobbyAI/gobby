@@ -149,12 +149,20 @@ def create_clone(
     help="Parent session ID (required)",
 )
 @click.option("--workflow", "-w", help="Workflow to activate")
+@click.option("--reasoning-effort", help="Reasoning effort override")
+@click.option(
+    "--reasoning-required/--no-reasoning-required",
+    default=False,
+    help="Fail instead of warning when the requested reasoning is unsupported",
+)
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def spawn_agent(
     clone_ref: str,
     prompt: str,
     parent_session_id: str,
     workflow: str | None,
+    reasoning_effort: str | None,
+    reasoning_required: bool,
     json_format: bool,
 ) -> None:
     """Spawn an agent to work in a clone.
@@ -174,7 +182,7 @@ def spawn_agent(
 
     daemon_url = get_daemon_url()
 
-    arguments = {
+    arguments: dict[str, str | bool] = {
         "prompt": prompt,
         "parent_session_id": parent_session_id,
         "isolation": "clone",
@@ -183,6 +191,9 @@ def spawn_agent(
 
     if workflow:
         arguments["workflow"] = workflow
+    if reasoning_effort:
+        arguments["reasoning_effort"] = reasoning_effort
+        arguments["reasoning_required"] = reasoning_required
 
     try:
         response = httpx.post(
@@ -210,6 +221,9 @@ def spawn_agent(
         session_id = result.get("session_id", "unknown")
         click.echo(f"Spawned agent in clone {clone_id}")
         click.echo(f"  Session: {session_id}")
+        reasoning = result.get("reasoning") or {}
+        if reasoning.get("message"):
+            click.echo(f"  Reasoning: {reasoning['message']}")
     else:
         click.echo(f"Failed to spawn agent: {result.get('error')}", err=True)
 

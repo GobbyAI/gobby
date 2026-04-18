@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from opentelemetry.trace import Status, StatusCode
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import DatabaseProtocol
@@ -65,6 +65,15 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
             if server and tool:
                 return f"{server}:{tool}"
     return str(tool_name)
+
+
+def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:
+    """Return True for synthetic direct MCP calls emitted by pipeline sessions."""
+    if event.source != SessionSource.PIPELINE:
+        return False
+
+    tool_name = event.data.get("tool_name", "")
+    return tool_name in ("call_tool", "mcp__gobby__call_tool")
 
 
 def _event_value(event_type: HookEventType | str) -> str:
@@ -185,33 +194,42 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # Initialized early so hardcoded turn-start rules can append.
                 mcp_calls: list[dict[str, Any]] = []
 
-                # Auto-track consecutive tool blocks (universal safety — not configurable)
-                # Only escalate when the SAME tool is retried — different tools reset the counter
-                # so the agent can recover by using other tools (Read, Bash, etc.).
-                if is_before_tool and variables.get("tool_block_pending"):
-                    tool_name = _get_tool_identity(event.data)
-                    last_blocked = variables.get("_last_blocked_tool", "")
-                    if tool_name == last_blocked:
-                        count = variables.get("consecutive_tool_blocks", 0) + 1
-                        variables["consecutive_tool_blocks"] = count
-                        if count >= 2:
-                            resp = HookResponse(
-                                decision="block",
-                                reason=(
-                                    "Rule enforced by Gobby: [consecutive-tool-block]\n"
-                                    f"You have attempted {tool_name} {count + 1} times consecutively "
-                                    "without addressing the error.\n"
-                                    "STOP retrying the same action. Read the previous error messages "
-                                    "and take a DIFFERENT action to resolve the underlying issue first."
-                                ),
-                            )
-                            if span.is_recording():
-                                span.set_attribute("final_decision", resp.decision)
-                                span.set_attribute("block_reason", resp.reason)
-                            return resp
-                    else:
-                        # Different tool — reset counter, let it through to rule evaluation
+                # Auto-track consecutive retries after a blocked BEFORE_TOOL.
+                # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
+                # tool_block_pending is reserved for real tool execution failures.
+                if is_before_tool and variables.get("_last_blocked_tool"):
+                    if _is_pipeline_direct_mcp_event(event):
+                        # Synthetic pipeline MCP events clear block state so the next real user tool starts from 0.
                         variables["consecutive_tool_blocks"] = 0
+                        variables["_last_blocked_tool"] = ""
+                    else:
+                        tool_name = _get_tool_identity(event.data)
+                        last_blocked = variables.get("_last_blocked_tool", "")
+                        if tool_name == last_blocked:
+                            count = variables.get("consecutive_tool_blocks", 0) + 1
+                            variables["consecutive_tool_blocks"] = count
+                            max_attempts = int(
+                                variables.get("max_consecutive_blocked_tool_attempts", 5)
+                            )
+                            total_attempts = count + 1
+                            if total_attempts >= max_attempts:
+                                resp = HookResponse(
+                                    decision="block",
+                                    reason=(
+                                        "Rule enforced by Gobby: [consecutive-tool-block]\n"
+                                        f"You have attempted {tool_name} {total_attempts} times consecutively "
+                                        "without addressing the error.\n"
+                                        "STOP retrying the same action. Read the previous error messages "
+                                        "and take a DIFFERENT action to resolve the underlying issue first."
+                                    ),
+                                )
+                                if span.is_recording():
+                                    span.set_attribute("final_decision", resp.decision)
+                                    span.set_attribute("block_reason", resp.reason)
+                                return resp
+                        else:
+                            # Different tool — reset counter, let it through to rule evaluation
+                            variables["consecutive_tool_blocks"] = 0
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):
@@ -269,7 +287,6 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if is_before_tool:
                     agent_block = self._check_agent_tool_enforcement(event, session_id, variables)
                     if agent_block is not None:
-                        variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
@@ -282,7 +299,6 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if is_before_tool:
                     step_block = self._check_step_tool_enforcement(event, session_id)
                     if step_block is not None:
-                        variables["tool_block_pending"] = True
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
@@ -340,8 +356,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         _clear_edit_write_state(variables)
 
                 if not rules:
-                    # Auto-manage tool_block_pending on after_tool
-                    # (Symmetric with auto-set on before_tool block at line ~164)
+                    # Auto-manage tool_block_pending on after_tool execution results.
                     if is_after_tool:
                         is_failure = event.metadata.get("is_failure", False) or event.data.get(
                             "is_error", False
@@ -388,8 +403,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             span.set_attribute("block_reason", resp.reason)
                     return resp
 
-                # Auto-manage tool_block_pending on after_tool before rule eval
-                # (Symmetric with auto-set on before_tool block at line ~164)
+                # Auto-manage tool_block_pending on after_tool before rule eval.
                 if is_after_tool:
                     is_failure = event.metadata.get("is_failure", False) or event.data.get(
                         "is_error", False
@@ -485,9 +499,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             block_reason = deferred_block.reason or "Blocked by rule"
                             block_reason = self._render_template(block_reason, ctx, allowed_funcs)
                             block_reason = f"Rule enforced by Gobby: [{_row.name}]\n{block_reason}"
-                            # Auto-set tool_block_pending on before_tool blocks
+                            # Track the blocked tool so repeated retries can escalate,
+                            # but do not mark this as a tool execution failure.
                             if is_before_tool:
-                                variables["tool_block_pending"] = True
                                 variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                                 # Blocked edit/write never executed — nothing to recover
                                 if _is_write_like_event_data(event.data):

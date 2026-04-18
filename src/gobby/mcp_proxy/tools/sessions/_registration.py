@@ -44,6 +44,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
         git_branch: str | None = None,
         parent_session_id: str | None = None,
         agent_depth: int = 0,
+        sandbox_enabled: bool | None = None,
     ) -> dict[str, Any]:
         """
         Register a session for a hookless client.
@@ -57,6 +58,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             git_branch: Git branch name
             parent_session_id: Parent session ID for handoff chains
             agent_depth: Depth in agent hierarchy (0 = root session)
+            sandbox_enabled: Whether the session runtime was launched sandboxed
 
         Returns:
             Session details including session_id, session_ref (#N), and status
@@ -94,6 +96,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 git_branch=git_branch,
                 parent_session_id=parent_session_id,
                 agent_depth=agent_depth,
+                sandbox_enabled=sandbox_enabled,
             )
 
             return {

@@ -322,7 +322,12 @@ def update_task(
     linear_team_id: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
 ) -> bool:
-    """Update task fields.
+    """Internal storage primitive for task field updates.
+
+    This function intentionally remains permissive because lifecycle and
+    reconciliation helpers need an atomic write primitive below the manager
+    policy boundary. External callers should use LocalTaskManager methods
+    instead of calling this directly.
 
     Returns True if parent_task_id was changed (indicating path cache needs update).
     """

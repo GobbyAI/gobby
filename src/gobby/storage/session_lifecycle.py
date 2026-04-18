@@ -87,7 +87,7 @@ def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 
     cursor = db.execute(
         """
         UPDATE sessions
-        SET status = 'paused', updated_at = datetime('now')
+        SET status = 'paused'
         WHERE status = 'active'
         AND datetime(updated_at) < datetime('now', 'utc', ? || ' minutes')
         """,

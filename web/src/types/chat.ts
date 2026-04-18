@@ -1,7 +1,7 @@
 import type { GobbySession } from "../hooks/useSessions";
 import type { PaletteItem } from "../hooks/useColonAutocomplete";
 
-export type ChatMode = "accept_edits" | "bypass" | "plan";
+export type ChatMode = "accept_edits" | "bypass" | "normal" | "plan";
 
 export interface ChatModeInfo {
   id: ChatMode;
@@ -18,9 +18,9 @@ export const CHAT_MODES: ChatModeInfo[] = [
     level: 0,
   },
   {
-    id: "accept_edits",
+    id: "normal",
     label: "Act",
-    description: "Auto-approve reads and edits, prompt for write operations",
+    description: "Prompt for non-exempt tool use",
     level: 1,
   },
   {
@@ -30,6 +30,17 @@ export const CHAT_MODES: ChatModeInfo[] = [
     level: 2,
   },
 ];
+
+export const AUTONOMOUS_CHAT_MODES: ChatModeInfo[] = CHAT_MODES.filter(
+  (mode) => mode.id !== "normal",
+);
+
+export function normalizeChatMode(mode: string | null | undefined): ChatMode {
+  if (mode === "act") return "normal";
+  if (mode === "accept_edits") return "normal";
+  if (mode === "bypass" || mode === "normal" || mode === "plan") return mode;
+  return "plan";
+}
 
 export interface ToolResult {
   content: unknown;
@@ -57,8 +68,25 @@ export function classifyTool(toolName: string | null | undefined): string {
   if (!toolName) return "unknown";
   const name = toolName.toLowerCase();
 
+  if (name === "protocol_context" || name === "protocol") return "protocol";
+
   // Built-in tools
-  if (["bash", "sh", "terminal", "shell"].includes(name)) return "bash";
+  if (
+    [
+      "bash",
+      "sh",
+      "terminal",
+      "shell",
+      "run_command",
+      "run_shell_command",
+      "runshellcommand",
+      "shelltool",
+      "commandexecution",
+      "exec_command",
+    ].includes(name)
+  ) {
+    return "bash";
+  }
   if (["read", "read_file", "cat"].includes(name)) return "read";
   if (["edit", "write", "multiedit", "patch", "sed"].includes(name))
     return "edit";
@@ -66,7 +94,7 @@ export function classifyTool(toolName: string | null | undefined): string {
   if (["glob", "ls", "list_files", "find"].includes(name)) return "glob";
 
   // MCP tools: mcp__server__tool
-  if (toolName.startsWith("mcp__")) return "mcp";
+  if (name.startsWith("mcp__")) return "mcp";
 
   return "unknown";
 }
@@ -150,7 +178,9 @@ export interface SessionObservationMeta {
   source: string;
   title: string | null;
   status: string;
+  canProxyAttach?: boolean;
   model: string | null;
+  reasoningEffort?: string | null;
   externalId: string;
   chatMode?: string | null;
   gitBranch?: string | null;
@@ -218,6 +248,7 @@ export interface ChatState {
       provider?: string | null;
       model?: string | null;
       reasoningEffort?: string | null;
+      chatMode?: string | null;
     },
   ) => Promise<string>;
   planPendingApproval: boolean;

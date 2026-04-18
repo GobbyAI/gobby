@@ -7,6 +7,7 @@ import { MessageItem } from "../chat/MessageItem";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { getSessionTitleText } from "../../lib/sessionTitle";
+import { canProxyAttachSessionRecord } from "../../lib/sessionProxyAttach";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -45,6 +46,7 @@ interface SessionEntry {
   startedAt?: string;
   seqNum?: number | null;
   hasTmux: boolean;
+  sandboxEnabled: boolean;
 }
 
 interface SessionContextMenu {
@@ -77,14 +79,42 @@ function getAgentBadge(agentRunId: string | null | undefined): {
   return { label: "auto", className: "session-kind-badge--auto" };
 }
 
+function getSandboxBadge(sandboxEnabled: boolean): {
+  label: string;
+  className: string;
+} | null {
+  if (!sandboxEnabled) return null;
+  return { label: "SB", className: "session-kind-badge--sandbox" };
+}
+
+function isWatchableActivitySession(session: GobbySession): boolean {
+  if (session.source === "pipeline" || session.source === "cron") {
+    return false;
+  }
+
+  // Resume-only terminal rows should stay visible only while tmux metadata
+  // still indicates a live session that can be reattached or resumed in chat.
+  if (session.status !== "active" && session.session_type === "terminal") {
+    return canProxyAttachSessionRecord(session);
+  }
+
+  return true;
+}
+
 function renderBadges(entry: SessionEntry) {
   const typeBadge = getSessionTypeBadge(entry.sessionType);
   const agentBadge = getAgentBadge(entry.agentRunId);
+  const sandboxBadge = getSandboxBadge(entry.sandboxEnabled);
   return (
     <>
       <span className={`session-kind-badge ${typeBadge.className}`}>
         {typeBadge.label}
       </span>
+      {sandboxBadge && (
+        <span className={`session-kind-badge ${sandboxBadge.className}`}>
+          {sandboxBadge.label}
+        </span>
+      )}
       {agentBadge && (
         <span className={`session-kind-badge ${agentBadge.className}`}>
           {agentBadge.label}
@@ -139,7 +169,7 @@ export const SessionsTab = memo(function SessionsTab({
       ? `&project_id=${encodeURIComponent(projectId)}`
       : "";
     try {
-      const [agentsRes, activeRes, pausedRes] = await Promise.all([
+      const [agentsRes, activeRes, pausedRes, handoffReadyRes] = await Promise.all([
         fetch(`${baseUrl}/api/agents/running`).then((r) =>
           r.ok ? r.json() : { agents: [] },
         ),
@@ -149,13 +179,17 @@ export const SessionsTab = memo(function SessionsTab({
         fetch(
           `${baseUrl}/api/sessions?status=paused&limit=20${projectParam}`,
         ).then((r) => (r.ok ? r.json() : { sessions: [] })),
+        fetch(
+          `${baseUrl}/api/sessions?status=handoff_ready&limit=20${projectParam}`,
+        ).then((r) => (r.ok ? r.json() : { sessions: [] })),
       ]);
       setAgents(agentsRes.agents ?? agentsRes ?? []);
-      const isWatchable = (s: GobbySession) =>
-        s.source !== "pipeline" && s.source !== "cron";
-      const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchable);
-      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchable);
-      setActivitySessions([...active, ...paused]);
+      const active = (activeRes.sessions ?? activeRes ?? []).filter(isWatchableActivitySession);
+      const paused = (pausedRes.sessions ?? pausedRes ?? []).filter(isWatchableActivitySession);
+      const handoffReady = (handoffReadyRes.sessions ?? handoffReadyRes ?? []).filter(
+        isWatchableActivitySession,
+      );
+      setActivitySessions([...active, ...paused, ...handoffReady]);
       setExpiringIds(new Set());
       setFetchError(null);
     } catch (err) {
@@ -196,7 +230,10 @@ export const SessionsTab = memo(function SessionsTab({
             ? `Agent ${a.run_id.slice(0, 8)}`
             : `Session ${a.run_id.slice(0, 8)}`),
         provider: a.provider,
-        status: "active" as const,
+        status:
+          matchedSession && matchedSession.status !== "active"
+            ? "paused"
+            : ("active" as const),
         sessionType: matchedSession?.session_type,
         externalId: matchedSession?.external_id,
         agentRunId: matchedSession?.agent_run_id ?? a.run_id,
@@ -204,6 +241,7 @@ export const SessionsTab = memo(function SessionsTab({
         startedAt: a.started_at,
         seqNum: matchedSession?.seq_num,
         hasTmux: !!a.pid,
+        sandboxEnabled: matchedSession?.sandbox_enabled ?? false,
       };
     });
 
@@ -215,7 +253,7 @@ export const SessionsTab = memo(function SessionsTab({
           type: "cli" as const,
           label: getSessionTitleText(s.title),
           provider: s.source ?? "unknown",
-          status: (s.status === "paused" ? "paused" : "active") as
+          status: (s.status === "active" ? "active" : "paused") as
             | "active"
             | "paused",
           sessionType: s.session_type,
@@ -224,6 +262,7 @@ export const SessionsTab = memo(function SessionsTab({
           startedAt: s.updated_at,
           seqNum: s.seq_num,
           hasTmux: !!s.terminal_context,
+          sandboxEnabled: s.sandbox_enabled ?? false,
         };
       });
 

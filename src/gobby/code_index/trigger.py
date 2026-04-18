@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
+
+from gobby.utils.native_bin import resolve_native_bin
 
 logger = logging.getLogger(__name__)
 
@@ -79,15 +80,15 @@ class CodeIndexTrigger:
         if not files or not root_path:
             return
 
-        gcode_bin = Path.home() / ".gobby" / "bin" / "gcode"
-        if not gcode_bin.exists():
+        gcode_bin = resolve_native_bin("gcode")
+        if gcode_bin is None:
             logger.warning("gcode not installed — skipping incremental index. Run `gobby install`.")
             return
 
         proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                str(gcode_bin),
+                gcode_bin,
                 "index",
                 "--files",
                 *files,

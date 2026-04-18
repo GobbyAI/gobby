@@ -8,9 +8,22 @@ import './ConfigurationPage.css'
 // Types
 // =============================================================================
 
-type TabId = 'config' | 'secrets' | 'prompts' | 'variables' | 'template'
+type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
+type ApprovalRuleRow = { id: string; value: string }
 
 const BACKEND_SECRET_MASK = '********'
+
+function createApprovalRuleRow(value = ''): ApprovalRuleRow {
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `project-approval-rule-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return { id, value }
+}
+
+function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
+  return rules.map((rule) => createApprovalRuleRow(rule))
+}
 
 // =============================================================================
 // Secret field detection
@@ -396,6 +409,155 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
         </button>
       </div>
     </>
+  )
+}
+
+interface ApprovalRulesTabProps {
+  rules: string[]
+  defaultRules: string[]
+  builtInExemptions: string[]
+  onSave: (rules: string[]) => Promise<boolean>
+}
+
+function ApprovalRulesTab({
+  rules,
+  defaultRules,
+  builtInExemptions,
+  onSave,
+}: ApprovalRulesTabProps) {
+  const [localRules, setLocalRules] = useState<ApprovalRuleRow[]>(() => toApprovalRuleRows(rules))
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLocalRules(toApprovalRuleRows(rules))
+    setSaveError(null)
+  }, [rules])
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const ok = await onSave(localRules.map((rule) => rule.value.trim()).filter(Boolean))
+      if (!ok) {
+        setSaveError('Failed to save approval rules.')
+      }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save approval rules.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="config-form">
+      <div className="config-form-section">
+        <div className="config-section-header">
+          <div>
+            <span className="config-section-title">Built-In Exemptions</span>
+            <span className="config-field-help" style={{ marginLeft: 8 }}>
+              Always auto-allowed and read-only
+            </span>
+          </div>
+        </div>
+        <div className="config-section-body">
+          {builtInExemptions.map((rule) => (
+            <div key={rule} className="config-form-field">
+              <input type="text" className="config-input" value={rule} readOnly />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="config-form-section">
+        <div className="config-section-header">
+          <div>
+            <span className="config-section-title">Global Auto-Allow Rules</span>
+            <span className="config-field-help" style={{ marginLeft: 8 }}>
+              Shared across providers for interactive web chat
+            </span>
+          </div>
+        </div>
+        <div className="config-section-body">
+          {localRules.map((rule, index) => (
+            <div key={rule.id} className="config-toggle-row" style={{ marginBottom: 12, gap: 8 }}>
+              <input
+                type="text"
+                className="config-input"
+                value={rule.value}
+                onChange={(e) =>
+                  setLocalRules((prev) => {
+                    setSaveError(null)
+                    return prev.map((value, i) =>
+                      i === index ? { ...value, value: e.target.value } : value,
+                    )
+                  })
+                }
+                placeholder="tool:Write or mcp:gobby-tasks:*"
+              />
+              <button
+                type="button"
+                className="config-toolbar-btn"
+                onClick={() =>
+                  setLocalRules((prev) => {
+                    setSaveError(null)
+                    return prev.filter((_, i) => i !== index)
+                  })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+
+          <div className="config-field-help" style={{ marginBottom: 12 }}>
+            Recommended defaults: {defaultRules.join(', ')}
+          </div>
+
+          <div className="config-toolbar-right">
+            <button
+              type="button"
+              className="config-toolbar-btn"
+              onClick={() =>
+                setLocalRules((prev) => {
+                  setSaveError(null)
+                  return [...prev, createApprovalRuleRow('')]
+                })
+              }
+            >
+              Add Rule
+            </button>
+            <button
+              type="button"
+              className="config-toolbar-btn"
+              onClick={() => {
+                setSaveError(null)
+                setLocalRules(toApprovalRuleRows(defaultRules))
+              }}
+            >
+              Reset To Defaults
+            </button>
+            <button
+              type="button"
+              className="config-toolbar-btn primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : 'Save Rules'}
+            </button>
+          </div>
+          {saveError && (
+            <div
+              className="config-field-help"
+              role="alert"
+              style={{ color: 'var(--status-escalated, #ef4444)', marginTop: 8 }}
+            >
+              {saveError}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1025,6 +1187,7 @@ export function ConfigurationPage() {
 
   const tabs: { id: TabId; label: string }[] = [
     { id: 'config', label: 'Configuration' },
+    { id: 'approvals', label: 'Approvals' },
     { id: 'secrets', label: 'Secrets' },
     { id: 'prompts', label: 'Prompts' },
     { id: 'variables', label: 'Variables' },
@@ -1063,6 +1226,14 @@ export function ConfigurationPage() {
             secretKeys={config.secretKeys}
             rulesEnforcement={config.rulesEnforcement}
             onToggleRulesEnforcement={config.setRulesEnforcement}
+          />
+        )}
+        {activeTab === 'approvals' && (
+          <ApprovalRulesTab
+            rules={config.globalApprovalRules}
+            defaultRules={config.defaultApprovalRules}
+            builtInExemptions={config.builtInApprovalExemptions}
+            onSave={config.saveGlobalApprovalRules}
           />
         )}
         {activeTab === 'secrets' && (

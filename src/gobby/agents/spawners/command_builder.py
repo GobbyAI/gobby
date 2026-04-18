@@ -15,6 +15,7 @@ def build_cli_command(
     working_directory: str | None = None,
     sandbox_args: list[str] | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     mode: str = "agent",
     output_format: str | None = None,
     env_overrides: dict[str, str] | None = None,
@@ -66,6 +67,8 @@ def build_cli_command(
             command.extend(["--session-id", session_id])
         if model:
             command.extend(["--model", model])
+        if reasoning_effort:
+            command.extend(["--effort", reasoning_effort])
         if auto_approve:
             command.append("--dangerously-skip-permissions")
         if mode == "interactive":
@@ -87,6 +90,8 @@ def build_cli_command(
         # Codex CLI flags
         if model:
             command.extend(["--model", model])
+        if cli == "codex" and reasoning_effort:
+            command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if auto_approve:
             command.append("--full-auto")
         if working_directory:
@@ -103,101 +108,6 @@ def build_cli_command(
     return command, env
 
 
-def build_gemini_command_with_resume(
-    gemini_external_id: str,
-    prompt: str | None = None,
-    auto_approve: bool = False,
-    gobby_session_id: str | None = None,
-    model: str | None = None,
-) -> list[str]:
-    """
-    Build Gemini CLI command with session resume.
-
-    Uses -r flag to resume a preflight-captured session, with session context
-    injected into the initial prompt.
-
-    Args:
-        gemini_external_id: Gemini's session_id from preflight capture
-        prompt: Optional user prompt
-        auto_approve: If True, add --approval-mode yolo
-        gobby_session_id: Gobby session ID to inject into context
-        model: Optional model name to pass to the CLI (--model flag)
-
-    Returns:
-        Command list for subprocess execution
-    """
-    command = ["gemini"]
-
-    # Resume the preflight session
-    command.extend(["-r", gemini_external_id])
-
-    if model:
-        command.extend(["--model", model])
-    if auto_approve:
-        command.extend(["--approval-mode", "yolo"])
-
-    # Build prompt with session context
-    if gobby_session_id:
-        context_prefix = (
-            f"Your Gobby session_id is: {gobby_session_id}\n"
-            f"Use this when calling Gobby MCP tools.\n\n"
-        )
-        full_prompt = context_prefix + (prompt or "")
-    else:
-        full_prompt = prompt or ""
-
-    # Use -i for interactive mode with initial prompt
-    if full_prompt:
-        command.extend(["-i", full_prompt])
-
-    return command
-
-
-def build_qwen_command_with_resume(
-    qwen_external_id: str,
-    prompt: str | None = None,
-    auto_approve: bool = False,
-    gobby_session_id: str | None = None,
-    model: str | None = None,
-) -> list[str]:
-    """
-    Build Qwen CLI command with session resume.
-
-    Uses -r flag to resume a preflight-captured session, with session context
-    injected into the initial prompt.
-
-    Args:
-        qwen_external_id: Qwen's session_id from preflight capture
-        prompt: Optional user prompt
-        auto_approve: If True, add --approval-mode yolo
-        gobby_session_id: Gobby session ID to inject into context
-        model: Optional model name to pass to the CLI (--model flag)
-
-    Returns:
-        Command list for subprocess execution
-    """
-    command = ["qwen", "-r", qwen_external_id]
-
-    if model:
-        command.extend(["--model", model])
-    if auto_approve:
-        command.extend(["--approval-mode", "yolo"])
-
-    if gobby_session_id:
-        context_prefix = (
-            f"Your Gobby session_id is: {gobby_session_id}\n"
-            f"Use this when calling Gobby MCP tools.\n\n"
-        )
-        full_prompt = context_prefix + (prompt or "")
-    else:
-        full_prompt = prompt or ""
-
-    if full_prompt:
-        command.extend(["-i", full_prompt])
-
-    return command
-
-
 def build_codex_command_with_resume(
     codex_external_id: str,
     prompt: str | None = None,
@@ -205,6 +115,8 @@ def build_codex_command_with_resume(
     gobby_session_id: str | None = None,
     working_directory: str | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
+    sandbox_args: list[str] | None = None,
 ) -> list[str]:
     """
     Build Codex CLI command with session resume.
@@ -219,11 +131,17 @@ def build_codex_command_with_resume(
         gobby_session_id: Gobby session ID to inject into context
         working_directory: Optional working directory override
         model: Optional model name to pass to the CLI (--model flag)
+        sandbox_args: Optional sandbox flags to insert before the prompt
 
     Returns:
         Command list for subprocess execution
     """
-    command = ["codex", "resume", codex_external_id]
+    command = ["codex"]
+
+    if reasoning_effort:
+        command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
+
+    command.extend(["resume", codex_external_id])
 
     if model:
         command.extend(["--model", model])
@@ -232,6 +150,8 @@ def build_codex_command_with_resume(
 
     if working_directory:
         command.extend(["-C", working_directory])
+    if sandbox_args:
+        command.extend(sandbox_args)
 
     # Build prompt with session context
     if gobby_session_id:

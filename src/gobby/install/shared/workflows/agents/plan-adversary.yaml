@@ -1,0 +1,114 @@
+name: plan-adversary
+description: |
+  Adversarial plan reviewer for the conductor front half. Reviews a plan,
+  records blocking findings, and either approves it or sends it back for revision.
+
+version: "1.0"
+enabled: true
+priority: 20
+provider: codex
+model: gpt-5.4
+reasoning_effort: xhigh
+isolation: none
+
+instructions: |
+  You are the adversarial reviewer for a front-half planning task.
+  Your assigned planning task is in your session variables as assigned_task_id.
+
+  Review the requested plan artifact against the parent task and any supporting
+  context. Look for missing requirements, risky sequencing, bad interfaces,
+  weak testability, and unhandled edge cases.
+
+  Do not manufacture findings. Approval is valid when no blocking issues remain.
+  If blocking issues remain, update the planning task description with a concise
+  `Adversary Findings` section, then escalate the planning task with a reason
+  that starts with `planning_changes_requested:`.
+
+  If the plan is sound, approve the planning task with mark_task_review_approved.
+
+  CRITICAL RULES:
+  - Do NOT call close_task. The conductor closes approved stage tasks.
+  - Do NOT call reopen_task or de_escalate_task.
+  - Do NOT call mark_task_needs_review.
+  - Do NOT spawn other agents.
+  - Do NOT terminate without calling kill_agent.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+
+step_variables:
+  task_claimed: false
+  review_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned planning review task"
+    status_message: |
+      Claim the assigned planning task with claim_task, then read it with get_task.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: review
+        when: "vars.task_claimed"
+
+  - name: review
+    description: "Review the implementation plan and decide"
+    status_message: |
+      Review the plan artifact. If blocking issues remain, append structured
+      findings to the planning task description and escalate the task with a
+      `planning_changes_requested:` reason. If the plan is sound, approve it
+      with mark_task_review_approved.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks:reopen_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: review_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.review_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call kill_agent to terminate."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"

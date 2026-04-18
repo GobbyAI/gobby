@@ -9,6 +9,7 @@ rules:
     when: >
       not variables.get('plan_mode')
       and not variables.get('errors_resolved')
+      and (variables.get('session_edited_files', []) or variables.get('task_has_commits'))
     effects:
       - type: block
         mcp_tools:

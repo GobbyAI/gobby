@@ -48,12 +48,112 @@ def _get_subtask_phase(subtask: dict[str, Any]) -> int:
     return _extract_phase_number(subtask) or _extract_phase_from_title(subtask) or 0
 
 
+_PHASE_HEADING_RE = re.compile(r"##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+)")
+_PHASE_SECTION_RE = re.compile(
+    r"^##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+?)$",
+    flags=re.MULTILINE,
+)
+
+
 def _extract_phase_titles(description: str) -> dict[int, str]:
-    """Extract phase titles from plan document content in task description."""
+    """Extract phase titles from plan document content in task description.
+
+    Accepts `## Phase N: Title`, `## Phase N — Title` (em-dash),
+    `## Phase N – Title` (en-dash), and `## Phase N - Title` (ASCII hyphen).
+    """
     titles: dict[int, str] = {}
-    for match in re.finditer(r"##\s+Phase\s+(\d+):\s*(.+)", description):
+    for match in _PHASE_HEADING_RE.finditer(description):
         titles[int(match.group(1))] = match.group(2).strip()
     return titles
+
+
+def _extract_phase_sections(content: str) -> list[dict[str, Any]]:
+    """Split plan markdown into ordered phase sections.
+
+    Each section spans from its ``## Phase N: Name`` heading to (but not
+    including) the next same-level phase heading or end-of-file. Accepts the
+    same separator characters as :func:`_extract_phase_titles`.
+    """
+    matches = list(_PHASE_SECTION_RE.finditer(content))
+    sections: list[dict[str, Any]] = []
+    for i, match in enumerate(matches):
+        body_start = match.end()
+        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        sections.append(
+            {
+                "number": int(match.group(1)),
+                "title": match.group(2).strip(),
+                "body": content[body_start:body_end].strip(),
+            }
+        )
+    return sections
+
+
+def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
+    """Prefix stable IDs in a compiled spec so sibling specs can merge without collision."""
+
+    def pfx(value: str) -> str:
+        return f"{prefix}{value}" if value and not value.startswith(prefix) else value
+
+    raw_execution_groups = spec.get("execution_groups") or []
+    group_id_map: dict[str, str] = {}
+    task_fallback_groups: dict[str, str] = {}
+    execution_groups = []
+    for group_index, group in enumerate(raw_execution_groups, start=1):
+        raw_group_id = group.get("id")
+        resolved_group_id = (
+            pfx(raw_group_id) if raw_group_id else pfx(f"execution-group-{group_index}")
+        )
+        prefixed_task_ids = [pfx(tid) for tid in group.get("task_ids") or []]
+        execution_groups.append(
+            {
+                **group,
+                "id": resolved_group_id,
+                "task_ids": prefixed_task_ids,
+            }
+        )
+        if isinstance(raw_group_id, str) and raw_group_id:
+            group_id_map[raw_group_id] = resolved_group_id
+        else:
+            for prefixed_task_id in prefixed_task_ids:
+                task_fallback_groups[prefixed_task_id] = resolved_group_id
+
+    phases = [
+        {
+            **phase,
+            "id": pfx(phase["id"]),
+            "task_ids": [pfx(tid) for tid in phase.get("task_ids") or []],
+        }
+        for phase in spec.get("phases") or []
+    ]
+    tasks = [
+        {
+            **task_item,
+            "id": prefixed_task_id,
+            "phase_id": pfx(task_item["phase_id"]),
+            "execution_group": (
+                group_id_map.get(raw_execution_group, pfx(raw_execution_group))
+                if isinstance(raw_execution_group, str) and raw_execution_group
+                else task_fallback_groups.get(prefixed_task_id, raw_execution_group)
+            ),
+        }
+        for task_item in spec.get("tasks") or []
+        for prefixed_task_id, raw_execution_group in [
+            (pfx(task_item["id"]), task_item.get("execution_group"))
+        ]
+    ]
+    dependencies = [
+        {"task_id": pfx(edge["task_id"]), "depends_on": pfx(edge["depends_on"])}
+        for edge in spec.get("dependencies") or []
+        if edge.get("task_id") and edge.get("depends_on")
+    ]
+    return {
+        **spec,
+        "phases": phases,
+        "tasks": tasks,
+        "dependencies": dependencies,
+        "execution_groups": execution_groups,
+    }
 
 
 def _translate_deps(deps: list[int], old_to_new: dict[int, int]) -> list[int]:
@@ -267,8 +367,19 @@ class ExpansionService:
         self.run_manager.start(run_id)
         self.run_manager.append_log(run_id, level="info", message="Starting expansion compile")
 
-        raw_spec = await self._generate_raw_spec(run, task)
-        compiled_spec = self.normalize_compiled_spec(raw_spec, task=task, plan_file=run.plan_file)
+        phase_sections = self._load_phase_sections(run.plan_file, task)
+        if len(phase_sections) >= 2:
+            self.run_manager.append_log(
+                run_id,
+                level="info",
+                message=f"Detected {len(phase_sections)} phases; compiling per-phase",
+            )
+            compiled_spec = await self._compile_multi_phase(run, task, phase_sections)
+        else:
+            raw_spec = await self._generate_raw_spec(run, task)
+            compiled_spec = self.normalize_compiled_spec(
+                raw_spec, task=task, plan_file=run.plan_file
+            )
         validation = self.validate_compiled_spec(compiled_spec)
         if not validation["valid"]:
             errors = "; ".join(validation["errors"])
@@ -680,10 +791,39 @@ class ExpansionService:
 
     async def _generate_raw_spec(self, run: ExpansionRun, task: Task) -> dict[str, Any]:
         """Call the configured LLM and return raw JSON output."""
+        prompt_context = self._build_prompt_context(run, task)
+        return await self._invoke_llm_compile(run, prompt_context)
+
+    async def _generate_raw_spec_for_phase(
+        self,
+        run: ExpansionRun,
+        task: Task,
+        phase_section: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Call the LLM scoped to a single plan-phase section."""
+        prompt_context = self._build_prompt_context(
+            run,
+            task,
+            plan_content_override=phase_section["body"],
+            single_phase_mode=True,
+            phase_title=phase_section["title"],
+            phase_number=phase_section["number"],
+        )
+        return await self._invoke_llm_compile(
+            run, prompt_context, phase_number=phase_section["number"]
+        )
+
+    async def _invoke_llm_compile(
+        self,
+        run: ExpansionRun,
+        prompt_context: dict[str, Any],
+        *,
+        phase_number: int | None = None,
+    ) -> dict[str, Any]:
+        """Render prompts, call the configured LLM, and parse the JSON response."""
         if self.llm_service is None:
             raise RuntimeError("LLM service is unavailable for task expansion")
 
-        prompt_context = self._build_prompt_context(run, task)
         expansion_config = self._get_expansion_config()
         prompt_path = (
             expansion_config.prompt_path
@@ -703,6 +843,7 @@ class ExpansionService:
         model_name = run.model or (expansion_config.model if expansion_config else "opus")
 
         provider = self.llm_service.get_provider(provider_name)
+        scope = f"run={run.id}" + (f" phase={phase_number}" if phase_number is not None else "")
         try:
             result = await provider.generate_json(
                 user_prompt, system_prompt=system_prompt, model=model_name
@@ -710,8 +851,8 @@ class ExpansionService:
             return cast(dict[str, Any], result)
         except Exception as e:
             logger.debug(
-                "generate_json failed for expansion run %s; falling back to generate_text",
-                run.id,
+                "generate_json failed for expansion %s; falling back to generate_text",
+                scope,
                 exc_info=True,
             )
             response_text = await provider.generate_text(
@@ -726,10 +867,80 @@ class ExpansionService:
                 raise ValueError("Expansion compiler did not return valid JSON") from e
             return parsed
 
-    def _build_prompt_context(self, run: ExpansionRun, task: Task) -> dict[str, Any]:
-        """Build prompt context for expansion compilation."""
+    async def _compile_multi_phase(
+        self,
+        run: ExpansionRun,
+        task: Task,
+        phase_sections: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Compile a multi-phase plan by issuing one LLM call per phase, then merging."""
+        expansion_config = self._get_expansion_config()
+        max_subtasks = expansion_config.max_subtasks if expansion_config else 15
+
+        merged_phases: list[dict[str, Any]] = []
+        merged_tasks: list[dict[str, Any]] = []
+        merged_deps: list[dict[str, str]] = []
+        merged_exec_groups: list[dict[str, Any]] = []
+
+        for section in phase_sections:
+            self.run_manager.append_log(
+                run.id,
+                level="info",
+                message=f"Compiling phase {section['number']}: {section['title']}",
+            )
+            raw = await self._generate_raw_spec_for_phase(run, task, section)
+            if not (raw.get("tasks") or []):
+                raise ValueError(f"Phase {section['number']} spec produced no tasks")
+            normalized = (
+                self.normalize_compiled_spec(raw, task=task, plan_file=run.plan_file)
+                if "subtasks" in raw
+                else self._normalize_native_compiled_spec(raw, task=task, plan_file=run.plan_file)
+            )
+            if len(normalized["tasks"]) > max_subtasks:
+                raise ValueError(
+                    f"Phase {section['number']} spec exceeds max_subtasks "
+                    f"({len(normalized['tasks'])} > {max_subtasks})"
+                )
+            prefixed = _prefix_spec_ids(normalized, prefix=f"phase-{section['number']}-")
+            merged_phases.extend(prefixed["phases"])
+            merged_tasks.extend(prefixed["tasks"])
+            merged_deps.extend(prefixed["dependencies"])
+            merged_exec_groups.extend(prefixed.get("execution_groups") or [])
+
+        if not merged_tasks:
+            raise ValueError("Multi-phase compile produced no tasks")
+
+        return {
+            "version": 1,
+            "parent_task_id": task.id,
+            "plan_file": run.plan_file,
+            "phases": merged_phases,
+            "tasks": merged_tasks,
+            "dependencies": self._dedupe_dependencies(merged_deps),
+            "execution_groups": merged_exec_groups,
+        }
+
+    def _build_prompt_context(
+        self,
+        run: ExpansionRun,
+        task: Task,
+        *,
+        plan_content_override: str | None = None,
+        single_phase_mode: bool = False,
+        phase_title: str = "",
+        phase_number: int = 0,
+    ) -> dict[str, Any]:
+        """Build prompt context for expansion compilation.
+
+        When ``plan_content_override`` is provided, it replaces the on-disk
+        plan content — used by the per-phase compile path so each LLM call
+        sees only its own phase body.
+        """
         repo_path = self._resolve_repo_path(task)
-        plan_content = self._load_plan_content(run.plan_file, repo_path)
+        if plan_content_override is not None:
+            plan_content: str | None = plan_content_override
+        else:
+            plan_content = self._load_plan_content(run.plan_file, repo_path)
         verification = self._get_verification_commands(repo_path)
         file_context = self._build_file_context(task, repo_path, plan_content)
 
@@ -744,7 +955,12 @@ class ExpansionService:
 
         research_sections: list[str] = [f"Project verification commands:\n{verification_str}"]
         if plan_content:
-            research_sections.append(f"Plan file ({run.plan_file}):\n{plan_content[:12000]}")
+            plan_label = (
+                f"Plan file ({run.plan_file}) — Phase {phase_number}: {phase_title}"
+                if single_phase_mode
+                else f"Plan file ({run.plan_file})"
+            )
+            research_sections.append(f"{plan_label}:\n{plan_content[:12000]}")
         if file_context:
             research_sections.append(file_context)
 
@@ -755,6 +971,9 @@ class ExpansionService:
             "context_str": "\n\n".join(research_sections),
             "research_str": file_context or "No repository files were selected for context.",
             "plan_file": run.plan_file or "",
+            "single_phase_mode": single_phase_mode,
+            "phase_title": phase_title,
+            "phase_number": phase_number,
         }
 
     def _normalize_native_compiled_spec(
@@ -996,14 +1215,36 @@ class ExpansionService:
             return Path(project_ctx["project_path"])
         return None
 
-    def _load_plan_content(self, plan_file: str | None, repo_path: Path | None) -> str | None:
+    def _load_plan_content(
+        self,
+        plan_file: str | None,
+        repo_path: Path | None,
+        *,
+        max_chars: int | None = 20000,
+    ) -> str | None:
         """Load a plan file relative to the repo when provided."""
         if not plan_file:
             return None
         plan_path = Path(plan_file)
         if not plan_path.is_absolute() and repo_path is not None:
             plan_path = repo_path / plan_file
-        return _read_text_if_exists(plan_path, max_chars=20000)
+        return _read_text_if_exists(plan_path, max_chars=max_chars)
+
+    def _load_phase_sections(self, plan_file: str | None, task: Task) -> list[dict[str, Any]]:
+        """Load a plan file and split it into phase sections.
+
+        Returns ``[]`` when ``plan_file`` is unset, unreadable, or contains no
+        ``## Phase N`` headings. Reads the full file (no char cap) so phase
+        splitting works on large plans; each section's body is still
+        truncated in ``_build_prompt_context`` before reaching the LLM.
+        """
+        if not plan_file:
+            return []
+        repo_path = self._resolve_repo_path(task)
+        content = self._load_plan_content(plan_file, repo_path, max_chars=None)
+        if not content:
+            return []
+        return _extract_phase_sections(content)
 
     def _get_verification_commands(self, repo_path: Path | None) -> dict[str, str]:
         """Resolve project verification commands from project.json or daemon defaults."""

@@ -150,7 +150,7 @@ def test_render_transcript_strips_search_quality_reflection_tags():
     assert rendered[0].content == "Result: thinking... done"
 
 
-def test_render_transcript_strips_permissions_instructions_tags():
+def test_render_transcript_renders_permissions_instructions_as_protocol_tool():
     msgs = [
         make_msg(
             0,
@@ -160,10 +160,21 @@ def test_render_transcript_strips_permissions_instructions_tags():
     ]
     rendered = render_transcript(msgs)
     assert len(rendered) == 1
-    assert rendered[0].content == "Filesystem sandboxing defines which files can be read or written."
+    assert rendered[0].content == ""
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert block.tool_calls[0].tool_type == "protocol"
+    assert block.tool_calls[0].tool_name == "protocol_context"
+    assert block.tool_calls[0].arguments == {"tag": "permissions instructions"}
+    assert block.tool_calls[0].result is not None
+    assert (
+        block.tool_calls[0].result.content
+        == "Filesystem sandboxing defines which files can be read or written."
+    )
 
 
-def test_render_transcript_strips_collaboration_mode_tags():
+def test_render_transcript_renders_collaboration_mode_as_protocol_tool():
     msgs = [
         make_msg(
             0,
@@ -173,7 +184,108 @@ def test_render_transcript_strips_collaboration_mode_tags():
     ]
     rendered = render_transcript(msgs)
     assert len(rendered) == 1
-    assert rendered[0].content == "Collaboration Mode: Default"
+    assert rendered[0].content == ""
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert block.tool_calls[0].arguments == {"tag": "collaboration_mode"}
+    assert block.tool_calls[0].result is not None
+    assert block.tool_calls[0].result.content == "Collaboration Mode: Default"
+
+
+def test_render_transcript_renders_turn_aborted_as_protocol_tool():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<turn_aborted>The user interrupted the previous turn.</turn_aborted>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == ""
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert block.tool_calls[0].arguments == {"tag": "turn_aborted"}
+    assert block.tool_calls[0].result is not None
+    assert block.tool_calls[0].result.content == "The user interrupted the previous turn."
+
+
+def test_render_transcript_reclassifies_bootstrap_user_text_as_system_protocol():
+    msgs = [
+        make_msg(
+            0,
+            "user",
+            """AGENTS.md instructions for /Users/josh/Projects/gobby
+
+# Personality
+You are a deeply pragmatic engineer.
+
+## Interaction Style
+Stay concise and direct.
+""",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].role == "system"
+    assert rendered[0].content == ""
+    assert len(rendered[0].content_blocks) == 1
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert block.tool_calls[0].arguments == {"tag": "system_instructions"}
+    assert block.tool_calls[0].result is not None
+    assert "AGENTS.md instructions for" in str(block.tool_calls[0].result.content)
+
+
+def test_render_transcript_interleaves_environment_context_protocol_tool():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "Visible\n<environment_context><shell>zsh</shell></environment_context>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == "Visible"
+    assert len(rendered[0].content_blocks) == 2
+    assert rendered[0].content_blocks[0].type == "text"
+    protocol_block = rendered[0].content_blocks[1]
+    assert protocol_block.type == "tool_chain"
+    assert protocol_block.tool_calls is not None
+    assert protocol_block.tool_calls[0].arguments == {"tag": "environment_context"}
+    assert protocol_block.tool_calls[0].result is not None
+    assert protocol_block.tool_calls[0].result.content == {"shell": "zsh"}
+
+
+def test_render_transcript_renders_instruction_wrappers_as_protocol_tools_case_insensitively():
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<INSTRUCTIONS># Repository Guidelines</INSTRUCTIONS>\n"
+            "<skills_instructions>Safety first.</skills_instructions>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 1
+    assert rendered[0].content == ""
+    assert len(rendered[0].content_blocks) == 1
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert [call.arguments for call in block.tool_calls] == [
+        {"tag": "instructions"},
+        {"tag": "skills_instructions"},
+    ]
+    assert [call.result.content for call in block.tool_calls if call.result is not None] == [
+        "# Repository Guidelines",
+        "Safety first.",
+    ]
 
 
 def test_render_incremental_returns_completed_turns():

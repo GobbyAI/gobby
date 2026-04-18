@@ -6,6 +6,8 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 from gobby.servers.websocket.server import WebSocketServer
 
@@ -35,6 +37,11 @@ class MockWebSocket:
 
     def messages_of_type(self, msg_type: str) -> list[dict]:
         return [m for m in self.all_messages() if m.get("type") == msg_type]
+
+
+class DisconnectingWebSocket(MockWebSocket):
+    async def send(self, message: str) -> None:
+        raise ConnectionClosedOK(Close(1001, "going away"), Close(1001, "going away"), True)
 
 
 @pytest.fixture
@@ -126,6 +133,21 @@ class TestTmuxListSessions:
         assert msg["sessions"][0]["pane_pid"] == 100
         assert msg["sessions"][1]["name"] == "agent-1"
         assert msg["sessions"][1]["socket"] == "gobby"
+
+    @pytest.mark.asyncio
+    async def test_list_ignores_disconnect_during_response_send(
+        self, server: WebSocketServer
+    ) -> None:
+        ws = DisconnectingWebSocket()
+        with (
+            patch.object(
+                server._tmux_mgr_default, "list_sessions", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(
+                server._tmux_mgr_gobby, "list_sessions", new_callable=AsyncMock, return_value=[]
+            ),
+        ):
+            await server._handle_tmux_list_sessions(ws, {"request_id": "r1"})
 
 
 class TestTmuxAttach:

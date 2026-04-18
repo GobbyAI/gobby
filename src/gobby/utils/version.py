@@ -1,4 +1,4 @@
-"""Version utility for reading package version from metadata."""
+"""Version utility for reading the installed package version."""
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -17,7 +17,9 @@ def get_version() -> str:
         PackageNotFoundError: If the package is not installed
     """
     try:
-        return version("gobby-platform")
+        return version("gobby")
     except PackageNotFoundError:
-        # Fallback for development environments where package may not be installed
-        return "0.2.1-dev"
+        # Development checkouts may not be installed as a package yet.
+        from gobby import __version__
+
+        return __version__

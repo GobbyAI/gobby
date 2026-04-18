@@ -16,6 +16,9 @@ variables:
   max_stop_attempts:
     value: 8
     description: Default max_stop_attempts to 8
+  max_consecutive_blocked_tool_attempts:
+    value: 5
+    description: Default max_consecutive_blocked_tool_attempts to 5
   task_claimed:
     value: false
     description: Default task_claimed to false

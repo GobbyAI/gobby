@@ -36,23 +36,6 @@ def project_id(db):
 class TestUpdateTaskFromWorkflow:
     """Tests for update_task_from_workflow function."""
 
-    def test_update_status(self, db, project_id) -> None:
-        """Test updating task status."""
-        task_manager = LocalTaskManager(db)
-        task = task_manager.create_task(
-            project_id=project_id,
-            title="Test task",
-        )
-
-        updated = update_task_from_workflow(
-            db=db,
-            task_id=task.id,
-            status="in_progress",
-        )
-
-        assert updated is not None
-        assert updated.status == "in_progress"
-
     def test_update_validation_status(self, db, project_id) -> None:
         """Test updating validation status."""
         task_manager = LocalTaskManager(db)
@@ -77,7 +60,7 @@ class TestUpdateTaskFromWorkflow:
         result = update_task_from_workflow(
             db=db,
             task_id="gt-nonexistent",
-            status="closed",
+            validation_status="invalid",
         )
 
         assert result is None

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
@@ -160,9 +161,10 @@ def _process_tool_proxy_result(
     """
     Process tool proxy result with consistent metrics, logging, and error handling.
 
-    All errors (including server-not-found) are returned as {success: False, result: {...}}
-    rather than raising HTTPException. This ensures consistent error formatting for
-    MCP clients, which otherwise show errors as "HTTP 404: {body}" instead of clean messages.
+    Tool-level errors (including server-not-found) are returned as HTTP 200 with
+    ``success=False`` in the response body rather than raising HTTPException.
+    This keeps MCP/HTTP clients on a consistent application-level error contract
+    without nesting a second ``success=False`` payload under ``result``.
 
     Args:
         result: The result from tool_proxy.call_tool()
@@ -171,17 +173,15 @@ def _process_tool_proxy_result(
         response_time_ms: Response time in milliseconds
 
     Returns:
-        Wrapped result dict with success status and response time
+        Result dict with success status and response time
     """
     # Track metrics for tool-level failures vs successes
     if isinstance(result, dict) and result.get("success") is False:
         inc_counter("mcp_tool_calls_failed_total")
 
-        # Return all errors consistently as {success: False, result: {...}}
-        # Previously, server-not-found errors raised HTTPException(404), but this
-        # caused MCP clients to format errors as "HTTP 404: {body}" instead of
-        # showing clean error messages. Consistent error envelopes work better
-        # for both MCP clients (via call_tool) and HTTP clients.
+        # Return tool-level failures as a flat error payload with success=False.
+        # This preserves the HTTP 200/application-error contract without forcing
+        # clients to unwrap a nested {"success": false, "result": {...}} shape.
         error_code = result.get("error_code")
         if error_code:
             logger.debug(
@@ -193,12 +193,7 @@ def _process_tool_proxy_result(
                 },
             )
 
-        # Tool-level failure - return failure envelope (not HTTP exception)
-        return {
-            "success": False,
-            "result": result,
-            "response_time_ms": response_time_ms,
-        }
+        return {**result, "response_time_ms": response_time_ms}
     else:
         inc_counter("mcp_tool_calls_succeeded_total")
         logger.debug(
@@ -254,7 +249,7 @@ async def _call_internal_tool(
             },
         )
     try:
-        result = await registry.call(tool_name, arguments or {})
+        result = normalize_internal_success_result(await registry.call(tool_name, arguments or {}))
         response_time_ms = (time.perf_counter() - start_time) * 1000
         inc_counter("mcp_tool_calls_succeeded_total")
         return {

@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.digest import (
+    bootstrap_session_title as _bootstrap_session_title,
+)
+from gobby.memory.digest import (
     build_turn_and_digest as _build_turn_and_digest,
 )
 from gobby.memory.digest import (
@@ -657,6 +660,37 @@ def create_memory_registry(
             return {"success": False, "error": str(e)}
 
     # ─── Sync & extraction tools (thin wrappers around workflow actions) ───
+
+    @registry.tool(
+        name="bootstrap_session_title",
+        description="Set a local heuristic session title from the first meaningful user prompt. Fired by a turn_start rule before the first completed turn.",
+    )
+    async def bootstrap_session_title_tool(
+        session_id: str = "",
+        prompt_text: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Bootstrap a session title without an LLM call.
+
+        Args:
+            session_id: Platform session ID (injected by dispatch layer)
+            prompt_text: User prompt text for heuristic title derivation
+        """
+        if not session_id:
+            return {"success": False, "error": "session_id is required"}
+        if session_manager is None:
+            return {"success": False, "error": "session_manager is required"}
+        try:
+            title = await _bootstrap_session_title(session_manager, session_id, prompt_text)
+            if not title:
+                return {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "title already set or prompt unusable",
+                }
+            return {"success": True, "title": title}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     @registry.tool(
         name="sync_import",

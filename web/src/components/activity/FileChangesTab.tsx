@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from 'react'
+import { memo, useState, useCallback, useEffect } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { DiffView } from './DiffView'
 import type { ChangedFile } from '../../hooks/useFileChanges'
@@ -42,26 +42,52 @@ export const FileChangesTab = memo(function FileChangesTab({
   const [topHeight, setTopHeight] = useState(35)
 
   const handleSelect = useCallback(
-    async (path: string) => {
+    (path: string) => {
       if (path === selectedPath) {
         setSelectedPath(null)
         setDiff('')
         return
       }
       setSelectedPath(path)
-      setLoadingDiff(true)
-      try {
-        const result = await fetchDiff(path)
-        setDiff(result)
-      } catch (err) {
-        console.error('Failed to fetch diff:', err)
-        setDiff('')
-      } finally {
-        setLoadingDiff(false)
-      }
     },
-    [selectedPath, fetchDiff]
+    [selectedPath]
   )
+
+  useEffect(() => {
+    if (!selectedPath) {
+      setDiff('')
+      setLoadingDiff(false)
+      return
+    }
+    if (!changedFiles.some((file) => file.path === selectedPath)) {
+      setSelectedPath(null)
+      setDiff('')
+      setLoadingDiff(false)
+      return
+    }
+    let isStale = false
+    setLoadingDiff(true)
+    void fetchDiff(selectedPath)
+      .then((result) => {
+        if (!isStale) {
+          setDiff(result)
+        }
+      })
+      .catch((err) => {
+        if (!isStale) {
+          console.error('Failed to fetch diff:', err)
+          setDiff('')
+        }
+      })
+      .finally(() => {
+        if (!isStale) {
+          setLoadingDiff(false)
+        }
+      })
+    return () => {
+      isStale = true
+    }
+  }, [changedFiles, fetchDiff, selectedPath])
 
   if (changedFiles.length === 0) {
     return (

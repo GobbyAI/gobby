@@ -27,6 +27,8 @@ interface Route {
 export function createMockFetch(): MockFetchInstance {
   const routes: Route[] = []
   const originalFetch = globalThis.fetch
+  const originalWindowFetch =
+    typeof window !== 'undefined' ? window.fetch : undefined
 
   const fn = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -46,6 +48,9 @@ export function createMockFetch(): MockFetchInstance {
   })
 
   globalThis.fetch = fn as unknown as typeof fetch
+  if (typeof window !== 'undefined') {
+    window.fetch = fn as unknown as typeof fetch
+  }
 
   return {
     fn,
@@ -76,6 +81,14 @@ export function createMockFetch(): MockFetchInstance {
     },
     restore() {
       globalThis.fetch = originalFetch
+      if (typeof window !== 'undefined') {
+        const win = window as Window & { fetch?: typeof fetch }
+        if (originalWindowFetch === undefined) {
+          Reflect.deleteProperty(win, 'fetch')
+        } else {
+          win.fetch = originalWindowFetch
+        }
+      }
     },
   }
 }
