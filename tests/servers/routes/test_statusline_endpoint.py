@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from gobby.servers.routes.sessions import create_sessions_router
 
@@ -134,6 +135,22 @@ class TestStatuslineEndpoint:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 400
+
+    def test_ignores_client_disconnect_while_reading_json(self, client, mock_server) -> None:
+        with patch(
+            "starlette.requests.Request.json",
+            new=AsyncMock(side_effect=ClientDisconnect()),
+        ):
+            response = client.post(
+                "/api/sessions/statusline",
+                content=b"{\"session_id\":\"ext-123\"}",
+                headers={"Content-Type": "application/json"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "warning": "client_disconnected"}
+        mock_server.session_manager.find_active_by_external_id.assert_not_called()
+        mock_server.session_manager.update_usage.assert_not_called()
 
     def test_defaults_missing_fields(self, client, mock_server) -> None:
         session = _make_session()

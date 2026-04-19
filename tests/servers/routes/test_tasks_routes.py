@@ -296,6 +296,15 @@ class TestGetTask:
         assert "state" in data
         assert "compat" in data
 
+    def test_get_by_seq_num_uses_project_context(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.get(f"/api/tasks/{sample_task['seq_num']}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == sample_task["id"]
+        assert data["seq_num"] == sample_task["seq_num"]
+
     def test_get_state_ignores_descendant_completion_blocks(
         self, client: TestClient, task_manager: LocalTaskManager, project_id: str
     ) -> None:
@@ -446,6 +455,18 @@ class TestLifecycleMutations:
         assert data["claimed_by_session_id"] == session_id
         assert data["state"]["owner_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
+
+    def test_claim_task_by_seq_num_uses_project_context(
+        self, client: TestClient, sample_task: dict, session_id: str
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['seq_num']}/claim",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == sample_task["id"]
+        assert data["claimed_by_session_id"] == session_id
 
     def test_claim_task_resolves_session_ref(
         self,

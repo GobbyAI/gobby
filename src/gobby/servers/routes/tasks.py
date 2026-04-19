@@ -166,6 +166,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             return project_id
         return server.resolve_project_id(project_id=None, cwd=None)
 
+    def _resolve_task(task_id: str, *, project_id: str | None = None) -> Any:
+        """Resolve flexible task refs using project context for seq-num lookups."""
+        resolved_project = project_id
+        if task_id.startswith("#") or task_id.isdigit():
+            resolved_project = _resolve_project(project_id)
+        return server.task_manager.get_task(task_id, project_id=resolved_project)
+
     async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
         """Broadcast a task event via WebSocket if available."""
         ws = server.services.websocket_server
@@ -285,7 +292,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def get_task(task_id: str) -> Any:
         """Get a task by ID, seq_num (#N), or path (1.2.3)."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             return task.to_dict()
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -295,7 +302,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Update a task's fields. Only provided fields are changed."""
         try:
             # Resolve the task ID first
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
 
             blocked_fields = request_data.model_fields_set & {"status", "assignee"}
@@ -337,7 +344,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         """Delete a task."""
         try:
             # Resolve first
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             delete_result = server.task_manager.delete_task(resolved_id, cascade=cascade)
             if not delete_result:
@@ -358,7 +365,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def claim_task(task_id: str, request_data: TaskClaimRequest) -> Any:
         """Claim a task for a session."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             resolved_session_id = _resolve_session_ref(
                 request_data.session_id,
@@ -383,7 +390,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> Any:
         """Release canonical task ownership without using generic PATCH."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             body = request_data or TaskReleaseClaimRequest()
             released = server.task_manager.release_task_claim(resolved_id, status=body.status)
@@ -401,7 +408,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> Any:
         """Move a task into the canonical review lifecycle stage."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             body = request_data or TaskReviewRequest()
             updated = server.task_manager.mark_task_needs_review(
@@ -422,7 +429,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> Any:
         """Mark a task as review-approved."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             body = request_data or TaskReviewRequest()
             updated = server.task_manager.mark_task_review_approved(
@@ -441,7 +448,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def escalate_task(task_id: str, request_data: TaskEscalateRequest) -> Any:
         """Escalate a task without using generic status mutation."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             updated = server.task_manager.escalate_task(resolved_id, reason=request_data.reason)
             result = updated.to_dict()
@@ -456,7 +463,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def close_task(task_id: str, request_data: TaskCloseRequest | None = None) -> Any:
         """Close a task."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             body = request_data or TaskCloseRequest()
             resolved_session_id = (
@@ -486,7 +493,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def reopen_task(task_id: str, request_data: TaskReopenRequest | None = None) -> Any:
         """Reopen a closed task."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             body = request_data or TaskReopenRequest()
             reopened = server.task_manager.reopen_task(resolved_id, reason=body.reason)
@@ -502,7 +509,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
         """De-escalate a task to an explicit next status with user decision context."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
             updated = server.task_manager.de_escalate_task(
                 resolved_id,
@@ -530,7 +537,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> Any:
         """List comments for a task, threaded."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
 
             total_row = server.task_manager.db.fetchone(
@@ -559,7 +566,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def create_comment(task_id: str, request_data: TaskCommentCreateRequest) -> Any:
         """Add a comment to a task."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             resolved_id = task.id
 
             comment_id = str(uuid.uuid4())
@@ -591,7 +598,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def delete_comment(task_id: str, comment_id: str) -> Any:
         """Delete a comment."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             server.task_manager.db.execute(
                 "DELETE FROM task_comments WHERE id = ? AND task_id = ?",
                 (comment_id, task.id),
@@ -615,7 +622,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     ) -> Any:
         """Get the dependency tree for a task."""
         try:
-            task = server.task_manager.get_task(task_id)
+            task = _resolve_task(task_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
             return dep_manager.get_dependency_tree(task.id, direction=direction)
         except (ValueError, TaskNotFoundError) as e:
@@ -625,8 +632,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def add_dependency(task_id: str, request_data: DependencyAddRequest) -> Any:
         """Add a dependency to a task."""
         try:
-            task = server.task_manager.get_task(task_id)
-            blocker = server.task_manager.get_task(request_data.depends_on)
+            task = _resolve_task(task_id)
+            blocker = _resolve_task(request_data.depends_on, project_id=task.project_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
             dep = dep_manager.add_dependency(task.id, blocker.id, dep_type=request_data.dep_type)
             return dep.to_dict()
@@ -639,8 +646,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def remove_dependency(task_id: str, depends_on_id: str) -> dict[str, Any]:
         """Remove a dependency from a task."""
         try:
-            task = server.task_manager.get_task(task_id)
-            blocker = server.task_manager.get_task(depends_on_id)
+            task = _resolve_task(task_id)
+            blocker = _resolve_task(depends_on_id, project_id=task.project_id)
             dep_manager = TaskDependencyManager(server.task_manager.db)
             removed = dep_manager.remove_dependency(task.id, blocker.id)
             if not removed:

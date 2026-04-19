@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from starlette.requests import ClientDisconnect
 
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
@@ -347,6 +348,8 @@ def register_core_routes(
         """
         try:
             body = await request.json()
+        except ClientDisconnect:
+            return {"status": "ok", "warning": "client_disconnected"}
         except (ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Invalid JSON") from None
 

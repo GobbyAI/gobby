@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer, create_server, run_server
@@ -1298,6 +1299,36 @@ class TestExceptionHandlers:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "error"
+
+    def test_global_exception_handler_downgrades_client_disconnect(
+        self, session_storage: LocalSessionManager
+    ) -> None:
+        """Client disconnects should not be logged as unhandled server errors."""
+        services = ServiceContainer(
+            config=MagicMock(),
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+        )
+
+        @server.app.get("/disconnect")
+        def trigger_disconnect() -> None:
+            raise ClientDisconnect()
+
+        client = TestClient(server.app, raise_server_exceptions=False)
+
+        with patch("gobby.servers.exception_handlers.logger") as mock_logger:
+            response = client.get("/disconnect")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "warning": "client_disconnected"}
+        assert mock_logger.error.called is False
+        assert mock_logger.debug.called is True
 
 
 # ============================================================================
