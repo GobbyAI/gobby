@@ -1320,6 +1320,19 @@ export function useChat() {
   // redundant set_mode emissions on WS reconnect and session restore
   const lastServerModeTimestampRef = useRef<number>(0);
 
+  // Main-chat contextUsage captured before attaching to an observed session,
+  // so detach can restore it. Null when no attach is active. Only set on the
+  // first attach in a sequence so chained attaches don't overwrite the
+  // original main-chat snapshot.
+  const preAttachContextUsageRef = useRef<{
+    totalInputTokens: number;
+    outputTokens: number;
+    contextWindow: number | null;
+    uncachedInputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  } | null>(null);
+
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
 
@@ -1972,7 +1985,14 @@ export function useChat() {
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
           if (hasSessionUsage(result)) {
-            setContextUsage(computeContextUsageFromSessionData(result));
+            setContextUsage((prev) => {
+              // First attach in a sequence captures the main-chat snapshot;
+              // chained attaches keep the original so detach returns to it.
+              if (preAttachContextUsageRef.current === null) {
+                preAttachContextUsageRef.current = prev;
+              }
+              return computeContextUsageFromSessionData(result);
+            });
           }
           // Do NOT set dbSessionId here. Under the unified session identity
           // model, dbSessionId mirrors the user's main chat conversation id,
@@ -2031,6 +2051,21 @@ export function useChat() {
           setProxyDeliveryNotice(null);
           setSessionInteractionMode("none");
           sessionInteractionModeRef.current = "none";
+          // Restore main-chat contextUsage snapshot taken at first attach,
+          // so the pie stops showing the observed session's percentages.
+          if (preAttachContextUsageRef.current !== null) {
+            setContextUsage(preAttachContextUsageRef.current);
+            preAttachContextUsageRef.current = null;
+          } else {
+            setContextUsage({
+              totalInputTokens: 0,
+              outputTokens: 0,
+              contextWindow: null,
+              uncachedInputTokens: 0,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+            });
+          }
           // Keep viewingSessionId/Meta — return to view-only mode
         } else if (
           data.type === "session_message" &&
