@@ -8,25 +8,6 @@ pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
     0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ]);
 
-/// Generate a stable ID for an unresolved same-project callee.
-#[allow(dead_code)]
-pub fn make_unresolved_callee_id(project_id: &str, callee_name: &str) -> String {
-    let key = format!("unresolved:{project_id}:{callee_name}");
-    Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
-}
-
-/// Generate a stable ID for an external call target.
-#[allow(dead_code)]
-pub fn make_external_symbol_id(
-    project_id: &str,
-    callee_name: &str,
-    module: Option<&str>,
-) -> String {
-    let module_key = module.unwrap_or_default();
-    let key = format!("external:{project_id}:{module_key}:{callee_name}");
-    Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
-}
-
 /// A code symbol extracted from AST parsing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
@@ -374,23 +355,6 @@ mod tests {
             "c0de1de0-0000-4000-8000-000000000000"
         );
     }
-
-    #[test]
-    fn test_unresolved_callee_id_matches_gobby_contract() {
-        let id = make_unresolved_callee_id("proj1", "foo");
-        let expected =
-            Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, b"unresolved:proj1:foo").to_string();
-        assert_eq!(id, expected);
-    }
-
-    #[test]
-    fn test_external_symbol_id_matches_gobby_contract() {
-        let id = make_external_symbol_id("proj1", "foo", Some("pkg.mod"));
-        let expected =
-            Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, b"external:proj1:pkg.mod:foo").to_string();
-        assert_eq!(id, expected);
-    }
-
     #[test]
     fn test_call_relation_promotes_symbol_targets() {
         let call = CallRelation::new(
