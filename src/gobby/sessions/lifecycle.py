@@ -542,7 +542,7 @@ class SessionLifecycleManager:
                 cache_creation_tokens=usage.cache_creation_tokens,
                 cache_read_tokens=usage.cache_read_tokens,
                 context_window=session_context_window,
-                event_at=event_timestamp,
+                event_at=canonicalize_event_timestamp(event_timestamp),
                 metadata=metadata,
             )
             inserted = self.token_event_store.record(event)

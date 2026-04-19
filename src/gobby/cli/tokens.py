@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -47,12 +47,14 @@ def _load_session_messages(session_id: str, session: Any) -> list[Any]:
 
     if path.suffix == ".json" and hasattr(parser, "parse_session_json"):
         data = json.loads(raw)
-        return parser.parse_session_json(data)
+        return cast(list[Any], parser.parse_session_json(data))
 
-    return parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+    return cast(list[Any], parser.parse_lines(raw.splitlines(keepends=True), start_index=0))
 
 
-def _messages_to_events(session_id: str, session: Any, messages: list[Any]) -> tuple[list[TokenEvent], str | None]:
+def _messages_to_events(
+    session_id: str, session: Any, messages: list[Any]
+) -> tuple[list[TokenEvent], str | None]:
     project_id = session.project_id if isinstance(session.project_id, str) else None
     source = session.source if isinstance(session.source, str) else "unknown"
     context_window = session.context_window if isinstance(session.context_window, int) else None

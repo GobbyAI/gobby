@@ -875,6 +875,8 @@ def _migrate_add_token_events(db: LocalDatabase) -> None:
         FROM token_events
         """
     )
+    if session_sums is None or event_sums is None:
+        raise RuntimeError("token_events backfill verification failed: missing aggregate rows")
     for key in ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"):
         if int(session_sums[key] or 0) != int(event_sums[key] or 0):
             raise RuntimeError(

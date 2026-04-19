@@ -174,8 +174,8 @@ class ChatSession(ChatSessionPermissionsMixin):
             return None
 
         chat_cfg = getattr(self._config, "chat", None)
-        chat_provider = getattr(chat_cfg, "provider", None)
-        chat_model = getattr(chat_cfg, "model", None)
+        chat_provider: str | None = getattr(chat_cfg, "provider", None)
+        chat_model: str | None = getattr(chat_cfg, "model", None)
         if chat_model and (not chat_provider or chat_provider == self.provider):
             return chat_model
 
