@@ -51,6 +51,7 @@ def create_skills_registry(
     embedding_model: str = "nomic-embed-text",
     embedding_api_base: str | None = None,
     embedding_api_key: str | None = None,
+    embedding_dim: int | None = None,
 ) -> SkillsToolRegistry:
     """
     Create a skills management tool registry.
@@ -63,6 +64,7 @@ def create_skills_registry(
         embedding_model: Embedding model name (from EmbeddingsConfig)
         embedding_api_base: API base URL for embedding endpoint
         embedding_api_key: API key for embedding provider
+        embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
         SkillsToolRegistry with skill management tools registered
@@ -87,6 +89,7 @@ def create_skills_registry(
             embedding_model=embedding_model,
             embedding_api_base=embedding_api_base,
             embedding_api_key=embedding_api_key,
+            embedding_dim=embedding_dim,
         ),
         updater=SkillUpdater(storage),
         loader=SkillLoader(),

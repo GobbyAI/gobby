@@ -44,6 +44,25 @@ def _make_searcher(
     )
 
 
+def _make_openai_client(dim: int) -> AsyncMock:
+    """Create a mock AsyncOpenAI client with deterministic vector size."""
+    mock_client = AsyncMock()
+
+    async def fake_create(model: str, input: list[str]):
+        class FakeItem:
+            def __init__(self, embedding: list[float]):
+                self.embedding = embedding
+
+        class FakeResponse:
+            def __init__(self, items: list[FakeItem]):
+                self.data = items
+
+        return FakeResponse([FakeItem([0.1] * dim) for _ in input])
+
+    mock_client.embeddings.create = fake_create
+    return mock_client
+
+
 class TestSearchConfig:
     """Tests for SearchConfig."""
 
@@ -401,6 +420,7 @@ class TestEmbeddingBackend:
 
         assert backend._model == "openai/nomic-embed-text"
         assert backend._api_base == "http://localhost:11434/v1"
+        assert backend._dim == 768
 
     @pytest.mark.asyncio
     async def test_fit_and_search(self) -> None:
@@ -430,6 +450,16 @@ class TestEmbeddingBackend:
             assert len(results) == 2
             # id1 should have higher similarity (identical embedding)
             assert results[0][0] == "id1"
+
+    @pytest.mark.asyncio
+    async def test_fit_dimension_mismatch_raises(self) -> None:
+        """Backend fit should fail fast when provider output has the wrong dimension."""
+        backend = EmbeddingBackend(model="dimension-mismatch-model", dim=4)
+        mock_client = _make_openai_client(dim=3)
+
+        with patch("openai.AsyncOpenAI", return_value=mock_client):
+            with pytest.raises(RuntimeError, match="expected_dim=4"):
+                await backend.fit_async([("id1", "hello")])
 
     @pytest.mark.asyncio
     async def test_empty_fit(self) -> None:

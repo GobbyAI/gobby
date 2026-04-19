@@ -348,6 +348,7 @@ def init_services(runner: GobbyRunner) -> None:
                 embed_fn = partial(
                     generate_embedding,
                     **_mem_embed_kwargs,
+                    expected_dim=emb_cfg.dim,
                 )
 
             runner.memory_manager = MemoryManager(
@@ -359,6 +360,9 @@ def init_services(runner: GobbyRunner) -> None:
                 neo4j_url=db_cfg.neo4j.url,
                 neo4j_auth=db_cfg.neo4j.auth,
                 neo4j_database=db_cfg.neo4j.database,
+                neo4j_graph_search=db_cfg.neo4j.graph_search,
+                neo4j_graph_min_score=db_cfg.neo4j.graph_min_score,
+                neo4j_rrf_k=db_cfg.neo4j.rrf_k,
                 embedding_dim=emb_cfg.dim,
                 collection_prefix=db_cfg.qdrant.collection_prefix,
             )

@@ -229,6 +229,7 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
             model=emb_cfg.model,
             api_base=emb_cfg.api_base,
             api_key=emb_cfg.api_key,
+            expected_dim=emb_cfg.dim,
         )
         if not healthy:
             # Try to auto-load the model (lms load / ollama pull) and retry
@@ -237,6 +238,7 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                     model=emb_cfg.model,
                     api_base=emb_cfg.api_base,
                     api_key=emb_cfg.api_key,
+                    expected_dim=emb_cfg.dim,
                 )
             if not healthy:
                 logger.warning(

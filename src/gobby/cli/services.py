@@ -143,6 +143,7 @@ async def is_embedding_healthy(
     model: str,
     api_base: str | None,
     api_key: str | None = None,
+    expected_dim: int | None = None,
 ) -> bool:
     """Check if the embedding endpoint is reachable.
 
@@ -158,6 +159,7 @@ async def is_embedding_healthy(
             api_base=api_base,
             api_key=api_key,
             max_retries=1,
+            expected_dim=expected_dim,
         )
         return len(result) > 0
     except Exception as e:

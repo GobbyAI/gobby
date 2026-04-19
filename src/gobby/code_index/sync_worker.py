@@ -56,6 +56,7 @@ async def sync_worker_loop(
                         model=embeddings_config.model,
                         api_base=embeddings_config.api_base,
                         api_key=embeddings_config.api_key,
+                        expected_dim=embeddings_config.dim,
                     )
 
             embed_model = _EmbedAdapter()

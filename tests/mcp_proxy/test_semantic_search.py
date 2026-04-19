@@ -123,6 +123,7 @@ class TestSemanticToolSearchApiBase:
             api_base="http://localhost:11434/v1",
             openai_api_key="sk-test",
             embedding_model="text-embedding-3-small",
+            embedding_dim=1536,
         )
 
         with patch(
@@ -137,6 +138,7 @@ class TestSemanticToolSearchApiBase:
                 api_base="http://localhost:11434/v1",
                 api_key="sk-test",
                 is_query=False,
+                expected_dim=1536,
             )
             assert result == [0.1, 0.2, 0.3]
 
@@ -157,6 +159,7 @@ class TestSemanticToolSearchApiBase:
                 api_base=None,
                 api_key=None,
                 is_query=False,
+                expected_dim=DEFAULT_EMBEDDING_DIM,
             )
             assert len(result) == 768
 
@@ -177,6 +180,7 @@ class TestSemanticToolSearchApiBase:
                 api_base=None,
                 api_key=None,
                 is_query=True,
+                expected_dim=DEFAULT_EMBEDDING_DIM,
             )
             assert len(result) == 768
 
@@ -724,7 +728,10 @@ class TestSearchTools:
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
         mock_vs.upsert = AsyncMock(
-            side_effect=[RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"), None]
+            side_effect=[
+                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
+                None,
+            ]
         )
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
@@ -794,7 +801,10 @@ class TestSearchTools:
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
         mock_vs.upsert = AsyncMock(
-            side_effect=[RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"), None]
+            side_effect=[
+                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
+                None,
+            ]
         )
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 

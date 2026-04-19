@@ -128,6 +128,7 @@ async def generate_embeddings(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     base_delay: float = _DEFAULT_BASE_DELAY,
     is_query: bool = False,
+    expected_dim: int | None = None,
 ) -> list[list[float]]:
     """Generate embeddings using an OpenAI-compatible API with exponential backoff.
 
@@ -146,6 +147,7 @@ async def generate_embeddings(
         max_retries: Maximum retry attempts for rate limit errors (default: 5)
         base_delay: Initial backoff delay in seconds (default: 1.0)
         is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
+        expected_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
         List of embedding vectors (one per input text). Returns an empty
@@ -174,6 +176,13 @@ async def generate_embeddings(
         for i, text in enumerate(prefixed_texts):
             key = _cache_key(text, model, api_base)
             entry = _cache.get(key)
+            if (
+                entry is not None
+                and expected_dim is not None
+                and len(entry.embedding) != expected_dim
+            ):
+                del _cache[key]
+                entry = None
             if entry is not None:
                 results.append(entry.embedding)
             elif key in seen_in_batch:
@@ -195,6 +204,7 @@ async def generate_embeddings(
             api_key=api_key,
             max_retries=max_retries,
             base_delay=base_delay,
+            expected_dim=expected_dim,
         )
 
         # --- Phase 3: Store results in cache ---
@@ -239,6 +249,27 @@ async def _try_reload_model(model: str, api_base: str) -> bool:
     return await try_autoload_embedding_model(model, api_base)
 
 
+def _validate_embeddings_dim(
+    embeddings: list[list[float]],
+    *,
+    expected_dim: int | None,
+    model: str,
+    api_base: str | None,
+) -> None:
+    """Fail fast when provider output does not match the configured dimension."""
+    if expected_dim is None or not embeddings:
+        return
+
+    actual_dim = len(embeddings[0])
+    if actual_dim == expected_dim:
+        return
+
+    raise RuntimeError(
+        "Embedding dimension mismatch: "
+        f"model={model}, api_base={api_base}, expected_dim={expected_dim}, actual_dim={actual_dim}"
+    )
+
+
 async def _fetch_embeddings(
     texts: list[str],
     model: str,
@@ -246,6 +277,7 @@ async def _fetch_embeddings(
     api_key: str | None,
     max_retries: int,
     base_delay: float,
+    expected_dim: int | None,
 ) -> list[list[float]]:
     """Raw API call to generate embeddings (no caching)."""
     from openai import (
@@ -265,6 +297,12 @@ async def _fetch_embeddings(
         try:
             response = await client.embeddings.create(model=model, input=texts)
             embeddings: list[list[float]] = [item.embedding for item in response.data]
+            _validate_embeddings_dim(
+                embeddings,
+                expected_dim=expected_dim,
+                model=model,
+                api_base=api_base,
+            )
             logger.debug(f"Generated {len(embeddings)} embeddings ({model})")
             return embeddings
         except AuthenticationError as e:
@@ -285,8 +323,16 @@ async def _fetch_embeddings(
             try:
                 response = await client.embeddings.create(model=model, input=texts)
                 embeddings = [item.embedding for item in response.data]
+                _validate_embeddings_dim(
+                    embeddings,
+                    expected_dim=expected_dim,
+                    model=model,
+                    api_base=api_base,
+                )
                 logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
                 return embeddings
+            except RuntimeError:
+                raise
             except Exception as retry_err:
                 raise RuntimeError(
                     f"Embedding failed after model reload: {retry_err}"
@@ -300,6 +346,8 @@ async def _fetch_embeddings(
                 f"Rate limited (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s"
             )
             await asyncio.sleep(delay)
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to generate embeddings: {e}")
             raise RuntimeError(f"Embedding generation failed: {e}") from e
@@ -318,6 +366,7 @@ async def generate_embedding(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     base_delay: float = _DEFAULT_BASE_DELAY,
     is_query: bool = False,
+    expected_dim: int | None = None,
 ) -> list[float]:
     """Generate embedding for a single text.
 
@@ -331,6 +380,7 @@ async def generate_embedding(
         max_retries: Maximum retry attempts for rate limit errors
         base_delay: Initial backoff delay in seconds
         is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
+        expected_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
         Embedding vector as list of floats
@@ -346,6 +396,7 @@ async def generate_embedding(
         max_retries=max_retries,
         base_delay=base_delay,
         is_query=is_query,
+        expected_dim=expected_dim,
     )
     if not embeddings:
         raise RuntimeError(

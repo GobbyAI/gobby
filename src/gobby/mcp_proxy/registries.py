@@ -398,6 +398,7 @@ def setup_internal_registries(
             embedding_model=_emb_cfg.model if _emb_cfg else "nomic-embed-text",
             embedding_api_base=_emb_cfg.api_base if _emb_cfg else None,
             embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,
+            embedding_dim=_emb_cfg.dim if _emb_cfg else None,
         )
         manager.add_registry(skills_registry)
         logger.debug("Skills registry initialized")

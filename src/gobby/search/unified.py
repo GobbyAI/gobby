@@ -84,6 +84,7 @@ class UnifiedSearcher:
         embedding_model: str = "nomic-embed-text",
         embedding_api_base: str | None = None,
         embedding_api_key: str | None = None,
+        embedding_dim: int | None = None,
     ):
         """Initialize UnifiedSearcher.
 
@@ -98,12 +99,14 @@ class UnifiedSearcher:
             embedding_model: Embedding model name (from EmbeddingsConfig)
             embedding_api_base: API base URL for embedding endpoint
             embedding_api_key: API key for embedding provider
+            embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
         """
         self._config = config or SearchConfig()
         self._event_callback = event_callback
         self._embedding_model = embedding_model
         self._embedding_api_base = embedding_api_base
         self._embedding_api_key = embedding_api_key
+        self._embedding_dim = embedding_dim
 
         # FTS5 config
         self._db = db
@@ -148,6 +151,7 @@ class UnifiedSearcher:
                 model=self._embedding_model,
                 api_base=self._embedding_api_base,
                 api_key=self._embedding_api_key,
+                dim=self._embedding_dim,
             )
         return self._embedding_backend
 
