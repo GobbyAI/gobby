@@ -605,6 +605,81 @@ def rebuild_crossrefs(ctx: click.Context, project_ref: str | None) -> None:
     )
 
 
+@memory.command("clear-graph")
+@click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
+    """Clear only the Neo4j knowledge graph projection (requires running daemon).
+
+    Deletes the KG projection in Neo4j and marks affected memories pending
+    so they can be extracted again. Does not clear vectors, crossrefs, or FTS.
+
+    Examples:
+
+        gobby memory clear-graph
+
+        gobby memory clear-graph -p myproject
+
+        gobby memory clear-graph --yes
+    """
+    client = _get_daemon_client(ctx)
+    is_healthy, err = client.check_health()
+    if not is_healthy:
+        raise click.ClickException(f"Daemon not running: {err}")
+
+    project_id = resolve_project_ref(project_ref, exit_on_not_found=project_ref is not None)
+    if not project_id:
+        if project_ref is not None:
+            raise click.ClickException(
+                f"Project '{project_ref}' was not found. "
+                "Pass a valid -p value or check the identifier."
+            )
+        if not yes:
+            click.confirm(
+                "No project detected. This will clear the knowledge graph for ALL projects "
+                "and requeue affected memories. Continue?",
+                abort=True,
+            )
+    elif not yes:
+        click.confirm(
+            "This will clear the knowledge graph for this project and requeue affected "
+            "memories. Continue?",
+            abort=True,
+        )
+
+    params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
+    click.echo("Clearing knowledge graph...")
+    try:
+        response = client.call_http_api(
+            f"/api/memories/graph/clear{params}", method="POST", timeout=30.0
+        )
+    except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
+        click.echo(f"Error: Could not reach daemon — is it running? ({e})")
+        raise SystemExit(1) from e
+
+    if not response.is_success:
+        raise click.ClickException(
+            f"Clear failed (HTTP {response.status_code}): {response.text}"
+        )
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise click.ClickException(f"Invalid response from daemon: {e}") from e
+
+    scope = f"project {project_id}" if project_id else "all projects"
+    click.echo(f"Knowledge graph cleared for {scope}.")
+    click.echo(
+        f"  Graph: {data.get('memories_deleted', 0)} memory nodes, "
+        f"{data.get('entities_deleted', 0)} orphaned entities"
+    )
+    click.echo(f"  Requeued: {data.get('memories_marked_pending', 0)} memories")
+    click.echo(
+        "Use `gobby memory rebuild-graph` to repopulate immediately, or let the "
+        "background worker refill it over time."
+    )
+
+
 @memory.command("rebuild-graph")
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
 @click.option(

@@ -1,8 +1,8 @@
-"""Tests for cli/memory.py -- targeting uncovered lines.
+"""Tests for cli/memory.py coverage gaps.
 
 Covers: get_memory_manager, create, recall tag parsing, list tag parsing,
-        export, dedupe, fix-null-project, backup, rebuild-crossrefs, rebuild-graph.
-Lines targeted: 20-51, 198, 210-211, 261-347, 365-465, 494-570
+        export, dedupe, fix-null-project, backup, rebuild-crossrefs,
+        clear-graph, and rebuild-graph.
 """
 
 from __future__ import annotations
@@ -287,13 +287,14 @@ class TestRebuildGraph:
         client.check_health.return_value = (True, None)
         resp = MagicMock()
         resp.is_success = True
-        resp.json.return_value = {"memories_extracted": 8, "memories_processed": 10, "errors": 0}
+        resp.json.return_value = {"job_id": "job-1", "already_running": False}
         client.call_http_api.return_value = resp
         mock_client_fn.return_value = client
 
         result = runner.invoke(memory, ["rebuild-graph"])
         assert result.exit_code == 0
-        assert "8/10" in result.output
+        assert "Started knowledge graph rebuild (job job-1)." in result.output
+        assert "gobby memory rebuild-graph --wait" in result.output
 
     @patch("gobby.cli.memory._get_daemon_client")
     def test_rebuild_graph_daemon_not_running(
@@ -335,7 +336,7 @@ class TestRebuildGraph:
         client.check_health.return_value = (True, None)
         resp = MagicMock()
         resp.is_success = True
-        resp.json.return_value = {"memories_extracted": 1, "memories_processed": 1, "errors": 0}
+        resp.json.return_value = {"job_id": "job-1", "already_running": False}
         client.call_http_api.return_value = resp
         mock_client_fn.return_value = client
 
@@ -344,3 +345,166 @@ class TestRebuildGraph:
         # Verify project_id was passed in the URL
         call_args = client.call_http_api.call_args
         assert "project_id=" in call_args[0][0]
+        assert "background=true" in call_args[0][0]
+        assert "gobby memory rebuild-graph --wait -p myproj" in result.output
+
+
+# =============================================================================
+# clear-graph
+# =============================================================================
+
+
+class TestClearGraph:
+    @patch("gobby.cli.memory.resolve_project_ref", return_value=None)
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_global_success(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = {
+            "success": True,
+            "memories_deleted": 12,
+            "entities_deleted": 7,
+            "memories_marked_pending": 14,
+        }
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph", "--yes"])
+
+        assert result.exit_code == 0
+        call_args = client.call_http_api.call_args
+        assert call_args[0][0] == "/api/memories/graph/clear"
+        assert "Knowledge graph cleared for all projects." in result.output
+        assert "12 memory nodes" in result.output
+        assert "7 orphaned entities" in result.output
+        assert "Requeued: 14 memories" in result.output
+        assert "gobby memory rebuild-graph" in result.output
+
+    @patch("gobby.cli.memory.resolve_project_ref", return_value="proj-1")
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_project_scope_uses_resolved_project(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = True
+        resp.json.return_value = {
+            "success": True,
+            "memories_deleted": 2,
+            "entities_deleted": 1,
+            "memories_marked_pending": 3,
+        }
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph", "--yes"])
+
+        assert result.exit_code == 0
+        call_args = client.call_http_api.call_args
+        assert "project_id=proj-1" in call_args[0][0]
+        assert "project proj-1" in result.output
+
+    @patch("gobby.cli.memory.resolve_project_ref", return_value=None)
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_requires_confirmation_for_global(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph"], input="n\n")
+
+        assert result.exit_code != 0
+        assert "ALL projects" in result.output
+        client.call_http_api.assert_not_called()
+
+    @patch("gobby.cli.memory.resolve_project_ref", return_value="proj-1")
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_requires_confirmation_for_project(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph"], input="n\n")
+
+        assert result.exit_code != 0
+        assert "this project" in result.output
+        client.call_http_api.assert_not_called()
+
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_daemon_not_running(
+        self, mock_client_fn: MagicMock, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (False, "down")
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph", "--yes"])
+
+        assert result.exit_code != 0
+        assert "Daemon not running" in result.output
+
+    @patch("gobby.cli.memory.resolve_project_ref", return_value=None)
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_api_failure(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        resp = MagicMock()
+        resp.is_success = False
+        resp.status_code = 500
+        resp.text = "err"
+        client.call_http_api.return_value = resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph", "--yes"])
+
+        assert result.exit_code != 0
+        assert "Clear failed" in result.output
+
+    @patch("gobby.cli.memory.resolve_project_ref", side_effect=SystemExit(1))
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_clear_graph_unknown_project_exits_before_http_call(
+        self,
+        mock_client_fn: MagicMock,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["clear-graph", "--project", "missing", "--yes"])
+
+        assert result.exit_code != 0
+        client.call_http_api.assert_not_called()
