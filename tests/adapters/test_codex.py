@@ -267,7 +267,7 @@ class TestCodexAppServerClientStart:
     """Tests for CodexAppServerClient.start()."""
 
     @pytest.mark.asyncio
-    async def test_start_spawns_subprocess(self):
+    async def test_start_spawns_subprocess(self) -> None:
         """Start spawns codex app-server subprocess."""
         client = CodexAppServerClient()
 
@@ -278,7 +278,7 @@ class TestCodexAppServerClientStart:
         mock_process.poll.return_value = None
 
         # Mock the response for initialize request
-        def mock_readline():
+        def mock_readline() -> str:
             return (
                 json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex/1.0"}}) + "\n"
             )
@@ -289,7 +289,7 @@ class TestCodexAppServerClientStart:
             "gobby.adapters.codex_impl.client.subprocess.Popen", return_value=mock_process
         ) as mock_popen:
             # Create a task that will complete quickly
-            async def run_start():
+            async def run_start() -> None:
                 try:
                     await asyncio.wait_for(client.start(), timeout=0.5)
                 except TimeoutError:
@@ -305,7 +305,7 @@ class TestCodexAppServerClientStart:
         await client.stop()
 
     @pytest.mark.asyncio
-    async def test_start_appends_config_overrides_and_features(self):
+    async def test_start_appends_config_overrides_and_features(self) -> None:
         """Start forwards optional app-server config flags when configured."""
         client = CodexAppServerClient(
             config_overrides=("model='gpt-5.4'", "sandbox='workspace-write'"),
@@ -319,7 +319,7 @@ class TestCodexAppServerClientStart:
         mock_process.stderr = MagicMock()
         mock_process.poll.return_value = None
 
-        def mock_readline():
+        def mock_readline() -> str:
             return (
                 json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex/1.0"}}) + "\n"
             )
@@ -330,7 +330,7 @@ class TestCodexAppServerClientStart:
             "gobby.adapters.codex_impl.client.subprocess.Popen", return_value=mock_process
         ) as mock_popen:
 
-            async def run_start():
+            async def run_start() -> None:
                 try:
                     await asyncio.wait_for(client.start(), timeout=0.5)
                 except TimeoutError:
@@ -355,7 +355,7 @@ class TestCodexAppServerClientStart:
         await client.stop()
 
     @pytest.mark.asyncio
-    async def test_start_when_already_connected(self):
+    async def test_start_when_already_connected(self) -> None:
         """Start returns early when already connected."""
         client = CodexAppServerClient()
         client._state = CodexConnectionState.CONNECTED
@@ -366,7 +366,7 @@ class TestCodexAppServerClientStart:
         assert client.state == CodexConnectionState.CONNECTED
 
     @pytest.mark.asyncio
-    async def test_start_failure_sets_error_state(self):
+    async def test_start_failure_sets_error_state(self) -> None:
         """Start sets error state on failure."""
         client = CodexAppServerClient()
 

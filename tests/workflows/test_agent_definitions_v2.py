@@ -15,6 +15,7 @@ import json
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -156,6 +157,47 @@ class TestAgentDefinitionBodyModel:
 
         body = AgentDefinitionBody(name="test")
         assert body.isolation == "inherit"
+
+    def test_reasoning_effort_normalizes_string_values(self) -> None:
+        """reasoning_effort keeps string normalization while rejecting coercion."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        body = AgentDefinitionBody(name="planner", reasoning_effort=" High ")
+        assert body.reasoning_effort == "high"
+
+    def test_reasoning_effort_rejects_non_string_values(self) -> None:
+        """reasoning_effort should fail early on malformed YAML types."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        with pytest.raises(ValidationError, match="reasoning_effort"):
+            AgentDefinitionBody(name="planner", reasoning_effort=1)
+
+    def test_reasoning_required_rejects_non_bool_values(self) -> None:
+        """reasoning_required should stay strict instead of coercing strings."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        with pytest.raises(ValidationError, match="reasoning_required"):
+            AgentDefinitionBody(name="planner", reasoning_required="true")
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("model", 123),
+            ("fallback_agent", 123),
+            ("api_base", 123),
+            ("api_token", 123),
+        ],
+    )
+    def test_execution_string_fields_reject_non_string_values(
+        self,
+        field_name: str,
+        value: int,
+    ) -> None:
+        """Execution config string fields should not stringify malformed values."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        with pytest.raises(ValidationError, match=field_name):
+            AgentDefinitionBody(name="planner", **{field_name: value})
 
 
 class TestAgentDefinitionBodySerialization:

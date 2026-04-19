@@ -179,6 +179,7 @@ export function useAgentSpawn() {
     defaults: CategoryDefaults,
   ): Promise<void> => {
     try {
+      const normalizedReasoningEffort = normalizeReasoningEffort(defaults.reasoning_effort ?? null)
       await fetch('/api/agents/launch-defaults', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -186,8 +187,8 @@ export function useAgentSpawn() {
           project_id: projectId,
           category,
           ...defaults,
-          reasoning_effort: normalizeReasoningEffort(defaults.reasoning_effort ?? null),
-          reasoning_required: defaults.reasoning_effort
+          reasoning_effort: normalizedReasoningEffort,
+          reasoning_required: normalizedReasoningEffort
             ? Boolean(defaults.reasoning_required)
             : false,
         }),

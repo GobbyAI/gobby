@@ -21,6 +21,8 @@ _FALLBACK_REASONING_EFFORTS: dict[str, frozenset[str]] = {
     "claude": frozenset({"low", "medium", "high", "max"}),
     "codex": frozenset({"low", "medium", "high", "xhigh"}),
 }
+_fallback_catalog: Any | None = None
+_fallback_catalog_config: DaemonConfig | None = None
 
 
 def normalize_reasoning_effort(value: str | None) -> str | None:
@@ -63,12 +65,17 @@ class SpawnReasoningResolution:
 def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
     from gobby.app_context import get_app_context
 
+    global _fallback_catalog, _fallback_catalog_config
+
     ctx = get_app_context()
     catalog = getattr(ctx, "provider_model_catalog", None) if ctx else None
     if catalog is None:
         from gobby.servers.provider_models import ProviderModelCatalog
 
-        catalog = ProviderModelCatalog(daemon_config)
+        if _fallback_catalog is None or daemon_config is not _fallback_catalog_config:
+            _fallback_catalog = ProviderModelCatalog(daemon_config)
+            _fallback_catalog_config = daemon_config
+        catalog = _fallback_catalog
     snapshot = catalog.get_provider_snapshot(provider)
     models = snapshot.get("models")
     return list(models) if isinstance(models, list) else []

@@ -4,7 +4,15 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from gobby.agents.reasoning import normalize_reasoning_effort
 
@@ -321,15 +329,15 @@ class AgentDefinitionBody(BaseModel):
     instructions: str | None = None
     # Execution
     provider: str = "inherit"
-    model: str | None = None
-    reasoning_effort: str | None = None
-    reasoning_required: bool | None = None
-    fallback_agent: str | None = None
-    api_base: str | None = Field(
+    model: StrictStr | None = None
+    reasoning_effort: StrictStr | None = None
+    reasoning_required: StrictBool | None = None
+    fallback_agent: StrictStr | None = None
+    api_base: StrictStr | None = Field(
         default=None,
         description="API base URL for the model endpoint (e.g., http://localhost:1234/v1 for LM Studio)",
     )
-    api_token: str | None = Field(
+    api_token: StrictStr | None = Field(
         default=None,
         description="Auth token for the endpoint. Supports ${ENV_VAR} pattern for env var expansion.",
     )
@@ -355,9 +363,9 @@ class AgentDefinitionBody(BaseModel):
     def _normalize_reasoning_effort(cls, value: Any) -> str | None:
         if value is None:
             return None
-        if isinstance(value, str):
-            return normalize_reasoning_effort(value)
-        return normalize_reasoning_effort(str(value))
+        if not isinstance(value, str):
+            raise ValueError("reasoning_effort must be a string")
+        return normalize_reasoning_effort(value)
 
     def build_prompt_preamble(self) -> str | None:
         """Build structured prompt preamble from role/goal/personality/instructions."""

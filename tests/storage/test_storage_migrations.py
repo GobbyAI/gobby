@@ -8,6 +8,7 @@ from gobby.storage.migrations import (
     BASELINE_VERSION,
     MIGRATIONS,
     _migrate_expansion_runs,
+    _run_migration_list,
     get_current_version,
     run_migrations,
 )
@@ -82,6 +83,36 @@ def test_migrations_idempotency(tmp_path) -> None:
     applied = run_migrations(db)
     assert applied == 0
     assert get_current_version(db) == initial_version
+
+
+def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
+    """SQL-string migrations should roll back all statements on failure."""
+    db_path = tmp_path / "atomic_migration.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+
+    with pytest.raises(sqlite3.OperationalError):
+        _run_migration_list(
+            db,
+            current_version=0,
+            migrations=[
+                (
+                    1,
+                    "Create temp table and fail",
+                    """
+                    CREATE TABLE temp_atomic (id INTEGER PRIMARY KEY);
+                    INSERT INTO temp_atomic (id) VALUES (1);
+                    INSERT INTO missing_table (id) VALUES (1);
+                    """,
+                )
+            ],
+        )
+
+    assert (
+        db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name='temp_atomic'")
+        is None
+    )
+    assert db.fetchall("SELECT version FROM schema_version") == []
 
 
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:

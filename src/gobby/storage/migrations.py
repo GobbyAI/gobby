@@ -643,9 +643,10 @@ def _migrate_agent_run_reasoning_fields(db: LocalDatabase) -> None:
         ("reasoning_status", "TEXT NOT NULL DEFAULT 'not_requested'"),
         ("reasoning_message", "TEXT"),
     )
-    for column, ddl in additions:
-        if not _column_exists(db, "agent_runs", column):
-            db.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
+    with db.transaction():
+        for column, ddl in additions:
+            if not _column_exists(db, "agent_runs", column):
+                db.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
 
 
 def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
@@ -1403,18 +1404,21 @@ def _run_migration_list(
                 if callable(action):
                     # Python data migration
                     action(db)
+                    db.execute(
+                        "INSERT INTO schema_version (version) VALUES (?)",
+                        (version,),
+                    )
                 else:
                     # SQL migration (may contain multiple statements)
-                    for statement in action.strip().split(";"):
-                        statement = statement.strip()
-                        if statement:
-                            db.execute(statement)
-
-                # Record migration
-                db.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)",
-                    (version,),
-                )
+                    with db.transaction():
+                        for statement in action.strip().split(";"):
+                            statement = statement.strip()
+                            if statement:
+                                db.execute(statement)
+                        db.execute(
+                            "INSERT INTO schema_version (version) VALUES (?)",
+                            (version,),
+                        )
                 applied += 1
                 last_version = version
             except Exception as e:
