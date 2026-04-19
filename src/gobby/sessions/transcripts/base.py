@@ -77,6 +77,7 @@ class ParsedMessage:
     usage: TokenUsage | None = None
     tool_use_id: str | None = None
     model: str | None = None
+    message_id: str | None = None
 
 
 @runtime_checkable

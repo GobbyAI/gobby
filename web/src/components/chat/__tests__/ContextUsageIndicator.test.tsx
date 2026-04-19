@@ -40,7 +40,7 @@ describe('ContextUsageIndicator', () => {
       />,
     )
 
-    const indicator = screen.getByText('0%').closest('div')
+    const indicator = screen.getByText('wait').closest('div')
     expect(indicator).toHaveAttribute(
       'title',
       'Context usage: waiting for first response...',

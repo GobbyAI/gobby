@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import type { GobbySession } from '../../types/sessions'
 import type { SessionMessage } from '../../hooks/useSessionDetail'
+import { useSessionTokenEvents } from '../../hooks/useSessionTokenEvents'
 import { SourceIcon } from '../shared/SourceIcon'
 import { BranchIcon, ChatIcon, SummaryIcon } from '../shared/Icons'
 import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
 import { SessionTranscript } from './SessionTranscript'
 import { SessionLineage } from './SessionLineage'
+import { SessionTokenTimeline } from './SessionTokenTimeline'
+import { SessionModelBreakdown } from './SessionModelBreakdown'
 import { ConfirmDialog } from '../chat/ui/ConfirmDialog'
 import { DURATION_INVALID, formatDuration, formatTokens } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'
@@ -64,9 +67,15 @@ export function SessionDetail({
   onSelectSession,
 }: SessionDetailProps) {
   const title = getSessionTitleText(session.title)
+  const tokenEventsEnabled =
+    import.meta.env.VITE_TOKEN_EVENTS !== '0' &&
+    import.meta.env.VITE_TOKEN_EVENTS !== 'false'
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editValue, setEditValue] = useState('')
   const saveOnBlurRef = useRef(true)
+  const { events: tokenEvents, breakdown: tokenBreakdown } = useSessionTokenEvents(
+    tokenEventsEnabled ? session.id : null,
+  )
 
   useEffect(() => {
     setIsEditingTitle(false)
@@ -143,6 +152,12 @@ export function SessionDetail({
         <div className="session-detail-compact-stats">
           {formatCompactStats(session)}
         </div>
+        {tokenEventsEnabled && (
+          <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <SessionTokenTimeline events={tokenEvents} />
+            <SessionModelBreakdown breakdown={tokenBreakdown} />
+          </div>
+        )}
       </div>
 
       {/* Collapsible metadata */}

@@ -102,6 +102,13 @@ class GeminiTranscriptParser(BaseTranscriptParser):
         self._tool_use_counter += 1
         return f"gemini-tu-{self._tool_use_counter}"
 
+    def _message_id_for(self, prefix: str, index: int, raw_id: Any = None) -> str:
+        """Generate a stable message identifier for deduping token events."""
+        if isinstance(raw_id, str) and raw_id.strip():
+            return raw_id.strip()
+        session_prefix = self.session_id or self.cli_name
+        return f"{session_prefix}:{prefix}:{index}"
+
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
     ) -> list[dict[str, Any]]:
@@ -310,6 +317,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             raw_json=data,
             usage=self._extract_usage(data),
             tool_use_id=tool_use_id,
+            message_id=self._message_id_for("jsonl", index, data.get("id")),
         )
 
     def _extract_usage(self, data: dict[str, Any]) -> TokenUsage | None:
@@ -324,6 +332,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
             return TokenUsage(
                 input_tokens=usage_data.get("promptTokenCount", 0),
                 output_tokens=usage_data.get("candidatesTokenCount", 0),
+                cache_read_tokens=usage_data.get("cachedContentTokenCount", 0),
             )
 
         return None
@@ -414,6 +423,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                     timestamp=timestamp,
                     raw_json=msg,
                     usage=self._extract_usage(msg),
+                    message_id=self._message_id_for("json", start_index, msg.get("id")),
                 )
             ]
 
@@ -438,6 +448,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                                 timestamp=timestamp,
                                 raw_json=msg,
                                 usage=self._extract_usage(msg),
+                                message_id=self._message_id_for("json", idx, msg.get("id")),
                             )
                         )
                         idx += 1
@@ -454,6 +465,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                                 timestamp=timestamp,
                                 raw_json=msg,
                                 usage=self._extract_usage(msg),
+                                message_id=self._message_id_for("json", idx, msg.get("id")),
                             )
                         )
                         idx += 1
@@ -473,6 +485,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                         timestamp=timestamp,
                         raw_json=msg,
                         usage=self._extract_usage(msg),
+                        message_id=self._message_id_for("json", idx, msg.get("id")),
                     )
                 )
                 idx += 1
@@ -499,6 +512,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                         raw_json=tc,
                         usage=self._extract_usage(msg),
                         tool_use_id=tc_id,
+                        message_id=self._message_id_for("json", idx, tc.get("id")),
                     )
                 )
                 idx += 1
@@ -528,6 +542,7 @@ class GeminiTranscriptParser(BaseTranscriptParser):
                             raw_json=tc,
                             usage=self._extract_usage(msg),
                             tool_use_id=tc_id,
+                            message_id=self._message_id_for("json", idx, tc.get("id")),
                         )
                     )
                     idx += 1

@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+from gobby.sessions.model_family import normalize_model
 from gobby.storage.database import LocalDatabase
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 216
+BASELINE_VERSION = 217
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -756,6 +757,132 @@ def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
         conn.execute("PRAGMA foreign_keys=ON")
 
 
+def _migrate_add_token_events(db: LocalDatabase) -> None:
+    """Add token_events ledger and synthetic backfill rows for existing session usage."""
+    conn = db.connection
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS token_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            project_id TEXT,
+            message_id TEXT,
+            source TEXT NOT NULL,
+            origin TEXT NOT NULL,
+            model TEXT,
+            model_family TEXT,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            context_window INTEGER,
+            event_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_events_event_at ON token_events(event_at);
+        CREATE INDEX IF NOT EXISTS idx_token_events_session ON token_events(session_id, event_at);
+        CREATE INDEX IF NOT EXISTS idx_token_events_project_event ON token_events(project_id, event_at);
+        CREATE INDEX IF NOT EXISTS idx_token_events_model_family ON token_events(model_family, event_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_token_events_dedup
+            ON token_events(session_id, message_id)
+            WHERE message_id IS NOT NULL;
+    """)
+
+    existing_rows = db.fetchone("SELECT COUNT(*) AS count FROM token_events")
+    if existing_rows and int(existing_rows["count"] or 0) > 0:
+        return
+
+    sessions = db.fetchall(
+        """
+        SELECT
+            id,
+            project_id,
+            source,
+            model,
+            context_window,
+            created_at,
+            usage_input_tokens,
+            usage_output_tokens,
+            usage_cache_creation_tokens,
+            usage_cache_read_tokens
+        FROM sessions
+        WHERE COALESCE(usage_input_tokens, 0) > 0
+           OR COALESCE(usage_output_tokens, 0) > 0
+           OR COALESCE(usage_cache_creation_tokens, 0) > 0
+           OR COALESCE(usage_cache_read_tokens, 0) > 0
+        """
+    )
+    if sessions:
+        rows: list[tuple[object, ...]] = []
+        for session in sessions:
+            rows.append(
+                (
+                    session["id"],
+                    session["project_id"],
+                    f"{session['id']}:backfill",
+                    session["source"] or "backfill",
+                    "backfill",
+                    session["model"],
+                    normalize_model(session["model"]),
+                    session["usage_input_tokens"] or 0,
+                    session["usage_output_tokens"] or 0,
+                    session["usage_cache_creation_tokens"] or 0,
+                    session["usage_cache_read_tokens"] or 0,
+                    session["context_window"],
+                    str(session["created_at"]).replace("+00:00", "Z"),
+                )
+            )
+        with db.transaction():
+            db.executemany(
+                """
+                INSERT OR IGNORE INTO token_events (
+                    session_id,
+                    project_id,
+                    message_id,
+                    source,
+                    origin,
+                    model,
+                    model_family,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                    context_window,
+                    event_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    session_sums = db.fetchone(
+        """
+        SELECT
+            COALESCE(SUM(usage_input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(usage_output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(usage_cache_creation_tokens), 0) AS cache_creation_tokens,
+            COALESCE(SUM(usage_cache_read_tokens), 0) AS cache_read_tokens
+        FROM sessions
+        """
+    )
+    event_sums = db.fetchone(
+        """
+        SELECT
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
+        FROM token_events
+        """
+    )
+    for key in ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens"):
+        if int(session_sums[key] or 0) != int(event_sums[key] or 0):
+            raise RuntimeError(
+                f"token_events backfill mismatch for {key}: "
+                f"{session_sums[key]} != {event_sums[key]}"
+            )
+
+
 # Migrations beyond v171.
 # Add new migrations here. Do not modify the baseline schema above.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
@@ -1294,6 +1421,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         216,
         "Canonicalize code-call targets and persist graph sync attempts",
         _migrate_code_graph_target_schema,
+    ),
+    (
+        217,
+        "Add token_events ledger for event-granular token accounting",
+        _migrate_add_token_events,
     ),
 ]
 

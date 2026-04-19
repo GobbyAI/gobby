@@ -3,6 +3,7 @@
 Handles registration, listing, lookup, status updates, expiry, and renaming.
 """
 
+import inspect
 import json
 import logging
 import subprocess  # nosec B404 # subprocess needed for git commit counting
@@ -19,6 +20,7 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_policy_hash,
 )
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
+from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -188,6 +190,7 @@ def register_core_routes(
     broadcast_session: "Callable[..., Awaitable[None]]",
 ) -> None:
     """Register core session CRUD routes on the router."""
+    statusline_last_seen: dict[str, datetime] = {}
 
     @router.post("/web-chat")
     async def create_web_chat_session(body: WebChatSessionRequest) -> dict[str, Any]:
@@ -337,7 +340,7 @@ def register_core_routes(
         from gobby.sessions.token_tracker import SessionTokenTracker
 
         sm = get_session_manager()
-        tracker = SessionTokenTracker(session_storage=sm)
+        tracker = SessionTokenTracker(db=sm.db)
         return tracker.get_usage_summary(days=days, project_id=project_id)
 
     @router.post("/statusline")
@@ -363,6 +366,13 @@ def register_core_routes(
             # Session may not be registered yet (first ~1s of updates)
             return {"status": "ok", "warning": "session_not_found"}
 
+        previous = statusline_last_seen.get(session.id)
+        now = datetime.now(UTC)
+        statusline_last_seen[session.id] = now
+        if previous is not None:
+            gap_ms = int((now - previous).total_seconds() * 1000)
+            logger.info("statusline_usage_gap session_id=%s gap_ms=%s", session.id, gap_ms)
+
         sm.update_usage(
             session_id=session.id,
             input_tokens=body.get("input_tokens", 0),
@@ -373,7 +383,53 @@ def register_core_routes(
             model=body.get("model_id"),
         )
 
+        ws_server = server.services.websocket_server
+        if ws_server is not None:
+            broadcast_result = ws_server.broadcast_session_usage_updated(
+                build_session_usage_payload(
+                    session_id=session.id,
+                    project_id=session.project_id,
+                    model=body.get("model_id") if isinstance(body.get("model_id"), str) else None,
+                    context_window=(
+                        body.get("context_window_size")
+                        if isinstance(body.get("context_window_size"), int)
+                        else None
+                    ),
+                    totals={
+                        "input_tokens": int(body.get("input_tokens", 0) or 0),
+                        "output_tokens": int(body.get("output_tokens", 0) or 0),
+                        "cache_creation_tokens": int(
+                            body.get("cache_creation_tokens", 0) or 0
+                        ),
+                        "cache_read_tokens": int(body.get("cache_read_tokens", 0) or 0),
+                    },
+                    updated_at=now,
+                )
+            )
+            if inspect.isawaitable(broadcast_result):
+                await broadcast_result
+
         return {"status": "ok"}
+
+    @router.get("/{session_id}/token-events")
+    async def get_session_token_events(
+        session_id: str,
+        limit: int = Query(500, ge=1, le=2000),
+        since: str | None = Query(None),
+    ) -> dict[str, Any]:
+        """Return recent token events for a session."""
+        sm = get_session_manager()
+        session = sm.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        store = TokenEventStore(sm.db)
+        events = store.list_session_events(session_id, limit=limit, since=since)
+        return {
+            "session_id": session_id,
+            "events": events,
+            "count": len(events),
+        }
 
     @router.get("")
     async def list_sessions(

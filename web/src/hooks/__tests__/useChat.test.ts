@@ -186,6 +186,8 @@ describe("useChat", () => {
     expect(msg.events).toContain("chat_stream");
     expect(msg.events).toContain("tool_status");
     expect(msg.events).toContain("session_message");
+    expect(msg.events).toContain("session_usage_updated");
+    expect(msg.events).toContain("token_event");
   });
 
   it("resets state on WS close", async () => {
@@ -2268,6 +2270,36 @@ describe("useChat", () => {
 
     expect(result.current.contextUsage.totalInputTokens).toBeGreaterThan(0);
     expect(result.current.contextUsage.contextWindow).toBe(200000);
+  });
+
+  it("updates context usage from session_usage_updated for the active session", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 420,
+        usage_output_tokens: 33,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 10,
+        context_window: 200000,
+      });
+    });
+
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 420,
+      outputTokens: 33,
+      cacheReadTokens: 120,
+      cacheCreationTokens: 10,
+      uncachedInputTokens: 290,
+      contextWindow: 200000,
+    });
+    expect(result.current.contextUsageUpdatedAt).not.toBeNull();
   });
 
   it("hydrates context usage from attach_to_session_result without changing the main chat id", async () => {

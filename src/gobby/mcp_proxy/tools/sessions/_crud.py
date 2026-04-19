@@ -279,5 +279,5 @@ This tool is for browsing/listing sessions, not for self-identification.""",
             return {"error": "Session manager not available"}
 
         days = max(1, min(days, 365))
-        tracker = SessionTokenTracker(session_storage=session_manager)
+        tracker = SessionTokenTracker(db=session_manager.db)
         return tracker.get_usage_summary(days=days, project_id=project_id)

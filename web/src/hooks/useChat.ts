@@ -102,6 +102,42 @@ interface VoiceTranscriptionMessage {
   request_id: string;
 }
 
+interface SessionUsageUpdatedMessage {
+  type: "session_usage_updated";
+  session_id: string;
+  project_id?: string | null;
+  model?: string | null;
+  context_window?: number | null;
+  usage_input_tokens?: number;
+  usage_output_tokens?: number;
+  usage_cache_creation_tokens?: number;
+  usage_cache_read_tokens?: number;
+  updated_at?: string;
+}
+
+interface TokenEventMessage {
+  type: "token_event";
+  session_id: string;
+  project_id?: string | null;
+  message_id?: string | null;
+  source?: string | null;
+  origin?: string | null;
+  event_at: string;
+  model?: string | null;
+  model_family?: string | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_tokens?: number;
+  cache_read_tokens?: number;
+  context_window?: number | null;
+  session_totals?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_tokens?: number;
+    cache_read_tokens?: number;
+  };
+}
+
 /** crypto.randomUUID() requires a secure context (HTTPS/localhost). Fall back for HTTP access (e.g. Tailscale IP). */
 function uuid(): string {
   if (
@@ -391,6 +427,31 @@ function hasSessionUsage(session: Record<string, unknown> | null): boolean {
       session.usage_output_tokens > 0) ||
     typeof session.context_window === "number"
   );
+}
+
+function buildContextUsageFromTotals(params: {
+  totalInputTokens?: number | null;
+  outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
+  contextWindow?: number | null;
+}) {
+  const totalInputTokens = params.totalInputTokens ?? 0;
+  const outputTokens = params.outputTokens ?? 0;
+  const cacheReadTokens = params.cacheReadTokens ?? 0;
+  const cacheCreationTokens = params.cacheCreationTokens ?? 0;
+
+  return {
+    totalInputTokens,
+    outputTokens,
+    contextWindow: params.contextWindow ?? null,
+    uncachedInputTokens: Math.max(
+      0,
+      totalInputTokens - cacheReadTokens - cacheCreationTokens,
+    ),
+    cacheReadTokens,
+    cacheCreationTokens,
+  };
 }
 
 function toSessionObservationMeta(
@@ -1140,6 +1201,19 @@ export function useChat() {
     saveConversationId(nextId);
   }, []);
 
+  const markSessionUsageFresh = useCallback((sessionId: string, rawTimestamp?: string) => {
+    const parsed = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
+    lastLiveUsageBySessionRef.current.set(
+      sessionId,
+      Number.isFinite(parsed) ? parsed : Date.now(),
+    );
+  }, []);
+
+  const shouldApplyHydratedUsage = useCallback((sessionId: string, fetchStartedAt: number) => {
+    const lastLive = lastLiveUsageBySessionRef.current.get(sessionId);
+    return lastLive == null || lastLive <= fetchStartedAt;
+  }, []);
+
   const applyMainSessionMeta = useCallback(
     (session: Record<string, unknown> | null) => {
       const nextMeta = toSessionObservationMeta(session, {
@@ -1315,6 +1389,7 @@ export function useChat() {
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
   });
+  const [contextUsageUpdatedAt, setContextUsageUpdatedAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   // Timestamp of last server-authoritative mode_changed — used to suppress
@@ -1333,6 +1408,8 @@ export function useChat() {
     cacheReadTokens: number;
     cacheCreationTokens: number;
   } | null>(null);
+  const didTrackContextUsageRef = useRef(false);
+  const lastLiveUsageBySessionRef = useRef<Map<string, number>>(new Map());
 
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
@@ -1350,6 +1427,14 @@ export function useChat() {
   const clearContinuationRollback = useCallback(() => {
     continuationRollbackRef.current = null;
   }, []);
+
+  useEffect(() => {
+    if (!didTrackContextUsageRef.current) {
+      didTrackContextUsageRef.current = true;
+      return;
+    }
+    setContextUsageUpdatedAt(Date.now());
+  }, [contextUsage]);
 
   const restoreContinuationState = useCallback(
     (snapshot: ContinuationRollbackSnapshot) => {
@@ -1502,6 +1587,8 @@ export function useChat() {
             "canvas_event",
             "artifact_event",
             "session_message",
+            "session_usage_updated",
+            "token_event",
           ],
         }),
       );
@@ -2184,6 +2271,77 @@ export function useChat() {
               : null,
           );
           console.log("Message sent to CLI session:", result.delivery_method);
+        } else if (data.type === "session_usage_updated") {
+          const update = data as unknown as SessionUsageUpdatedMessage;
+          const visibleSessionId =
+            viewingSessionIdRef.current ?? dbSessionIdRef.current;
+          if (update.session_id === visibleSessionId) {
+            markSessionUsageFresh(update.session_id, update.updated_at);
+            setContextUsage((prev) =>
+              buildContextUsageFromTotals({
+                totalInputTokens: update.usage_input_tokens ?? 0,
+                outputTokens: update.usage_output_tokens ?? 0,
+                cacheReadTokens: update.usage_cache_read_tokens ?? 0,
+                cacheCreationTokens: update.usage_cache_creation_tokens ?? 0,
+                contextWindow:
+                  typeof update.context_window === "number"
+                    ? update.context_window
+                    : prev.contextWindow,
+              }),
+            );
+          }
+          if (viewingSessionIdRef.current === update.session_id) {
+            setViewingSessionMeta((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    model:
+                      typeof update.model === "string" ? update.model : prev.model,
+                    contextWindow:
+                      typeof update.context_window === "number"
+                        ? update.context_window
+                        : prev.contextWindow,
+                  }
+                : prev,
+            );
+          } else if (dbSessionIdRef.current === update.session_id) {
+            setMainSessionMeta((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    model:
+                      typeof update.model === "string" ? update.model : prev.model,
+                    contextWindow:
+                      typeof update.context_window === "number"
+                        ? update.context_window
+                        : prev.contextWindow,
+                  }
+                : prev,
+            );
+          }
+        } else if (data.type === "token_event") {
+          const eventData = data as unknown as TokenEventMessage;
+          const visibleSessionId =
+            viewingSessionIdRef.current ?? dbSessionIdRef.current;
+          const sessionTotals = eventData.session_totals;
+          if (
+            eventData.session_id === visibleSessionId &&
+            sessionTotals
+          ) {
+            markSessionUsageFresh(eventData.session_id, eventData.event_at);
+            setContextUsage((prev) =>
+              buildContextUsageFromTotals({
+                totalInputTokens: sessionTotals.input_tokens ?? 0,
+                outputTokens: sessionTotals.output_tokens ?? 0,
+                cacheReadTokens: sessionTotals.cache_read_tokens ?? 0,
+                cacheCreationTokens: sessionTotals.cache_creation_tokens ?? 0,
+                contextWindow:
+                  typeof eventData.context_window === "number"
+                    ? eventData.context_window
+                    : prev.contextWindow,
+              }),
+            );
+          }
         } else if (data.type === "subscribe_success") {
           console.log("Subscribed to events:", data);
         } else if (data.type === "chat_deleted") {
@@ -2207,6 +2365,7 @@ export function useChat() {
     applyMainSessionMeta,
     clearContinuingSession,
     clearContinuationRollback,
+    markSessionUsageFresh,
     resolveAgentName,
     restoreContinuationState,
     setSelectedProvider,
@@ -3369,6 +3528,7 @@ export function useChat() {
         .finally(() => setIsLoadingMessages(false));
 
       // Fetch session metadata
+      const metadataFetchStartedAt = Date.now();
       fetch(`${baseUrl}/api/sessions/${sessionId}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
@@ -3412,6 +3572,9 @@ export function useChat() {
             s.usage_output_tokens > 0 ||
             s.context_window
           ) {
+            if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
+              return;
+            }
             const totalIn = s.usage_input_tokens ?? 0;
             const cacheRead = s.usage_cache_read_tokens ?? 0;
             const cacheCreation = s.usage_cache_creation_tokens ?? 0;
@@ -3431,7 +3594,7 @@ export function useChat() {
       // resolveAgentName is a stable useCallback (its own deps are []) — safe
       // to reference here without re-creating the callback every render.
     },
-    [resolveAgentName, setContextUsage],
+    [resolveAgentName, setContextUsage, shouldApplyHydratedUsage],
   );
 
   // Clear viewing state and restore previous web chat
@@ -3751,6 +3914,7 @@ export function useChat() {
     isThinking,
     isLoadingMessages,
     contextUsage,
+    contextUsageUpdatedAt,
     sendMessage,
     sendMode,
     sendProjectChange,

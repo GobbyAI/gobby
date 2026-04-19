@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import type { TimeSeriesGranularity } from '../types/tokens'
 
 export interface TokenBucket {
   timestamp: string
@@ -8,10 +9,15 @@ export interface TokenBucket {
 
 export interface TokenTimeSeriesData {
   hours: number
+  granularity?: TimeSeriesGranularity
   buckets: TokenBucket[]
 }
 
-export function useTokenTimeSeries(hours: number, projectId?: string) {
+export function useTokenTimeSeries(
+  hours: number,
+  projectId?: string,
+  granularity: TimeSeriesGranularity = '1h',
+) {
   const [data, setData] = useState<TokenTimeSeriesData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -23,7 +29,7 @@ export function useTokenTimeSeries(hours: number, projectId?: string) {
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      let url = `/api/admin/tokens/timeseries?hours=${hours}`
+      let url = `/api/admin/tokens/timeseries?hours=${hours}&granularity=${granularity}`
       if (projectId) url += `&project_id=${encodeURIComponent(projectId)}`
       const resp = await fetch(url, { signal: controller.signal })
       if (!mountedRef.current) return
@@ -40,7 +46,7 @@ export function useTokenTimeSeries(hours: number, projectId?: string) {
       setError(String(e))
       setData(null)
     }
-  }, [hours, projectId])
+  }, [granularity, hours, projectId])
 
   useEffect(() => {
     mountedRef.current = true

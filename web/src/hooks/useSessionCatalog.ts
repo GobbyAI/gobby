@@ -85,6 +85,47 @@ export function useSessionCatalog(projectId: string | null) {
     }, [fetchSessions]),
   );
 
+  useWebSocketEvent(
+    "session_usage_updated",
+    useCallback((data: Record<string, unknown>) => {
+      const sessionId = typeof data.session_id === "string" ? data.session_id : null;
+      if (!sessionId) {
+        return;
+      }
+      setSessions((prev) =>
+        prev.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                usage_input_tokens:
+                  typeof data.usage_input_tokens === "number"
+                    ? data.usage_input_tokens
+                    : session.usage_input_tokens,
+                usage_output_tokens:
+                  typeof data.usage_output_tokens === "number"
+                    ? data.usage_output_tokens
+                    : session.usage_output_tokens,
+                usage_cache_creation_tokens:
+                  typeof data.usage_cache_creation_tokens === "number"
+                    ? data.usage_cache_creation_tokens
+                    : session.usage_cache_creation_tokens,
+                usage_cache_read_tokens:
+                  typeof data.usage_cache_read_tokens === "number"
+                    ? data.usage_cache_read_tokens
+                    : session.usage_cache_read_tokens,
+                context_window:
+                  typeof data.context_window === "number"
+                    ? data.context_window
+                    : session.context_window,
+                model:
+                  typeof data.model === "string" ? data.model : session.model,
+              }
+            : session,
+        ),
+      );
+    }, []),
+  );
+
   const sortedSessions = useMemo(
     () =>
       [...sessions].sort(

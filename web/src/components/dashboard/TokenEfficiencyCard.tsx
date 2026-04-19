@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -12,8 +12,12 @@ import {
 import { useTokenTimeSeries } from '../../hooks/useTokenTimeSeries'
 import { useSavings } from '../../hooks/useSavings'
 import { useUsage } from '../../hooks/useUsage'
+import { useModelBreakdown } from '../../hooks/useModelBreakdown'
 import { cn } from '../../lib/utils'
 import { DashboardCard } from './DashboardCard'
+import { GranularityToggle } from './GranularityToggle'
+import { ModelDistributionBar } from './ModelDistributionBar'
+import { ModelBreakdownList } from './ModelBreakdownList'
 import {
   dashboardBreakdownClass,
   dashboardBreakdownLabelClass,
@@ -23,6 +27,7 @@ import {
   dashboardEfficiencyClass,
   dashboardFullCardClass,
 } from './dashboardStyles'
+import type { TimeSeriesGranularity } from '../../types/tokens'
 
 interface ChartPoint {
   time: string
@@ -31,8 +36,11 @@ interface ChartPoint {
   tokens_saved: number
 }
 
-function formatTime(ts: string): string {
+function formatTime(ts: string, granularity: TimeSeriesGranularity): string {
   const d = new Date(ts)
+  if (granularity === '1d') {
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -65,19 +73,24 @@ interface Props {
 }
 
 export function TokenEfficiencyCard({ hours, projectId }: Props) {
-  const { data: tsData, isLoading } = useTokenTimeSeries(hours, projectId)
+  const tokenEventsEnabled =
+    import.meta.env.VITE_TOKEN_EVENTS !== '0' &&
+    import.meta.env.VITE_TOKEN_EVENTS !== 'false'
+  const [granularity, setGranularity] = useState<TimeSeriesGranularity>('1h')
+  const { data: tsData, isLoading } = useTokenTimeSeries(hours, projectId, granularity)
   const { data: savingsData } = useSavings(hours, projectId)
   const { data: usageData } = useUsage(hours, projectId)
+  const { data: modelBreakdown } = useModelBreakdown(hours, projectId)
 
   const chartData = useMemo<ChartPoint[]>(() => {
     if (!tsData?.buckets) return []
     return tsData.buckets.map(b => ({
-      time: formatTime(b.timestamp),
+      time: formatTime(b.timestamp, granularity),
       ts: new Date(b.timestamp).getTime(),
       tokens_spent: b.tokens_spent,
       tokens_saved: b.tokens_saved,
     }))
-  }, [tsData])
+  }, [granularity, tsData])
 
   // Compute efficiency ratio from totals
   const totalSpent = usageData
@@ -97,11 +110,16 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
       title="Token Efficiency"
       className={dashboardFullCardClass}
       action={
-        efficiencyPct > 0 ? (
-          <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
-            {efficiencyPct}% efficiency
-          </span>
-        ) : undefined
+        <div className="flex items-center gap-2">
+          {tokenEventsEnabled && (
+            <GranularityToggle value={granularity} onChange={setGranularity} />
+          )}
+          {efficiencyPct > 0 ? (
+            <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
+              {efficiencyPct}% efficiency
+            </span>
+          ) : null}
+        </div>
       }
     >
         {isLoading && !hasData ? (
@@ -156,6 +174,13 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
           <div className={dashboardChartEmptyClass}>
             No token data yet.
           </div>
+        )}
+
+        {tokenEventsEnabled && modelBreakdown.length > 0 && (
+          <>
+            <ModelDistributionBar items={modelBreakdown} />
+            <ModelBreakdownList items={modelBreakdown} />
+          </>
         )}
 
         {Object.keys(categories).length > 0 && (

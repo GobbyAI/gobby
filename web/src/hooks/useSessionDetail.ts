@@ -268,6 +268,40 @@ export function useSessionDetail(sessionId: string | null) {
     })
   }, []))
 
+  useWebSocketEvent('session_usage_updated', useCallback((data: Record<string, unknown>) => {
+    const updatedSessionId = typeof data.session_id === 'string' ? data.session_id : null
+    if (!updatedSessionId || updatedSessionId !== sessionIdRef.current) return
+
+    setSession((prev) =>
+      prev
+        ? {
+            ...prev,
+            usage_input_tokens:
+              typeof data.usage_input_tokens === 'number'
+                ? data.usage_input_tokens
+                : prev.usage_input_tokens,
+            usage_output_tokens:
+              typeof data.usage_output_tokens === 'number'
+                ? data.usage_output_tokens
+                : prev.usage_output_tokens,
+            usage_cache_creation_tokens:
+              typeof data.usage_cache_creation_tokens === 'number'
+                ? data.usage_cache_creation_tokens
+                : prev.usage_cache_creation_tokens,
+            usage_cache_read_tokens:
+              typeof data.usage_cache_read_tokens === 'number'
+                ? data.usage_cache_read_tokens
+                : prev.usage_cache_read_tokens,
+            context_window:
+              typeof data.context_window === 'number'
+                ? data.context_window
+                : prev.context_window,
+            model: typeof data.model === 'string' ? data.model : prev.model,
+          }
+        : prev,
+    )
+  }, []))
+
   const hasMore = false
 
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false)

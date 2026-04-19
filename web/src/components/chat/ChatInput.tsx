@@ -49,6 +49,7 @@ interface ChatInputProps {
   stopRecording?: () => Promise<void>
   cancelRecording?: () => void
   contextUsage?: ContextUsage
+  contextUsageUpdatedAt?: number | null
   currentBranch?: string | null
   worktreePath?: string | null
   projectId?: string | null
@@ -124,6 +125,7 @@ export function ChatInput({
   stopRecording,
   cancelRecording,
   contextUsage,
+  contextUsageUpdatedAt = null,
   currentBranch,
   worktreePath,
   projectId,
@@ -173,8 +175,19 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
+  const [usageClock, setUsageClock] = useState(() => Date.now())
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
+  const contextUsageStaleMs =
+    contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
+
+  useEffect(() => {
+    if (contextUsageUpdatedAt == null) {
+      return
+    }
+    const interval = window.setInterval(() => setUsageClock(Date.now()), 15_000)
+    return () => window.clearInterval(interval)
+  }, [contextUsageUpdatedAt])
 
   // Revoke blob URLs on unmount to prevent memory leaks
   const queuedFilesRef = useRef(queuedFiles)
@@ -730,6 +743,7 @@ export function ChatInput({
                 totalInputTokens={contextUsage?.totalInputTokens ?? 0}
                 outputTokens={contextUsage?.outputTokens ?? 0}
                 contextWindow={contextUsage?.contextWindow ?? null}
+                staleMs={contextUsageStaleMs}
                 uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
                 cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
                 cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}

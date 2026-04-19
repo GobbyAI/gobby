@@ -1125,6 +1125,48 @@ class LocalSessionManager:
             logger.error(f"Failed to update session usage {session_id}: {e}")
             return False
 
+    def add_usage_delta(
+        self,
+        session_id: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        context_window: int | None = None,
+        model: str | None = None,
+    ) -> bool:
+        """Increment session usage statistics atomically."""
+        query = """
+        UPDATE sessions
+        SET
+            usage_input_tokens = COALESCE(usage_input_tokens, 0) + ?,
+            usage_output_tokens = COALESCE(usage_output_tokens, 0) + ?,
+            usage_cache_creation_tokens = COALESCE(usage_cache_creation_tokens, 0) + ?,
+            usage_cache_read_tokens = COALESCE(usage_cache_read_tokens, 0) + ?,
+            context_window = COALESCE(?, context_window),
+            model = COALESCE(?, model),
+            updated_at = datetime('now')
+        WHERE id = ?
+        """
+        try:
+            with self.db.transaction():
+                cursor = self.db.execute(
+                    query,
+                    (
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_tokens,
+                        cache_read_tokens,
+                        context_window,
+                        model,
+                        session_id,
+                    ),
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to add usage delta for session {session_id}: {e}")
+            return False
+
     def get_sessions_since(
         self, since: datetime, project_id: str | None = None
     ) -> builtins.list[Session]:

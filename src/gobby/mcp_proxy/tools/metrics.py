@@ -36,7 +36,7 @@ def create_metrics_registry(
     # Create usage tracker if session storage is provided
     token_tracker: SessionTokenTracker | None = None
     if session_storage is not None:
-        token_tracker = SessionTokenTracker(session_storage=session_storage)
+        token_tracker = SessionTokenTracker(db=session_storage.db)
     registry = InternalToolRegistry(
         name="gobby-metrics",
         description="Tool metrics - query call counts, success rates, latency",

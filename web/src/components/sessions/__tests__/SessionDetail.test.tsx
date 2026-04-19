@@ -24,6 +24,15 @@ vi.mock('../../shared/Icons', () => ({
 vi.mock('../../shared/MemoizedMarkdown', () => ({
   MemoizedMarkdown: ({ content }: { content: string }) => <div data-testid="markdown">{content}</div>,
 }))
+vi.mock('../../../hooks/useSessionTokenEvents', () => ({
+  useSessionTokenEvents: () => ({
+    events: [],
+    breakdown: [],
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+  }),
+}))
 
 const SAMPLE_SESSION: GobbySession = {
   id: 'sess-1',

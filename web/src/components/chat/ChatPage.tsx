@@ -758,6 +758,7 @@ export function ChatPage({
               modeDisabled={isProxyAttached}
               modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
               contextUsage={chat.contextUsage}
+              contextUsageUpdatedAt={chat.contextUsageUpdatedAt}
               currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}

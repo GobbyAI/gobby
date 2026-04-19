@@ -851,6 +851,32 @@ CREATE TABLE savings_ledger (
 CREATE INDEX idx_savings_ledger_created ON savings_ledger(created_at);
 CREATE INDEX idx_savings_ledger_project_cat ON savings_ledger(project_id, category);
 
+CREATE TABLE token_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id TEXT,
+    message_id TEXT,
+    source TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    model TEXT,
+    model_family TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    context_window INTEGER,
+    event_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    metadata TEXT
+);
+CREATE INDEX idx_token_events_event_at ON token_events(event_at);
+CREATE INDEX idx_token_events_session ON token_events(session_id, event_at);
+CREATE INDEX idx_token_events_project_event ON token_events(project_id, event_at);
+CREATE INDEX idx_token_events_model_family ON token_events(model_family, event_at);
+CREATE UNIQUE INDEX idx_token_events_dedup
+    ON token_events(session_id, message_id)
+    WHERE message_id IS NOT NULL;
+
 CREATE TABLE task_affected_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

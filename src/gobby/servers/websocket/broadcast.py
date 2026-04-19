@@ -42,6 +42,8 @@ class BroadcastMixin:
             "hook_event",
             "session_message",
             "session_event",
+            "session_usage_updated",
+            "token_event",
             "agent_event",
             "agent_message",
             "agent_command",
@@ -136,6 +138,22 @@ class BroadcastMixin:
             "session_id": session_id,
             "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_session_usage_updated(self, payload: dict[str, Any]) -> None:
+        """Broadcast session aggregate token usage refresh."""
+        message = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            **payload,
+        }
+        await self.broadcast(message)
+
+    async def broadcast_token_event(self, payload: dict[str, Any]) -> None:
+        """Broadcast a transcript-derived token event."""
+        message = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            **payload,
         }
         await self.broadcast(message)
 

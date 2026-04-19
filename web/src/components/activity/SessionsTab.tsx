@@ -9,6 +9,7 @@ import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
+import { formatTokens } from "../../utils/formatTime";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -48,6 +49,9 @@ interface WatchingSessionEntry {
   startedAt?: string;
   updatedAt?: string;
   seqNum?: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
   hasTmux: boolean;
   sandboxEnabled: boolean;
 }
@@ -260,6 +264,11 @@ export const SessionsTab = memo(function SessionsTab({
               startedAt: agent.started_at,
               updatedAt: matchedSession.updated_at,
               seqNum: matchedSession.seq_num,
+              inputTokens: matchedSession.usage_input_tokens ?? 0,
+              outputTokens: matchedSession.usage_output_tokens ?? 0,
+              totalTokens:
+                (matchedSession.usage_input_tokens ?? 0) +
+                (matchedSession.usage_output_tokens ?? 0),
               hasTmux: Boolean(matchedSession.terminal_context),
               sandboxEnabled: matchedSession.sandbox_enabled ?? false,
             });
@@ -281,6 +290,9 @@ export const SessionsTab = memo(function SessionsTab({
         agentRunId: session.agent_run_id,
         updatedAt: session.updated_at,
         seqNum: session.seq_num,
+        inputTokens: session.usage_input_tokens ?? 0,
+        outputTokens: session.usage_output_tokens ?? 0,
+        totalTokens: (session.usage_input_tokens ?? 0) + (session.usage_output_tokens ?? 0),
         hasTmux: Boolean(session.terminal_context),
         sandboxEnabled: session.sandbox_enabled ?? false,
       }));
@@ -586,6 +598,16 @@ export const SessionsTab = memo(function SessionsTab({
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  {entry.totalTokens > 1_000 && (
+                    <div className="hidden min-w-[82px] text-right md:block">
+                      <div className="text-[10px] tabular-nums text-foreground">
+                        {formatTokens(entry.totalTokens)}
+                      </div>
+                      <div className="text-[10px] tabular-nums text-muted-foreground">
+                        {formatTokens(entry.inputTokens)} / {formatTokens(entry.outputTokens)}
+                      </div>
+                    </div>
+                  )}
                   {renderBadges(entry)}
                   {entry.status !== "expired" && (
                     <button

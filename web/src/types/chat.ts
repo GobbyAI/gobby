@@ -212,6 +212,7 @@ export interface ChatState {
   isConnected: boolean;
   isReconnecting: boolean;
   contextUsage?: ContextUsage;
+  contextUsageUpdatedAt?: number | null;
   onSend: (
     content: string,
     files?: QueuedFile[],

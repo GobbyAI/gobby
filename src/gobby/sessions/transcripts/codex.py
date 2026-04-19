@@ -26,7 +26,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage
+from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -114,30 +114,33 @@ class CodexTranscriptParser(BaseTranscriptParser):
             return None
 
         line_type = data.get("type")
-        if line_type != "response_item":
-            return None
-
         payload = data.get("payload")
         if not isinstance(payload, dict):
             return None
 
         timestamp = _parse_timestamp(data)
+
+        if line_type == "event_msg":
+            return self._parse_event_msg(data, payload, index, timestamp)
+        if line_type != "response_item":
+            return None
+
         payload_type = payload.get("type")
 
         if payload_type == "message":
             return self._parse_message(data, payload, index, timestamp)
-        elif payload_type == "function_call":
+        if payload_type == "function_call":
             return self._parse_function_call(data, payload, index, timestamp)
-        elif payload_type == "function_call_output":
+        if payload_type == "function_call_output":
             return self._parse_function_call_output(data, payload, index, timestamp)
-        else:
-            self.error_log.log_unknown_block(
-                line_num=index,
-                session_id=self.session_id,
-                block_type=f"response_item/{payload_type}",
-                raw=data,
-            )
-            return None
+
+        self.error_log.log_unknown_block(
+            line_num=index,
+            session_id=self.session_id,
+            block_type=f"response_item/{payload_type}",
+            raw=data,
+        )
+        return None
 
     def _parse_message(
         self,
@@ -164,6 +167,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             timestamp=timestamp,
             raw_json=data,
             usage=None,
+            message_id=self._message_id_for(index, payload.get("id")),
         )
 
     def _parse_function_call(
@@ -193,6 +197,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             raw_json=data,
             usage=None,
             tool_use_id=call_id,
+            message_id=self._message_id_for(index, payload.get("id") or call_id),
         )
 
     def _parse_function_call_output(
@@ -217,6 +222,55 @@ class CodexTranscriptParser(BaseTranscriptParser):
             raw_json=data,
             usage=None,
             tool_use_id=call_id,
+            message_id=self._message_id_for(index, payload.get("id") or call_id),
+        )
+
+    def _parse_event_msg(
+        self,
+        data: dict[str, Any],
+        payload: dict[str, Any],
+        index: int,
+        timestamp: datetime,
+    ) -> ParsedMessage | None:
+        payload_type = payload.get("type")
+        if payload_type != "token_count":
+            return None
+
+        input_tokens = int(payload.get("input_tokens") or payload.get("inputTokens") or 0)
+        cached_input_tokens = int(
+            payload.get("cached_input_tokens") or payload.get("cachedInputTokens") or 0
+        )
+        output_tokens = int(payload.get("output_tokens") or payload.get("outputTokens") or 0)
+        reasoning_output_tokens = int(
+            payload.get("reasoning_output_tokens") or payload.get("reasoningOutputTokens") or 0
+        )
+        cache_creation_tokens = int(
+            payload.get("cache_creation_input_tokens")
+            or payload.get("cacheCreationInputTokens")
+            or 0
+        )
+
+        usage = TokenUsage(
+            input_tokens=max(0, input_tokens - cached_input_tokens),
+            output_tokens=output_tokens + reasoning_output_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cached_input_tokens,
+        )
+        model = payload.get("model") or payload.get("model_id") or payload.get("modelId")
+
+        return ParsedMessage(
+            index=index,
+            role="assistant",
+            content="",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=timestamp,
+            raw_json=data,
+            usage=usage,
+            model=str(model) if model else None,
+            message_id=self._message_id_for(index, payload.get("message_id") or payload.get("id")),
         )
 
     def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
@@ -230,6 +284,12 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 current_index += 1
 
         return parsed_messages
+
+    def _message_id_for(self, index: int, raw_id: Any = None) -> str:
+        if isinstance(raw_id, str) and raw_id.strip():
+            return raw_id.strip()
+        session_prefix = self.session_id or "codex"
+        return f"{session_prefix}:codex:{index}"
 
 
 def _extract_text_from_blocks(content_blocks: Any) -> str:
