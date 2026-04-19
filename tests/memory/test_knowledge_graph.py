@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import asdict
 from unittest.mock import AsyncMock, MagicMock
@@ -113,6 +114,23 @@ class TestRelationship:
 
 class TestAddToGraph:
     """Tests for KnowledgeGraphService.add_to_graph()."""
+
+    async def test_ensure_graph_schema_serializes_concurrent_initialization(
+        self,
+        service: KnowledgeGraphService,
+        mock_neo4j: AsyncMock,
+    ) -> None:
+        """Concurrent callers should only run schema DDL once."""
+
+        async def _ensure_once() -> None:
+            await asyncio.sleep(0.01)
+
+        mock_neo4j.ensure_memory_graph_schema = AsyncMock(side_effect=_ensure_once)
+
+        await asyncio.gather(*[service._ensure_graph_schema() for _ in range(5)])
+
+        mock_neo4j.ensure_memory_graph_schema.assert_awaited_once()
+        assert service._graph_schema_ensured is True
 
     async def test_add_to_graph_extracts_entities(
         self,

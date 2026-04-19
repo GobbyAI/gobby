@@ -6,6 +6,7 @@ then merges them into a Neo4j knowledge graph.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -109,6 +110,7 @@ class KnowledgeGraphService:
         self._embedding_dim = embedding_dim
         self._model = model
         self._graph_schema_ensured = False
+        self._graph_schema_lock = asyncio.Lock()
         self._vector_index_ensured = False
 
     # -----------------------------------------------------------------------
@@ -283,13 +285,16 @@ class KnowledgeGraphService:
         """Lazily ensure the memory knowledge-graph schema exists."""
         if self._graph_schema_ensured:
             return
-        try:
-            await self._neo4j.ensure_memory_graph_schema()
-            self._graph_schema_ensured = True
-        except Neo4jConnectionError:
-            logger.debug("Neo4j unreachable, skipping knowledge-graph schema creation")
-        except Exception as e:
-            logger.warning(f"Failed to ensure knowledge-graph schema: {e}")
+        async with self._graph_schema_lock:
+            if self._graph_schema_ensured:
+                return
+            try:
+                await self._neo4j.ensure_memory_graph_schema()
+                self._graph_schema_ensured = True
+            except Neo4jConnectionError:
+                logger.debug("Neo4j unreachable, skipping knowledge-graph schema creation")
+            except Exception as e:
+                logger.warning(f"Failed to ensure knowledge-graph schema: {e}")
 
     @staticmethod
     def _display_entity_name(name: str) -> str:
