@@ -21,7 +21,6 @@ from gobby.sessions.token_tracker import SessionTokenTracker
 def create_metrics_registry(
     metrics_manager: ToolMetricsManager,
     session_storage: Any | None = None,
-    daily_budget_tokens: int = 10_000_000,
     event_store: MetricsEventStore | None = None,
 ) -> InternalToolRegistry:
     """
@@ -29,19 +28,15 @@ def create_metrics_registry(
 
     Args:
         metrics_manager: ToolMetricsManager instance
-        session_storage: Optional LocalSessionManager for token tracking
-        daily_budget_tokens: Daily budget limit in tokens (default: 10M)
+        session_storage: Optional LocalSessionManager for usage reporting
 
     Returns:
         InternalToolRegistry with metrics tools registered
     """
-    # Create token tracker if session storage is provided
+    # Create usage tracker if session storage is provided
     token_tracker: SessionTokenTracker | None = None
     if session_storage is not None:
-        token_tracker = SessionTokenTracker(
-            session_storage=session_storage,
-            daily_budget_tokens=daily_budget_tokens,
-        )
+        token_tracker = SessionTokenTracker(session_storage=session_storage)
     registry = InternalToolRegistry(
         name="gobby-metrics",
         description="Tool metrics - query call counts, success rates, latency",
@@ -288,7 +283,7 @@ def create_metrics_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Token tracking tools (only available if session_storage provided)
+    # Usage reporting tools (only available if session_storage provided)
     @registry.tool(
         name="get_usage_report",
         description="Get token usage report for a specified time period.",
@@ -304,31 +299,11 @@ def create_metrics_registry(
             Dictionary with usage summary
         """
         if token_tracker is None:
-            return {"success": False, "error": "Token tracking not configured"}
+            return {"success": False, "error": "Usage reporting not configured"}
 
         try:
             summary = token_tracker.get_usage_summary(days=days)
             return {"success": True, "usage": summary}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    @registry.tool(
-        name="get_budget_status",
-        description="Get current daily token budget status including used and remaining tokens.",
-    )
-    def get_budget_status() -> dict[str, Any]:
-        """
-        Get current budget status for today.
-
-        Returns:
-            Dictionary with budget info
-        """
-        if token_tracker is None:
-            return {"success": False, "error": "Token tracking not configured"}
-
-        try:
-            status = token_tracker.get_budget_status()
-            return {"success": True, "budget": status}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

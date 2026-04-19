@@ -210,9 +210,8 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         Set usage statistics for a test session.
 
-        This endpoint is for E2E testing of token budget throttling.
-        It allows tests to set session usage values to simulate
-        budget consumption.
+        This endpoint is for E2E testing of usage reporting.
+        It allows tests to set session usage values directly.
 
         Args:
             request: Session usage details

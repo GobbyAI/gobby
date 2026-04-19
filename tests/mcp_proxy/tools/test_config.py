@@ -172,7 +172,7 @@ class TestListConfigKeys:
     def test_list_config_keys_after_set(self, config_registry, config_store: ConfigStore) -> None:
         """Test list_config_keys returns keys after setting values."""
         config_store.set("daemon_port", 60887)
-        config_store.set("conductor.daily_budget_tokens", 50_000_000)
+        config_store.set("telemetry.log_level", "debug")
 
         tool = config_registry.get_tool("list_config_keys")
         result = tool()
@@ -180,20 +180,20 @@ class TestListConfigKeys:
         assert result["success"] is True
         assert result["count"] == 2
         assert "daemon_port" in result["keys"]
-        assert "conductor.daily_budget_tokens" in result["keys"]
+        assert "telemetry.log_level" in result["keys"]
 
     def test_list_config_keys_with_prefix(self, config_registry, config_store: ConfigStore) -> None:
         """Test list_config_keys filters by prefix."""
-        config_store.set("conductor.daily_budget_tokens", 50_000_000)
-        config_store.set("conductor.warning_threshold", 0.8)
+        config_store.set("telemetry.log_level", "debug")
+        config_store.set("telemetry.log_format", "json")
         config_store.set("daemon_port", 60887)
 
         tool = config_registry.get_tool("list_config_keys")
-        result = tool(prefix="conductor")
+        result = tool(prefix="telemetry")
 
         assert result["success"] is True
         assert result["count"] == 2
-        assert all(k.startswith("conductor") for k in result["keys"])
+        assert all(k.startswith("telemetry") for k in result["keys"])
 
 
 class TestEnsureDefaults:

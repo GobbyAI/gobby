@@ -200,12 +200,6 @@ class MetricsConfig(BaseModel):
         "Set higher for large installs to avoid underreporting. "
         "Use 0 for unbounded (uses COUNT queries instead of list).",
     )
-    daily_budget_tokens: int = Field(
-        default=10_000_000,
-        ge=0,
-        description="Daily budget limit in tokens. Set to 0 for unlimited.",
-    )
-
     @field_validator("list_limit")
     @classmethod
     def validate_list_limit(cls, v: int) -> int:

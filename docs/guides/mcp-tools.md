@@ -283,7 +283,7 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 | `gobby-clones` | Clone isolation lifecycle |
 | `gobby-merge` | Merge conflict resolution |
 | `gobby-skills` | Skill discovery and loading |
-| `gobby-metrics` | Metrics and budget tracking |
+| `gobby-metrics` | Metrics and usage reporting |
 | `gobby-hub` | Cross-project queries |
 | `gobby-cron` | Scheduled triggers |
 
@@ -757,7 +757,7 @@ call_tool("gobby-merge", "merge_apply", {})
 
 ## Metrics (`gobby-metrics`)
 
-10 tools for tool usage and budget tracking.
+9 tools for tool usage and metrics reporting.
 
 | Tool | Description |
 | :--- | :--- |
@@ -770,8 +770,7 @@ call_tool("gobby-merge", "merge_apply", {})
 | `reset_tool_metrics` | Admin reset for specific tool |
 | `cleanup_old_metrics` | Delete metrics older than retention |
 | `get_retention_stats` | Metrics retention statistics |
-| `get_usage_report` | Token and cost usage report |
-| `get_budget_status` | Daily budget status |
+| `get_usage_report` | Token usage report |
 
 ---
 

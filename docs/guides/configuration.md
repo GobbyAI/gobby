@@ -469,14 +469,15 @@ skills:
   injection_format: summary      # summary, full, none
 ```
 
-### Conductor (Token Budget)
+### Conductor
 
 ```yaml
 conductor:
-  daily_budget_usd: 50.0
-  warning_threshold: 0.8         # 0.0-1.0
-  throttle_threshold: 0.9        # 0.0-1.0
-  tracking_window_days: 7
+  enabled: false
+  model: haiku
+  tick_interval_seconds: 120
+  idle_timeout_seconds: 300
+  skip_if_busy: true
 ```
 
 ### Hook Extensions

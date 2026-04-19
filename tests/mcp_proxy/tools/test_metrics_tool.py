@@ -131,7 +131,7 @@ class TestMetricsTools:
 
 
 class TestTokenMetricsTools:
-    """Tests for token tracking tools."""
+    """Tests for usage reporting tools."""
 
     @pytest.fixture
     def mock_session_storage(self):
@@ -169,12 +169,15 @@ class TestTokenMetricsTools:
 
     @pytest.fixture
     def token_metrics_tools(self, mock_metrics_manager, mock_session_storage):
-        """Create registry with token tracking support."""
+        """Create registry with usage reporting support."""
         return create_metrics_registry(
             metrics_manager=mock_metrics_manager,
             session_storage=mock_session_storage,
-            daily_budget_tokens=10_000_000,
         )
+
+    def test_get_budget_status_not_registered(self, token_metrics_tools) -> None:
+        """Budget tools are removed from the metrics registry."""
+        assert "get_budget_status" not in token_metrics_tools._tools
 
     def test_get_usage_report(self, token_metrics_tools, mock_session_storage) -> None:
         """get_usage_report returns usage summary for specified days."""
@@ -205,64 +208,6 @@ class TestTokenMetricsTools:
         mock_session_storage.get_sessions_since.side_effect = Exception("DB error")
 
         result = tool.func(days=1)
-
-        assert result["success"] is False
-        assert "DB error" in result["error"]
-
-    def test_get_budget_status(self, token_metrics_tools, mock_session_storage) -> None:
-        """get_budget_status returns current budget info."""
-        tool = token_metrics_tools._tools["get_budget_status"]
-
-        result = tool.func()
-
-        assert result["success"] is True
-        assert "budget" in result
-        assert result["budget"]["daily_budget_tokens"] == 10_000_000
-        assert result["budget"]["used_today_tokens"] == 4500  # 3000 input + 1500 output
-        assert result["budget"]["remaining_tokens"] == 10_000_000 - 4500
-        assert result["budget"]["over_budget"] is False
-        mock_session_storage.get_sessions_since.assert_called_once()
-
-    def test_get_budget_status_over_budget(self, mock_metrics_manager) -> None:
-        """get_budget_status shows over_budget when exceeded."""
-        from datetime import UTC, datetime, timedelta
-
-        storage = MagicMock()
-
-        # Create sessions that exceed the budget
-        now = datetime.now(UTC)
-        expensive_session = MagicMock(
-            id="sess-expensive",
-            usage_input_tokens=6_000_000,
-            usage_output_tokens=5_000_000,
-            usage_cache_creation_tokens=0,
-            usage_cache_read_tokens=0,
-            model="claude-3-5-sonnet-20241022",
-            source="claude",
-            created_at=(now - timedelta(hours=1)).isoformat(),
-        )
-        storage.get_sessions_since.return_value = [expensive_session]
-
-        registry = create_metrics_registry(
-            metrics_manager=mock_metrics_manager,
-            session_storage=storage,
-            daily_budget_tokens=1_000_000,  # Only 1M token budget
-        )
-        tool = registry._tools["get_budget_status"]
-
-        result = tool.func()
-
-        assert result["success"] is True
-        assert result["budget"]["over_budget"] is True
-        assert result["budget"]["used_today_tokens"] == 11_000_000
-        assert result["budget"]["remaining_tokens"] == -10_000_000
-
-    def test_get_budget_status_error(self, token_metrics_tools, mock_session_storage) -> None:
-        """get_budget_status handles errors gracefully."""
-        tool = token_metrics_tools._tools["get_budget_status"]
-        mock_session_storage.get_sessions_since.side_effect = Exception("DB error")
-
-        result = tool.func()
 
         assert result["success"] is False
         assert "DB error" in result["error"]

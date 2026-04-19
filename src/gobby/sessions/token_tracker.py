@@ -1,14 +1,7 @@
-"""Session-based token tracking for budget management.
-
-This module provides SessionTokenTracker which aggregates usage from sessions
-over time and enables budget tracking for agent spawning decisions.
-
-Budget is expressed in tokens/day, not USD.
-"""
+"""Session-based token usage aggregation."""
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
@@ -16,22 +9,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
 
-logger = logging.getLogger(__name__)
-
-
-def _format_tokens(n: int) -> str:
-    """Format token count for human display (e.g., 10.5M, 1.2K)."""
-    if n >= 1_000_000_000:
-        return f"{n / 1_000_000_000:.1f}B"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.1f}K"
-    return str(n)
-
 
 class SessionStorageProtocol(Protocol):
-    """Protocol for the session storage dependency used by token tracking."""
+    """Protocol for the session storage dependency used by usage aggregation."""
 
     def get_sessions_since(
         self, since: datetime, project_id: str | None = None
@@ -40,26 +20,16 @@ class SessionStorageProtocol(Protocol):
 
 @dataclass
 class SessionTokenTracker:
-    """Track token usage from sessions for budget management.
-
-    This class aggregates usage data from sessions over time and provides
-    budget checking for agent spawning decisions.
+    """Aggregate token usage from sessions over time.
 
     Example:
-        tracker = SessionTokenTracker(
-            session_storage=session_manager,
-            daily_budget_tokens=10_000_000,
-        )
+        tracker = SessionTokenTracker(session_storage=session_manager)
 
         # Get usage summary for last 7 days
         summary = tracker.get_usage_summary(days=7)
-
-        # Check if we can spawn an agent
-        can_spawn, reason = tracker.can_spawn_agent()
     """
 
     session_storage: SessionStorageProtocol
-    daily_budget_tokens: int = 10_000_000  # Default daily budget: 10M tokens
 
     def get_usage_summary(self, days: int = 1, project_id: str | None = None) -> dict[str, Any]:
         """Get usage summary for the specified number of days.
@@ -131,67 +101,3 @@ class SessionTokenTracker:
             "usage_by_source": usage_by_source,
             "period_days": days,
         }
-
-    def get_budget_status(self) -> dict[str, Any]:
-        """Get current budget status for today.
-
-        Returns:
-            Dict with budget info: daily_budget_tokens, used_today_tokens,
-            remaining_tokens, percentage_used, over_budget
-        """
-        summary = self.get_usage_summary(days=1)
-        used_today = summary["total_input_tokens"] + summary["total_output_tokens"]
-
-        # Handle unlimited budget (daily_budget_tokens <= 0)
-        if self.daily_budget_tokens <= 0:
-            return {
-                "daily_budget_tokens": self.daily_budget_tokens,
-                "used_today_tokens": used_today,
-                "remaining_tokens": float("inf"),
-                "percentage_used": 0.0,
-                "over_budget": False,
-            }
-
-        remaining = self.daily_budget_tokens - used_today
-
-        return {
-            "daily_budget_tokens": self.daily_budget_tokens,
-            "used_today_tokens": used_today,
-            "remaining_tokens": remaining,
-            "percentage_used": (used_today / self.daily_budget_tokens * 100),
-            "over_budget": used_today > self.daily_budget_tokens,
-        }
-
-    def can_spawn_agent(self, estimated_tokens: int | None = None) -> tuple[bool, str | None]:
-        """Check if we can spawn an agent based on token budget.
-
-        Args:
-            estimated_tokens: Optional estimated token usage for the agent run
-
-        Returns:
-            Tuple of (can_spawn, reason if not)
-        """
-        # Unlimited budget (0 or negative means no limit)
-        if self.daily_budget_tokens <= 0:
-            return True, None
-
-        status = self.get_budget_status()
-
-        # Already over budget
-        if status["over_budget"]:
-            return (
-                False,
-                f"Daily token budget exceeded: {_format_tokens(status['used_today_tokens'])} used "
-                f"of {_format_tokens(self.daily_budget_tokens)}",
-            )
-
-        # Check if estimated tokens would exceed budget
-        if estimated_tokens is not None:
-            if status["used_today_tokens"] + estimated_tokens > self.daily_budget_tokens:
-                return (
-                    False,
-                    f"Estimated {_format_tokens(estimated_tokens)} tokens would exceed budget. "
-                    f"Remaining: {_format_tokens(status['remaining_tokens'])}",
-                )
-
-        return True, None
