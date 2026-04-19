@@ -189,6 +189,47 @@ def test_memory_exists(memory_manager) -> None:
     assert memory_manager.memory_exists("mm-nonexistent") is False
 
 
+def test_mark_pending_graphs_scopes_to_project(memory_manager, db) -> None:
+    """Project-scoped resets should only affect memories in that project."""
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+
+    mem_proj1 = memory_manager.create_memory(content="Project 1 memory", project_id="proj1")
+    mem_proj2 = memory_manager.create_memory(content="Project 2 memory", project_id="proj2")
+    mem_global = memory_manager.create_memory(content="Global memory", project_id=None)
+
+    updated = memory_manager.mark_pending_graphs("proj1")
+
+    assert updated == 1
+    rows = db.fetchall(
+        "SELECT id, graph_processed FROM memories WHERE id IN (?, ?, ?)",
+        (mem_proj1.id, mem_proj2.id, mem_global.id),
+    )
+    by_id = {row["id"]: row["graph_processed"] for row in rows}
+    assert by_id[mem_proj1.id] == 0
+    assert by_id[mem_proj2.id] == 1
+    assert by_id[mem_global.id] == 1
+
+
+def test_mark_pending_graphs_without_project_resets_all(memory_manager, db) -> None:
+    """Global resets should mark every memory as pending KG processing."""
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+
+    mem_proj1 = memory_manager.create_memory(content="Reset all project 1", project_id="proj1")
+    mem_proj2 = memory_manager.create_memory(content="Reset all project 2", project_id="proj2")
+    mem_global = memory_manager.create_memory(content="Reset all global", project_id=None)
+
+    updated = memory_manager.mark_pending_graphs()
+
+    assert updated == 3
+    rows = db.fetchall(
+        "SELECT id, graph_processed FROM memories WHERE id IN (?, ?, ?)",
+        (mem_proj1.id, mem_proj2.id, mem_global.id),
+    )
+    assert {row["graph_processed"] for row in rows} == {0}
+
+
 def test_content_exists_with_project(memory_manager, db) -> None:
     """Test content_exists method with project_id."""
     db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")

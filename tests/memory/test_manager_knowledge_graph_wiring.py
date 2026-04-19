@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.memory.services.knowledge_graph import KnowledgeGraphResult, KnowledgeGraphStatus
 
 pytestmark = pytest.mark.unit
 
@@ -161,6 +162,66 @@ class TestGraphDelegation:
         result = await manager.get_entity_neighbors("Josh")
 
         assert result is None
+
+    async def test_clear_knowledge_graph_requeues_affected_memories(self) -> None:
+        """clear_knowledge_graph should reset graph_processed for affected memories."""
+        manager = _make_manager(
+            neo4j_url="http://localhost:7474",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        manager._kg_service.clear_graph = AsyncMock(
+            return_value={"memories_deleted": 2, "entities_deleted": 4}
+        )
+        manager.storage.mark_pending_graphs = MagicMock(return_value=3)
+
+        result = await manager.clear_knowledge_graph(project_id="proj-1")
+
+        manager._kg_service.clear_graph.assert_awaited_once_with(project_id="proj-1")
+        manager.storage.mark_pending_graphs.assert_called_once_with("proj-1")
+        assert result == {
+            "success": True,
+            "memories_marked_pending": 3,
+            "memories_deleted": 2,
+            "entities_deleted": 4,
+        }
+
+    async def test_rebuild_knowledge_graph_marks_successful_memories_processed(self) -> None:
+        """Explicit rebuild should reconcile graph_processed for successful rows."""
+        manager = _make_manager(
+            neo4j_url="http://localhost:7474",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        mem1 = MagicMock(id="mem-1", content="First memory", project_id="proj-1")
+        mem2 = MagicMock(id="mem-2", content="Second memory", project_id="proj-1")
+        mem3 = MagicMock(id="mem-3", content="Third memory", project_id="proj-1")
+
+        manager._fetch_all_project_memories = AsyncMock(return_value=[mem1, mem2, mem3])
+        manager._kg_service.add_to_graph = AsyncMock(
+            side_effect=[
+                KnowledgeGraphResult(KnowledgeGraphStatus.SUCCESS),
+                KnowledgeGraphResult(KnowledgeGraphStatus.NOOP_NO_ENTITIES),
+                KnowledgeGraphResult(KnowledgeGraphStatus.DETERMINISTIC_FAILURE),
+            ]
+        )
+        manager.mark_graph_processed = MagicMock()
+
+        result = await manager.rebuild_knowledge_graph(project_id="proj-1")
+
+        assert manager._kg_service.add_to_graph.await_count == 3
+        manager.mark_graph_processed.assert_any_call("mem-1")
+        manager.mark_graph_processed.assert_any_call("mem-2")
+        assert manager.mark_graph_processed.call_count == 2
+        assert result["memories_processed"] == 3
+        assert result["memories_marked_processed"] == 2
+        assert result["memories_extracted"] == 1
+        assert result["noop_no_entities"] == 1
+        assert result["errors"] == 1
 
 
 class TestGraphBackgroundTask:

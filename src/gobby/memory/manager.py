@@ -1500,18 +1500,19 @@ class MemoryManager:
     # =========================================================================
 
     async def clear_knowledge_graph(self, project_id: str | None = None) -> dict[str, Any]:
-        """Clear only the Neo4j knowledge-graph projection."""
+        """Clear the Neo4j knowledge-graph projection and requeue affected memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
         cleared = await self._kg_service.clear_graph(project_id=project_id)
-        return {"success": True, **cleared}
+        pending = await asyncio.to_thread(self.storage.mark_pending_graphs, project_id)
+        return {"success": True, "memories_marked_pending": pending, **cleared}
 
     async def rebuild_knowledge_graph(
         self,
         project_id: str | None = None,
         limit: int = MAX_REINDEX_LIMIT,
     ) -> dict[str, Any]:
-        """Rebuild only the Neo4j knowledge-graph projection from SQLite memories."""
+        """Rebuild the Neo4j knowledge-graph projection from SQLite memories."""
         if not self._kg_service:
             return {"success": False, "error": "KnowledgeGraphService not initialized"}
 
@@ -1545,9 +1546,16 @@ class MemoryManager:
                 return result
 
         kg_results = await asyncio.gather(*[_rebuild_kg(mem) for mem in all_memories])
-        for result in kg_results:
+        processed = 0
+        for mem, result in zip(all_memories, kg_results, strict=False):
             status_counts[result.status.value] += 1
             if result.status in (
+                KnowledgeGraphStatus.SUCCESS,
+                KnowledgeGraphStatus.NOOP_NO_ENTITIES,
+            ):
+                await asyncio.to_thread(self.mark_graph_processed, mem.id)
+                processed += 1
+            elif result.status in (
                 KnowledgeGraphStatus.PARTIAL_FAILURE,
                 KnowledgeGraphStatus.RETRYABLE_FAILURE,
                 KnowledgeGraphStatus.DETERMINISTIC_FAILURE,
@@ -1562,6 +1570,7 @@ class MemoryManager:
         return {
             "success": True,
             "memories_processed": len(all_memories),
+            "memories_marked_processed": processed,
             "status_counts": status_counts,
             "memories_extracted": status_counts[KnowledgeGraphStatus.SUCCESS.value],
             "noop_no_entities": status_counts[KnowledgeGraphStatus.NOOP_NO_ENTITIES.value],
