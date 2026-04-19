@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.registries import setup_internal_registries
-from gobby.mcp_proxy.semantic_search import DEFAULT_EMBEDDING_MODEL, SemanticToolSearch
+from gobby.mcp_proxy.semantic_search import (
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_EMBEDDING_MODEL,
+    SemanticToolSearch,
+)
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.telemetry.instruments import inc_counter
 
@@ -210,10 +214,14 @@ class HTTPServer:
                     _emb_cfg.api_key if _emb_cfg and _emb_cfg.api_key else openai_api_key
                 ),
                 embedding_model=_emb_cfg.model if _emb_cfg else DEFAULT_EMBEDDING_MODEL,
+                embedding_dim=_emb_cfg.dim if _emb_cfg else DEFAULT_EMBEDDING_DIM,
                 api_base=_emb_cfg.api_base if _emb_cfg else None,
                 vector_store=getattr(services, "vector_store", None),
             )
-            logger.debug("Semantic tool search initialized")
+            logger.debug(
+                "Semantic tool search initialized (dim=%s)",
+                _emb_cfg.dim if _emb_cfg else DEFAULT_EMBEDDING_DIM,
+            )
 
         # Create fallback resolver for alternative tool suggestions on error
         fallback_resolver = None

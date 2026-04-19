@@ -100,6 +100,41 @@ def client(basic_http_server: HTTPServer) -> Iterator[TestClient]:
 class TestHTTPServerInit:
     """Tests for HTTPServer initialization."""
 
+    def test_init_passes_configured_embedding_dim_to_semantic_search(self) -> None:
+        """SemanticToolSearch should receive the configured embedding dimension."""
+        from gobby.config.persistence import EmbeddingsConfig
+
+        mock_config = MagicMock()
+        mock_config.embeddings = EmbeddingsConfig(model="test-model", dim=1024, api_base=None)
+        mock_config.websocket = None
+
+        services = ServiceContainer(
+            config=mock_config,
+            database=MagicMock(),
+            session_manager=None,
+            task_manager=MagicMock(),
+            llm_service=MagicMock(),
+            mcp_manager=MagicMock(),
+            mcp_db_manager=MagicMock(db=MagicMock()),
+        )
+
+        with (
+            patch("gobby.storage.secrets.SecretStore") as mock_secret_store,
+            patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
+            patch("gobby.storage.merge_resolutions.MergeResolutionManager"),
+            patch("gobby.worktrees.merge.resolver.MergeResolver"),
+            patch("gobby.servers.http.setup_internal_registries", return_value=[]),
+            patch("gobby.servers.http.SemanticToolSearch") as mock_semantic_search,
+            patch("gobby.servers.http.GobbyDaemonTools"),
+            patch("gobby.servers.http.create_mcp_server"),
+            patch("gobby.servers.app_factory.create_app", return_value=FastAPI()),
+        ):
+            mock_secret_store.return_value.get.return_value = None
+            HTTPServer(services=services, port=8000, test_mode=True)
+
+        assert mock_semantic_search.call_args is not None
+        assert mock_semantic_search.call_args.kwargs["embedding_dim"] == 1024
+
     def test_init_minimal(self) -> None:
         """Test HTTPServer with minimal configuration."""
         services = ServiceContainer(
