@@ -259,6 +259,28 @@ describe("SessionsTab", () => {
     expect(screen.getByText("Transcript output")).toBeInTheDocument();
   });
 
+  it("keeps session token accounting out of the sessions list UI", async () => {
+    const highUsageSession = makeSession({
+      id: "usage-1",
+      ref: "#205",
+      external_id: "usage-ext-1",
+      title: "High Usage Session",
+      seq_num: 205,
+      usage_input_tokens: 1200,
+      usage_output_tokens: 3400,
+      updated_at: "2026-04-08T12:25:00Z",
+    });
+
+    render(<SessionsTab sessions={[highUsageSession]} focusSessionId="usage-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#205: High Usage Session")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("4.6K")).toBeNull();
+    expect(screen.queryByText("1.2K / 3.4K")).toBeNull();
+  });
+
   it("hides resume and swap for expired sessions without a transcript but keeps summary when available", async () => {
     mockUseSessionDetail.mockReturnValue({
       session: EXPIRED_SESSION,

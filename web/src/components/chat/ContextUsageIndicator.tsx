@@ -24,8 +24,7 @@ export function ContextUsageIndicator({
   // Only input tokens (uncached + cache_read + cache_creation) count toward context load.
   const percentage = contextWindow ? Math.min((totalInputTokens / contextWindow) * 100, 100) : 0
   const displayPercent = Math.round(percentage)
-  const isWaiting = contextWindow === null && totalInputTokens === 0
-  const indicatorLabel = isWaiting ? 'wait' : `${displayPercent}%`
+  const indicatorLabel = `${displayPercent}%`
 
   // SVG pie/ring chart
   const size = 20

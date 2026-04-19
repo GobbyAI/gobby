@@ -9,7 +9,6 @@ import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
-import { formatTokens } from "../../utils/formatTime";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -641,16 +640,6 @@ export const SessionsTab = memo(function SessionsTab({
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  {entry.totalTokens > 1_000 && (
-                    <div className="hidden min-w-[82px] text-right md:block">
-                      <div className="text-[10px] tabular-nums text-foreground">
-                        {formatTokens(entry.totalTokens)}
-                      </div>
-                      <div className="text-[10px] tabular-nums text-muted-foreground">
-                        {formatTokens(entry.inputTokens)} / {formatTokens(entry.outputTokens)}
-                      </div>
-                    </div>
-                  )}
                   {renderBadges(entry)}
                   {entry.status !== "expired" && (
                     <button
