@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -174,3 +176,53 @@ class TestStatuslineEndpoint:
             context_window=None,
             model=None,
         )
+
+    def test_does_not_log_usage_gap_for_routine_updates(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            caplog.at_level(logging.INFO, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=5)]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert "statusline_usage_gap" not in caplog.text
+
+    def test_warns_for_large_statusline_update_gap(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=31)]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert "statusline_usage_gap" in caplog.text
+        assert "gap_ms=31000" in caplog.text
+        assert "threshold_ms=30000" in caplog.text

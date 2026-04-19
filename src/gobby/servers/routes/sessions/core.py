@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+STATUSLINE_GAP_WARNING_THRESHOLD_MS = 30_000
+
 
 def _get_commit_count(db: "DatabaseProtocol", session: Any) -> int:
     """Count git commits made during a session's timeframe.
@@ -371,7 +373,13 @@ def register_core_routes(
         statusline_last_seen[session.id] = now
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
-            logger.info("statusline_usage_gap session_id=%s gap_ms=%s", session.id, gap_ms)
+            if gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS:
+                logger.warning(
+                    "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s",
+                    session.id,
+                    gap_ms,
+                    STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                )
 
         sm.update_usage(
             session_id=session.id,
