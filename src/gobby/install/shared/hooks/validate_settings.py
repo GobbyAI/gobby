@@ -29,6 +29,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.cli.installers.hook_commands import is_gobby_hook_command
 
 
@@ -50,18 +51,7 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         cli_name="Claude Code",
         settings_dir=".claude",
         settings_file="settings.json",
-        required_hooks=(
-            "SessionStart",
-            "SessionEnd",
-            "UserPromptSubmit",
-            "PreToolUse",
-            "PostToolUse",
-            "PreCompact",
-            "Notification",
-            "Stop",
-            "SubagentStart",
-            "SubagentStop",
-        ),
+        required_hooks=CLAUDE_PASCAL_HOOK_NAMES,
         nested=True,
     ),
     "gemini": ValidationConfig(

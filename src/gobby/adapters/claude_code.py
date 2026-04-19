@@ -3,25 +3,21 @@
 This adapter translates between Claude Code's native hook format and the unified
 HookEvent/HookResponse models. It implements the strangler fig pattern for safe
 migration from the existing HookManager.execute() method.
-
-Claude Code Hook Types (12 total):
-- session-start, session-end: Session lifecycle
-- user-prompt-submit: Before user prompt validation
-- pre-tool-use, post-tool-use, post-tool-use-failure: Tool lifecycle
-- pre-compact: Context compaction
-- stop: Agent stops
-- subagent-start, subagent-stop: Subagent lifecycle
-- permission-request: Permission requests (future)
-- notification: System notifications
 """
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import (
     BaseAdapter,
     build_first_hook_session_metadata_lines,
     system_message_has_session_banner,
+)
+from gobby.adapters.claude_contract import (
+    CLAUDE_EVENT_MAP,
+    CLAUDE_HOOK_EVENT_NAME_MAP,
+    ClaudeDecisionStyle,
+    get_claude_contract,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.llm.sdk_utils import compress_and_truncate
@@ -45,22 +41,9 @@ class ClaudeCodeAdapter(BaseAdapter):
 
     source = SessionSource.CLAUDE
 
-    # Event type mapping: Claude Code hook names -> unified HookEventType
-    # Claude Code uses kebab-case hook names in the payload's "hook_type" field
-    EVENT_MAP: dict[str, HookEventType] = {
-        "session-start": HookEventType.SESSION_START,
-        "session-end": HookEventType.SESSION_END,
-        "user-prompt-submit": HookEventType.BEFORE_AGENT,
-        "stop": HookEventType.STOP,
-        "pre-tool-use": HookEventType.BEFORE_TOOL,
-        "post-tool-use": HookEventType.AFTER_TOOL,
-        "post-tool-use-failure": HookEventType.AFTER_TOOL,  # Same as AFTER_TOOL with error flag
-        "pre-compact": HookEventType.PRE_COMPACT,
-        "subagent-start": HookEventType.SUBAGENT_START,
-        "subagent-stop": HookEventType.SUBAGENT_STOP,
-        "permission-request": HookEventType.PERMISSION_REQUEST,
-        "notification": HookEventType.NOTIFICATION,
-    }
+    # Event type mapping: Claude hook names -> unified HookEventType.
+    EVENT_MAP: dict[str, HookEventType] = dict(CLAUDE_EVENT_MAP)
+    HOOK_EVENT_NAME_MAP: dict[str, str] = dict(CLAUDE_HOOK_EVENT_NAME_MAP)
 
     def __init__(self, hook_manager: "HookManager | None" = None):
         """Initialize the Claude Code adapter.
@@ -138,21 +121,43 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Copy to avoid mutating the original (shared function mutates in place)
         return normalize_tool_fields(dict(input_data))
 
-    # Map Claude Code hook types to hookEventName for hookSpecificOutput
-    HOOK_EVENT_NAME_MAP: dict[str, str] = {
-        "session-start": "SessionStart",
-        "session-end": "SessionEnd",
-        "user-prompt-submit": "UserPromptSubmit",
-        "stop": "Stop",
-        "pre-tool-use": "PreToolUse",
-        "post-tool-use": "PostToolUse",
-        "post-tool-use-failure": "PostToolUse",
-        "pre-compact": "PreCompact",
-        "subagent-start": "SubagentStart",
-        "subagent-stop": "SubagentStop",
-        "permission-request": "PermissionRequest",
-        "notification": "Notification",
-    }
+    def _build_additional_context(
+        self,
+        response: HookResponse,
+        *,
+        hook_type: str | None,
+    ) -> str | None:
+        """Build Claude ``additionalContext`` content for supported events."""
+        contract = get_claude_contract(hook_type)
+        if not contract or not contract.allows_additional_context:
+            return None
+
+        additional_context_parts: list[str] = []
+        session_start_hook = contract.hook_event_name == "SessionStart"
+
+        # SessionStart startup context should be injected once through
+        # additionalContext, not duplicated into systemMessage.
+        if response.system_message and session_start_hook:
+            additional_context_parts.append(response.system_message)
+
+        if response.context:
+            additional_context_parts.append(response.context)
+
+        if response.metadata:
+            context_lines = build_first_hook_session_metadata_lines(
+                response.metadata,
+                include_session_id_line=not (
+                    session_start_hook
+                    and system_message_has_session_banner(response.system_message)
+                ),
+            )
+            if context_lines:
+                additional_context_parts.append("\n".join(context_lines))
+
+        if not additional_context_parts:
+            return None
+
+        return compress_and_truncate("\n\n".join(additional_context_parts))[0]
 
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
@@ -178,81 +183,166 @@ class ClaudeCodeAdapter(BaseAdapter):
         Returns:
             Dict in Claude Code's expected format.
         """
-        # Map decision to continue flag
-        # Both "deny" and "block" should stop execution
-        should_continue = response.decision not in ("deny", "block")
+        contract = get_claude_contract(hook_type)
+        hook_event_name = contract.hook_event_name if contract else "Unknown"
+        additional_context = self._build_additional_context(response, hook_type=hook_type)
 
-        result: dict[str, Any] = {
-            "continue": should_continue,
-        }
+        result: dict[str, Any] = {"continue": True}
+        if response.system_message and hook_event_name != "SessionStart":
+            result["systemMessage"] = response.system_message
 
-        # Add stop reason if denied or blocked
-        if response.decision in ("deny", "block") and response.reason:
-            result["stopReason"] = response.reason
+        def ensure_hook_specific_output() -> dict[str, Any]:
+            hook_output = result.setdefault(
+                "hookSpecificOutput",
+                {"hookEventName": hook_event_name},
+            )
+            return cast(dict[str, Any], hook_output)
 
-        # Add tool decision for pre-tool-use hooks
-        # Claude Code schema: decision uses "approve"/"block"
-        # permissionDecision uses "allow"/"deny"/"ask"
-        if response.decision in ("deny", "block"):
+        if additional_context:
+            ensure_hook_specific_output()["additionalContext"] = additional_context
+
+        is_denied = response.decision in ("deny", "block")
+        decision_style = contract.decision_style if contract else ClaudeDecisionStyle.NONE
+
+        if decision_style == ClaudeDecisionStyle.TOP_LEVEL_BLOCK and is_denied:
             result["decision"] = "block"
-        else:
-            result["decision"] = "approve"
+            if response.reason:
+                result["reason"] = response.reason
+        elif decision_style == ClaudeDecisionStyle.PRE_TOOL_USE:
+            permission_decision: str | None = response.permission_decision
+            if not permission_decision:
+                if response.auto_approve:
+                    permission_decision = "allow"
+                elif response.decision == "ask":
+                    permission_decision = "ask"
+                elif is_denied:
+                    permission_decision = "deny"
 
-        # Add hookSpecificOutput with additionalContext for model context injection
-        # This includes both workflow inject_context AND session identifiers
-        hook_event_name = self.HOOK_EVENT_NAME_MAP.get(hook_type or "", "Unknown")
-        session_start_hook = hook_event_name == "SessionStart"
-        additional_context_parts: list[str] = []
+            if (
+                permission_decision
+                or response.modified_input is not None
+                or response.reason
+                or additional_context
+            ):
+                hook_output = ensure_hook_specific_output()
+                if permission_decision:
+                    hook_output["permissionDecision"] = permission_decision
+                    if response.reason:
+                        hook_output["permissionDecisionReason"] = response.reason
+                if response.modified_input is not None:
+                    hook_output["updatedInput"] = response.modified_input
+        elif decision_style == ClaudeDecisionStyle.PERMISSION_REQUEST:
+            behavior = response.permission_decision
+            if not behavior:
+                if is_denied:
+                    behavior = "deny"
+                elif (
+                    response.auto_approve
+                    or response.modified_input is not None
+                    or response.updated_permissions
+                ):
+                    behavior = "allow"
 
-        # SessionStart startup context should be injected once through
-        # additionalContext, not duplicated into systemMessage.
-        if response.system_message:
-            if session_start_hook:
-                additional_context_parts.append(response.system_message)
-            else:
-                result["systemMessage"] = response.system_message
+            if behavior:
+                decision_payload: dict[str, Any] = {"behavior": behavior}
+                if behavior == "allow":
+                    if response.modified_input is not None:
+                        decision_payload["updatedInput"] = response.modified_input
+                    if response.updated_permissions:
+                        decision_payload["updatedPermissions"] = response.updated_permissions
+                elif response.reason:
+                    decision_payload["message"] = response.reason
+                    if response.decision == "block":
+                        decision_payload["interrupt"] = True
 
-        # Add workflow-injected context (from inject_context action)
-        # This is the primary way to inject context visible to the model
-        if response.context:
-            additional_context_parts.append(response.context)
+                ensure_hook_specific_output()["decision"] = decision_payload
+        elif decision_style == ClaudeDecisionStyle.PERMISSION_DENIED:
+            if response.retry:
+                ensure_hook_specific_output()["retry"] = True
+        elif decision_style == ClaudeDecisionStyle.WATCH_PATHS:
+            if response.watch_paths is not None:
+                ensure_hook_specific_output()["watchPaths"] = response.watch_paths
+        elif decision_style == ClaudeDecisionStyle.WORKTREE_CREATE:
+            if response.worktree_path:
+                ensure_hook_specific_output()["worktreePath"] = response.worktree_path
+        elif decision_style == ClaudeDecisionStyle.ELICITATION:
+            elicitation_action = response.elicitation_action
+            if not elicitation_action and is_denied:
+                elicitation_action = "decline"
+            if (
+                elicitation_action
+                or response.elicitation_content is not None
+                or response.elicitation_error is not None
+            ):
+                hook_output = ensure_hook_specific_output()
+                if elicitation_action:
+                    hook_output["action"] = elicitation_action
+                if response.elicitation_content is not None:
+                    hook_output["content"] = response.elicitation_content
+                if response.elicitation_error is not None:
+                    hook_output["errorMessage"] = response.elicitation_error
+        elif decision_style == ClaudeDecisionStyle.ELICITATION_RESULT:
+            elicitation_action = response.elicitation_action
+            if not elicitation_action and is_denied:
+                elicitation_action = "decline"
+            if elicitation_action or response.elicitation_content is not None:
+                hook_output = ensure_hook_specific_output()
+                if elicitation_action:
+                    hook_output["action"] = elicitation_action
+                if response.elicitation_content is not None:
+                    hook_output["content"] = response.elicitation_content
+        elif decision_style == ClaudeDecisionStyle.HARD_STOP and is_denied:
+            result["continue"] = False
+            if response.reason:
+                result["stopReason"] = response.reason
+        elif decision_style == ClaudeDecisionStyle.NONE and is_denied:
+            result["continue"] = False
+            if response.reason:
+                result["stopReason"] = response.reason
 
-        # Add session identifiers from metadata
-        # Note: "session_id" in metadata is Gobby's internal platform session ID
-        #       "external_id" in metadata is the CLI's session UUID
-        #       "session_ref" is the short #N format for easier reference
-        # Token optimization: Only inject full metadata on first hook per session
-        if response.metadata:
-            gobby_session_id = response.metadata.get("session_id")
-            if gobby_session_id:
-                context_lines = build_first_hook_session_metadata_lines(
-                    response.metadata,
-                    include_session_id_line=not (
-                        session_start_hook
-                        and system_message_has_session_banner(response.system_message)
-                    ),
-                )
-                if context_lines:
-                    additional_context_parts.append("\n".join(context_lines))
-
-        # Build hookSpecificOutput if we have any context to inject
-        # Only include hookSpecificOutput for hook types that Claude Code's schema accepts
-        # Valid hookEventName values: PreToolUse, UserPromptSubmit, PostToolUse, SessionStart
-        valid_hook_event_names = {"PreToolUse", "UserPromptSubmit", "PostToolUse", "SessionStart"}
-        if additional_context_parts and hook_event_name in valid_hook_event_names:
-            result["hookSpecificOutput"] = {
-                "hookEventName": hook_event_name,
-                "additionalContext": compress_and_truncate("\n\n".join(additional_context_parts))[
-                    0
-                ],
+        if (
+            is_denied
+            and decision_style
+            not in {
+                ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
+                ClaudeDecisionStyle.PRE_TOOL_USE,
+                ClaudeDecisionStyle.PERMISSION_REQUEST,
+                ClaudeDecisionStyle.ELICITATION,
+                ClaudeDecisionStyle.ELICITATION_RESULT,
+                ClaudeDecisionStyle.HARD_STOP,
+                ClaudeDecisionStyle.NONE,
             }
+            and result.get("continue", True)
+        ):
+            result["continue"] = False
+            if response.reason:
+                result["stopReason"] = response.reason
 
-        # PreToolUse: rewrite tool input via updatedInput
-        if response.modified_input and hook_event_name == "PreToolUse":
-            hook_output = result.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
-            hook_output["updatedInput"] = response.modified_input
-            if response.auto_approve:
-                hook_output["permissionDecision"] = "allow"
+        if result.get("continue") is False:
+            result.pop("decision", None)
+            final_hook_output: Any = result.get("hookSpecificOutput")
+            if isinstance(final_hook_output, dict):
+                for allow_style_key in (
+                    "permissionDecision",
+                    "updatedInput",
+                    "decision",
+                    "retry",
+                    "watchPaths",
+                    "worktreePath",
+                    "action",
+                    "content",
+                    "errorMessage",
+                ):
+                    final_hook_output.pop(allow_style_key, None)
+                if final_hook_output == {"hookEventName": hook_event_name}:
+                    result.pop("hookSpecificOutput", None)
+
+        cleanup_hook_output: Any = result.get("hookSpecificOutput")
+        if (
+            isinstance(cleanup_hook_output, dict)
+            and cleanup_hook_output == {"hookEventName": hook_event_name}
+        ):
+            result.pop("hookSpecificOutput", None)
 
         return result
 

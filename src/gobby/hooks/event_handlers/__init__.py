@@ -115,6 +115,7 @@ class EventHandlers(
             HookEventType.BEFORE_TOOL: self.handle_before_tool,
             HookEventType.AFTER_TOOL: self.handle_after_tool,
             HookEventType.PRE_COMPACT: self.handle_pre_compact,
+            HookEventType.POST_COMPACT: self.handle_post_compact,
             HookEventType.SUBAGENT_START: self.handle_subagent_start,
             HookEventType.SUBAGENT_STOP: self.handle_subagent_stop,
             HookEventType.NOTIFICATION: self.handle_notification,
@@ -122,7 +123,20 @@ class EventHandlers(
             HookEventType.BEFORE_MODEL: self.handle_before_model,
             HookEventType.AFTER_MODEL: self.handle_after_model,
             HookEventType.PERMISSION_REQUEST: self.handle_permission_request,
+            HookEventType.PERMISSION_DENIED: self.handle_permission_denied,
             HookEventType.STOP: self.handle_stop,
+            HookEventType.STOP_FAILURE: self.handle_stop_failure,
+            HookEventType.TASK_CREATED: self.handle_task_created,
+            HookEventType.TASK_COMPLETED: self.handle_task_completed,
+            HookEventType.TEAMMATE_IDLE: self.handle_teammate_idle,
+            HookEventType.INSTRUCTIONS_LOADED: self.handle_instructions_loaded,
+            HookEventType.CONFIG_CHANGE: self.handle_config_change,
+            HookEventType.CWD_CHANGED: self.handle_cwd_changed,
+            HookEventType.FILE_CHANGED: self.handle_file_changed,
+            HookEventType.WORKTREE_CREATE: self.handle_worktree_create,
+            HookEventType.WORKTREE_REMOVE: self.handle_worktree_remove,
+            HookEventType.ELICITATION: self.handle_elicitation,
+            HookEventType.ELICITATION_RESULT: self.handle_elicitation_result,
         }
 
     def get_handler(

@@ -11,6 +11,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.adapters.claude_contract import (
+    CLAUDE_HOOK_EVENT_NAME_MAP,
+    CLAUDE_NATIVE_HOOK_NAMES,
+)
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
@@ -36,23 +40,9 @@ class TestClaudeCodeAdapterInit:
 class TestEventMap:
     """Verify all Claude Code hook types are correctly mapped."""
 
-    def test_all_12_hook_types_mapped(self) -> None:
+    def test_all_hook_types_mapped(self) -> None:
         adapter = ClaudeCodeAdapter()
-        expected_keys = {
-            "session-start",
-            "session-end",
-            "user-prompt-submit",
-            "stop",
-            "pre-tool-use",
-            "post-tool-use",
-            "post-tool-use-failure",
-            "pre-compact",
-            "subagent-start",
-            "subagent-stop",
-            "permission-request",
-            "notification",
-        }
-        assert set(adapter.EVENT_MAP.keys()) == expected_keys
+        assert set(adapter.EVENT_MAP.keys()) == set(CLAUDE_NATIVE_HOOK_NAMES)
 
     @pytest.mark.parametrize(
         "hook_type,expected_event_type",
@@ -93,7 +83,7 @@ class TestHookEventNameMap:
             ("stop", "Stop"),
             ("pre-tool-use", "PreToolUse"),
             ("post-tool-use", "PostToolUse"),
-            ("post-tool-use-failure", "PostToolUse"),
+            ("post-tool-use-failure", "PostToolUseFailure"),
             ("pre-compact", "PreCompact"),
             ("subagent-start", "SubagentStart"),
             ("subagent-stop", "SubagentStop"),
@@ -104,6 +94,10 @@ class TestHookEventNameMap:
     def test_hook_event_name(self, hook_type: str, expected_name: str) -> None:
         adapter = ClaudeCodeAdapter()
         assert adapter.HOOK_EVENT_NAME_MAP[hook_type] == expected_name
+
+    def test_matches_shared_contract(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        assert adapter.HOOK_EVENT_NAME_MAP == dict(CLAUDE_HOOK_EVENT_NAME_MAP)
 
 
 class TestTranslateToHookEvent:
@@ -454,46 +448,46 @@ class TestTranslateFromHookResponse:
         response = HookResponse(decision="allow")
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
         assert result["continue"] is True
-        assert result["decision"] == "approve"
+        assert "decision" not in result
         assert "stopReason" not in result
 
     def test_deny_decision(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="deny", reason="Not allowed")
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
-        assert result["continue"] is False
-        assert result["decision"] == "block"
-        assert result["stopReason"] == "Not allowed"
+        assert result["continue"] is True
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Not allowed"
 
     def test_block_decision(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="block", reason="Blocked by policy")
         result = adapter.translate_from_hook_response(response)
         assert result["continue"] is False
-        assert result["decision"] == "block"
         assert result["stopReason"] == "Blocked by policy"
+        assert "decision" not in result
 
     def test_deny_without_reason(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="deny")
         result = adapter.translate_from_hook_response(response)
         assert result["continue"] is False
-        assert result["decision"] == "block"
         assert "stopReason" not in result
+        assert "decision" not in result
 
     def test_ask_decision(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="ask")
         result = adapter.translate_from_hook_response(response)
         assert result["continue"] is True
-        assert result["decision"] == "approve"
+        assert "decision" not in result
 
     def test_modify_decision(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="modify")
         result = adapter.translate_from_hook_response(response)
         assert result["continue"] is True
-        assert result["decision"] == "approve"
+        assert "decision" not in result
 
     def test_system_message(self) -> None:
         adapter = ClaudeCodeAdapter()
@@ -547,17 +541,66 @@ class TestTranslateFromHookResponse:
         assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
 
+    def test_context_injection_post_tool_use_failure(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(decision="allow", context="Failure context")
+        result = adapter.translate_from_hook_response(
+            response, hook_type="post-tool-use-failure"
+        )
+        assert result["hookSpecificOutput"]["hookEventName"] == "PostToolUseFailure"
+        assert "Failure context" in result["hookSpecificOutput"]["additionalContext"]
+
+    def test_context_injection_notification(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(decision="allow", context="Notification context")
+        result = adapter.translate_from_hook_response(response, hook_type="notification")
+        assert result["hookSpecificOutput"]["hookEventName"] == "Notification"
+        assert "Notification context" in result["hookSpecificOutput"]["additionalContext"]
+
+    def test_context_injection_subagent_start(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(decision="allow", context="Subagent context")
+        result = adapter.translate_from_hook_response(response, hook_type="subagent-start")
+        assert result["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
+        assert "Subagent context" in result["hookSpecificOutput"]["additionalContext"]
+
+    def test_permission_request_allow_uses_nested_decision(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="allow",
+            modified_input={"command": "npm run lint"},
+            updated_permissions=[
+                {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
+            ],
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="permission-request")
+        decision = result["hookSpecificOutput"]["decision"]
+        assert decision["behavior"] == "allow"
+        assert decision["updatedInput"] == {"command": "npm run lint"}
+        assert decision["updatedPermissions"] == [
+            {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
+        ]
+
+    def test_permission_request_block_sets_interrupt(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(decision="block", reason="Needs human review")
+        result = adapter.translate_from_hook_response(response, hook_type="permission-request")
+        decision = result["hookSpecificOutput"]["decision"]
+        assert result["continue"] is True
+        assert decision["behavior"] == "deny"
+        assert decision["message"] == "Needs human review"
+        assert decision["interrupt"] is True
+
     def test_no_context_no_hook_specific_output(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow")
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
         assert "hookSpecificOutput" not in result
 
-    def test_invalid_hook_event_name_no_hook_specific_output(self) -> None:
-        """Hook types not in the valid set should not produce hookSpecificOutput."""
+    def test_non_context_hook_event_name_no_hook_specific_output(self) -> None:
+        """Hook types without additionalContext support should not produce hookSpecificOutput."""
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow", context="Some context")
-        # pre-compact -> PreCompact is NOT in the valid set
         result = adapter.translate_from_hook_response(response, hook_type="pre-compact")
         assert "hookSpecificOutput" not in result
 
@@ -740,7 +783,6 @@ class TestHandleNative:
 
         # Verify the response
         assert result["continue"] is True
-        assert result["decision"] == "approve"
         assert "hookSpecificOutput" in result
         assert "#42" in result["hookSpecificOutput"]["additionalContext"]
 
@@ -763,9 +805,12 @@ class TestHandleNative:
         }
         result = adapter.handle_native(native, mock_hook_manager)
 
-        assert result["continue"] is False
-        assert result["decision"] == "block"
-        assert result["stopReason"] == "Tool not allowed in this workflow step"
+        assert result["continue"] is True
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert (
+            result["hookSpecificOutput"]["permissionDecisionReason"]
+            == "Tool not allowed in this workflow step"
+        )
 
     def test_handle_native_preserves_hook_type_in_response(self) -> None:
         """hook_type is used for hookEventName in response."""
@@ -787,8 +832,8 @@ class TestHandleNative:
         result = adapter.handle_native(native, mock_hook_manager)
         assert result["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
 
-    def test_handle_native_notification_no_hookspecific(self) -> None:
-        """Notification hook type doesn't produce hookSpecificOutput."""
+    def test_handle_native_notification_context_uses_hookspecific(self) -> None:
+        """Notification now supports docs-backed additionalContext."""
         adapter = ClaudeCodeAdapter()
         mock_hook_manager = MagicMock()
         mock_hook_manager.handle.return_value = HookResponse(
@@ -801,5 +846,5 @@ class TestHandleNative:
             "input_data": {"session_id": "ext-notif"},
         }
         result = adapter.handle_native(native, mock_hook_manager)
-        # Notification is not in valid_hook_event_names
-        assert "hookSpecificOutput" not in result
+        assert result["hookSpecificOutput"]["hookEventName"] == "Notification"
+        assert "some notification context" in result["hookSpecificOutput"]["additionalContext"]

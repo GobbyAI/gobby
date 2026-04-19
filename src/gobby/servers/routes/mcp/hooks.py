@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from gobby.adapters.claude_contract import (
+    build_graceful_error_hook_response,
+    get_claude_contract,
+)
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,
@@ -27,15 +31,6 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
-
-# Map hook types to hookEventName for additionalContext
-# Only these hook types support hookSpecificOutput in Claude Code
-HOOK_EVENT_NAME_MAP: dict[str, str] = {
-    "pre-tool-use": "PreToolUse",
-    "post-tool-use": "PostToolUse",
-    "post-tool-use-failure": "PostToolUse",
-    "user-prompt-submit": "UserPromptSubmit",
-}
 
 HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
     "PreToolUse": "PreToolUse",
@@ -58,22 +53,27 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
 
     This prevents agents from being confused by non-fatal hook errors.
     """
-    response: dict[str, Any] = {
-        "continue": True,
-        "decision": "approve",
-    }
+    from gobby.adapters.claude_code import ClaudeCodeAdapter
 
-    # Add helpful context for supported hook types
-    hook_event_name = HOOK_EVENT_NAME_MAP.get(hook_type)
-    if hook_event_name:
-        response["hookSpecificOutput"] = {
-            "hookEventName": hook_event_name,
+    adapter = ClaudeCodeAdapter()
+    response = adapter.translate_from_hook_response(
+        build_graceful_error_hook_response(error_msg),
+        hook_type=hook_type,
+    )
+    if isinstance(response, dict):
+        return response
+
+    fallback: dict[str, Any] = {"continue": True}
+    contract = get_claude_contract(hook_type)
+    if contract and contract.allows_additional_context:
+        fallback["hookSpecificOutput"] = {
+            "hookEventName": contract.hook_event_name,
             "additionalContext": (
-                f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
+                f"Gobby hook error (non-fatal): {error_msg}. "
+                "Tool execution will proceed normally."
             ),
         }
-
-    return response
+    return fallback
 
 
 MAX_PENDING_PER_SESSION = 3

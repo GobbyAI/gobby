@@ -45,6 +45,7 @@ _TURN_END_EVENT_VALUES = frozenset(
     {
         HookEventType.AFTER_AGENT.value,
         HookEventType.STOP.value,
+        HookEventType.STOP_FAILURE.value,
     }
 )
 
@@ -539,35 +540,66 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     modified_input = rewrite_meta.get("input_updates")
                     auto_approve = rewrite_meta.get("auto_approve", False)
 
+                permission_meta = variables.pop("_permission_response", None)
+                permission_decision: str | None = None
+                updated_permissions: list[dict[str, Any]] | None = None
+                if permission_meta and isinstance(permission_meta, dict):
+                    if permission_meta.get("input_updates") is not None:
+                        modified_input = permission_meta.get("input_updates")
+                    permission_decision = permission_meta.get("permission_decision")
+                    updated_permissions = permission_meta.get("updated_permissions")
+
+                watch_paths = variables.pop("_watch_paths", None)
+                worktree_path = variables.pop("_worktree_path", None)
+                retry = bool(variables.pop("_retry", False))
+                elicitation_meta = variables.pop("_elicitation", None)
+                elicitation_action: str | None = None
+                elicitation_content: dict[str, Any] | None = None
+                elicitation_error: str | None = None
+                if elicitation_meta and isinstance(elicitation_meta, dict):
+                    elicitation_action = elicitation_meta.get("action")
+                    elicitation_content = elicitation_meta.get("content")
+                    elicitation_error = elicitation_meta.get("error")
+
+                response_kwargs = {
+                    "metadata": meta,
+                    "modified_input": modified_input,
+                    "auto_approve": auto_approve,
+                    "permission_decision": permission_decision,
+                    "updated_permissions": updated_permissions,
+                    "retry": retry,
+                    "watch_paths": watch_paths,
+                    "worktree_path": worktree_path,
+                    "elicitation_action": elicitation_action,
+                    "elicitation_content": elicitation_content,
+                    "elicitation_error": elicitation_error,
+                }
+
                 if override_decision == "block":
                     resp = HookResponse(
                         decision="block",
                         reason=override_reason or "",
                         context=ctx_str,
-                        metadata=meta,
+                        **response_kwargs,
                     )
                 elif override_decision == "allow":
                     resp = HookResponse(
                         decision="allow",
                         context=ctx_str,
-                        metadata=meta,
-                        modified_input=modified_input,
-                        auto_approve=auto_approve,
+                        **response_kwargs,
                     )
                 elif block_reason:
                     resp = HookResponse(
                         decision="block",
                         reason=block_reason,
                         context=ctx_str,
-                        metadata=meta,
+                        **response_kwargs,
                     )
                 else:
                     resp = HookResponse(
                         decision="allow",
                         context=ctx_str,
-                        metadata=meta,
-                        modified_input=modified_input,
-                        auto_approve=auto_approve,
+                        **response_kwargs,
                     )
 
                 if span.is_recording():

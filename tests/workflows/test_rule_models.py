@@ -17,7 +17,7 @@ class TestRuleTriggerEvent:
     def test_enum_exposes_raw_hook_events_and_semantic_turn_boundaries(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert len(RuleTriggerEvent) == 17
+        assert len(RuleTriggerEvent) == 31
 
     def test_enum_values(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent
@@ -38,7 +38,20 @@ class TestRuleTriggerEvent:
         assert RuleTriggerEvent.SUBAGENT_START == "subagent_start"
         assert RuleTriggerEvent.SUBAGENT_STOP == "subagent_stop"
         assert RuleTriggerEvent.PERMISSION_REQUEST == "permission_request"
+        assert RuleTriggerEvent.PERMISSION_DENIED == "permission_denied"
         assert RuleTriggerEvent.NOTIFICATION == "notification"
+        assert RuleTriggerEvent.STOP_FAILURE == "stop_failure"
+        assert RuleTriggerEvent.TASK_CREATED == "task_created"
+        assert RuleTriggerEvent.TASK_COMPLETED == "task_completed"
+        assert RuleTriggerEvent.TEAMMATE_IDLE == "teammate_idle"
+        assert RuleTriggerEvent.INSTRUCTIONS_LOADED == "instructions_loaded"
+        assert RuleTriggerEvent.CONFIG_CHANGE == "config_change"
+        assert RuleTriggerEvent.CWD_CHANGED == "cwd_changed"
+        assert RuleTriggerEvent.FILE_CHANGED == "file_changed"
+        assert RuleTriggerEvent.WORKTREE_CREATE == "worktree_create"
+        assert RuleTriggerEvent.WORKTREE_REMOVE == "worktree_remove"
+        assert RuleTriggerEvent.ELICITATION == "elicitation"
+        assert RuleTriggerEvent.ELICITATION_RESULT == "elicitation_result"
 
     def test_enum_is_str(self) -> None:
         """RuleTriggerEvent should be a str enum for JSON serialization."""

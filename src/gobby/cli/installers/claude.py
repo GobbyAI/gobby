@@ -14,6 +14,7 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import rewrite_hook_template_commands
@@ -29,19 +30,7 @@ from .skill_install import backup_gobby_skills, install_router_skills_as_command
 logger = logging.getLogger(__name__)
 
 # Hook types that Gobby registers (must match hooks-template.json)
-_GOBBY_HOOK_TYPES = [
-    "SessionStart",
-    "SessionEnd",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "PreCompact",
-    "Notification",
-    "Stop",
-    "SubagentStart",
-    "SubagentStop",
-    "PermissionRequest",
-]
+_GOBBY_HOOK_TYPES = list(CLAUDE_PASCAL_HOOK_NAMES)
 
 
 _STATUSLINE_MARKER = "statusline_handler.py"

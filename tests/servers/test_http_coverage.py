@@ -1069,7 +1069,6 @@ class TestHooksEndpoints:
             assert response.status_code == 200
             data = response.json()
             assert data["continue"] is True
-            assert data["decision"] == "approve"
             # Should include helpful context for supported hook types
             assert "hookSpecificOutput" in data
             assert data["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
@@ -1114,9 +1113,9 @@ class TestHooksEndpoints:
             assert response.status_code == 200
             data = response.json()
             assert data["continue"] is True
-            assert data["decision"] == "approve"
-            # session-start doesn't support hookSpecificOutput, so no additionalContext
-            assert "hookSpecificOutput" not in data
+            assert data["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+            assert "non-fatal" in data["hookSpecificOutput"]["additionalContext"]
+            assert "Some error" in data["hookSpecificOutput"]["additionalContext"]
 
 
 # ============================================================================

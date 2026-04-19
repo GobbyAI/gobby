@@ -73,10 +73,24 @@ class RuleTriggerEvent(str, Enum):
     BEFORE_MODEL = "before_model"
     AFTER_MODEL = "after_model"
     PRE_COMPACT = "pre_compact"
+    POST_COMPACT = "post_compact"
     SUBAGENT_START = "subagent_start"
     SUBAGENT_STOP = "subagent_stop"
     PERMISSION_REQUEST = "permission_request"
+    PERMISSION_DENIED = "permission_denied"
     NOTIFICATION = "notification"
+    STOP_FAILURE = "stop_failure"
+    TASK_CREATED = "task_created"
+    TASK_COMPLETED = "task_completed"
+    TEAMMATE_IDLE = "teammate_idle"
+    INSTRUCTIONS_LOADED = "instructions_loaded"
+    CONFIG_CHANGE = "config_change"
+    CWD_CHANGED = "cwd_changed"
+    FILE_CHANGED = "file_changed"
+    WORKTREE_CREATE = "worktree_create"
+    WORKTREE_REMOVE = "worktree_remove"
+    ELICITATION = "elicitation"
+    ELICITATION_RESULT = "elicitation_result"
 
 
 # Backward-compatible alias for older imports. This still resolves to the
@@ -94,6 +108,11 @@ class RuleEffect(BaseModel):
         "mcp_call",
         "observe",
         "rewrite_input",
+        "set_permission_response",
+        "set_retry",
+        "set_watch_paths",
+        "set_worktree_path",
+        "set_elicitation",
         "load_skill",
     ]
 
@@ -130,6 +149,22 @@ class RuleEffect(BaseModel):
     # rewrite_input — modify tool input before execution (PreToolUse)
     input_updates: dict[str, Any] | None = None
     auto_approve: bool = False
+    permission_decision: Literal["allow", "deny"] | None = None
+    updated_permissions: list[dict[str, Any]] | None = None
+
+    # set_retry — tell Claude an auto-denied tool may be retried
+    retry: bool = False
+
+    # set_watch_paths — update dynamic FileChanged watchers
+    watch_paths: list[str] | None = None
+
+    # set_worktree_path — override the created worktree directory
+    worktree_path: str | None = None
+
+    # set_elicitation — programmatically answer or override elicitation results
+    elicitation_action: Literal["accept", "decline", "cancel"] | None = None
+    elicitation_content: dict[str, Any] | None = None
+    elicitation_error: str | None = None
 
     # load_skill — resolve and inject a skill's content into agent context
     skill: str | None = None
@@ -155,6 +190,21 @@ class RuleEffect(BaseModel):
             },
             "observe": {"category", "message", *selector_fields},
             "rewrite_input": {"input_updates", "auto_approve", *selector_fields},
+            "set_permission_response": {
+                "permission_decision",
+                "input_updates",
+                "updated_permissions",
+                *selector_fields,
+            },
+            "set_retry": {"retry", *selector_fields},
+            "set_watch_paths": {"watch_paths", *selector_fields},
+            "set_worktree_path": {"worktree_path", *selector_fields},
+            "set_elicitation": {
+                "elicitation_action",
+                "elicitation_content",
+                "elicitation_error",
+                *selector_fields,
+            },
             "load_skill": {"skill", *selector_fields},
         }
         # Fields with non-None defaults that shouldn't trigger warnings
@@ -166,6 +216,7 @@ class RuleEffect(BaseModel):
             "block_on_failure",
             "block_on_success",
             "message",
+            "retry",
         }
         relevant = _fields_by_type.get(self.type, set())
         for field_name, field_set in _fields_by_type.items():

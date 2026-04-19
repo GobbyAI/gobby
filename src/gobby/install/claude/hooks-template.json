@@ -11,12 +11,12 @@
         ]
       }
     ],
-    "SessionEnd": [
+    "InstructionsLoaded": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=session-end"
+            "command": "ghook --gobby-owned --cli=claude --type=instructions-loaded"
           }
         ]
       }
@@ -42,6 +42,17 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=permission-request"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "*",
@@ -53,12 +64,24 @@
         ]
       }
     ],
-    "PreCompact": [
+    "PostToolUseFailure": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=pre-compact"
+            "command": "ghook --gobby-owned --cli=claude --type=post-tool-use-failure"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=permission-denied"
           }
         ]
       }
@@ -69,16 +92,6 @@
           {
             "type": "command",
             "command": "ghook --gobby-owned --cli=claude --type=notification"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=stop"
           }
         ]
       }
@@ -103,13 +116,155 @@
         ]
       }
     ],
-    "PermissionRequest": [
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=task-created"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=task-completed"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=stop"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=stop-failure"
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=teammate-idle"
+          }
+        ]
+      }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=config-change"
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=cwd-changed"
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": ".envrc|.env",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=file-changed"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=worktree-create"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=worktree-remove"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=pre-compact"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=post-compact"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=session-end"
+          }
+        ]
+      }
+    ],
+    "Elicitation": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=permission-request"
+            "command": "ghook --gobby-owned --cli=claude --type=elicitation"
+          }
+        ]
+      }
+    ],
+    "ElicitationResult": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=elicitation-result"
           }
         ]
       }
