@@ -145,7 +145,10 @@ fn build_python_module_index(root_path: &Path, candidate_files: &[PathBuf]) -> H
             continue;
         }
 
-        let mut module = rel.with_extension("").to_string_lossy().replace('/', ".");
+        let mut module = rel
+            .with_extension("")
+            .to_string_lossy()
+            .replace(['/', '\\'], ".");
         if module.ends_with(".__init__") {
             module.truncate(module.len() - ".__init__".len());
         }

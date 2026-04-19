@@ -7,6 +7,15 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — gcode
+
+### Fixed
+
+#### gcode
+
+- **FTS fallback query sanitization** — Escaped `%`, `_`, and `\` correctly in the LIKE-based fallback search path so literal user queries stay literal. Prevents malformed matches and closes a SQL-injection footgun in symbol resolution and name search.
+- **Neo4j correctness cutover** — Completed import-aware call-target classification for Python, JavaScript, and TypeScript. `gcode index` now distinguishes local symbols, unresolved callees, and external modules when writing call data, which reduces bogus graph edges and improves `callers`, `usages`, `blast-radius`, and graph-boosted search relevance. (#137)
+
 ## [0.6.0] — gcode
 
 ### Changed

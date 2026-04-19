@@ -52,7 +52,7 @@ codebase → tree-sitter AST → SQLite index → search / retrieve / navigate
 
 1. **Index** — Walk files, parse ASTs with tree-sitter, extract symbols and content chunks
 2. **Store** — SQLite for symbols + FTS5, Neo4j for call/import graphs, Qdrant for semantic vectors
-3. **Search** — Hybrid ranking: FTS5 + semantic similarity + graph relevance → Reciprocal Rank Fusion
+3. **Search** — Hybrid ranking: FTS5 + optional semantic + optional graph sources → Reciprocal Rank Fusion
 4. **Retrieve** — Byte-offset reads for exact symbol source, no file-level bloat
 
 ## Installation
@@ -86,12 +86,11 @@ Expand-Archive gcode.zip -DestinationPath .
 ### Build from source
 
 ```bash
-# With embeddings (requires cmake for llama-cpp-2)
 cargo install gobby-code
-
-# Without embeddings (no cmake needed)
-cargo install gobby-code --no-default-features
 ```
+
+Graph and semantic features are configured at runtime. You do not need Cargo
+feature flags to enable Neo4j, Qdrant, or embeddings support.
 
 ### With Gobby
 
@@ -118,7 +117,7 @@ gcode tree                                # File tree with symbol counts
 
 # Dependency graph (requires Neo4j)
 gcode callers "handleAuth"                # Who calls this?
-gcode usages "handleAuth"                 # All references (calls + imports)
+gcode usages "handleAuth"                 # Incoming call sites
 gcode imports src/auth.ts                 # Import graph for a file
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
 
@@ -155,14 +154,14 @@ Full indexing and text search. No external services needed.
 ```
 codebase → tree-sitter → SQLite        → FTS5 search
                           Neo4j         → call graphs, blast radius, imports
-                          Qdrant + GGUF → semantic vector search
+                          Qdrant + embeddings API → semantic vector search
                           Gobby daemon  → auto-indexing, LLM summaries,
                                           config, secrets, sessions, agents
 ```
 
 Gobby adds graph queries, semantic search, and infrastructure that makes gcode better at its core job — not just more features bolted on.
 
-**Search quality improves.** With Neo4j, `gcode search` blends FTS5 text matching with call-graph relevance. Symbols that are heavily referenced rank higher. With Qdrant, conceptual queries like "database connection pooling" find semantically similar code even when the exact words don't match.
+**Search quality improves.** With Neo4j, `gcode search` blends FTS5 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
 **Config and secrets are managed.** Neo4j URLs, Qdrant API keys, and auth credentials are stored in the shared database and encrypted with Fernet. No env vars to juggle.
 
@@ -172,7 +171,7 @@ Gobby adds graph queries, semantic search, and infrastructure that makes gcode b
 |-----------|-----------|-----------|
 | AST indexing + FTS5 search | Yes | Yes |
 | Graph-boosted search ranking | — | Yes (Neo4j) |
-| Semantic vector search | — | Yes (Qdrant + GGUF) |
+| Semantic vector search | — | Yes (Qdrant + embeddings API) |
 | Call graph / blast radius | — | Yes (Neo4j) |
 | Import graph | — | Yes (Neo4j) |
 | Auto-indexing on file change | — | Yes (daemon file watcher) |
@@ -190,7 +189,7 @@ Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/
 |---------------------|----------|
 | Neo4j down | Graph commands return `[]`. Search loses graph boost. |
 | Qdrant down | Search loses semantic boost. FTS5 + graph still work. |
-| GGUF model missing | Semantic embeddings disabled. FTS5 + graph still work. |
+| Embeddings API unavailable | Semantic embeddings disabled. FTS5 + graph still work. |
 | No index yet | Commands error with `Run gcode init to initialize`. |
 
 ## Language Support
@@ -203,13 +202,14 @@ gcode parses ASTs using tree-sitter with support for 18 languages:
 | **Tier 2** | Dart, Elixir |
 | **Tier 3** | JSON, YAML, Markdown (content indexing only) |
 
-## Build Features
+## Build
 
-The `embeddings` Cargo feature (default: on) enables local GGUF embedding generation via `llama-cpp-2`. Requires cmake to build. macOS builds use Metal GPU acceleration.
+`gcode` uses runtime-configured services rather than Cargo feature flags.
 
 ```bash
-cargo build --release                        # With embeddings
-cargo build --release --no-default-features  # Without embeddings (no cmake)
+cargo build --release
+cargo test --no-default-features
+cargo clippy --no-default-features -- -D warnings
 ```
 
 ## Platform Support
