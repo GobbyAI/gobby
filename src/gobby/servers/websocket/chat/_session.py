@@ -332,6 +332,7 @@ class ChatSessionMixin:
         # Durable web-chat rows are the authoritative provider binding for an
         # existing conversation. A stale frontend provider selection should not
         # silently re-route a restored session onto a different backend.
+        daemon_cfg = getattr(self, "daemon_config", None)
         pending_providers = getattr(self, "_pending_providers", {})
         pending_provider = _normalize_web_chat_provider(pending_providers.pop(session_key, None))
         effective_provider = pending_provider
@@ -343,8 +344,10 @@ class ChatSessionMixin:
             effective_provider = _normalize_web_chat_provider(provider)
         if not effective_provider and agent_body:
             effective_provider = _normalize_web_chat_provider(getattr(agent_body, "provider", None))
+        if not effective_provider and daemon_cfg is not None:
+            chat_cfg = getattr(daemon_cfg, "chat", None)
+            effective_provider = _normalize_web_chat_provider(getattr(chat_cfg, "provider", None))
 
-        daemon_cfg = getattr(self, "daemon_config", None)
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
         if runtime_manager is not None:
             current_web_chat_sandbox = runtime_manager.sandbox_config
@@ -363,7 +366,11 @@ class ChatSessionMixin:
                 reasoning_effort=reasoning_effort,
             )
         else:
-            session = ChatSession(conversation_id=conversation_id)
+            if provider_name != "claude":
+                raise RuntimeError(
+                    f"Web chat provider '{provider_name}' requires the managed runtime backend"
+                )
+            session = ChatSession(conversation_id=conversation_id, provider=provider_name)
             session.reasoning_effort = reasoning_effort
 
         if reasoning_effort is not None:

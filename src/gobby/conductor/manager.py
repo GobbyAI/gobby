@@ -239,8 +239,15 @@ class ConductorManager:
         # Lazy import to avoid circular deps at module level
         from gobby.servers.chat_session import ChatSession
 
+        if self._config.provider != "claude":
+            raise RuntimeError(
+                f"Conductor provider '{self._config.provider}' is not supported. "
+                "Use provider='claude'."
+            )
+
         session = ChatSession(
             conversation_id=self._conversation_id,
+            provider=self._config.provider,
             project_id=self._project_id,
             project_path=self._project_path,
         )

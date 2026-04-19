@@ -52,6 +52,8 @@ class TestMemoryConfigDefaults:
         assert config.backend == "local"
         assert config.access_debounce_seconds == 60
         assert config.crossref_threshold == 0.3
+        assert config.kg.provider == "claude"
+        assert config.kg.model == "haiku"
 
 
 class TestMemoryConfigCustom:

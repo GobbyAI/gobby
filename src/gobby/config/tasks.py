@@ -17,11 +17,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+
 __all__ = [
     "CompactHandoffConfig",
     "FileExtractionConfig",
     "PatternCriteriaConfig",
-    "TaskEnrichmentConfig",
     "TaskExpansionConfig",
     "TaskValidationConfig",
     "GobbyTasksConfig",
@@ -91,53 +92,20 @@ class PatternCriteriaConfig(BaseModel):
     )
 
 
-class TaskEnrichmentConfig(BaseModel):
-    """Configuration for task enrichment (adding context, categorization, validation criteria)."""
-
-    enabled: bool = Field(
-        default=True,
-        description="Enable task enrichment",
-    )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for enrichment",
-    )
-    model: str = Field(
-        default="haiku",
-        description="Model to use for enrichment (lightweight model for speed)",
-    )
-    enable_code_research: bool = Field(
-        default=True,
-        description="Enable codebase research during enrichment",
-    )
-    enable_web_research: bool = Field(
-        default=False,
-        description="Enable web research during enrichment",
-    )
-    enable_mcp_tools: bool = Field(
-        default=False,
-        description="Enable MCP tool calls during enrichment",
-    )
-    generate_validation: bool = Field(
-        default=True,
-        description="Generate validation criteria during enrichment",
-    )
-
-
-class TaskExpansionConfig(BaseModel):
+class TaskExpansionConfig(FeatureDefaultConfig):
     """Configuration for task expansion (breaking down broad tasks/epics)."""
 
     enabled: bool = Field(
         default=True,
         description="Enable automated task expansion",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for expansion",
-    )
     model: str = Field(
         default="opus",
         description="Model to use for expansion",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.HIGH,
+        description="Complexity tier — determines fallback model when local provider fails",
     )
 
     prompt_path: str | None = Field(
@@ -191,20 +159,20 @@ class TaskExpansionConfig(BaseModel):
     )
 
 
-class TaskValidationConfig(BaseModel):
+class TaskValidationConfig(FeatureDefaultConfig):
     """Configuration for task validation (checking completion against criteria)."""
 
     enabled: bool = Field(
         default=True,
         description="Enable automated task validation",
     )
-    provider: str = Field(
-        default="claude",
-        description="LLM provider to use for validation",
-    )
     model: str = Field(
         default="sonnet",
         description="Model to use for validation",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.MID,
+        description="Complexity tier — determines fallback model when local provider fails",
     )
     system_prompt: str = Field(
         default="You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
@@ -610,10 +578,6 @@ class GobbyTasksConfig(BaseModel):
     file_extraction: FileExtractionConfig = Field(
         default_factory=FileExtractionConfig,
         description="Configuration for extracting file paths from task descriptions",
-    )
-    enrichment: TaskEnrichmentConfig = Field(
-        default_factory=TaskEnrichmentConfig,
-        description="Task enrichment configuration",
     )
     expansion: TaskExpansionConfig = Field(
         default_factory=lambda: TaskExpansionConfig(),

@@ -170,7 +170,16 @@ class ChatSession(ChatSessionPermissionsMixin):
     @property
     def _default_model(self) -> str | None:
         """Resolve default model from config."""
-        if self._config and hasattr(self._config, "llm_providers"):
+        if not self._config:
+            return None
+
+        chat_cfg = getattr(self._config, "chat", None)
+        chat_provider = getattr(chat_cfg, "provider", None)
+        chat_model = getattr(chat_cfg, "model", None)
+        if chat_model and (not chat_provider or chat_provider == self.provider):
+            return chat_model
+
+        if hasattr(self._config, "llm_providers"):
             model: str | None = self._config.llm_providers.default_model
             return model
         return None

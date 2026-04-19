@@ -70,6 +70,7 @@ async def test_handle_tick_creates_session_on_first_call() -> None:
         # ChatSession created with correct args
         cls.assert_called_once_with(
             conversation_id=f"conductor-{PROJECT_ID}",
+            provider="claude",
             project_id=PROJECT_ID,
             project_path="/tmp/test-project",
         )
@@ -118,6 +119,17 @@ async def test_handle_tick_no_skip_when_disabled() -> None:
         job = MagicMock()
         result = await manager(job)
         assert "Conductor:" in result
+
+
+@pytest.mark.asyncio
+async def test_handle_tick_rejects_non_claude_provider() -> None:
+    """Conductor config exposes provider for consistency, but only Claude is supported today."""
+    manager, _ = _make_manager(ConductorConfig(enabled=True, provider="codex", model="gpt-5"))
+
+    job = MagicMock()
+    result = await manager(job)
+
+    assert "provider 'codex' is not supported" in result
 
 
 @pytest.mark.asyncio

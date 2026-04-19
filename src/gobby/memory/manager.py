@@ -135,7 +135,7 @@ class MemoryManager:
             try:
                 from gobby.prompts.loader import PromptLoader
 
-                provider = llm_service.get_default_provider()
+                provider, model, _ = llm_service.get_provider_for_feature(config.kg)
                 prompt_loader = PromptLoader(db=self.db)
                 self._kg_service = KnowledgeGraphService(
                     neo4j_client=self._neo4j_client,
@@ -146,7 +146,7 @@ class MemoryManager:
                     code_link_min_score=config.code_link_min_score,
                     code_symbol_collection_prefix=collection_prefix,
                     embedding_dim=embedding_dim,
-                    model=config.kg_model,
+                    model=model,
                 )
                 logger.debug("KnowledgeGraphService initialized")
             except Exception as e:

@@ -33,9 +33,7 @@ from gobby.config.features import (
     MetricsConfig,
     ProjectVerificationConfig,
     RecommendToolsConfig,
-    ReviewConfig,
     SkillDescriptionConfig,
-    TaskDescriptionConfig,
     ToolSummarizerConfig,
 )
 from gobby.config.llm_providers import LLMProvidersConfig
@@ -410,10 +408,6 @@ class DaemonConfig(BaseModel):
         default_factory=ToolSummarizerConfig,
         description="Tool description summarization configuration",
     )
-    task_description: TaskDescriptionConfig = Field(
-        default_factory=TaskDescriptionConfig,
-        description="LLM-based task description generation configuration",
-    )
     import_mcp_server: ImportMCPServerConfig = Field(
         default_factory=ImportMCPServerConfig,
         description="MCP server import configuration",
@@ -510,10 +504,6 @@ class DaemonConfig(BaseModel):
         default_factory=ChatConfig,
         description="Chat mode configuration (default mode for new sessions)",
     )
-    review: ReviewConfig = Field(
-        default_factory=ReviewConfig,
-        description="Code review configuration",
-    )
     merge_resolution: MergeResolutionConfig = Field(
         default_factory=MergeResolutionConfig,
         description="Merge conflict resolution LLM configuration",
@@ -555,10 +545,6 @@ class DaemonConfig(BaseModel):
     def get_tool_summarizer_config(self) -> ToolSummarizerConfig:
         """Get tool_summarizer configuration."""
         return self.tool_summarizer
-
-    def get_task_description_config(self) -> TaskDescriptionConfig:
-        """Get task_description configuration."""
-        return self.task_description
 
     def get_import_mcp_server_config(self) -> ImportMCPServerConfig:
         """Get import_mcp_server configuration."""
@@ -747,7 +733,9 @@ def _resolve_config_values(
 
 
 # Keys renamed/removed from DaemonConfig that may still exist in DB config_store
-_LEGACY_KEYS_TO_DROP = frozenset({"_meta", "title_synthesis", "rules", "ui_settings"})
+_LEGACY_KEYS_TO_DROP = frozenset(
+    {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
+)
 
 # Mapping from old logging.* field names to new telemetry.* field names
 _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
@@ -783,6 +771,25 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
             for old_field, new_field in _LOGGING_TO_TELEMETRY_FIELDS.items():
                 if old_field in old_logging and new_field not in telemetry:
                     telemetry[new_field] = old_logging[old_field]
+
+    for key in ("gobby_tasks", "gobby-tasks"):
+        gobby_tasks = config_dict.get(key)
+        if isinstance(gobby_tasks, dict):
+            gobby_tasks.pop("enrichment", None)
+
+    memory = config_dict.get("memory")
+    if isinstance(memory, dict):
+        legacy_kg_provider = memory.pop("kg_provider", None)
+        legacy_kg_model = memory.pop("kg_model", None)
+        if legacy_kg_provider is not None or legacy_kg_model is not None:
+            kg = memory.get("kg")
+            if not isinstance(kg, dict):
+                kg = {}
+                memory["kg"] = kg
+            if legacy_kg_provider is not None and "provider" not in kg:
+                kg["provider"] = legacy_kg_provider
+            if legacy_kg_model is not None and "model" not in kg:
+                kg["model"] = legacy_kg_model
 
     return config_dict
 

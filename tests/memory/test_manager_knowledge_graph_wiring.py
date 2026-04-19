@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.persistence import MemoryConfig
 
 pytestmark = pytest.mark.unit
+
+
+def _mock_llm_service(provider: AsyncMock | None = None) -> MagicMock:
+    llm_service = MagicMock()
+    llm_service.get_provider_for_feature = MagicMock(
+        return_value=(provider or AsyncMock(), "haiku", None)
+    )
+    return llm_service
 
 
 def _make_manager(
@@ -47,28 +55,41 @@ class TestKnowledgeGraphServiceInitialization:
 
     def test_kg_service_created_when_neo4j_and_llm_configured(self) -> None:
         """KnowledgeGraphService is created when Neo4j URL + LLM are configured."""
-        llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
         embed_fn = AsyncMock(return_value=[0.1, 0.2])
         vs = AsyncMock()
 
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
-            llm_service=llm_service,
+            llm_service=_mock_llm_service(),
             vector_store=vs,
             embed_fn=embed_fn,
         )
 
         assert manager._kg_service is not None
 
+    def test_kg_service_uses_configured_provider_and_model(self) -> None:
+        """KnowledgeGraphService wiring should honor memory.kg provider/model."""
+        provider = AsyncMock()
+        llm_service = _mock_llm_service(provider)
+
+        with patch("gobby.memory.manager.KnowledgeGraphService") as mock_kg_service:
+            manager = _make_manager(
+                neo4j_url="http://localhost:7474",
+                llm_service=llm_service,
+                vector_store=AsyncMock(),
+                embed_fn=AsyncMock(return_value=[0.1]),
+            )
+
+        llm_service.get_provider_for_feature.assert_called_once_with(manager.config.kg)
+        call_kwargs = mock_kg_service.call_args.kwargs
+        assert call_kwargs["llm_provider"] is provider
+        assert call_kwargs["model"] == "haiku"
+
     def test_kg_service_none_when_no_neo4j(self) -> None:
         """KnowledgeGraphService is None when Neo4j is not configured."""
-        llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
-
         manager = _make_manager(
             neo4j_url=None,
-            llm_service=llm_service,
+            llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(),
         )
@@ -90,12 +111,9 @@ class TestGraphDelegation:
 
     async def test_get_entity_graph_delegates_to_kg_service(self) -> None:
         """get_entity_graph delegates to KnowledgeGraphService."""
-        llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
-
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
-            llm_service=llm_service,
+            llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
         )
@@ -110,12 +128,9 @@ class TestGraphDelegation:
 
     async def test_get_entity_neighbors_delegates_to_kg_service(self) -> None:
         """get_entity_neighbors delegates to KnowledgeGraphService."""
-        llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
-
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
-            llm_service=llm_service,
+            llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
         )
@@ -153,12 +168,9 @@ class TestGraphBackgroundTask:
 
     async def test_create_memory_fires_graph_task_after_dedup(self) -> None:
         """create_memory fires a graph background task when KnowledgeGraphService is available."""
-        llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
-
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
-            llm_service=llm_service,
+            llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
         )
@@ -226,12 +238,9 @@ class TestGraphBackgroundTask:
 
     async def test_graph_task_failure_logged_not_raised(self) -> None:
         """Graph background task failure is logged but doesn't propagate."""
-        llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
-
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
-            llm_service=llm_service,
+            llm_service=_mock_llm_service(),
             vector_store=AsyncMock(),
             embed_fn=AsyncMock(return_value=[0.1]),
         )

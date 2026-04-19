@@ -15,11 +15,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
+from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DatabasesConfig",
     "EmbeddingsConfig",
+    "MemoryKnowledgeGraphConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
     "Neo4jConfig",
@@ -178,6 +181,19 @@ class EmbeddingsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class MemoryKnowledgeGraphConfig(FeatureDefaultConfig):
+    """LLM configuration for memory knowledge-graph extraction."""
+
+    model: str = Field(
+        default="haiku",
+        description="Model for KG extraction (cheap/fast recommended)",
+    )
+    tier: ModelTier = Field(
+        default=ModelTier.LOW,
+        description="Complexity tier — determines fallback model when local provider fails",
+    )
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
@@ -216,13 +232,9 @@ class MemoryConfig(BaseModel):
         default=60,
         description="Minimum seconds between access stat updates for the same memory",
     )
-    kg_provider: str = Field(
-        default="claude",
-        description="LLM provider for knowledge graph entity/relationship extraction",
-    )
-    kg_model: str = Field(
-        default="haiku",
-        description="Model for KG extraction (cheap/fast recommended)",
+    kg: MemoryKnowledgeGraphConfig = Field(
+        default_factory=MemoryKnowledgeGraphConfig,
+        description="LLM provider/model configuration for knowledge graph extraction",
     )
     code_link_min_score: float = Field(
         default=0.82,

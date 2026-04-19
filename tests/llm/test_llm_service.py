@@ -138,6 +138,20 @@ class TestLLMServiceGetProviderForFeature:
         with pytest.raises(ValueError, match="missing 'model' field"):
             service.get_provider_for_feature(feature_config)
 
+    def test_get_provider_for_feature_rejects_claude_alias_on_non_claude_provider(
+        self, llm_config: DaemonConfig
+    ) -> None:
+        """Claude shorthand aliases are only valid for provider='claude'."""
+        service = LLMService(llm_config)
+
+        feature_config = MagicMock()
+        feature_config.provider = "codex"
+        feature_config.model = "sonnet"
+        feature_config.prompt = None
+
+        with pytest.raises(ValueError, match="Only provider='claude' accepts haiku/sonnet/opus"):
+            service.get_provider_for_feature(feature_config)
+
     @patch("gobby.llm.claude.ClaudeLLMProvider")
     def test_get_provider_for_feature_success(
         self, mock_claude_provider: MagicMock, llm_config_claude_only: DaemonConfig

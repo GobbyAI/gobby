@@ -7,7 +7,6 @@ Contains MCP proxy and tool feature Pydantic config models:
 - ImportMCPServerConfig: MCP server import settings
 - MetricsConfig: Metrics endpoint settings
 - ProjectVerificationConfig: Project verification command settings
-- TaskDescriptionConfig: LLM-based task description generation settings
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
@@ -19,7 +18,6 @@ from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
 __all__ = [
     "ChatConfig",
     "KnowledgeGraphQueueConfig",
-    "ReviewConfig",
     "ToolSummarizerConfig",
     "RecommendToolsConfig",
     "ImportMCPServerConfig",
@@ -29,7 +27,6 @@ __all__ = [
     "HookStageConfig",
     "HooksConfig",
     "SkillDescriptionConfig",
-    "TaskDescriptionConfig",
 ]
 
 
@@ -60,41 +57,6 @@ class ToolSummarizerConfig(FeatureDefaultConfig):
         default=None,
         description="Path to custom server description system prompt (e.g., 'features/server_description_system')",
     )
-
-
-class TaskDescriptionConfig(FeatureDefaultConfig):
-    """Task description generation configuration.
-
-    Controls LLM-based description generation for tasks created from specs.
-    Used when structured extraction yields minimal results.
-    """
-
-    enabled: bool = Field(
-        default=True,
-        description="Enable LLM-based task description generation",
-    )
-    min_structured_length: int = Field(
-        default=50,
-        description="Minimum length of structured extraction before LLM fallback triggers",
-    )
-
-    prompt_path: str | None = Field(
-        default=None,
-        description="Path to custom task description prompt (e.g., 'features/task_description')",
-    )
-
-    system_prompt_path: str | None = Field(
-        default=None,
-        description="Path to custom task description system prompt (e.g., 'features/task_description_system')",
-    )
-
-    @field_validator("min_structured_length")
-    @classmethod
-    def validate_min_structured_length(cls, v: int) -> int:
-        """Validate min_structured_length is non-negative."""
-        if v < 0:
-            raise ValueError("min_structured_length must be non-negative")
-        return v
 
 
 class MergeResolutionConfig(FeatureDefaultConfig):
@@ -292,16 +254,6 @@ class ProjectVerificationConfig(BaseModel):
     track_savings: bool = Field(
         default=True,
         description="Track token savings via metrics",
-    )
-
-
-class ReviewConfig(FeatureDefaultConfig):
-    """Code review configuration."""
-
-    model: str = Field(default="opus", description="Model for code review")
-    tier: ModelTier = Field(
-        default=ModelTier.HIGH,
-        description="Complexity tier — determines fallback model when local provider fails",
     )
 
 
