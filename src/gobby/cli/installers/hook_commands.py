@@ -43,7 +43,15 @@ def build_hook_command_prefix(
     *,
     ghook_bin: str | None = None,
 ) -> str:
-    """Build the shared command prefix for hook templates."""
+    """Build the shared command prefix for hook templates.
+
+    `_hooks_dir` is retained for backward compatibility with older callers and
+    template helpers, but it is intentionally unused now that `resolved_ghook`
+    from `resolve_native_bin_or_default("ghook")` is the authoritative source
+    of the executable path. The returned prefix always includes
+    `_GOBBY_OWNED_MARKER`, so removing `_hooks_dir` would be a breaking API
+    change without changing runtime behavior.
+    """
     resolved_ghook = ghook_bin or resolve_native_bin_or_default("ghook")
     return f"{shlex.quote(resolved_ghook)} {_GOBBY_OWNED_MARKER}"
 

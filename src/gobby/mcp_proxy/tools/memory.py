@@ -621,8 +621,6 @@ def create_memory_registry(
                 project_id=project_id,
                 limit=limit,
             )
-            if not result.get("success", False):
-                return result
             return result
         except Exception as e:
             return {"success": False, "error": str(e)}

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.code_index.graph import CodeGraph
+    from gobby.code_index.models import IndexedFile
     from gobby.code_index.storage import CodeIndexStorage
     from gobby.config.code_index import CodeIndexConfig
     from gobby.config.persistence import EmbeddingsConfig
@@ -143,7 +144,7 @@ async def _sync_file(
     embed_model: Any | None,
     project_id: str,
     root: Path,
-    file: Any,
+    file: IndexedFile,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
     # Validate: file record still exists (not invalidated between poll and process)
@@ -200,7 +201,7 @@ async def _sync_vectors(
     embed_model: Any,
     config: CodeIndexConfig,
     project_id: str,
-    file: Any,
+    file: IndexedFile,
 ) -> None:
     """Generate embeddings and upsert to Qdrant for a file's symbols."""
     symbols = storage.get_symbols_for_file(project_id, file.file_path)
@@ -258,7 +259,7 @@ async def _sync_graph(
     storage: CodeIndexStorage,
     graph: CodeGraph,
     project_id: str,
-    file: Any,
+    file: IndexedFile,
 ) -> None:
     """Write Neo4j edges for a file from SQLite import/call/symbol data."""
     # Read relations from SQLite

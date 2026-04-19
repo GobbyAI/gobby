@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -48,18 +49,19 @@ def _make_openai_client(dim: int) -> AsyncMock:
     """Create a mock AsyncOpenAI client with deterministic vector size."""
     mock_client = AsyncMock()
 
-    async def fake_create(model: str, input: list[str]):
-        class FakeItem:
-            def __init__(self, embedding: list[float]):
-                self.embedding = embedding
+    @dataclass
+    class FakeItem:
+        embedding: list[float]
 
-        class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
-                self.data = items
+    @dataclass
+    class FakeResponse:
+        data: list[FakeItem]
 
+    async def fake_create(model: str, input: list[str]) -> FakeResponse:
         return FakeResponse([FakeItem([0.1] * dim) for _ in input])
 
-    mock_client.embeddings.create = fake_create
+    create_mock: AsyncMock = AsyncMock(side_effect=fake_create)
+    mock_client.embeddings.create = create_mock
     return mock_client
 
 

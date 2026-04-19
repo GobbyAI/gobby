@@ -20,15 +20,17 @@ The Python codebase is expected to be ported to Rust in a later effort. This pla
 
 ## Constraints
 
-- **Driver**: psycopg v3 (sync + async on one connection; pairs with `psycopg_pool`). Not psycopg2 (sync-only, no async path). Not asyncpg (would require async-ifying all synchronous storage call sites).
+- **Driver**: psycopg v3 (sync + async on one driver; pairs with `psycopg_pool`). This is the key migration choice because existing synchronous storage call sites can keep running while new async paths are added incrementally on the same driver. Not psycopg2 (sync-only, no async path). Not asyncpg (async-only would force a broad refactor of every synchronous storage call site up front instead of letting the codebase adopt async gradually).
 - **Migration tool**: raw SQL files + a handwritten migration registry. No SQLAlchemy, no Alembic.
 - **Test backend**: compose-managed PostgreSQL reached via `DATABASE_URL`. Schema-per-xdist-worker plus test-scoped schema reset for isolation. Zero language-specific test infra so the pattern survives the Rust port.
 - **Rust portability**: migrations must be pure `.sql` files (no Python callables). Parameter style standardized on `$1`. Runtime DSN lives in bootstrap for now; pool and connection tuning are still env-driven (`PGPOOL_MIN`, `PGPOOL_MAX`, `PGCONNECT_TIMEOUT`, `PGAPPNAME`) rather than embedded in Python.
 - **Search**: `pg_search` (ParadeDB) shipped via a custom `gobby/postgres:17-pgsearch` image. BM25 ranking via Tantivy. Rust-portable indexes. Semantic search (Qdrant) is an explicit non-goal of this plan but the search backend dispatcher leaves a clean seam for it.
 - **Gobby Pro compatibility**: Gobby Pro is assumed to be a sync / fleet-management hub, not a hosted-Gobby service. This plan does not need to run on managed Postgres (RDS, Cloud SQL, Aurora). Gobby always runs locally on the user's machine; Gobby Pro talks to Gobby instances via API, not by sharing a database. Gobby Pro's own datastore is out of scope for this plan.
 - **Licensing**: pg_search is AGPL-3.0. Used unmodified as a Postgres extension (separate process), it does not propagate to Gobby's application code. The software is distributed to end users for local execution, which is the standard AGPL / GPL case: source of pg_search itself must be available (it is, on GitHub), and no copyleft reaches Gobby. The rest of the runtime stack is PostgreSQL-license, Apache-2.0 (Qdrant), and LGPL-3.0 (psycopg v3) — all permissive from Gobby's perspective.
-- **Bootstrap security posture**: `bootstrap.yaml` remains the pre-DB source of truth and stores the runtime `database_url` in plaintext for now, consistent with today's local-first bootstrap model (which already stores `neo4j_password` there). This is an accepted tradeoff for this migration. Moving Postgres credentials behind an OS secret store is future hardening, not part of this plan.
-- **Rollback window**: short. Stop daemon, restore `hub_backend=sqlite`, restart. Rollback is a migration safety net, not a permanent product feature. Writes made during the post-cutover validation window are lost on rollback; this is acceptable given no external users.
+- **Bootstrap security posture**: `bootstrap.yaml` remains the pre-DB source of truth and stores the runtime `database_url` in plaintext for now, consistent with today's local-first bootstrap model (which already stores `neo4j_password` there). This is tracked technical debt for the migration, not invisible risk. Minimum operator guidance for this phase: restrict `~/.gobby/bootstrap.yaml` to owner read/write only (`0600`). Mitigation timeline: move Postgres credentials behind OS keyring / secret-store integration in the first post-cutover `v0.4.x` hardening cycle, with a migration path from inline `database_url` to a keyring-backed reference.
+- **Rollback window**: short. Stop daemon, restore `hub_backend=sqlite`, restart. Rollback is a migration safety net, not a permanent product feature. Writes made during the post-cutover validation window are at risk on rollback; they must be captured for forensics, but they are not auto-merged back into SQLite.
+
+> Warning: `bootstrap.yaml` containing `database_url` is equivalent to storing the Postgres password in plaintext, just like today's `neo4j_password`. Treat that file as a secret-bearing credential file.
 
 ## Current Constraints in the Repo
 
@@ -85,7 +87,7 @@ Rules:
 - runtime startup must not infer the backend from DB-stored config (chicken-and-egg)
 - after cutover, normal startup uses `hub_backend=postgres`
 - after Phase 7 cleanup, `database_path` exists only for import tooling
-- for this phase, `database_url` is stored directly in `bootstrap.yaml`; no pre-DB secret indirection is introduced
+- for this phase, `database_url` is stored directly in `bootstrap.yaml`; no pre-DB secret indirection is introduced, so operators must keep `bootstrap.yaml` locked down to owner read/write (`0600`) until the planned OS keyring migration lands
 
 There is no `database_shadow_url`. No shadow-write phase.
 
@@ -137,7 +139,7 @@ What this plan does preserve, so Gobby Pro integration is not harder later:
 
 - **Schema-per-tenant-ready DDL**: `CREATE TABLE tasks`, not `CREATE TABLE gobby.tasks`. Unqualified object names mean an operator could later run multiple Gobby instances against one Postgres with separate schemas if that ever becomes useful (e.g. a self-hosted team deployment). `pg_get_serial_sequence(table, col)` is used for sequence reseeds (task 5.3) — no hardcoded sequence names.
 - **Session-pool compatibility**: savepoints and nested transactions work under pgbouncer / RDS Proxy session pooling. Transaction pool mode is *not* compatible today; documented as future work, not fixed here.
-- **Secret handling**: for this phase, local runtime credentials live in `bootstrap.yaml` as part of `database_url`. That is intentional. Gobby Pro integration does not get harder because Gobby Pro still talks to local Gobby instances over API, not by sharing their database credentials.
+- **Secret handling**: for this phase, local runtime credentials live in `bootstrap.yaml` as part of `database_url`. That is intentional but temporary tracked debt. Gobby Pro integration does not get harder because Gobby Pro still talks to local Gobby instances over API, not by sharing their database credentials, and the roadmap is to replace inline `database_url` storage with an OS keyring-backed reference after cutover hardening.
 - **API-not-DB integration**: Gobby Pro talks to Gobby instances through Gobby's existing HTTP API (`:60887`) and WebSocket (`:60888`). This plan does not alter those contracts.
 
 Explicitly out of scope for this plan (tracked as follow-ups for Gobby Pro):
@@ -145,6 +147,7 @@ Explicitly out of scope for this plan (tracked as follow-ups for Gobby Pro):
 - Gobby Pro's control plane, device registry, sync protocol.
 - Qdrant-backed semantic search integration. Keyword search via pg_search is delivered here; semantic is a companion workstream with the `pick_search_backend` seam as its insertion point.
 - `gobby export` / `gobby import` for moving a user's Gobby state between machines — that's a Gobby Pro sync feature, not part of this hub-storage migration.
+- OS keyring integration for Postgres credentials: replace inline `database_url` storage in `bootstrap.yaml` with a keyring-backed reference plus a migration step that rewrites existing plaintext entries.
 
 ## Phase 1: PostgreSQL service and bootstrap support
 
@@ -255,7 +258,7 @@ Validation:
 
 - `hub_backend="postgres"` requires `database_url` non-empty
 - `hub_backend="sqlite"` tolerates `database_url=None`
-- `database_url` is stored verbatim in `bootstrap.yaml` for this phase
+- `database_url` is stored verbatim in `bootstrap.yaml` for this phase; require `bootstrap.yaml` to be owner read/write only (`0600`) and track that plaintext credential storage as migration debt until OS keyring integration ships
 - parse errors raise `BootstrapConfigError` with field-level messages
 
 Update `runner_init()` to branch on `hub_backend` when constructing the hub database. Do not allow DB-stored config to override bootstrap-level backend selection.
@@ -272,11 +275,13 @@ FROM postgres:17
 
 # Install build dependencies, pg_search, then clean up
 ARG PG_SEARCH_VERSION=0.17.0
+ARG PG_SEARCH_SHA256=<release-sha256>
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl ca-certificates gnupg \
     && curl -fsSL "https://github.com/paradedb/paradedb/releases/download/v${PG_SEARCH_VERSION}/pg_search-v${PG_SEARCH_VERSION}-pg17-$(dpkg --print-architecture)-ubuntu2204.deb" \
         -o /tmp/pg_search.deb \
+    && echo "${PG_SEARCH_SHA256}  /tmp/pg_search.deb" | sha256sum -c - \
     && dpkg -i /tmp/pg_search.deb \
     && rm /tmp/pg_search.deb \
     && apt-get purge -y curl gnupg \
@@ -293,10 +298,12 @@ The image build must pin an exact pg_search release artifact and checksum in the
 - Set `shared_preload_libraries = 'pg_search'` so pg_search can register its query hooks at startup
 - Pass `pg_isready` and `CREATE EXTENSION pg_search` smoke tests in the build pipeline
 - Publish to the Gobby image registry (GHCR or equivalent) on every release tag
+- Bump `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` together, verify the checksum against the upstream release artifact before merge, and rerun the Postgres smoke/search test suite before publish
+- Security checklist: monitor `pg_search` / ParadeDB advisories through GitHub security alerts or CVE feeds so future bumps are tracked intentionally
 
 CI task publishes image on git tag. License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is included in the image via `/usr/share/doc/pg_search/copyright` already present in the .deb.
 
-### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4, Phase 5)
+### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4)
 
 Target: `src/gobby/cli/postgres.py`
 
@@ -306,6 +313,8 @@ Target: `src/gobby/cli/postgres.py`
 - refuse if migration has not yet produced the `migration_complete` marker row in the Postgres `schema_migrations` table
 - write a dated backup of `bootstrap.yaml` before rewriting
 - print the exact rollback command on success
+
+The command itself is the enforcement point for migration completion. Ship it in Phase 1 if useful, but `gobby postgres activate` must perform the runtime validation above and fail clearly until Phase 5 has completed successfully.
 
 ```python
 @postgres_cli.command("activate")
@@ -348,13 +357,15 @@ services:
     ports:
       - "60892:5432"
     tmpfs:
-      - /var/lib/postgresql/data  # fast, ephemeral, no leftover state between runs
+      - /var/lib/postgresql/data  # fast and ephemeral: all database data disappears when the container stops
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U gobby_test"]
       interval: 2s
       timeout: 2s
       retries: 15
 ```
+
+The `tmpfs` entry at `/var/lib/postgresql/data` makes the PostgreSQL test container fully ephemeral. Tests cannot rely on data surviving `docker compose` restarts, CI workflows that restart services mid-run must recreate or reseed the database, and this is intentionally different from the persistent-volume configuration used in dev/prod.
 
 CI job uses a service container spec:
 
@@ -387,29 +398,66 @@ Per-worker isolation without per-session container churn:
 
 ```python
 # tests/fixtures/postgres.py
+import logging
 import os
+import time
 import uuid
 from collections.abc import Iterator
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from gobby.storage.hub.postgres import PostgresHubDatabase
+
+logger = logging.getLogger(__name__)
+
+
+def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
+    """Drop only aged `gobby_test_*` schemas from abandoned test runs."""
+    cutoff_epoch = int(time.time()) - age_hours * 3600
+    with psycopg.connect(url, autocommit=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT schema_name
+            FROM information_schema.schemata
+            WHERE schema_name LIKE 'gobby_test_%'
+            """
+        ).fetchall()
+        for (schema_name,) in rows:
+            parts = schema_name.split("_", 5)
+            if len(parts) != 6:
+                continue
+            try:
+                created_epoch = int(parts[2])
+            except ValueError:
+                continue
+            if created_epoch > cutoff_epoch:
+                continue
+            logger.warning("Dropping orphaned Postgres test schema %s", schema_name)
+            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name)))
 
 
 @pytest.fixture(scope="session")
 def postgres_schema(worker_id: str) -> Iterator[str]:
     """Create a unique schema for this xdist worker, drop it on teardown."""
-    nonce = uuid.uuid4().hex[:8]
-    schema = f"gobby_test_{worker_id}_{nonce}"
+    created_epoch = int(time.time())
+    nonce = uuid.uuid4().hex[:6]
+    schema = f"gobby_test_{created_epoch}_{os.getpid()}_{worker_id}_{nonce}"
     url = os.environ["DATABASE_URL"]
+    _cleanup_orphaned_schemas(url)
     with psycopg.connect(url, autocommit=True) as conn:
-        conn.execute(f"CREATE SCHEMA {schema}")
+        conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
     try:
         yield schema
     finally:
         with psycopg.connect(url, autocommit=True) as conn:
-            conn.execute(f"DROP SCHEMA {schema} CASCADE")
+            exists = conn.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                (schema,),
+            ).fetchone()
+            if exists:
+                conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 
 
 def _reset_schema(url: str, schema: str) -> None:
@@ -744,7 +792,7 @@ class MigrationRunner:
                 txn.execute(statement)
 ```
 
-`_split_statements_respecting_dollar_quotes` tracks `$func$`, `$$`, and simple single-quote contexts so function/trigger bodies stay as one statement.
+`_split_statements_respecting_dollar_quotes` must treat semicolons outside any active quote/comment boundary as the only split points. It needs unit tests for nested or adjacent dollar-quoted tags (for example `$outer$...$inner$...$outer$`), single-quoted strings containing `;` or `$`, line comments and block comments containing `$tag$` patterns, and mixed contexts where quote-looking text appears inside a dollar-quoted body. Do not use the splitter in production migration runs until those tests pass.
 
 Migration file layout:
 
@@ -834,10 +882,14 @@ WITH (key_field='id');
 -- Memories — stringified JSON tags via a generated column because BM25
 -- indexes want text, not JSONB, and we need tag content searchable
 ALTER TABLE memories
+ADD CONSTRAINT tags_is_array
+CHECK (tags IS NULL OR jsonb_typeof(tags) = 'array');
+
+ALTER TABLE memories
 ADD COLUMN tags_text TEXT
 GENERATED ALWAYS AS (
     COALESCE((SELECT string_agg(value, ' ')
-              FROM jsonb_array_elements_text(tags)), '')
+              FROM jsonb_array_elements_text(tags) AS value), '')
 ) STORED;
 
 CREATE INDEX memories_search_bm25 ON memories
@@ -859,6 +911,8 @@ CREATE INDEX skills_search_bm25 ON skills
 USING bm25 (id, name, description, content)
 WITH (key_field='id');
 ```
+
+The `tags_is_array` constraint keeps the generated column honest if `memories.tags` drifts later, and the `COALESCE(..., '')` is required so `tags_text` stays TEXT-compatible for NULL / empty tag sets.
 
 Queries use the `@@@` operator with pg_search's DSL:
 
@@ -953,9 +1007,15 @@ For each call site, document:
 2. Whether it reads database state — and if so, whether the reading session is the same as the writing session, a different session, or async.
 3. Whether it mutates external state (files, network, in-memory structures).
 
-Any callback that reads database state from a session other than the writing one is flagged as "requires explicit transaction boundary." Fix each such case by moving the affected read inside the originating transaction, or by forcing a fresh `BEGIN` on the reading session before the read.
+Any callback that reads database state from a session other than the writing one is flagged as "requires explicit transaction boundary." Phase 4.7 does not stop at reporting: fix each such case by moving the affected read inside the originating transaction, by forcing a fresh `BEGIN` on the reading session before the read, or by moving the logic into a post-snapshot-safe transaction. Audit every `savepoint()` / `conn.in_transaction` usage that assumes SQLite semantics and remediate the broken code paths in the same phase.
 
-Deliverable: a short report committed under `docs/postgres-callback-audit.md`. Referenced from the cutover runbook (6.1) so oncall knows what to watch for during the validation window.
+Deliverables:
+
+- a short report committed under `docs/postgres-callback-audit.md`, referenced from the cutover runbook (6.1)
+- remediation changes for every high-risk callback / transaction-boundary bug found by the audit
+- integration tests that open separate sessions under PostgreSQL MVCC and verify after-commit callbacks do not observe or expose stale / partial state across sessions
+
+Cutover is blocked until the Phase 4.7 report shows no unresolved high-risk callbacks, no known broken `savepoint()` / `conn.in_transaction` usages remain, and all new MVCC integration tests pass.
 
 ## Phase 5: One-shot SQLite → PostgreSQL migration tool
 
@@ -1043,6 +1103,8 @@ The table list is discovered dynamically from Postgres identity/sequence metadat
 
 Target: `docs/runbooks/postgres-cutover.md` (new)
 
+> Warning: once `gobby postgres activate` runs, Postgres becomes the live write target for the validation window. If rollback is required, writes made in Postgres during that validation window are at risk and must be captured before deactivation.
+
 Step-by-step:
 
 1. Announce cutover, schedule window.
@@ -1051,16 +1113,20 @@ Step-by-step:
 4. `gobby postgres install` if not already installed.
 5. `gobby postgres migrate-from-sqlite --source ~/.gobby/gobby-hub.db --target $DATABASE_URL`.
 6. Verify the validation output exits 0 and writes the `migration_complete` marker row.
-7. `gobby postgres activate`.
-8. `gobby start`.
-9. Run the smoke suite: `gobby status`, `gobby sessions list`, `gobby tasks list`, `gobby memory search "foo"`, `gobby code search "bar"`. Each must return expected data within expected latency.
-10. Announce cutover complete; validation window starts (default 48h).
+7. Enable validation-window write capture on the Postgres target before activation. Use an append-only audit log or change-capture stream, and record the sink / artifact location in the cutover ticket. If that capture is not live, cutover is blocked.
+8. `gobby postgres activate`.
+9. `gobby start`.
+10. Run the smoke suite: `gobby status`, `gobby sessions list`, `gobby tasks list`, `gobby memory search "foo"`, `gobby code search "bar"`. Each must return expected data within expected latency.
+11. Announce cutover complete; the validation window starts now. The maximum validation window is 48h from `gobby postgres activate`, recorded as an explicit deadline in the cutover ticket. If unresolved blocking regressions remain at that 48h deadline, roll back instead of extending the window silently.
 
 Explicit watch-list for the validation window:
 
 - MVCC-driven callback regressions (see the Phase 4.7 audit report)
 - search result ordering drift on representative queries
 - latency regressions > 2× baseline on storage-bound endpoints
+- health of the append-only audit log / change-capture stream enabled in step 7
+
+Do not enter the validation window until the Phase 4.7 callback remediation gate is green.
 
 ### 6.2 Rollback runbook [category: docs] (depends: 6.1)
 
@@ -1071,13 +1137,14 @@ When to roll back: any validation-window regression that cannot be fixed forward
 Steps:
 
 1. `gobby stop`.
-2. `gobby postgres deactivate` (flips `hub_backend=sqlite`).
-3. The pre-cutover SQLite database is untouched; no restore needed if the rollback happens inside the validation window.
-4. `gobby start`.
-5. Export any Postgres-side writes made during the validation window for post-mortem analysis: `pg_dump` with a row-level `WHERE updated_at > <cutover_ts>` filter where tables support it.
-6. File a task to re-migrate after the blocking regression is fixed.
+2. Export all Postgres-side writes made during the validation window to a safe artifact before flipping `hub_backend` back. Use the append-only audit log / change-capture stream enabled in the cutover runbook (6.1) as the primary source, and supplement it with targeted `pg_dump` / SQL exports for tables that support `updated_at` filtering.
+3. `gobby postgres deactivate` (flips `hub_backend=sqlite`).
+4. The pre-cutover SQLite database is untouched; no restore needed if the rollback happens inside the validation window.
+5. `gobby start`.
+6. Attach the validation-window export artifact to the rollback / post-mortem task for forensic analysis and any later partial-merge work.
+7. File a task to re-migrate after the blocking regression is fixed.
 
-Explicit data-loss rule: writes made to Postgres during the validation window are lost on rollback. This is accepted given no external users. If the validation window closes without rollback, a later rollback requires a reverse migration (Postgres → SQLite) which is explicitly out of scope for this plan.
+Explicit data-loss rule: writes made to Postgres during the validation window are at risk on rollback and are not merged back into SQLite automatically. The export step above exists for forensic analysis and potential partial-merge tooling later, not for automatic recovery. If the validation window closes without rollback, a later rollback requires a reverse migration (Postgres → SQLite) which is explicitly out of scope for this plan.
 
 ## Phase 7: Remove SQLite runtime support
 

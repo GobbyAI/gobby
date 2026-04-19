@@ -140,18 +140,18 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                 code_indexer.storage.search_symbols_fts,
                 q,
                 scoped_project,
-                None,
-                None,
-                limit,
+                kind=None,
+                file_path=None,
+                limit=limit,
             )
             if not results:
                 results = await asyncio.to_thread(
                     code_indexer.storage.search_symbols_by_name,
                     q,
                     scoped_project,
-                    None,
-                    None,
-                    limit,
+                    kind=None,
+                    file_path=None,
+                    limit=limit,
                 )
             return {
                 "results": [
@@ -180,7 +180,12 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         code_indexer = getattr(server.services, "code_indexer", None)
         if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code indexer not available")
-        result = await code_indexer.clear_graph(_require_project_id(project_id))
+        scoped_project = _require_project_id(project_id)
+        try:
+            result = await code_indexer.clear_graph(scoped_project)
+        except Exception as e:
+            logger.exception(f"Failed to clear code graph for {scoped_project}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
         return cast(dict[str, Any], result)
@@ -193,7 +198,12 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         code_indexer = getattr(server.services, "code_indexer", None)
         if code_indexer is None:
             raise HTTPException(status_code=503, detail="Code indexer not available")
-        result = await code_indexer.rebuild_graph(_require_project_id(project_id), limit=limit)
+        scoped_project = _require_project_id(project_id)
+        try:
+            result = await code_indexer.rebuild_graph(scoped_project, limit=limit)
+        except Exception as e:
+            logger.exception(f"Failed to rebuild code graph for {scoped_project}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
         if not result.get("success", False):
             raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
         return cast(dict[str, Any], result)

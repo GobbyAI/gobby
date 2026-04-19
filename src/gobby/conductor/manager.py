@@ -58,6 +58,11 @@ class ConductorManager:
         config: ConductorConfig,
         execution_manager: LocalPipelineExecutionManager | None = None,
     ) -> None:
+        if config.provider != "claude":
+            raise RuntimeError(
+                f"Conductor provider '{config.provider}' is not supported. "
+                "Use provider='claude'."
+            )
         self._project_id = project_id
         self._project_path = project_path
         self._session_manager = session_manager

@@ -14,6 +14,8 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
+_VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR = 5
+_VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT = 200
 
 
 class Neo4jConnectionError(Exception):
@@ -472,26 +474,38 @@ class Neo4jClient:
         Returns:
             List of dicts with name, labels, score, and properties
         """
+        if limit <= 0:
+            return []
+
         _validate_cypher_identifier(index_name, "index name")
+        candidate_limit = min(
+            max(limit * _VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR, limit),
+            _VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT,
+        )
         cypher = (
-            f"CALL db.index.vector.queryNodes('{index_name}', $limit, $embedding) "
+            f"CALL db.index.vector.queryNodes('{index_name}', $candidate_limit, $embedding) "
             "YIELD node, score "
             "WHERE score >= $min_score "
-            "AND (node.project_id = $project_id OR ($project_id IS NULL AND node.project_id IS NULL)) "
             "RETURN node.entity_key AS entity_key, node.name AS name, "
             "node.entity_type AS entity_type, node.project_id AS project_id, "
             "labels(node) AS labels, score, "
             "properties(node) AS props"
         )
-        return await self.query(
+        rows = await self.query(
             cypher,
             {
                 "embedding": query_embedding,
-                "limit": limit,
+                "candidate_limit": candidate_limit,
                 "min_score": min_score,
-                "project_id": project_id,
             },
         )
+        filtered = [
+            row
+            for row in rows
+            if row.get("project_id") == project_id
+            if row.get("score", 0.0) >= min_score
+        ]
+        return filtered[:limit]
 
     async def execute_read(
         self, cypher: str, params: dict[str, Any] | None = None

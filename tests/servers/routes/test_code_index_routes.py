@@ -84,8 +84,20 @@ def test_search_falls_back_to_name_search(client: TestClient, mock_server: Magic
     data = response.json()
     assert data["results"][0]["id"] == "sym-1"
     assert data["results"][0]["type"] == "function"
-    mock_server.services.code_indexer.storage.search_symbols_fts.assert_called_once()
-    mock_server.services.code_indexer.storage.search_symbols_by_name.assert_called_once()
+    mock_server.services.code_indexer.storage.search_symbols_fts.assert_called_once_with(
+        "handler",
+        "proj-1",
+        kind=None,
+        file_path=None,
+        limit=25,
+    )
+    mock_server.services.code_indexer.storage.search_symbols_by_name.assert_called_once_with(
+        "handler",
+        "proj-1",
+        kind=None,
+        file_path=None,
+        limit=25,
+    )
 
 
 def test_blast_radius_validates_exclusive_target(client: TestClient) -> None:
@@ -112,3 +124,21 @@ def test_rebuild_graph_delegates(client: TestClient, mock_server: MagicMock) -> 
         "proj-1",
         limit=50,
     )
+
+
+def test_clear_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:
+    mock_server.services.code_indexer.clear_graph = AsyncMock(side_effect=RuntimeError("boom"))
+
+    response = client.post("/api/code-index/graph/clear", params={"project_id": "proj-1"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "boom"
+
+
+def test_rebuild_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:
+    mock_server.services.code_indexer.rebuild_graph = AsyncMock(side_effect=RuntimeError("boom"))
+
+    response = client.post("/api/code-index/graph/rebuild", params={"project_id": "proj-1"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "boom"

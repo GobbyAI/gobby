@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.code_index.models import ContentChunk, IndexedFile, IndexedProject, Symbol
+from gobby.code_index.models import CallRelation, ContentChunk, IndexedFile, IndexedProject, Symbol
 from gobby.code_index.storage import CodeIndexStorage
 
 pytestmark = pytest.mark.unit
@@ -109,6 +109,35 @@ def test_search_symbols_by_qualified_name(
     results = code_storage.search_symbols_by_name("Calculator.add", "proj-1")
     assert len(results) >= 1
     assert any(s.qualified_name == "Calculator.add" for s in results)
+
+
+def test_get_calls_for_file_round_trips_optional_fields_as_none(
+    code_storage: CodeIndexStorage,
+) -> None:
+    """Optional callee metadata should round-trip as None, not empty strings."""
+    calls = [
+        CallRelation(
+            caller_symbol_id="sym-1",
+            callee_name="missing_target",
+            file_path="src/app.py",
+            line=42,
+        )
+    ]
+
+    code_storage.upsert_calls("proj-1", "src/app.py", calls)
+
+    results = code_storage.get_calls_for_file("proj-1", "src/app.py")
+    assert results == [
+        {
+            "caller_symbol_id": "sym-1",
+            "callee_symbol_id": None,
+            "callee_name": "missing_target",
+            "callee_target_kind": "unresolved",
+            "callee_external_module": None,
+            "file_path": "src/app.py",
+            "line": 42,
+        }
+    ]
 
 
 def test_delete_symbols_for_file(

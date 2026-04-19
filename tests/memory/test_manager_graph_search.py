@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.memory.identity import entity_key
 from gobby.memory.manager import MemoryManager
 
 pytestmark = pytest.mark.unit
@@ -147,7 +148,7 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": "__global__::python",
+                    "entity_key": entity_key(None, "Python"),
                     "name": "Python",
                     "entity_type": "tool",
                     "labels": ["Tool"],
@@ -155,7 +156,7 @@ class TestSearchGraphForMemories:
                     "memory_ids": ["mem-1", "mem-2"],
                 },
                 {
-                    "entity_key": "__global__::fastapi",
+                    "entity_key": entity_key(None, "FastAPI"),
                     "name": "FastAPI",
                     "entity_type": "framework",
                     "labels": ["Framework"],
@@ -188,7 +189,7 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": "__global__::a",
+                    "entity_key": entity_key(None, "A"),
                     "name": "A",
                     "entity_type": "entity",
                     "labels": [],
@@ -254,7 +255,7 @@ class TestSearchMemoriesGraphIntegration:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": "__global__::a",
+                    "entity_key": entity_key(None, "A"),
                     "name": "A",
                     "entity_type": "entity",
                     "labels": [],

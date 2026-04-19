@@ -260,14 +260,16 @@ def _validate_embeddings_dim(
     if expected_dim is None or not embeddings:
         return
 
-    actual_dim = len(embeddings[0])
-    if actual_dim == expected_dim:
-        return
+    for index, vector in enumerate(embeddings):
+        actual_dim = len(vector)
+        if actual_dim == expected_dim:
+            continue
 
-    raise RuntimeError(
-        "Embedding dimension mismatch: "
-        f"model={model}, api_base={api_base}, expected_dim={expected_dim}, actual_dim={actual_dim}"
-    )
+        raise RuntimeError(
+            "Embedding dimension mismatch: "
+            f"model={model}, api_base={api_base}, expected_dim={expected_dim}, "
+            f"index={index}, actual_dim={actual_dim}"
+        )
 
 
 async def _fetch_embeddings(

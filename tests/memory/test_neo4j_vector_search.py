@@ -117,6 +117,52 @@ class TestVectorSearch:
 
         assert results == []
 
+    async def test_filters_project_scoped_results_after_overfetch(self, client: Neo4jClient) -> None:
+        """vector_search should overfetch candidates, then trim after project filtering."""
+        client.query = AsyncMock(
+            return_value=[
+                {
+                    "entity_key": "other",
+                    "name": "Other",
+                    "entity_type": "tool",
+                    "project_id": "proj-2",
+                    "labels": ["_Entity"],
+                    "score": 0.99,
+                    "props": {},
+                },
+                {
+                    "entity_key": "wanted-1",
+                    "name": "Python",
+                    "entity_type": "tool",
+                    "project_id": "proj-1",
+                    "labels": ["_Entity"],
+                    "score": 0.95,
+                    "props": {},
+                },
+                {
+                    "entity_key": "wanted-2",
+                    "name": "FastAPI",
+                    "entity_type": "framework",
+                    "project_id": "proj-1",
+                    "labels": ["_Entity"],
+                    "score": 0.91,
+                    "props": {},
+                },
+            ]
+        )
+
+        results = await client.vector_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            limit=1,
+            min_score=0.5,
+            project_id="proj-1",
+        )
+
+        assert [row["entity_key"] for row in results] == ["wanted-1"]
+        client.query.assert_awaited_once()
+        _, params = client.query.await_args.args
+        assert params["candidate_limit"] > 1
+
     async def test_validates_index_name(self, client: Neo4jClient) -> None:
         """vector_search rejects invalid index names."""
         with pytest.raises(ValueError, match="Invalid Cypher"):

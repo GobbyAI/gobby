@@ -480,21 +480,21 @@ class TestEntityGraph:
 
 
 # =============================================================================
-# GET /memories/graph/entities/{name}/neighbors
+# GET /memories/graph/entities/{entity_key}/neighbors
 # =============================================================================
 
 
 class TestEntityNeighbors:
-    """Test GET /memories/graph/entities/{name}/neighbors endpoint."""
+    """Test GET /memories/graph/entities/{entity_key}/neighbors endpoint."""
 
     def test_neighbors_no_neo4j(self, client, mock_server) -> None:
-        """GET /memories/graph/entities/{name}/neighbors returns 404 when no Neo4j."""
+        """GET /memories/graph/entities/{entity_key}/neighbors returns 404 when no Neo4j."""
         mock_server.memory_manager._neo4j_client = None
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 404
 
     def test_neighbors_success(self, client, mock_server) -> None:
-        """GET /memories/graph/entities/{name}/neighbors returns neighbors."""
+        """GET /memories/graph/entities/{entity_key}/neighbors returns neighbors."""
         mock_server.memory_manager._neo4j_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(
             return_value={"entities": [], "relationships": []}
@@ -504,14 +504,14 @@ class TestEntityNeighbors:
         assert "entities" in response.json()
 
     def test_neighbors_unreachable(self, client, mock_server) -> None:
-        """GET /memories/graph/entities/{name}/neighbors returns 502 when unreachable."""
+        """GET /memories/graph/entities/{entity_key}/neighbors returns 502 when unreachable."""
         mock_server.memory_manager._neo4j_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(return_value=None)
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 502
 
     def test_neighbors_server_error(self, client, mock_server) -> None:
-        """GET /memories/graph/entities/{name}/neighbors returns 500 on error."""
+        """GET /memories/graph/entities/{entity_key}/neighbors returns 500 on error."""
         mock_server.memory_manager._neo4j_client = MagicMock()
         mock_server.memory_manager.get_entity_neighbors = AsyncMock(
             side_effect=RuntimeError("Neo4j error")

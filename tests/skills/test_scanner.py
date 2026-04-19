@@ -155,11 +155,11 @@ class TestFindingExtraction:
     ) -> None:
         skill_scanner._rule_categories.cache_clear()
         monkeypatch.setattr("clawcare.scanner.rules.list_builtin_rulesets", lambda: [])
-
-        with pytest.raises(RuntimeError, match="ruleset_dir="):
-            skill_scanner._rule_categories()
-
-        skill_scanner._rule_categories.cache_clear()
+        try:
+            with pytest.raises(RuntimeError, match="ruleset_dir="):
+                skill_scanner._rule_categories()
+        finally:
+            skill_scanner._rule_categories.cache_clear()
 
 
 class TestMultipleFindings:

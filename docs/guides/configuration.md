@@ -480,6 +480,22 @@ conductor:
   skip_if_busy: true
 ```
 
+Migration note for `v0.3.x` -> `v0.4.0`:
+
+- Removed keys: `daily_budget_usd`, `warning_threshold`, `throttle_threshold`, `tracking_window_days`.
+- Legacy behavior: the current config model ignores unknown conductor keys, so those old values are not auto-migrated and do not affect runtime behavior in `v0.4.0`.
+- Recommended migration: manually remove the old keys from your config before restarting on `v0.4.0`. There is no dedicated migration command or script for this change.
+- Current conductor keys:
+
+```yaml
+conductor:
+  enabled: true
+  model: haiku
+  tick_interval_seconds: 120
+  idle_timeout_seconds: 300
+  skip_if_busy: true
+```
+
 ### Hook Extensions
 
 #### WebSocket Broadcasting

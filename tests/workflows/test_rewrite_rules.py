@@ -613,3 +613,62 @@ class TestCompressBashOutputBundledRule:
         assert response.modified_input is not None
         assert "gsqz" in response.modified_input["command"]
         assert "echo ok" in response.modified_input["command"]
+
+
+class TestPermissionResponseEffects:
+    """set_permission_response and set_retry should preserve explicit empty/false values."""
+
+    @pytest.mark.asyncio
+    async def test_permission_response_keeps_empty_payloads(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "permission-clear",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="set_permission_response",
+                        permission_decision="allow",
+                        input_updates={},
+                        updated_permissions=[],
+                    )
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
+            session_id="sess-1",
+            variables={},
+        )
+
+        assert response.decision == "allow"
+        assert response.permission_decision == "allow"
+        assert response.modified_input == {}
+        assert response.updated_permissions == []
+
+    @pytest.mark.asyncio
+    async def test_set_retry_preserves_explicit_false(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "no-retry",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_retry", retry=False)],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
+            session_id="sess-1",
+            variables={},
+        )
+
+        assert response.decision == "allow"
+        assert response.retry is False

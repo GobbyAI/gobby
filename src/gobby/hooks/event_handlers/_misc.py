@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+from gobby.app_context import get_app_context
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.mcp_proxy.tools.worktrees._helpers import (
@@ -10,6 +12,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -90,6 +93,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 if usage:
                     input_tokens = usage.get("promptTokenCount", 0)
                     output_tokens = usage.get("candidatesTokenCount", 0)
+                    cache_read_tokens = usage.get("cachedContentTokenCount", 0)
                     # total_tokens = usage.get("totalTokenCount", 0)
 
                     # Update session usage in DB
@@ -99,12 +103,36 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
                             cache_creation_tokens=0,  # Gemini doesn't always split these here
-                            cache_read_tokens=0,
+                            cache_read_tokens=cache_read_tokens,
                             model=model_name,
                         )
                         self.logger.debug(
                             f"Updated Gemini session usage: {input_tokens} in, {output_tokens} out"
                         )
+                        refreshed = self._session_storage.get(session_id)
+                        app_ctx = get_app_context()
+                        ws_server = app_ctx.websocket_server if app_ctx is not None else None
+                        if refreshed is not None and ws_server is not None:
+                            payload = build_session_usage_payload(
+                                session_id=session_id,
+                                project_id=refreshed.project_id,
+                                model=model_name if isinstance(model_name, str) else refreshed.model,
+                                context_window=refreshed.context_window,
+                                totals={
+                                    "input_tokens": int(input_tokens or 0),
+                                    "output_tokens": int(output_tokens or 0),
+                                    "cache_creation_tokens": 0,
+                                    "cache_read_tokens": int(cache_read_tokens or 0),
+                                },
+                            )
+                            try:
+                                loop = asyncio.get_running_loop()
+                                loop.create_task(ws_server.broadcast_session_usage_updated(payload))
+                            except RuntimeError:
+                                self.logger.debug(
+                                    "No running event loop for Gemini usage broadcast",
+                                    exc_info=True,
+                                )
                     except Exception as e:
                         self.logger.warning(f"Failed to update Gemini session usage: {e}")
         else:
@@ -189,10 +217,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
             if existing:
                 self._worktree_manager.delete(existing.id)
 
-        base_branch = "main"
         current_branch = git_manager.get_current_branch()
-        if current_branch and current_branch != "main":
-            base_branch = current_branch
+        base_branch = current_branch or git_manager.get_default_branch()
 
         use_local = False
         try:
@@ -251,9 +277,12 @@ class MiscEventHandlerMixin(EventHandlersBase):
             result = git_manager.delete_worktree(worktree_path=worktree_path, force=True)
             if not result.success:
                 self.logger.warning(f"WORKTREE_REMOVE failed: {result.message}")
+            git_delete_succeeded = result.success
         except Exception as e:
             self.logger.warning(f"WORKTREE_REMOVE cleanup failed: {e}")
+            git_delete_succeeded = False
 
+        record_cleanup_succeeded = True
         if self._worktree_manager:
             try:
                 existing = self._worktree_manager.get_by_path(worktree_path)
@@ -261,8 +290,10 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     self._worktree_manager.delete(existing.id)
             except Exception as e:
                 self.logger.warning(f"WORKTREE_REMOVE record cleanup failed: {e}")
+                record_cleanup_succeeded = False
 
-        self.logger.info(f"WORKTREE_REMOVE removed {worktree_path}")
+        if git_delete_succeeded and record_cleanup_succeeded:
+            self.logger.info(f"WORKTREE_REMOVE removed {worktree_path}")
         return HookResponse(decision="allow")
 
     def handle_elicitation(self, event: HookEvent) -> HookResponse:

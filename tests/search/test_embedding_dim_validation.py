@@ -167,3 +167,16 @@ async def test_expected_dim_none_preserves_back_compat() -> None:
         result = await generate_embedding("hello", model="test-model")
 
     assert len(result) == 768
+
+
+def test_validate_embeddings_dim_checks_every_vector() -> None:
+    """Mixed-dimension batches should fail at the first offending vector."""
+    with pytest.raises(RuntimeError, match="index=1") as exc_info:
+        embeddings_mod._validate_embeddings_dim(
+            [[0.1, 0.2], [0.3]],
+            expected_dim=2,
+            model="test-model",
+            api_base="http://localhost:1234/v1",
+        )
+
+    assert "actual_dim=1" in str(exc_info.value)

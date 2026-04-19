@@ -12,7 +12,10 @@ import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.storage.database import LocalDatabase
 
 from gobby.cli.installers.hook_commands import is_gobby_hook_command
 from gobby.config.bootstrap import load_bootstrap
@@ -337,7 +340,7 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
-def _detect_openai(db: Any | None = None) -> str | None:
+def _detect_openai(db: LocalDatabase | None = None) -> str | None:
     """Detect OpenAI embeddings from stored or environment credentials."""
     if db is not None:
         try:
@@ -351,7 +354,7 @@ def _detect_openai(db: Any | None = None) -> str | None:
     return "openai" if os.environ.get("OPENAI_API_KEY") else None
 
 
-def _infer_from_env_or_none(dim: Any, db: Any | None = None) -> str | None:
+def _infer_from_env_or_none(dim: Any, db: LocalDatabase | None = None) -> str | None:
     """Return the env-backed OpenAI provider, or explicit disabled state, or None."""
     if dim == 0:
         return "none"

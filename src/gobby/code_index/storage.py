@@ -518,10 +518,10 @@ class CodeIndexStorage:
         return [
             {
                 "caller_symbol_id": r["caller_symbol_id"],
-                "callee_symbol_id": r["callee_symbol_id"],
+                "callee_symbol_id": r["callee_symbol_id"] or None,
                 "callee_name": r["callee_name"],
                 "callee_target_kind": r["callee_target_kind"],
-                "callee_external_module": r["callee_external_module"],
+                "callee_external_module": r["callee_external_module"] or None,
                 "file_path": r["file_path"],
                 "line": r["line"],
             }

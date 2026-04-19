@@ -94,7 +94,9 @@ function agentDefToYaml(d: AgentDefInfo['definition']): string {
   obj.provider = d.provider
   if (d.model) obj.model = d.model
   if (d.reasoning_effort) obj.reasoning_effort = d.reasoning_effort
-  if (d.reasoning_required) obj.reasoning_required = d.reasoning_required
+  if (d.reasoning_required !== undefined && d.reasoning_required !== null) {
+    obj.reasoning_required = d.reasoning_required
+  }
   if (d.fallback_agent) obj.fallback_agent = d.fallback_agent
   obj.mode = d.mode
   if (d.isolation) obj.isolation = d.isolation
@@ -548,7 +550,9 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     if (d.instructions) body.instructions = d.instructions
     if (d.model) body.model = d.model
     if (d.reasoning_effort) body.reasoning_effort = d.reasoning_effort
-    if (d.reasoning_required) body.reasoning_required = d.reasoning_required
+    if (d.reasoning_required !== undefined && d.reasoning_required !== null) {
+      body.reasoning_required = d.reasoning_required
+    }
     if (d.fallback_agent) body.fallback_agent = d.fallback_agent
     if (d.isolation) body.isolation = d.isolation
     if (d.workflows) body.workflows = d.workflows

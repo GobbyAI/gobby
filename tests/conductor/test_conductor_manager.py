@@ -122,9 +122,17 @@ async def test_handle_tick_no_skip_when_disabled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_tick_rejects_non_claude_provider() -> None:
-    """Conductor config exposes provider for consistency, but only Claude is supported today."""
-    manager, _ = _make_manager(ConductorConfig(enabled=True, provider="codex", model="gpt-5"))
+async def test_init_rejects_non_claude_provider() -> None:
+    """Conductor should fail fast instead of waiting for the first tick."""
+    with pytest.raises(RuntimeError, match="provider 'codex' is not supported"):
+        _make_manager(ConductorConfig(enabled=True, provider="codex", model="gpt-5"))
+
+
+@pytest.mark.asyncio
+async def test_handle_tick_still_rejects_non_claude_provider_after_init() -> None:
+    """The tick path keeps the defensive provider guard in place."""
+    manager, _ = _make_manager()
+    manager._config.provider = "codex"
 
     job = MagicMock()
     result = await manager(job)

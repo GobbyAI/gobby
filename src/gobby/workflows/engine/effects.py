@@ -188,13 +188,13 @@ class EffectsMixin:
             permission_meta = variables.setdefault("_permission_response", {})
             if effect.permission_decision:
                 permission_meta["permission_decision"] = effect.permission_decision
-            if effect.input_updates:
+            if effect.input_updates is not None:
                 permission_meta["input_updates"] = self._render_nested_value(
                     effect.input_updates,
                     ctx,
                     allowed_funcs,
                 )
-            if effect.updated_permissions:
+            if effect.updated_permissions is not None:
                 permission_meta["updated_permissions"] = self._render_nested_value(
                     effect.updated_permissions,
                     ctx,
@@ -202,7 +202,7 @@ class EffectsMixin:
                 )
 
         elif effect.type == "set_retry":
-            variables["_retry"] = True if effect.retry is False else effect.retry
+            variables["_retry"] = effect.retry if effect.retry is not None else True
 
         elif effect.type == "set_watch_paths":
             if effect.watch_paths is not None:

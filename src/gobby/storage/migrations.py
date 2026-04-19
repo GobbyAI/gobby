@@ -699,20 +699,33 @@ def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
 
     conn = db.connection
     conn.execute("PRAGMA foreign_keys=OFF")
-    conn.executescript("""
-        ALTER TABLE code_calls RENAME TO code_calls_legacy;
+    try:
+        conn.executescript("""
+            ALTER TABLE code_calls RENAME TO code_calls_legacy;
 
-        CREATE TABLE code_calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL,
-            caller_symbol_id TEXT NOT NULL,
-            callee_symbol_id TEXT NOT NULL DEFAULT '',
-            callee_name TEXT NOT NULL,
-            callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
-            callee_external_module TEXT NOT NULL DEFAULT '',
-            file_path TEXT NOT NULL,
-            line INTEGER NOT NULL DEFAULT 0,
-            UNIQUE(
+            CREATE TABLE code_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                caller_symbol_id TEXT NOT NULL,
+                callee_symbol_id TEXT NOT NULL DEFAULT '',
+                callee_name TEXT NOT NULL,
+                callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+                callee_external_module TEXT NOT NULL DEFAULT '',
+                file_path TEXT NOT NULL,
+                line INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(
+                    project_id,
+                    caller_symbol_id,
+                    callee_symbol_id,
+                    callee_name,
+                    callee_target_kind,
+                    callee_external_module,
+                    file_path,
+                    line
+                )
+            );
+
+            INSERT INTO code_calls (
                 project_id,
                 caller_symbol_id,
                 callee_symbol_id,
@@ -722,36 +735,25 @@ def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
                 file_path,
                 line
             )
-        );
+            SELECT
+                project_id,
+                caller_symbol_id,
+                '',
+                callee_name,
+                'unresolved',
+                '',
+                file_path,
+                line
+            FROM code_calls_legacy;
 
-        INSERT INTO code_calls (
-            project_id,
-            caller_symbol_id,
-            callee_symbol_id,
-            callee_name,
-            callee_target_kind,
-            callee_external_module,
-            file_path,
-            line
-        )
-        SELECT
-            project_id,
-            caller_symbol_id,
-            '',
-            callee_name,
-            'unresolved',
-            '',
-            file_path,
-            line
-        FROM code_calls_legacy;
-
-        DROP TABLE code_calls_legacy;
-        CREATE INDEX idx_cc_file ON code_calls(project_id, file_path);
-        CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
-        CREATE INDEX idx_cc_target
-            ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
-    """)
-    conn.execute("PRAGMA foreign_keys=ON")
+            DROP TABLE code_calls_legacy;
+            CREATE INDEX idx_cc_file ON code_calls(project_id, file_path);
+            CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+            CREATE INDEX idx_cc_target
+                ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
+        """)
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
 
 
 # Migrations beyond v171.

@@ -1,6 +1,6 @@
-  # Neo4j Correctness Cutover Plan
+# Neo4j Correctness Cutover Plan
 
-  ## Summary
+## Summary
 
   Fix Neo4j as two derived projections, not source-of-truth storage:
 
@@ -11,7 +11,7 @@
   No backward compatibility for existing Neo4j contents is required. After the changes land, clear and rebuild both projections. Do not add long-lived
   compatibility branches or feature flags.
 
-  ## 1. Memory KG identity, constraints, and add_to_graph() contract
+## 1. Memory KG identity, constraints, and add_to_graph() contract
 
   Add src/gobby/memory/identity.py with explicit normalization and key generation.
 
@@ -60,7 +60,7 @@
 
   Neo4j writes and reads in src/gobby/memory/neo4j_client.py must MERGE and MATCH by entity_key, never by name.
 
-  ## 2. Memory KG lifecycle, routes, invalidation, and reconcile
+## 2. Memory KG lifecycle, routes, invalidation, and reconcile
 
   Update src/gobby/sessions/lifecycle.py:171 so graph_processed is set only for:
 
@@ -92,7 +92,7 @@
   - update reconcile logic to remain correct under the new identity model
   - orphan cleanup during reconcile should use the new scoped/entity-key-aware helpers
 
-  ## 3. Memory KG deletion and scoped orphan cleanup
+## 3. Memory KG deletion and scoped orphan cleanup
 
   Extend existing orphan cleanup instead of hand-waving a new behavior.
 
@@ -114,7 +114,7 @@
 
   Routine memory deletion should leave Neo4j truthful without waiting for later reconcile runs.
 
-  ## 4. Memory KG UI
+## 4. Memory KG UI
 
   Update:
 
@@ -130,7 +130,7 @@
   - fetch neighbors by entity_key
   - keep name as display text only
 
-  ## 5. Code graph: target model and relationship coverage
+## 5. Code graph: target model and relationship coverage
 
   The concrete bug to remove is:
 
@@ -170,7 +170,7 @@
   - make graph writes raise on failure
   - only set graph_synced=1 after the full sync succeeds
 
-  ## 6. gcode coordinated cutover
+## 6. gcode coordinated cutover
 
   Update ~/Projects/gobby-cli/crates/gcode/src/neo4j.rs so:
 
@@ -193,7 +193,7 @@
 
   No compatibility layer and no dual-read rollout.
 
-  ## 7. Code graph UI
+## 7. Code graph UI
 
   Keep the existing nodes / links shape if possible.
 
@@ -204,7 +204,7 @@
 
   Only add minimal node metadata if needed to render unresolved/external node kinds intentionally.
 
-  ## 8. Config cleanup
+## 8. Config cleanup
 
   Remove legacy fallbacks in src/gobby/memory/manager.py for:
 
@@ -220,7 +220,7 @@
 
   If missing from the canonical config model, add them in the same change. Update fixtures and tests to stop patching legacy attrs.
 
-  ## 9. Operator surfaces and persistent failure signal
+## 9. Operator surfaces and persistent failure signal
 
   These are required work.
 
@@ -238,7 +238,7 @@
   - goal is to distinguish “attempted and failed” from “not yet attempted”
   - do not expand this into a larger telemetry project
 
-  ## 10. Implementation order
+## 10. Implementation order
 
   1. Add src/gobby/memory/identity.py and unit tests
   2. Add KG Neo4j constraints/indexes
@@ -259,7 +259,7 @@
   17. Remove legacy Neo4j config fallbacks and update tests
   18. Clear and rebuild Neo4j projections for cutover validation
 
-  ## 11. Test plan
+## 11. Test plan
 
   - Memory KG identity:
       - same normalized name in same project -> same entity_key
@@ -299,7 +299,7 @@
       - only canonical databases.neo4j.* knobs are used
       - no legacy neo4j_* access remains in MemoryManager
 
-  ## Assumptions
+## Assumptions
 
   - Existing Neo4j projection contents will be cleared and rebuilt
   - gobby-cli only needs coordinated changes for direct code-graph reads

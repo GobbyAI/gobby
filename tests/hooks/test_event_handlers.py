@@ -1679,7 +1679,7 @@ class TestToolHandlerEdgeCases:
             HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "Write",
-                "tool_input": {"file_path": str(repo_root / "src" / "regular.py")},
+                "tool_input": {"file_path": "src/regular.py"},
             },
             metadata={"_platform_session_id": "sess-123"},
         )
@@ -1717,7 +1717,7 @@ class TestToolHandlerEdgeCases:
             HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "Write",
-                "tool_input": {"file_path": str(Path("/tmp/outside/settings.json"))},
+                "tool_input": {"file_path": "../outside/settings.json"},
             },
             metadata={"_platform_session_id": "sess-123"},
         )
