@@ -50,6 +50,8 @@ class TestAdminRoutes:
 
         server.memory_manager = MagicMock()
         server.memory_manager.get_stats.return_value = {"total_count": 10}
+        server.memory_manager._vector_store = None
+        server.memory_manager._neo4j_client = None
 
         server._background_tasks = set()
 
@@ -98,6 +100,38 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+
+    @patch("gobby.servers.routes.admin._health.is_qdrant_healthy", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    @patch("gobby.servers.routes.admin._health.asyncio.to_thread")
+    def test_status_endpoint_uses_qdrant_service_health_when_url_configured(
+        self,
+        mock_to_thread,
+        mock_psutil,
+        mock_is_qdrant_healthy,
+        client,
+        mock_server,
+    ) -> None:
+        mock_process = MagicMock()
+        mock_process.memory_info.return_value = MagicMock(
+            rss=1024 * 1024 * 100, vms=1024 * 1024 * 200
+        )
+        mock_process.num_threads.return_value = 10
+        mock_psutil.Process.return_value = mock_process
+        mock_to_thread.return_value = 0.5
+        mock_is_qdrant_healthy.return_value = True
+
+        vector_store = MagicMock()
+        vector_store._client = None
+        vector_store._url = "http://localhost:6333"
+        mock_server.memory_manager._vector_store = vector_store
+
+        response = client.get("/api/admin/status")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["memory"]["qdrant"] == {"configured": True, "healthy": True}
+        mock_is_qdrant_healthy.assert_awaited_once_with("http://localhost:6333")
 
     @patch("gobby.servers.routes.admin._health.get_all_metrics")
     @patch("gobby.servers.routes.admin._health.generate_latest")

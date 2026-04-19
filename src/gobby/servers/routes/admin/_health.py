@@ -11,12 +11,27 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from gobby.cli.services import is_qdrant_healthy
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+
+def _get_qdrant_url(server: "HTTPServer", vector_store: Any | None) -> str | None:
+    """Resolve the configured Qdrant URL when available."""
+    store_url = getattr(vector_store, "_url", None)
+    if isinstance(store_url, str) and store_url:
+        return store_url
+
+    services = getattr(server, "services", None)
+    config = getattr(services, "config", None) if services is not None else None
+    databases = getattr(config, "databases", None) if config is not None else None
+    qdrant = getattr(databases, "qdrant", None) if databases is not None else None
+    config_url = getattr(qdrant, "url", None) if qdrant is not None else None
+    return config_url if isinstance(config_url, str) and config_url else None
 
 
 def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -201,9 +216,12 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             # Qdrant vector store status
             try:
                 vector_store = getattr(server.memory_manager, "_vector_store", None)
-                qdrant_configured = vector_store is not None
+                qdrant_url = _get_qdrant_url(server, vector_store)
+                qdrant_configured = vector_store is not None or qdrant_url is not None
                 qdrant_healthy = False
-                if vector_store is not None:
+                if qdrant_url:
+                    qdrant_healthy = await is_qdrant_healthy(qdrant_url)
+                elif vector_store is not None:
                     qdrant_client = getattr(vector_store, "_client", None)
                     if qdrant_client is not None:
                         try:
