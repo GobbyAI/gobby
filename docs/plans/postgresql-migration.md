@@ -2,47 +2,62 @@
 
 ## Summary
 
-Migrate Gobby's primary hub database from SQLite to PostgreSQL, but do **not**
-run PostgreSQL in the same OS container as Qdrant or Neo4j.
+Replace SQLite as Gobby's runtime hub database with PostgreSQL.
 
-The correct packaging is:
+Do not run PostgreSQL in the same OS container as Qdrant or Neo4j. The
+packaging model stays:
 
-- keep one unified `docker-compose.yml`
-- add PostgreSQL as a separate `postgres` service in that compose stack
-- continue running Qdrant and Neo4j as separate services
+- one unified `docker-compose.yml`
+- one separate `postgres` service
+- one separate `qdrant` service
+- one separate `neo4j` service
 
-This keeps the user-facing install model simple without turning the storage
-stack into an operational mess. A single multi-process container for Postgres,
-Qdrant, and Neo4j would be harder to test, upgrade, observe, and recover.
+Because this is an internal migration with no external users, do **not** build
+a long-lived dual-write rollout. That complexity solves the wrong problem.
 
-The migration itself should be a staged dual-write rollout:
+Use a cold migration instead:
 
-1. add a database abstraction that supports SQLite and PostgreSQL
-2. keep SQLite as primary while shadow-writing to PostgreSQL
-3. backfill existing data and validate parity
-4. cut reads and writes over to PostgreSQL
-5. remove SQLite-only hub storage paths after one stable release cycle
+1. add PostgreSQL service support and bootstrap-level database selection
+2. add a temporary storage compatibility layer to port runtime SQL
+3. build PostgreSQL schema and search parity
+4. migrate existing SQLite data into PostgreSQL with the daemon stopped
+5. cut runtime reads and writes over to PostgreSQL
+6. remove SQLite as a runtime backend after validation
+
+End state:
+
+- PostgreSQL is the only runtime hub database
+- fresh installs initialize PostgreSQL directly
+- SQLite remains only as migration input and a short-lived backup artifact
+- SQLite-specific runtime paths are removed
 
 ## Current Constraints in the Repo
 
 This is not a connection-string swap.
 
-- `src/gobby/storage/database.py` is a SQLite-specific adapter with
-  `sqlite3.Connection`, `sqlite3.Row`, savepoints, and SQLite transaction
-  semantics baked into the interface.
-- `src/gobby/storage/baseline_schema.sql` uses SQLite-specific features such as
-  `datetime('now')`, `AUTOINCREMENT`, partial indexes, and FTS5 virtual tables.
-- `src/gobby/storage/migrations.py` creates and maintains multiple FTS5-backed
-  indexes with triggers for tasks, memories, skills, and code index search.
-- Storage modules under `src/gobby/storage/` use raw SQL directly, so backend
-  compatibility has to be handled in the adapter and schema layers.
-- Memory reconciliation code currently treats the hub database as the source of
-  truth and explicitly names SQLite in comments and user-facing behavior.
+- `src/gobby/storage/database.py` exposes `sqlite3.Connection`,
+  `sqlite3.Row`, savepoints, and SQLite transaction semantics through
+  `DatabaseProtocol`.
+- `src/gobby/storage/baseline_schema.sql` and
+  `src/gobby/storage/migrations.py` depend on SQLite-only features such as
+  `datetime('now')`, `AUTOINCREMENT`, `PRAGMA`, `json_extract`, and FTS5
+  virtual tables and triggers.
+- storage modules under `src/gobby/storage/` use raw SQL directly, including
+  SQLite conflict syntax such as `INSERT OR IGNORE` and `INSERT OR REPLACE`.
+- some write paths depend on SQLite cursor behavior such as `lastrowid` for
+  integer primary keys.
+- bootstrap and startup still assume a filesystem SQLite database path:
+  `database_path` in config/bootstrap, `load_config()`, and `runner_init()`.
+- search currently assumes SQLite FTS5 for tasks, memories, skills, and code
+  index data.
+- comments and operational behavior still refer to SQLite as the hub source of
+  truth.
 
-Because of that, the migration has two separate tracks:
+Because of that, the work splits into three concrete tracks:
 
-1. operational packaging of PostgreSQL in the Docker-managed services stack
-2. architectural replacement of SQLite-specific hub storage semantics
+1. package PostgreSQL as a first-class local service
+2. port runtime storage semantics away from SQLite-specific behavior
+3. migrate existing hub data once, then remove SQLite from runtime
 
 ## Target Architecture
 
@@ -56,130 +71,204 @@ Add a `postgres` service to `src/gobby/data/docker-compose.services.yml` with:
 - `pg_isready` healthcheck
 - environment-backed defaults for database name, user, password, and port
 
-This should mirror the existing Qdrant and Neo4j installer model:
+This mirrors the current local service model used for Qdrant and Neo4j:
 
 - `gobby postgres install`
 - `gobby postgres status`
 - `gobby postgres uninstall`
 
-Qdrant and Neo4j stay exactly as they are: supporting stores managed in the
-same compose project, not merged into PostgreSQL and not merged into one
-container.
+Qdrant and Neo4j remain separate supporting stores in the same compose project.
 
-### Storage abstraction
+### Runtime database model
 
-Keep the current raw-SQL approach. Do not add SQLAlchemy or Alembic in this
-migration.
+PostgreSQL becomes the only runtime hub database.
 
-Instead, introduce a dialect-neutral hub database layer:
+SQLite is retained temporarily for:
 
-- `SQLiteDatabase`
-- `PostgresDatabase`
-- a widened `DatabaseProtocol` that exposes the current execution,
-  fetch, transaction, and after-commit behavior without leaking
-  `sqlite3.Connection` or `sqlite3.Row`
+- reading legacy hub data during migration
+- rollback during the short validation window immediately after cutover
 
-Compatibility rules:
+SQLite is **not** a permanent fallback backend after this work completes.
 
-- call sites should consume mapping-like rows rather than `sqlite3.Row`
-- storage code should continue using raw SQL, but SQL must be split by dialect
-  where syntax diverges
-- current behavior around nested transactions and after-commit callbacks must be
-  preserved across both backends
+### Bootstrap and configuration
 
-### Configuration
+Database backend selection must happen before DB-backed config is available.
 
-Add new config keys:
+Add bootstrap-level settings:
 
-- `database_url`: primary PostgreSQL DSN when PostgreSQL is the active hub DB
-- `database_shadow_url`: optional PostgreSQL DSN used only for shadow dual-write
+- `hub_backend`: `sqlite` or `postgres`
+- `database_url`: PostgreSQL DSN used when `hub_backend=postgres`
+- `database_path`: legacy SQLite path used when `hub_backend=sqlite` and during
+  one-shot import
 
-Keep `database_path` during migration as the SQLite fallback and rollback path.
 Selection rules:
 
-- if `database_url` is set, PostgreSQL is primary
-- otherwise `database_path` remains primary
-- if `database_shadow_url` is set, shadow dual-write is enabled
+- bootstrap decides which hub database to open
+- runtime startup must not infer the backend from DB-stored config
+- after cutover, normal startup uses `hub_backend=postgres`
+- after SQLite runtime removal, `database_path` remains only for import tooling
+
+Do **not** add `database_shadow_url`. There is no shadow-write phase in this
+plan.
+
+### Storage compatibility layer
+
+Keep raw SQL. Do not add SQLAlchemy or Alembic in this migration.
+
+Introduce a temporary backend-neutral hub database layer with two purposes:
+
+- port runtime call sites off direct `sqlite3` types
+- isolate SQL and behavior that differ between SQLite and PostgreSQL
+
+That layer is migration scaffolding, not a promise of permanent dual-backend
+support.
+
+Compatibility requirements:
+
+- row parsers consume `Mapping[str, Any]` instead of `sqlite3.Row`
+- storage managers stop depending on raw `sqlite3.Connection` and
+  `sqlite3.Cursor` types
+- generated-key behavior is explicit instead of relying on `lastrowid`
+- conflict behavior is explicit instead of relying on `INSERT OR IGNORE` or
+  `INSERT OR REPLACE`
+- nested transactions and after-commit callbacks preserve current semantics
+- SQL that differs by backend lives in one obvious place instead of being
+  scattered through managers
+
+### Search architecture
+
+Search must stop assuming SQLite FTS5 as a runtime primitive.
+
+PostgreSQL runtime search should use:
+
+- `to_tsvector('simple', ...)` indexes for keyword search
+- `tsquery` / `websearch_to_tsquery` query construction as appropriate
+- `pg_trgm` for permissive fuzzy matching where FTS5 behavior was loose
+
+Search should route through logical backends for:
+
+- task search
+- memory search
+- skill search
+- code index search
 
 ## Implementation Plan
 
-### Phase 1: PostgreSQL service support
+### Phase 1: PostgreSQL service and bootstrap support
 
 - Add `postgres` to the unified compose template.
 - Add installer, uninstaller, and health-check code parallel to the existing
-  Qdrant and Neo4j paths.
-- Add CLI commands for install, status, uninstall, migration, and cutover.
-- Persist PostgreSQL connection settings through the same config/bootstrap flow
-  used by the rest of the daemon.
+  Qdrant and Neo4j flows.
+- Extend bootstrap config and startup so the hub backend is selected before any
+  DB-backed config is read.
+- Update daemon service startup to include the `postgres` profile when the
+  bootstrap/runtime configuration enables PostgreSQL.
+- Add CLI commands for install, status, uninstall, migration, and activation.
 
-### Phase 2: backend-neutral hub database API
+This phase is mandatory before any storage work, because the current runtime
+still assumes a SQLite path during bootstrap.
 
-- Split the current `LocalDatabase` role into backend-specific implementations.
-- Widen `DatabaseProtocol` so storage modules depend on generic rows and
-  transactions rather than `sqlite3`.
-- Update row parsers in storage modules to accept `Mapping[str, Any]`.
-- Preserve the existing savepoint and after-commit semantics so workflow,
-  session, and task logic does not regress.
+### Phase 2: Temporary backend-neutral storage seam
 
-This phase is the prerequisite for dual-write. Without it, shadow PostgreSQL
-writes will become a pile of special cases.
+- Split the current `LocalDatabase` role into backend-specific implementations:
+  one temporary SQLite import/legacy implementation and one PostgreSQL runtime
+  implementation.
+- Narrow `DatabaseProtocol` so storage modules depend on backend-neutral rows,
+  execution helpers, and transaction scopes rather than `sqlite3`.
+- Move row parsers to `Mapping[str, Any]`.
+- Replace direct SQLite assumptions in managers:
+  - `sqlite3.Row`
+  - `sqlite3.Connection`
+  - `sqlite3.Cursor`
+  - `lastrowid`
+  - `INSERT OR IGNORE`
+  - `INSERT OR REPLACE`
+  - SQLite-specific date math and JSON expressions
+- Preserve nested transaction and after-commit behavior during the port.
 
-### Phase 3: PostgreSQL schema and search parity
+Do not let this phase become a permanent two-backend architecture. The SQLite
+implementation exists only to support migration and short-term rollback.
+
+### Phase 3: PostgreSQL schema and query parity
 
 - Add a PostgreSQL baseline schema and PostgreSQL migration registry alongside
-  the existing SQLite schema assets.
-- Convert SQLite schema concepts to PostgreSQL-native equivalents:
+  the current SQLite assets.
+- Convert schema concepts to PostgreSQL-native types:
   - `TEXT` timestamps -> `TIMESTAMPTZ`
-  - `INTEGER` booleans -> `BOOLEAN`
+  - integer booleans -> `BOOLEAN`
   - `BLOB` -> `BYTEA`
-  - JSON text blobs that are queried structurally -> `JSONB`
-- Replace SQLite FTS5 dependencies with PostgreSQL full-text search and fuzzy
-  matching support:
-  - `to_tsvector('simple', ...)` expression indexes for keyword search
-  - `pg_trgm` for fuzzy fallback where current search is permissive
+  - structured JSON text -> `JSONB`
+- Replace SQLite identity columns with PostgreSQL identity/sequence-backed
+  columns and define how inserts retrieve generated keys.
+- Replace SQLite conflict syntax with explicit PostgreSQL `ON CONFLICT` rules.
+- Replace SQLite date arithmetic with PostgreSQL interval-based expressions.
+- Replace `json_extract(...)` usage with PostgreSQL JSONB operators/functions.
+- Replace FTS5 tables and triggers with PostgreSQL search indexes and query
+  paths.
 
-The search layer should become logical rather than SQLite-specific:
+This phase should include a portability audit of runtime SQL, not just schema
+translation.
 
-- tasks search
-- memories search
-- skills search
-- code index search
-
-Each search feature should route through a backend-specific implementation
-instead of directly assuming FTS5 virtual tables and triggers.
-
-### Phase 4: data migration and dual-write
+### Phase 4: One-shot SQLite -> PostgreSQL migration
 
 - Add `gobby postgres migrate-from-sqlite`.
+- Run the migration with the daemon stopped.
 - Migration command behavior:
-  - open SQLite primary
-  - create PostgreSQL schema
+  - open the legacy SQLite hub database read-only
+  - create the PostgreSQL schema in a target database
   - bulk copy all tables in dependency-safe order
-  - validate row counts and representative checksums
-- Enable dual-write mode:
-  - reads stay on SQLite
-  - writes go to SQLite and PostgreSQL
-  - PostgreSQL failures must not corrupt or block primary SQLite writes
-  - parity mismatches must emit logs and metrics
+  - preserve existing primary keys, including integer identities
+  - reseed PostgreSQL sequences/identity values after import
+  - rebuild PostgreSQL search structures/indexes as needed
+  - validate row counts, foreign-key integrity, and targeted content hashes
 
-Update comments, endpoint descriptions, and operational docs that currently say
-"SQLite is the source of truth" so they instead refer to the hub database as
-the source of truth.
+Validation must be deterministic, not "looks close enough." At minimum:
 
-### Phase 5: cutover and rollback
+- row counts for every migrated table
+- foreign-key and uniqueness validation
+- representative record checks for sessions, tasks, memories, config, code
+  index, agents, metrics, and workflow data
+- sequence/identity reseed verification for tables with generated integer IDs
+
+Leave the SQLite file untouched after import so it can serve as rollback input
+during the short validation window.
+
+### Phase 5: Cold cutover to PostgreSQL runtime
 
 - Stop the daemon.
-- Run one final incremental SQLite -> PostgreSQL sync.
-- Set `database_url` to the PostgreSQL DSN and restart the daemon.
-- Keep the SQLite file untouched as rollback state.
+- Run the final migration into PostgreSQL.
+- switch bootstrap/runtime configuration to `hub_backend=postgres`
+- restart the daemon against PostgreSQL only
+- run smoke checks against the daemon and key storage surfaces
 
-Rollback rule:
+There is no shadow-write mode in this phase:
 
-- if cutover validation fails, remove `database_url`, disable dual-write, and
-  restart back on SQLite
+- reads come from PostgreSQL
+- writes go to PostgreSQL
+- startup should not open the SQLite hub database in normal operation
 
-Do not delete the SQLite database during the first PostgreSQL-backed release
-cycle.
+Rollback rule during the validation window:
+
+- stop the daemon
+- restore bootstrap/runtime configuration to `hub_backend=sqlite`
+- restart against the untouched SQLite database
+
+Rollback exists only as short-term migration safety, not as a permanent product
+feature.
+
+### Phase 6: Remove SQLite runtime support
+
+- Make fresh installs initialize PostgreSQL directly.
+- Remove SQLite from normal startup and runtime storage wiring.
+- Remove or isolate SQLite-specific migrations, FTS5 runtime code, and schema
+  assumptions that are no longer needed.
+- Keep only the minimum SQLite importer code required for one-time legacy
+  migrations, if any.
+- Update docs, comments, and user-facing text that still refer to SQLite as the
+  hub database.
+
+This phase is part of the migration, not optional cleanup. The goal is to stop
+carrying dead dual-backend complexity.
 
 ## CLI and Interface Changes
 
@@ -189,64 +278,79 @@ New CLI surface:
 - `gobby postgres status`
 - `gobby postgres uninstall`
 - `gobby postgres migrate-from-sqlite`
-- `gobby postgres cutover`
+- `gobby postgres activate`
 
-New config surface:
+Bootstrap/config changes:
 
-- `database_url`
-- `database_shadow_url`
+- add `hub_backend`
+- add `database_url`
+- keep `database_path` temporarily for SQLite import and rollback
+- remove any need for `database_shadow_url`
 
 Type and interface changes:
 
 - row parsers move from `sqlite3.Row` assumptions to mapping rows
-- the hub database contract becomes backend-neutral
+- the hub database contract stops exposing `sqlite3` types
 - search implementations stop depending directly on SQLite FTS5 tables
+- generated-key and conflict behavior become explicit in the storage layer
 
 ## Test Plan
 
 ### Unit tests
 
-- config precedence across `database_path`, `database_url`, and
-  `database_shadow_url`
+- bootstrap precedence and validation across `hub_backend`, `database_url`, and
+  `database_path`
 - PostgreSQL adapter execution, fetch, transaction, nested transaction, and
   after-commit behavior
 - row parsing compatibility with mapping-style rows
+- generated-key behavior for sequence/identity-backed tables
 - PostgreSQL search parity for tasks, memories, skills, and code index queries
+- SQL portability coverage for paths previously using SQLite-only syntax
 
-### Installer tests
+### Service/installer tests
 
 - compose template includes a `postgres` service, profile, volume, and
   healthcheck
-- install, uninstall, and status commands follow the same behavior pattern as
-  Qdrant and Neo4j
+- install, uninstall, status, and activate commands follow the same behavior
+  pattern as the other local services
 
 ### Migration tests
 
 - migrate a populated SQLite fixture database into PostgreSQL
 - verify row counts for every table
 - verify foreign-key integrity after import
+- verify sequence/identity reseeding after import
 - verify representative reads and writes for sessions, tasks, memories, config,
-  code index, and metrics
+  code index, metrics, agents, and workflows
 
-### Dual-write and cutover tests
+### Cutover tests
 
-- successful shadow writes
-- shadow-write failure does not break primary writes
-- mismatch detection emits observable diagnostics
-- end-to-end cutover from SQLite fixture -> PostgreSQL primary -> rollback path
+- end-to-end cold cutover from SQLite fixture to PostgreSQL primary
+- daemon boots and runs with PostgreSQL only after activation
+- startup does not require or open the SQLite runtime database after cutover
+- rollback to SQLite works during the short validation window
+
+### Cleanup tests
+
+- fresh installs initialize PostgreSQL without creating `~/.gobby/gobby-hub.db`
+- SQLite-only runtime code paths are no longer used after the migration is
+  complete
 
 ## Acceptance Criteria
 
 - PostgreSQL is installable as a first-class service in the existing Docker
   Compose stack.
-- The daemon can run against either SQLite or PostgreSQL through the same
-  storage contract.
-- The full hub database can be backfilled from SQLite into PostgreSQL.
-- Dual-write parity can be observed before cutover.
+- Bootstrap can select the hub database backend before DB-backed config is
+  loaded.
+- The daemon can boot and run against PostgreSQL without opening a SQLite
+  runtime database.
+- Existing SQLite hub data can be imported into PostgreSQL with validated
+  counts and integrity checks.
 - Search behavior remains available after replacing SQLite FTS5 assumptions with
   PostgreSQL search support.
-- Rollback to SQLite is possible without data loss during the initial
-  PostgreSQL rollout window.
+- Fresh installs initialize PostgreSQL directly.
+- SQLite remains available only as temporary migration input/backup during the
+  migration window, then is removed from runtime use.
 
 ## Assumptions
 
@@ -254,5 +358,9 @@ Type and interface changes:
 - PostgreSQL runs in the same compose project as Qdrant and Neo4j, but in a
   separate container.
 - Raw SQL remains the storage implementation style for this migration.
+- There are no external users, so a cold migration is preferable to dual-write
+  rollout complexity.
+- The compatibility layer introduced during the migration is temporary and will
+  be removed once PostgreSQL is the only runtime backend.
 - Qdrant and Neo4j remain supporting stores; they are not replaced by
   PostgreSQL as part of this work.
