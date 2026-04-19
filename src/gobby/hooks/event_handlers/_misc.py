@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.mcp_proxy.tools.worktrees._helpers import (
+    copy_project_json_to_worktree,
+    generate_worktree_path,
+    install_provider_hooks,
+    resolve_project_context,
+)
+from gobby.utils.project_context import get_workflow_project_path
+from gobby.worktrees.git import WorktreeGitManager
 
 
 class MiscEventHandlerMixin(EventHandlersBase):
@@ -153,13 +163,106 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_worktree_create(self, event: HookEvent) -> HookResponse:
-        """Handle WORKTREE_CREATE event (Claude Code only)."""
-        self._log_observe_only_event("WORKTREE_CREATE", event)
-        return HookResponse(decision="allow")
+        """Handle WORKTREE_CREATE with a git-backed default implementation."""
+        worktree_name = event.data.get("name")
+        if not isinstance(worktree_name, str) or not worktree_name.strip():
+            self.logger.warning("WORKTREE_CREATE missing worktree name")
+            return HookResponse(decision="allow")
+
+        git_manager, project_id, error = resolve_project_context(
+            event.cwd,
+            None,
+            None,
+        )
+        if error or git_manager is None:
+            self.logger.warning(f"WORKTREE_CREATE project resolution failed: {error}")
+            return HookResponse(decision="allow")
+
+        if self._worktree_manager and project_id:
+            existing = self._worktree_manager.get_by_branch(project_id, worktree_name)
+            if existing and Path(existing.worktree_path).exists():
+                self.logger.info(
+                    f"WORKTREE_CREATE reusing existing worktree for '{worktree_name}': "
+                    f"{existing.worktree_path}"
+                )
+                return HookResponse(worktree_path=existing.worktree_path)
+            if existing:
+                self._worktree_manager.delete(existing.id)
+
+        base_branch = "main"
+        current_branch = git_manager.get_current_branch()
+        if current_branch and current_branch != "main":
+            base_branch = current_branch
+
+        use_local = False
+        try:
+            has_unpushed, _ = git_manager.has_unpushed_commits(base_branch)
+            use_local = has_unpushed
+        except Exception as e:
+            self.logger.debug(f"WORKTREE_CREATE unpushed-commit check failed: {e}")
+
+        worktree_path = generate_worktree_path(worktree_name, Path(git_manager.repo_path).name)
+        result = git_manager.create_worktree(
+            worktree_path=worktree_path,
+            branch_name=worktree_name,
+            base_branch=base_branch,
+            create_branch=True,
+            use_local=use_local,
+        )
+        if not result.success:
+            self.logger.warning(f"WORKTREE_CREATE failed: {result.message}")
+            return HookResponse(decision="allow")
+
+        if self._worktree_manager and project_id:
+            try:
+                self._worktree_manager.create(
+                    project_id=project_id,
+                    branch_name=worktree_name,
+                    worktree_path=worktree_path,
+                    base_branch=base_branch,
+                )
+            except Exception as e:
+                self.logger.warning(f"WORKTREE_CREATE record creation failed: {e}")
+
+        try:
+            copy_project_json_to_worktree(git_manager.repo_path, worktree_path)
+            install_provider_hooks("claude", worktree_path)
+        except Exception as e:
+            self.logger.warning(f"WORKTREE_CREATE post-setup failed: {e}")
+
+        self.logger.info(f"WORKTREE_CREATE created {worktree_path}")
+        return HookResponse(worktree_path=worktree_path)
 
     def handle_worktree_remove(self, event: HookEvent) -> HookResponse:
-        """Handle WORKTREE_REMOVE event (Claude Code only)."""
-        self._log_observe_only_event("WORKTREE_REMOVE", event)
+        """Handle WORKTREE_REMOVE with git-backed cleanup."""
+        worktree_path = event.data.get("worktree_path")
+        if not isinstance(worktree_path, str) or not worktree_path.strip():
+            self.logger.warning("WORKTREE_REMOVE missing worktree_path")
+            return HookResponse(decision="allow")
+
+        repo_path = get_workflow_project_path(Path(worktree_path))
+        if repo_path is None and event.cwd:
+            repo_path = get_workflow_project_path(Path(event.cwd))
+        if repo_path is None:
+            repo_path = Path(event.cwd or worktree_path)
+
+        try:
+            git_manager = WorktreeGitManager(repo_path)
+            result = git_manager.delete_worktree(worktree_path=worktree_path, force=True)
+            if not result.success:
+                self.logger.warning(f"WORKTREE_REMOVE failed: {result.message}")
+        except Exception as e:
+            self.logger.warning(f"WORKTREE_REMOVE cleanup failed: {e}")
+
+        if self._worktree_manager:
+            try:
+                existing = self._worktree_manager.get_by_path(worktree_path)
+                if existing:
+                    self._worktree_manager.delete(existing.id)
+            except Exception as e:
+                self.logger.warning(f"WORKTREE_REMOVE record cleanup failed: {e}")
+
+        self.logger.info(f"WORKTREE_REMOVE removed {worktree_path}")
         return HookResponse(decision="allow")
 
     def handle_elicitation(self, event: HookEvent) -> HookResponse:

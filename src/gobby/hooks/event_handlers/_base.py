@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.sessions import LocalSessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 
@@ -29,6 +30,7 @@ class EventHandlersBase:
     _session_task_manager: SessionTaskManager | None
     _message_processor: Any | None
     _task_manager: LocalTaskManager | None
+    _worktree_manager: LocalWorktreeManager | None
     _session_coordinator: SessionCoordinator | None
     _skill_manager: HookSkillManager | None
     _skills_config: SkillsConfig | None

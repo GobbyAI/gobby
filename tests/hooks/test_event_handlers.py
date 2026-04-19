@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -62,6 +63,7 @@ def mock_dependencies() -> dict[str, Any]:
         "session_storage": session_storage,
         "message_processor": MagicMock(),
         "task_manager": MagicMock(),
+        "worktree_manager": MagicMock(),
         "session_coordinator": MagicMock(),
         "logger": logging.getLogger("test"),
     }
@@ -1879,6 +1881,85 @@ class TestNotificationHandlerEdgeCases:
 
         assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
+
+
+class TestWorktreeHandlers:
+    """Test WORKTREE_CREATE and WORKTREE_REMOVE default behavior."""
+
+    def test_worktree_create_returns_created_path(self, mock_dependencies: dict) -> None:
+        mock_dependencies["worktree_manager"].get_by_branch.return_value = None
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE,
+            data={"name": "feature-auth"},
+            source="claude",
+        )
+
+        git_manager = MagicMock()
+        git_manager.repo_path = "/repo"
+        git_manager.get_current_branch.return_value = "main"
+        git_manager.has_unpushed_commits.return_value = (False, 0)
+        git_manager.create_worktree.return_value = MagicMock(success=True, message="ok")
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.generate_worktree_path",
+                return_value="/tmp/worktrees/feature-auth",
+            ),
+            patch("gobby.hooks.event_handlers._misc.copy_project_json_to_worktree"),
+            patch("gobby.hooks.event_handlers._misc.install_provider_hooks"),
+        ):
+            response = handlers.handle_worktree_create(event)
+
+        assert response.worktree_path == "/tmp/worktrees/feature-auth"
+        git_manager.create_worktree.assert_called_once_with(
+            worktree_path="/tmp/worktrees/feature-auth",
+            branch_name="feature-auth",
+            base_branch="main",
+            create_branch=True,
+            use_local=False,
+        )
+        mock_dependencies["worktree_manager"].create.assert_called_once_with(
+            project_id="proj-123",
+            branch_name="feature-auth",
+            worktree_path="/tmp/worktrees/feature-auth",
+            base_branch="main",
+        )
+
+    def test_worktree_remove_deletes_git_worktree_and_record(
+        self, mock_dependencies: dict
+    ) -> None:
+        mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(id="wt-123")
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_REMOVE,
+            data={"worktree_path": "/tmp/worktrees/feature-auth"},
+            source="claude",
+        )
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.get_workflow_project_path",
+                return_value=Path("/repo"),
+            ),
+            patch("gobby.hooks.event_handlers._misc.WorktreeGitManager") as mock_git_cls,
+        ):
+            mock_git_manager = mock_git_cls.return_value
+            mock_git_manager.delete_worktree.return_value = MagicMock(success=True, message="ok")
+            response = handlers.handle_worktree_remove(event)
+
+        assert response.decision == "allow"
+        mock_git_manager.delete_worktree.assert_called_once_with(
+            worktree_path="/tmp/worktrees/feature-auth",
+            force=True,
+        )
+        mock_dependencies["worktree_manager"].delete.assert_called_once_with("wt-123")
 
 
 class TestPermissionRequestEdgeCases:
