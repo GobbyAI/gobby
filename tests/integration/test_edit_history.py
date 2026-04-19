@@ -7,19 +7,26 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.integration
 
 
-def test_edit_history_flow(temp_db) -> None:
+def test_edit_history_flow(temp_db, tmp_path) -> None:
     """Test full flow: session -> claim task -> edit -> had_edits set."""
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    in_repo_file = repo_root / "src" / "edited.py"
+    in_repo_file.parent.mkdir(parents=True)
+
     # 1. Setup managers
     session_manager = LocalSessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
     project_manager = LocalProjectManager(temp_db)
+    session_var_manager = SessionVariableManager(temp_db)
 
     # Create project to satisfy FK
-    project = project_manager.create("test-project", "/tmp/repo")
+    project = project_manager.create("test-project", str(repo_root))
     project_id = project.id
 
     # EventHandlers needs session_storage and task_manager
@@ -55,7 +62,8 @@ def test_edit_history_flow(temp_db) -> None:
         session_id="test-session-1",
         source=SessionSource.GEMINI,
         timestamp=datetime.now(UTC),
-        data={"tool_name": edit_tool},
+        cwd=str(repo_root),
+        data={"tool_name": edit_tool, "tool_input": {"file_path": str(in_repo_file)}},
         metadata={"_platform_session_id": session.id},
     )
 
@@ -64,6 +72,7 @@ def test_edit_history_flow(temp_db) -> None:
     # 6. Verify had_edits is True
     session = session_manager.get(session.id)
     assert session.had_edits
+    assert session_var_manager.get_variables(session.id)["session_edited_files"] == ["src/edited.py"]
 
     # 7. Verify non-edit tool doesn't trigger it (if it was false)
     # Reset session for negative test
@@ -84,6 +93,52 @@ def test_edit_history_flow(temp_db) -> None:
 
     session = session_manager.get(session.id)
     assert not session.had_edits
+
+
+def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
+    """Test claimed out-of-repo edits do not set had_edits or session_edited_files."""
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    outside_file = tmp_path / "outside" / "settings.json"
+    outside_file.parent.mkdir(parents=True)
+
+    session_manager = LocalSessionManager(temp_db)
+    task_manager = LocalTaskManager(temp_db)
+    project_manager = LocalProjectManager(temp_db)
+    session_var_manager = SessionVariableManager(temp_db)
+
+    project = project_manager.create("test-project-outside", str(repo_root))
+    session = session_manager.register(
+        external_id="test-session-outside",
+        machine_id="test-machine",
+        source="gemini",
+        project_id=project.id,
+        title="Out-of-Repo Edit Session",
+    )
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Out-of-Repo Task",
+        created_in_session_id=session.id,
+    )
+    task_manager.claim_task(task.id, session.id)
+
+    handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)
+    edit_tool = list(EDIT_TOOLS)[0]
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id="test-session-outside",
+        source=SessionSource.GEMINI,
+        timestamp=datetime.now(UTC),
+        cwd=str(repo_root),
+        data={"tool_name": edit_tool, "tool_input": {"file_path": str(outside_file)}},
+        metadata={"_platform_session_id": session.id},
+    )
+
+    handlers.handle_after_tool(event)
+
+    session = session_manager.get(session.id)
+    assert not session.had_edits
+    assert "session_edited_files" not in session_var_manager.get_variables(session.id)
 
 
 def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:

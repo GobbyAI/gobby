@@ -1668,6 +1668,27 @@ class TestToolHandlerEdgeCases:
 
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
+    def test_after_tool_edit_marks_had_edits_for_in_repo_path(
+        self, mock_dependencies: dict
+    ) -> None:
+        """Test AFTER_TOOL marks had_edits when the edited path resolves inside cwd."""
+        repo_root = Path("/tmp/project")
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(repo_root / "src" / "regular.py")},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(repo_root)
+
+        handlers.handle_after_tool(event)
+
+        mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
+
     def test_after_tool_edit_skips_gobby_internal_files(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for .gobby/ internal files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
@@ -1682,6 +1703,25 @@ class TestToolHandlerEdgeCases:
             },
             metadata={"_platform_session_id": "sess-123"},
         )
+
+        handlers.handle_after_tool(event)
+
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+
+    def test_after_tool_edit_skips_out_of_repo_paths(self, mock_dependencies: dict) -> None:
+        """Test AFTER_TOOL does NOT mark had_edits for edits outside cwd."""
+        repo_root = Path("/tmp/project")
+        mock_dependencies["task_manager"].list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(Path("/tmp/outside/settings.json"))},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = str(repo_root)
 
         handlers.handle_after_tool(event)
 

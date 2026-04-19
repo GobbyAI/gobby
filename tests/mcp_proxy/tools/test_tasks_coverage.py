@@ -1657,6 +1657,62 @@ class TestCloseTaskTool:
             mock_task_manager.close_task.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_close_task_out_of_repo_succeeds_without_session_edits(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test out_of_repo reason succeeds when the session had no in-repo edits."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = None
+        mock_task.project_id = "proj-1"
+        mock_task.validation_criteria = None
+        mock_task.requires_user_review = False
+        mock_task.to_brief.return_value = {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "status": "closed",
+        }
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.close_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []
+
+        mock_session = MagicMock()
+        mock_session.had_edits = False
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.utils.git.run_git_command") as mock_git,
+            patch(
+                "gobby.utils.git.normalize_commit_sha",
+                side_effect=lambda sha, cwd=None: sha,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.LocalSessionManager"
+            ) as MockSessionManager,
+        ):
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+            mock_git.return_value = "abc123"
+
+            mock_session_instance = MagicMock()
+            mock_session_instance.get.return_value = mock_session
+            MockSessionManager.return_value = mock_session_instance
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "reason": "out_of_repo",
+                    "changes_summary": "test changes",
+                },
+            )
+
+            assert result == {"success": True}
+            mock_task_manager.close_task.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_close_task_clears_task_claimed_variables(
         self, mock_task_manager, mock_sync_manager
     ):

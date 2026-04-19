@@ -614,6 +614,7 @@ class CodexAdapter(BaseAdapter):
         """
         method = native_event.get("method", "")
         params = native_event.get("params", {})
+        event_cwd = params.get("cwd") if isinstance(params.get("cwd"), str) else None
 
         # Handle different event types
         if method == "thread/started":
@@ -713,6 +714,7 @@ class CodexAdapter(BaseAdapter):
                     source=self.source,
                     timestamp=datetime.now(UTC),
                     machine_id=self._get_machine_id(),
+                    cwd=event_cwd,
                     data=item_data,
                 )
 

@@ -28,6 +28,7 @@ from gobby.adapters.codex_impl.types import (
     CodexThread,
     CodexTurn,
 )
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
@@ -184,6 +185,7 @@ class TestCodexAppServerClientInit:
         assert client._process is None
         assert client.state == CodexConnectionState.DISCONNECTED
         assert client.is_connected is False
+        assert client._thread_cwds == {}
 
     def test_custom_command(self) -> None:
         """Initialize with custom codex command."""
@@ -580,6 +582,7 @@ class TestCodexAppServerClientThreadManagement:
         assert thread.id == "thr-new"
         assert thread.model_provider == "openai"
         assert "thr-new" in client._threads
+        assert client._thread_cwds["thr-new"] == "/project"
 
     @pytest.mark.asyncio
     async def test_resume_thread(self):
@@ -633,6 +636,7 @@ class TestCodexAppServerClientThreadManagement:
         """archive_thread sends request and removes from cache."""
         client = CodexAppServerClient()
         client._threads["thr-delete"] = CodexThread(id="thr-delete")
+        client._thread_cwds["thr-delete"] = "/project"
 
         with patch.object(
             client, "_send_request", new_callable=AsyncMock, return_value={}
@@ -642,6 +646,7 @@ class TestCodexAppServerClientThreadManagement:
             mock_send.assert_called_once_with("thread/archive", {"threadId": "thr-delete"})
 
         assert "thr-delete" not in client._threads
+        assert "thr-delete" not in client._thread_cwds
 
     @pytest.mark.asyncio
     async def test_list_models_follows_pagination(self) -> None:
@@ -1128,6 +1133,41 @@ class TestCodexAdapterTranslateToHookEvent:
             assert hook_event.event_type == HookEventType.AFTER_TOOL
             assert hook_event.data["item_type"] == item_type
 
+    def test_item_completed_file_change_uses_cached_cwd(self, tmp_path) -> None:
+        """Cached thread cwd should flow into synthetic AFTER_TOOL hook events."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        in_repo_file = repo_root / "src" / "main.py"
+        in_repo_file.parent.mkdir(parents=True)
+
+        client = CodexAppServerClient()
+        client._thread_cwds["thr-tool"] = str(repo_root)
+        params = client._enrich_notification(
+            "item/completed",
+            {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-file-1",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "fileChange": {
+                        "input": [{"path": str(in_repo_file), "content": "print('ok')"}]
+                    },
+                },
+            },
+        )
+
+        adapter = CodexAdapter()
+        hook_event = adapter.translate_to_hook_event(
+            {"method": "item/completed", "params": params}
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.AFTER_TOOL
+        assert hook_event.cwd == str(repo_root)
+        assert hook_event.data["tool_name"] == "Write"
+        assert hook_event.data["tool_input"]["file_path"] == str(in_repo_file)
+
     def test_item_completed_mcp_tool_uses_raw_completed_fields(self) -> None:
         """Tool-shaped item/completed payloads should preserve MCP tool identity."""
         adapter = CodexAdapter()
@@ -1160,6 +1200,88 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["mcp_server"] == "gobby"
         assert hook_event.data["mcp_tool"] == "get_tool_schema"
         assert hook_event.data["tool_output"] == {"success": True}
+
+    def test_item_completed_file_change_out_of_repo_does_not_mark_had_edits(
+        self, tmp_path
+    ) -> None:
+        """Synthetic Codex AFTER_TOOL edits outside cwd should not mark had_edits."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        outside_file = tmp_path / "outside" / "settings.json"
+        outside_file.parent.mkdir(parents=True)
+
+        client = CodexAppServerClient()
+        client._thread_cwds["thr-tool"] = str(repo_root)
+        params = client._enrich_notification(
+            "item/completed",
+            {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-file-2",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "fileChange": {
+                        "input": [{"path": str(outside_file), "content": '{"ok":true}'}]
+                    },
+                },
+            },
+        )
+
+        adapter = CodexAdapter()
+        hook_event = adapter.translate_to_hook_event(
+            {"method": "item/completed", "params": params}
+        )
+        assert hook_event is not None
+        hook_event.metadata["_platform_session_id"] = "sess-123"
+
+        session_storage = MagicMock()
+        task_manager = MagicMock()
+        task_manager.list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(session_storage=session_storage, task_manager=task_manager)
+
+        handlers.handle_after_tool(hook_event)
+
+        session_storage.mark_had_edits.assert_not_called()
+
+    def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path) -> None:
+        """Synthetic Codex AFTER_TOOL edits inside cwd should still mark had_edits."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        in_repo_file = repo_root / "src" / "main.py"
+        in_repo_file.parent.mkdir(parents=True)
+
+        client = CodexAppServerClient()
+        client._thread_cwds["thr-tool"] = str(repo_root)
+        params = client._enrich_notification(
+            "item/completed",
+            {
+                "threadId": "thr-tool",
+                "item": {
+                    "id": "item-file-3",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "fileChange": {
+                        "input": [{"path": str(in_repo_file), "content": "print('ok')"}]
+                    },
+                },
+            },
+        )
+
+        adapter = CodexAdapter()
+        hook_event = adapter.translate_to_hook_event(
+            {"method": "item/completed", "params": params}
+        )
+        assert hook_event is not None
+        hook_event.metadata["_platform_session_id"] = "sess-123"
+
+        session_storage = MagicMock()
+        task_manager = MagicMock()
+        task_manager.list_tasks.return_value = [MagicMock()]
+        handlers = EventHandlers(session_storage=session_storage, task_manager=task_manager)
+
+        handlers.handle_after_tool(hook_event)
+
+        session_storage.mark_had_edits.assert_called_once_with("sess-123")
 
     def test_item_completed_mcp_tool_derives_name_from_server_and_tool(self) -> None:
         """mcpToolCall completions without name should still normalize tool identity."""

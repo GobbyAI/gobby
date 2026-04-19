@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -257,8 +258,14 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         or tool_input.get("path")
                     )
                     is_internal = file_path and ".gobby/" in str(file_path)
+                    repo_relative_path = (
+                        self._resolve_repo_relative_edit_path(str(file_path), event.cwd)
+                        if file_path
+                        else None
+                    )
+                    in_repo_edit = not file_path or repo_relative_path is not None
 
-                    if not is_internal:
+                    if not is_internal and in_repo_edit:
                         # Track repo-relative file path in session variables
                         # (independent of task-claim gate — rules need this
                         # for per-session has_dirty_files scoping)
@@ -302,6 +309,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(decision="allow")
 
+    def _resolve_repo_relative_edit_path(self, file_path: str, cwd: str | None) -> str | None:
+        """Return a repo-relative edit path, or ``None`` when the edit escapes ``cwd``."""
+        if not cwd:
+            return os.path.normpath(file_path)
+
+        repo_root = Path(cwd).resolve(strict=False)
+        target_path = Path(file_path)
+        if not target_path.is_absolute():
+            target_path = repo_root / target_path
+
+        resolved_target = target_path.resolve(strict=False)
+        if not resolved_target.is_relative_to(repo_root):
+            return None
+
+        return os.path.normpath(os.fspath(resolved_target.relative_to(repo_root)))
+
     def _track_session_edited_file(self, session_id: str, file_path: str, cwd: str | None) -> None:
         """Record a repo-relative file path in session_edited_files variable.
 
@@ -309,13 +332,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
         preventing bleed across concurrent sessions sharing a working directory.
         """
         try:
-            if cwd:
-                rel_path = os.path.normpath(os.path.relpath(file_path, cwd))
-            else:
-                rel_path = os.path.normpath(file_path)
-
-            # Skip paths that escape the repo (e.g. /tmp files)
-            if rel_path.startswith(".."):
+            rel_path = self._resolve_repo_relative_edit_path(file_path, cwd)
+            if rel_path is None:
                 return
 
             from gobby.workflows.state_manager import SessionVariableManager
