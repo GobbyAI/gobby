@@ -35,7 +35,7 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 # Baseline version - the schema state that is applied for new databases directly.
 # Must be bumped when BASELINE_SCHEMA is updated with columns from new migrations,
 # so that fresh databases don't re-run migrations already baked into the baseline.
-BASELINE_VERSION = 214
+BASELINE_VERSION = 216
 
 # Minimum migration version - databases older than this cannot be upgraded
 # because legacy migrations (pre-v171) have been removed.
@@ -303,6 +303,15 @@ def _column_exists(db: LocalDatabase, table: str, column: str) -> bool:
     """Return True when the given table already has the target column."""
     row = db.fetchone(
         f"SELECT COUNT(*) as cnt FROM pragma_table_info('{table}') WHERE name = ?", (column,)
+    )
+    return bool(row and row["cnt"] > 0)
+
+
+def _table_exists(db: LocalDatabase, table: str) -> bool:
+    """Return True when the given table exists."""
+    row = db.fetchone(
+        "SELECT COUNT(*) as cnt FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
     )
     return bool(row and row["cnt"] > 0)
 
@@ -637,6 +646,111 @@ def _migrate_agent_run_reasoning_fields(db: LocalDatabase) -> None:
     for column, ddl in additions:
         if not _column_exists(db, "agent_runs", column):
             db.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
+
+
+def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
+    """Add code-graph attempt tracking and canonical call-target columns."""
+    _add_column_if_missing(
+        db,
+        "code_indexed_files",
+        "graph_sync_attempted_at TEXT",
+        "graph_sync_attempted_at",
+    )
+
+    if not _table_exists(db, "code_calls"):
+        db.connection.executescript("""
+            CREATE TABLE IF NOT EXISTS code_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                caller_symbol_id TEXT NOT NULL,
+                callee_symbol_id TEXT NOT NULL DEFAULT '',
+                callee_name TEXT NOT NULL,
+                callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+                callee_external_module TEXT NOT NULL DEFAULT '',
+                file_path TEXT NOT NULL,
+                line INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(
+                    project_id,
+                    caller_symbol_id,
+                    callee_symbol_id,
+                    callee_name,
+                    callee_target_kind,
+                    callee_external_module,
+                    file_path,
+                    line
+                )
+            );
+            CREATE INDEX IF NOT EXISTS idx_cc_file ON code_calls(project_id, file_path);
+            CREATE INDEX IF NOT EXISTS idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+            CREATE INDEX IF NOT EXISTS idx_cc_target
+                ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
+        """)
+        return
+
+    if _column_exists(db, "code_calls", "callee_target_kind"):
+        db.connection.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_cc_file ON code_calls(project_id, file_path);
+            CREATE INDEX IF NOT EXISTS idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+            CREATE INDEX IF NOT EXISTS idx_cc_target
+                ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
+        """)
+        return
+
+    conn = db.connection
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript("""
+        ALTER TABLE code_calls RENAME TO code_calls_legacy;
+
+        CREATE TABLE code_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            caller_symbol_id TEXT NOT NULL,
+            callee_symbol_id TEXT NOT NULL DEFAULT '',
+            callee_name TEXT NOT NULL,
+            callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+            callee_external_module TEXT NOT NULL DEFAULT '',
+            file_path TEXT NOT NULL,
+            line INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(
+                project_id,
+                caller_symbol_id,
+                callee_symbol_id,
+                callee_name,
+                callee_target_kind,
+                callee_external_module,
+                file_path,
+                line
+            )
+        );
+
+        INSERT INTO code_calls (
+            project_id,
+            caller_symbol_id,
+            callee_symbol_id,
+            callee_name,
+            callee_target_kind,
+            callee_external_module,
+            file_path,
+            line
+        )
+        SELECT
+            project_id,
+            caller_symbol_id,
+            '',
+            callee_name,
+            'unresolved',
+            '',
+            file_path,
+            line
+        FROM code_calls_legacy;
+
+        DROP TABLE code_calls_legacy;
+        CREATE INDEX idx_cc_file ON code_calls(project_id, file_path);
+        CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+        CREATE INDEX idx_cc_target
+            ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
+    """)
+    conn.execute("PRAGMA foreign_keys=ON")
 
 
 # Migrations beyond v171.
@@ -1172,6 +1286,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         215,
         "Persist requested and effective reasoning metadata on agent_runs",
         _migrate_agent_run_reasoning_fields,
+    ),
+    (
+        216,
+        "Canonicalize code-call targets and persist graph sync attempts",
+        _migrate_code_graph_target_schema,
     ),
 ]
 

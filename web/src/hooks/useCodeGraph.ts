@@ -123,11 +123,11 @@ export function useCodeGraph() {
 
   const fetchBlastRadius = useCallback(async (
     projectId: string,
-    opts: { symbolName?: string; filePath?: string; depth?: number }
+    opts: { symbolId?: string; filePath?: string; depth?: number }
   ): Promise<CodeGraphData | null> => {
     try {
       const params = new URLSearchParams({ project_id: projectId })
-      if (opts.symbolName) params.set('symbol_name', opts.symbolName)
+      if (opts.symbolId) params.set('symbol_id', opts.symbolId)
       if (opts.filePath) params.set('file_path', opts.filePath)
       if (opts.depth !== undefined && opts.depth !== null) params.set('depth', String(opts.depth))
       const res = await fetch(`${getBaseUrl()}/api/code-index/graph/blast-radius?${params}`)

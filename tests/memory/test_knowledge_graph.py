@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.memory.identity import entity_key
 from gobby.memory.neo4j_client import Neo4jConnectionError
 from gobby.memory.services.knowledge_graph import (
     Entity,
@@ -221,8 +222,8 @@ class TestAddToGraph:
 
         mock_neo4j.merge_relationship.assert_called_once()
         call_kwargs = mock_neo4j.merge_relationship.call_args.kwargs
-        assert call_kwargs["source"] == "Josh"
-        assert call_kwargs["target"] == "Python"
+        assert call_kwargs["source_key"] == entity_key(None, "Josh")
+        assert call_kwargs["target_key"] == entity_key(None, "Python")
         assert call_kwargs["rel_type"] == "uses"
 
     async def test_add_to_graph_sets_embeddings(
@@ -323,7 +324,7 @@ class TestGetEntityGraph:
         result = await service.get_entity_graph(limit=100)
 
         assert result == expected
-        mock_neo4j.get_entity_graph.assert_called_once_with(limit=100)
+        mock_neo4j.get_entity_graph.assert_called_once_with(limit=100, project_id=None)
 
 
 class TestGetEntityNeighbors:
@@ -341,7 +342,7 @@ class TestGetEntityNeighbors:
         result = await service.get_entity_neighbors("Josh")
 
         assert result == expected
-        mock_neo4j.get_entity_neighbors.assert_called_once_with("Josh")
+        mock_neo4j.get_entity_neighbors.assert_called_once_with("Josh", project_id=None)
 
 
 class TestSearchGraph:
@@ -517,7 +518,7 @@ class TestRelatesToCode:
             else call_args.kwargs.get("parameters", {}).get("links", [])
         )
         assert len(links) == 2
-        assert links[0]["entity_name"] == "auth"
+        assert links[0]["entity_key"] == entity_key("proj-1", "auth")
         assert links[0]["symbol_id"] == "sym-uuid-1"
         assert links[0]["score"] == 0.90
 
@@ -622,7 +623,10 @@ class TestMemoryNodeProjectIdScoping:
         mock_neo4j: AsyncMock,
     ) -> None:
         """_link_entities_to_memory sets project_id on the Memory node."""
-        entities = [Entity(name="Auth", entity_type="concept")]
+        entities = service._normalize_entities(
+            [Entity(name="Auth", entity_type="concept")],
+            project_id="proj-A",
+        )
         await service._link_entities_to_memory(entities, "mem-1", project_id="proj-A")
 
         # First query call is the MERGE for Memory node
@@ -640,7 +644,10 @@ class TestMemoryNodeProjectIdScoping:
         mock_neo4j: AsyncMock,
     ) -> None:
         """_link_entities_to_memory with project_id=None doesn't overwrite existing value."""
-        entities = [Entity(name="Auth", entity_type="concept")]
+        entities = service._normalize_entities(
+            [Entity(name="Auth", entity_type="concept")],
+            project_id=None,
+        )
         await service._link_entities_to_memory(entities, "mem-1", project_id=None)
 
         merge_call = mock_neo4j.query.call_args_list[0]
@@ -679,7 +686,16 @@ class TestMemoryNodeProjectIdScoping:
     ) -> None:
         """search_entities_by_vector passes project_id filter to memory lookup query."""
         mock_neo4j.vector_search = AsyncMock(
-            return_value=[{"name": "Auth", "labels": ["Concept"], "score": 0.9}]
+            return_value=[
+                {
+                    "entity_key": entity_key("proj-A", "Auth"),
+                    "name": "Auth",
+                    "entity_type": "concept",
+                    "project_id": "proj-A",
+                    "labels": ["Concept"],
+                    "score": 0.9,
+                }
+            ]
         )
         mock_neo4j.ensure_vector_index = AsyncMock()
 
@@ -705,7 +721,7 @@ class TestMemoryNodeProjectIdScoping:
         mock_neo4j.query = AsyncMock(return_value=[{"memory_id": "mem-1"}])
 
         await service.find_related_memory_ids(
-            entity_names=["Auth"],
+            entity_keys=[entity_key("proj-A", "Auth")],
             project_id="proj-A",
         )
 
@@ -727,9 +743,10 @@ class TestRemoveMemoryFromGraph:
         """remove_memory_from_graph issues DETACH DELETE on the Memory node."""
         await service.remove_memory_from_graph("mem-1")
 
-        mock_neo4j.query.assert_awaited_once()
-        cypher = mock_neo4j.query.call_args.args[0]
-        params = mock_neo4j.query.call_args.args[1]
+        delete_calls = [c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]]
+        assert len(delete_calls) == 1
+        cypher = delete_calls[0].args[0]
+        params = delete_calls[0].args[1]
         assert "DETACH DELETE" in cypher
         assert "memory_id: $memory_id" in cypher
         assert params["memory_id"] == "mem-1"

@@ -179,6 +179,7 @@ async def _sync_file(
     if not file.graph_synced and config.graph_enabled:
         if graph is not None and graph.available:
             try:
+                storage.mark_graph_sync_attempted(file.id)
                 await _sync_graph(
                     storage=storage,
                     graph=graph,
@@ -260,9 +261,6 @@ async def _sync_graph(
     file: Any,
 ) -> None:
     """Write Neo4j edges for a file from SQLite import/call/symbol data."""
-    # Delete old graph data for this file
-    await graph.delete_file(file_path=file.file_path, project_id=project_id)
-
     # Read relations from SQLite
     imports = storage.get_imports_for_file(project_id, file.file_path)
     calls = storage.get_calls_for_file(project_id, file.file_path)
@@ -275,7 +273,7 @@ async def _sync_graph(
     ]
 
     # Write to Neo4j
-    await graph.add_relationships(
+    await graph.sync_file(
         project_id=project_id,
         file_path=file.file_path,
         imports=imports,

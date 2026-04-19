@@ -190,13 +190,14 @@ class SessionLifecycleManager:
         processed = 0
         for memory in pending:
             try:
-                await kg_service.add_to_graph(
+                result = await kg_service.add_to_graph(
                     memory.content,
                     memory_id=memory.id,
                     project_id=memory.project_id,
                 )
-                await asyncio.to_thread(self.memory_manager.mark_graph_processed, memory.id)
-                processed += 1
+                if result.status in ("success", "noop_no_entities"):
+                    await asyncio.to_thread(self.memory_manager.mark_graph_processed, memory.id)
+                    processed += 1
             except Exception as e:
                 logger.warning(f"KG processing failed for memory {memory.id}: {e}")
 

@@ -153,6 +153,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     @router.get("/graph/entities")
     async def entity_graph(
         limit: int = Query(500, description="Maximum entities to fetch"),
+        project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
         """Get Neo4j knowledge graph entities and relationships."""
         if server.memory_manager is None or not getattr(
@@ -161,7 +162,8 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail="Neo4j not configured")
         try:
             result: dict[str, Any] | None = await server.memory_manager.get_entity_graph(
-                limit=limit
+                limit=limit,
+                project_id=project_id,
             )
             if result is None:
                 raise HTTPException(status_code=502, detail="Neo4j unreachable")
@@ -172,8 +174,11 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Failed to get entity graph: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    @router.get("/graph/entities/{entity_name}/neighbors")
-    async def entity_neighbors(entity_name: str) -> dict[str, Any]:
+    @router.get("/graph/entities/{entity_key}/neighbors")
+    async def entity_neighbors(
+        entity_key: str,
+        project_id: str | None = Query(None, description="Filter by project ID"),
+    ) -> dict[str, Any]:
         """Get neighbors for a single Neo4j entity."""
         if server.memory_manager is None or not getattr(
             server.memory_manager, "_neo4j_client", None
@@ -181,7 +186,8 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=404, detail="Neo4j not configured")
         try:
             result: dict[str, Any] | None = await server.memory_manager.get_entity_neighbors(
-                entity_name
+                entity_key,
+                project_id=project_id,
             )
             if result is None:
                 raise HTTPException(status_code=502, detail="Neo4j unreachable")
@@ -239,33 +245,32 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Failed to rebuild crossrefs: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    @router.post("/graph/clear")
+    async def clear_knowledge_graph(
+        project_id: str | None = Query(None, description="Filter by project ID"),
+    ) -> dict[str, Any]:
+        """Clear only the Neo4j knowledge-graph projection."""
+        try:
+            result = await server.memory_manager.clear_knowledge_graph(project_id=project_id)
+            if not result.get("success", False):
+                raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
+            return cast(dict[str, Any], result)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to clear knowledge graph: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
     @router.post("/graph/rebuild")
     async def rebuild_knowledge_graph(
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> dict[str, Any]:
         """Extract entities from all existing memories into the knowledge graph."""
         try:
-            kg = server.memory_manager.kg_service
-            if not kg:
-                raise HTTPException(
-                    status_code=400,
-                    detail="KnowledgeGraphService not initialized (requires Neo4j + LLM)",
-                )
-            memories = _fetch_all_memories(server, project_id)
-            successful_count = 0
-            errors = 0
-            for memory in memories:
-                try:
-                    await kg.add_to_graph(memory.content)
-                    successful_count += 1
-                except Exception as e:
-                    logger.warning(f"KG extraction failed for {memory.id}: {e}")
-                    errors += 1
-            return {
-                "memories_processed": successful_count + errors,
-                "memories_extracted": successful_count,
-                "errors": errors,
-            }
+            result = await server.memory_manager.rebuild_knowledge_graph(project_id=project_id)
+            if not result.get("success", False):
+                raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
+            return cast(dict[str, Any], result)
         except HTTPException:
             raise
         except Exception as e:

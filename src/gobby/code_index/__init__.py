@@ -12,6 +12,8 @@ from gobby.code_index.models import (
     IndexedProject,
     IndexResult,
     Symbol,
+    make_external_symbol_id,
+    make_unresolved_callee_id,
 )
 
 __all__ = [
@@ -22,4 +24,6 @@ __all__ = [
     "IndexedProject",
     "IndexResult",
     "Symbol",
+    "make_external_symbol_id",
+    "make_unresolved_callee_id",
 ]

@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+import re
+import unicodedata
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from gobby.memory.identity import entity_key, normalize_entity_name
 from gobby.memory.neo4j_client import Neo4jConnectionError
 
 if TYPE_CHECKING:
@@ -22,6 +26,7 @@ if TYPE_CHECKING:
     from gobby.prompts.loader import PromptLoader
 
 logger = logging.getLogger(__name__)
+_DISPLAY_WHITESPACE_RE = re.compile(r"\s+")
 
 
 @dataclass
@@ -39,6 +44,37 @@ class Relationship:
     source: str
     target: str
     relationship: str
+
+
+class KnowledgeGraphStatus(StrEnum):
+    """Status for a knowledge-graph projection attempt."""
+
+    SUCCESS = "success"
+    NOOP_NO_ENTITIES = "noop_no_entities"
+    PARTIAL_FAILURE = "partial_failure"
+    RETRYABLE_FAILURE = "retryable_failure"
+    DETERMINISTIC_FAILURE = "deterministic_failure"
+
+
+@dataclass
+class KnowledgeGraphResult:
+    """Result of a knowledge-graph projection attempt."""
+
+    status: KnowledgeGraphStatus
+    entities_extracted: int = 0
+    relationships_extracted: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _GraphEntity:
+    """Normalized entity record used for Neo4j writes."""
+
+    entity_key: str
+    name: str
+    entity_type: str
+    project_id: str | None
+    normalized_name: str
 
 
 class KnowledgeGraphService:
@@ -72,6 +108,7 @@ class KnowledgeGraphService:
         self._code_symbol_collection_prefix = code_symbol_collection_prefix
         self._embedding_dim = embedding_dim
         self._model = model
+        self._graph_schema_ensured = False
         self._vector_index_ensured = False
 
     # -----------------------------------------------------------------------
@@ -83,7 +120,7 @@ class KnowledgeGraphService:
         content: str,
         memory_id: str | None = None,
         project_id: str | None = None,
-    ) -> None:
+    ) -> KnowledgeGraphResult:
         """Extract entities and relationships from content and merge into Neo4j.
 
         Pipeline:
@@ -97,93 +134,249 @@ class KnowledgeGraphService:
         8. Link entities to source memory via MENTIONED_IN
         9. Cross-link entities to code symbols via RELATES_TO_CODE
         """
-        # Step 1: Extract entities
+        await self._ensure_graph_schema()
+
         try:
-            entities = await self._extract_entities(content)
+            extracted_entities = await self._extract_entities(content)
         except Exception as e:
             logger.warning(f"Entity extraction failed: {e}")
-            return
+            return self._failure_result(e)
 
+        entities = self._normalize_entities(extracted_entities, project_id=project_id)
         if not entities:
-            return
+            return KnowledgeGraphResult(status=KnowledgeGraphStatus.NOOP_NO_ENTITIES)
 
-        # Step 2: Extract relationships
+        partial_errors: list[str] = []
+        made_progress = False
+
         try:
-            relationships = await self._extract_relationships(content, entities)
+            extracted_relationships = await self._extract_relationships(content, extracted_entities)
         except Exception as e:
             logger.warning(f"Relationship extraction failed: {e}")
-            relationships = []
+            partial_errors.append(f"relationship_extraction:{e}")
+            extracted_relationships = []
 
-        # Step 3-4: Handle outdated relationships
+        relationships = self._normalize_relationships(
+            extracted_relationships,
+            entities=entities,
+            project_id=project_id,
+        )
+
         try:
-            await self._delete_outdated_relations(entities, relationships)
+            await self._delete_outdated_relations(
+                entities=entities,
+                new_relations=relationships,
+                project_id=project_id,
+            )
         except Exception as e:
             logger.warning(f"Relation cleanup failed: {e}")
+            partial_errors.append(f"relation_cleanup:{e}")
 
-        # Step 5: Merge nodes
         for entity in entities:
             try:
                 await self._neo4j.merge_node(
+                    entity_key=entity.entity_key,
                     name=entity.name,
-                    labels=[entity.entity_type.capitalize()],
-                    properties={"entity_type": entity.entity_type},
+                    project_id=entity.project_id,
+                    labels=[entity.entity_type.capitalize(), "_Entity"],
+                    properties={
+                        "entity_type": entity.entity_type,
+                        "project_id": entity.project_id,
+                    },
                 )
+                made_progress = True
             except Neo4jConnectionError as e:
                 logger.warning(f"Neo4j unreachable during merge_node: {e}")
-                return
+                return self._connection_failure_result(
+                    e,
+                    made_progress=made_progress,
+                    partial_errors=partial_errors,
+                    entities=len(entities),
+                    relationships=len(relationships),
+                )
             except Exception as e:
                 logger.warning(f"Failed to merge node {entity.name}: {e}")
+                partial_errors.append(f"merge_node:{entity.name}:{e}")
 
-        # Step 6: Add _Entity label (separate SET avoids MERGE mismatch with existing nodes)
-        for entity in entities:
-            try:
-                await self._neo4j.query(
-                    "MATCH (n {name: $name}) SET n:_Entity",
-                    {"name": entity.name},
-                )
-            except Neo4jConnectionError as e:
-                logger.warning(f"Neo4j unreachable during _Entity label: {e}")
-                return
-            except Exception as e:
-                logger.warning(f"Failed to add _Entity label for {entity.name}: {e}")
-
-        # Merge relationships
         for rel in relationships:
             try:
                 await self._neo4j.merge_relationship(
-                    source=rel.source,
-                    target=rel.target,
+                    source_key=rel.source,
+                    target_key=rel.target,
                     rel_type=rel.relationship,
                 )
+                made_progress = True
             except Neo4jConnectionError as e:
                 logger.warning(f"Neo4j unreachable during merge_relationship: {e}")
-                return
+                return self._connection_failure_result(
+                    e,
+                    made_progress=made_progress,
+                    partial_errors=partial_errors,
+                    entities=len(entities),
+                    relationships=len(relationships),
+                )
             except Exception as e:
                 logger.warning(f"Failed to merge relationship {rel}: {e}")
+                partial_errors.append(f"merge_relationship:{rel.relationship}:{e}")
 
-        # Step 7: Set embeddings (retain for Step 9 reuse)
         entity_embeddings: dict[str, list[float]] = {}
         for entity in entities:
             try:
                 embedding = await self._embed_fn(entity.name)
-                entity_embeddings[entity.name] = embedding
+                entity_embeddings[entity.entity_key] = embedding
                 await self._neo4j.set_node_vector(
-                    node_name=entity.name,
+                    entity_key=entity.entity_key,
                     embedding=embedding,
                 )
+                made_progress = True
             except Neo4jConnectionError as e:
                 logger.warning(f"Neo4j unreachable during set_node_vector: {e}")
-                return
+                return self._connection_failure_result(
+                    e,
+                    made_progress=made_progress,
+                    partial_errors=partial_errors,
+                    entities=len(entities),
+                    relationships=len(relationships),
+                )
             except Exception as e:
                 logger.warning(f"Failed to set embedding for {entity.name}: {e}")
+                partial_errors.append(f"set_embedding:{entity.name}:{e}")
 
-        # Step 8: Link entities to source memory via MENTIONED_IN
         if memory_id:
-            await self._link_entities_to_memory(entities, memory_id, project_id=project_id)
+            try:
+                await self._link_entities_to_memory(entities, memory_id, project_id=project_id)
+                made_progress = True
+            except Neo4jConnectionError as e:
+                logger.warning(f"Neo4j unreachable during MENTIONED_IN link: {e}")
+                return self._connection_failure_result(
+                    e,
+                    made_progress=made_progress,
+                    partial_errors=partial_errors,
+                    entities=len(entities),
+                    relationships=len(relationships),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to link entities to memory {memory_id}: {e}")
+                partial_errors.append(f"mentioned_in:{memory_id}:{e}")
 
-        # Step 9: Cross-link entities to code symbols via RELATES_TO_CODE
         if project_id and self._vector_store and entity_embeddings:
-            await self._link_entities_to_code(entities, entity_embeddings, project_id)
+            try:
+                await self._link_entities_to_code(entities, entity_embeddings, project_id)
+                made_progress = True
+            except Exception as e:
+                logger.warning(f"Failed to link entities to code for project {project_id}: {e}")
+                partial_errors.append(f"relates_to_code:{project_id}:{e}")
+
+        status = (
+            KnowledgeGraphStatus.PARTIAL_FAILURE
+            if partial_errors
+            else KnowledgeGraphStatus.SUCCESS
+        )
+        return KnowledgeGraphResult(
+            status=status,
+            entities_extracted=len(entities),
+            relationships_extracted=len(relationships),
+            errors=partial_errors,
+        )
+
+    async def _ensure_graph_schema(self) -> None:
+        """Lazily ensure the memory knowledge-graph schema exists."""
+        if self._graph_schema_ensured:
+            return
+        try:
+            await self._neo4j.ensure_memory_graph_schema()
+            self._graph_schema_ensured = True
+        except Neo4jConnectionError:
+            logger.debug("Neo4j unreachable, skipping knowledge-graph schema creation")
+        except Exception as e:
+            logger.warning(f"Failed to ensure knowledge-graph schema: {e}")
+
+    @staticmethod
+    def _display_entity_name(name: str) -> str:
+        """Normalize an entity name for display while preserving case."""
+        normalized = unicodedata.normalize("NFKC", name)
+        normalized = normalized.strip()
+        return _DISPLAY_WHITESPACE_RE.sub(" ", normalized)
+
+    def _normalize_entities(
+        self,
+        entities: list[Entity],
+        *,
+        project_id: str | None,
+    ) -> list[_GraphEntity]:
+        """Normalize and deduplicate extracted entities by stable key."""
+        deduped: dict[str, _GraphEntity] = {}
+        for entity in entities:
+            display_name = self._display_entity_name(entity.name)
+            normalized_name = normalize_entity_name(display_name)
+            if not normalized_name:
+                continue
+            key = entity_key(project_id, display_name)
+            if key in deduped:
+                continue
+            deduped[key] = _GraphEntity(
+                entity_key=key,
+                name=display_name,
+                entity_type=entity.entity_type,
+                project_id=project_id,
+                normalized_name=normalized_name,
+            )
+        return list(deduped.values())
+
+    def _normalize_relationships(
+        self,
+        relationships: list[Relationship],
+        *,
+        entities: list[_GraphEntity],
+        project_id: str | None,
+    ) -> list[Relationship]:
+        """Normalize relationships to stable entity keys."""
+        entity_map = {entity.entity_key: entity for entity in entities}
+        deduped: dict[tuple[str, str, str], Relationship] = {}
+        for relationship in relationships:
+            source_key = entity_key(project_id, relationship.source)
+            target_key = entity_key(project_id, relationship.target)
+            if source_key not in entity_map or target_key not in entity_map:
+                continue
+            dedupe_key = (source_key, relationship.relationship, target_key)
+            deduped[dedupe_key] = Relationship(
+                source=source_key,
+                target=target_key,
+                relationship=relationship.relationship,
+            )
+        return list(deduped.values())
+
+    @staticmethod
+    def _failure_result(error: Exception) -> KnowledgeGraphResult:
+        """Build a deterministic or retryable failure result."""
+        status = (
+            KnowledgeGraphStatus.RETRYABLE_FAILURE
+            if isinstance(error, Neo4jConnectionError)
+            else KnowledgeGraphStatus.DETERMINISTIC_FAILURE
+        )
+        return KnowledgeGraphResult(status=status, errors=[str(error)])
+
+    @staticmethod
+    def _connection_failure_result(
+        error: Exception,
+        *,
+        made_progress: bool,
+        partial_errors: list[str],
+        entities: int,
+        relationships: int,
+    ) -> KnowledgeGraphResult:
+        """Build a result for a Neo4j connectivity failure."""
+        status = (
+            KnowledgeGraphStatus.PARTIAL_FAILURE
+            if made_progress or partial_errors
+            else KnowledgeGraphStatus.RETRYABLE_FAILURE
+        )
+        return KnowledgeGraphResult(
+            status=status,
+            entities_extracted=entities,
+            relationships_extracted=relationships,
+            errors=[*partial_errors, str(error)],
+        )
 
     async def _extract_entities(self, content: str) -> list[Entity]:
         """Extract entities from content using LLM."""
@@ -237,25 +430,32 @@ class KnowledgeGraphService:
         ]
 
     async def _delete_outdated_relations(
-        self, entities: list[Entity], new_relations: list[Relationship]
+        self,
+        entities: list[_GraphEntity],
+        new_relations: list[Relationship],
+        project_id: str | None,
     ) -> None:
         """Find and delete outdated relationships from Neo4j."""
-        entity_names = [e.name for e in entities]
-        if not entity_names:
+        entity_keys = [e.entity_key for e in entities]
+        if not entity_keys:
             return
 
-        # Fetch existing relationships for these entities
         try:
-            existing = await self._fetch_existing_relations(entity_names)
+            existing = await self._fetch_existing_relations(entity_keys)
         except Neo4jConnectionError:
             return
 
         if not existing:
             return
 
+        name_by_key = {entity.entity_key: entity.name for entity in entities}
         new_relations_json = json.dumps(
             [
-                {"source": r.source, "relationship": r.relationship, "destination": r.target}
+                {
+                    "source": name_by_key.get(r.source, r.source),
+                    "relationship": r.relationship,
+                    "destination": name_by_key.get(r.target, r.target),
+                }
                 for r in new_relations
             ]
         )
@@ -277,21 +477,26 @@ class KnowledgeGraphService:
             if source and relationship and destination:
                 try:
                     await self._neo4j.query(
-                        "MATCH (a {name: $source})-[r]->(b {name: $target}) "
+                        "MATCH (a:_Entity {entity_key: $source_key})-[r]->"
+                        "(b:_Entity {entity_key: $target_key}) "
                         "WHERE type(r) = $rel_type DELETE r",
-                        {"source": source, "target": destination, "rel_type": relationship},
+                        {
+                            "source_key": entity_key(project_id, source),
+                            "target_key": entity_key(project_id, destination),
+                            "rel_type": relationship,
+                        },
                     )
                 except Neo4jConnectionError as e:
                     logger.warning(f"Neo4j unreachable during relation delete: {e}")
                     return
 
-    async def _fetch_existing_relations(self, entity_names: list[str]) -> list[dict[str, str]]:
+    async def _fetch_existing_relations(self, entity_keys: list[str]) -> list[dict[str, str]]:
         """Fetch existing relationships involving the given entities."""
         rows = await self._neo4j.query(
-            "MATCH (a)-[r]->(b) "
-            "WHERE a.name IN $names OR b.name IN $names "
+            "MATCH (a:_Entity)-[r]->(b:_Entity) "
+            "WHERE a.entity_key IN $keys OR b.entity_key IN $keys "
             "RETURN a.name AS source, type(r) AS rel_type, b.name AS target",
-            {"names": entity_names},
+            {"keys": entity_keys},
         )
         return [
             {"source": r["source"], "relationship": r["rel_type"], "destination": r["target"]}
@@ -300,43 +505,49 @@ class KnowledgeGraphService:
 
     async def _link_entities_to_memory(
         self,
-        entities: list[Entity],
+        entities: list[_GraphEntity],
         memory_id: str,
         project_id: str | None = None,
     ) -> None:
         """Create Memory node and MENTIONED_IN relationships from entities."""
-        try:
-            # Merge Memory node with project_id scoping
+        await self._neo4j.query(
+            "MERGE (m:Memory {memory_id: $memory_id}) "
+            "ON CREATE SET m.project_id = $project_id, "
+            "m.created_at = datetime(), m.updated_at = datetime() "
+            "ON MATCH SET m.project_id = coalesce($project_id, m.project_id), "
+            "m.updated_at = datetime()",
+            {"memory_id": memory_id, "project_id": project_id},
+        )
+        for entity in entities:
             await self._neo4j.query(
-                "MERGE (m:Memory {memory_id: $memory_id}) "
-                "ON CREATE SET m.project_id = $project_id "
-                "ON MATCH SET m.project_id = coalesce($project_id, m.project_id)",
-                {"memory_id": memory_id, "project_id": project_id},
+                "MATCH (e:_Entity {entity_key: $entity_key}), "
+                "(m:Memory {memory_id: $memory_id}) "
+                "MERGE (e)-[:MENTIONED_IN]->(m)",
+                {"entity_key": entity.entity_key, "memory_id": memory_id},
             )
-            # Link each entity to the memory
-            for entity in entities:
-                try:
-                    await self._neo4j.query(
-                        "MATCH (e {name: $name}), (m:Memory {memory_id: $memory_id}) "
-                        "MERGE (e)-[:MENTIONED_IN]->(m)",
-                        {"name": entity.name, "memory_id": memory_id},
-                    )
-                except Neo4jConnectionError as e:
-                    logger.warning(f"Neo4j unreachable during MENTIONED_IN link: {e}")
-                    return
-                except Exception as e:
-                    logger.warning(f"Failed to link {entity.name} to memory {memory_id}: {e}")
-        except Neo4jConnectionError as e:
-            logger.warning(f"Neo4j unreachable during Memory node merge: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to create Memory node {memory_id}: {e}")
 
-    async def remove_memory_from_graph(self, memory_id: str) -> None:
+    async def remove_memory_from_graph(
+        self,
+        memory_id: str,
+        project_id: str | None = None,
+    ) -> None:
         """Remove a Memory node and all its MENTIONED_IN edges from Neo4j."""
         try:
+            memory_scope = project_id
+            if memory_scope is None:
+                scope_rows = await self._neo4j.query(
+                    "MATCH (m:Memory {memory_id: $memory_id}) RETURN m.project_id AS project_id",
+                    {"memory_id": memory_id},
+                )
+                if scope_rows:
+                    memory_scope = scope_rows[0].get("project_id")
             await self._neo4j.query(
                 "MATCH (m:Memory {memory_id: $memory_id}) DETACH DELETE m",
                 {"memory_id": memory_id},
+            )
+            await self.remove_orphaned_entities(
+                scope="project" if memory_scope is not None else "global",
+                project_id=memory_scope,
             )
         except Neo4jConnectionError as e:
             logger.warning(f"Neo4j unreachable during memory deletion: {e}")
@@ -351,6 +562,12 @@ class KnowledgeGraphService:
         if not memory_ids:
             return 0
         try:
+            scope_rows = await self._neo4j.query(
+                "MATCH (m:Memory) WHERE m.memory_id IN $ids "
+                "RETURN m.memory_id AS memory_id, m.project_id AS project_id",
+                {"ids": list(memory_ids)},
+            )
+            impacted_scopes = {row.get("project_id") for row in scope_rows}
             records = await self._neo4j.query(
                 "MATCH (m:Memory) WHERE m.memory_id IN $ids "
                 "WITH count(m) AS total, collect(m) AS nodes "
@@ -358,7 +575,12 @@ class KnowledgeGraphService:
                 "RETURN total AS deleted",
                 {"ids": list(memory_ids)},
             )
-            return records[0]["deleted"] if records else 0
+            for scope in impacted_scopes:
+                await self.remove_orphaned_entities(
+                    scope="project" if scope is not None else "global",
+                    project_id=scope,
+                )
+            return int(records[0]["deleted"]) if records else 0
         except Neo4jConnectionError as e:
             logger.warning(f"Neo4j unreachable during batch memory deletion: {e}")
             return 0
@@ -381,19 +603,38 @@ class KnowledgeGraphService:
             logger.warning(f"Failed to enumerate Memory nodes: {e}")
             return set()
 
-    async def remove_orphaned_entities(self) -> int:
+    async def remove_orphaned_entities(
+        self,
+        scope: str = "all",
+        project_id: str | None = None,
+    ) -> int:
         """Delete Entity nodes with no MENTIONED_IN edges. Return count deleted."""
+        if scope == "project":
+            if project_id is None:
+                raise ValueError("project_id is required when scope='project'")
+            where_clause = (
+                "e.project_id = $project_id AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
+            )
+            params: dict[str, Any] = {"project_id": project_id}
+        elif scope == "global":
+            where_clause = "e.project_id IS NULL AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
+            params = {}
+        elif scope == "all":
+            where_clause = "NOT (e)-[:MENTIONED_IN]->(:Memory)"
+            params = {}
+        else:
+            raise ValueError(f"Unsupported orphan cleanup scope: {scope}")
+
         try:
-            # Count first, then delete — DETACH DELETE returns 0 for count(e)
             count_records = await self._neo4j.query(
-                "MATCH (e:_Entity) WHERE NOT (e)-[:MENTIONED_IN]->(:Memory) RETURN count(e) AS total",
-                {},
+                f"MATCH (e:_Entity) WHERE {where_clause} RETURN count(e) AS total",
+                params,
             )
             total = int(count_records[0]["total"]) if count_records else 0
             if total > 0:
                 await self._neo4j.query(
-                    "MATCH (e:_Entity) WHERE NOT (e)-[:MENTIONED_IN]->(:Memory) DETACH DELETE e",
-                    {},
+                    f"MATCH (e:_Entity) WHERE {where_clause} DETACH DELETE e",
+                    params,
                 )
             return total
         except Neo4jConnectionError as e:
@@ -402,6 +643,34 @@ class KnowledgeGraphService:
         except Exception as e:
             logger.warning(f"Failed to remove orphaned entities: {e}")
             return 0
+
+    async def clear_graph(self, project_id: str | None = None) -> dict[str, int]:
+        """Delete all KG projection nodes for a project or all scopes."""
+        try:
+            if project_id is None:
+                memory_count_rows = await self._neo4j.query(
+                    "MATCH (m:Memory) RETURN count(m) AS total",
+                    {},
+                )
+                entity_count_rows = await self._neo4j.query(
+                    "MATCH (e:_Entity) RETURN count(e) AS total",
+                    {},
+                )
+                await self._neo4j.query(
+                    "MATCH (n) WHERE n:Memory OR n:_Entity DETACH DELETE n",
+                    {},
+                )
+                return {
+                    "memories_deleted": int(memory_count_rows[0]["total"]) if memory_count_rows else 0,
+                    "entities_deleted": int(entity_count_rows[0]["total"]) if entity_count_rows else 0,
+                }
+            return await self.clear_project_graph(project_id)
+        except Neo4jConnectionError as e:
+            logger.warning(f"Neo4j unreachable during clear_graph: {e}")
+            return {"memories_deleted": 0, "entities_deleted": 0}
+        except Exception as e:
+            logger.warning(f"Failed to clear graph: {e}")
+            return {"memories_deleted": 0, "entities_deleted": 0}
 
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
         """Delete all Memory nodes (and relationships) for a project, then clean orphaned entities.
@@ -421,7 +690,10 @@ class KnowledgeGraphService:
                 {"project_id": project_id},
             )
             memories_deleted = int(records[0]["deleted"]) if records else 0
-            entities_deleted = await self.remove_orphaned_entities()
+            entities_deleted = await self.remove_orphaned_entities(
+                scope="project",
+                project_id=project_id,
+            )
             return {
                 "memories_deleted": memories_deleted,
                 "entities_deleted": entities_deleted,
@@ -435,7 +707,7 @@ class KnowledgeGraphService:
 
     async def _link_entities_to_code(
         self,
-        entities: list[Entity],
+        entities: list[_GraphEntity],
         entity_embeddings: dict[str, list[float]],
         project_id: str,
     ) -> None:
@@ -451,7 +723,7 @@ class KnowledgeGraphService:
         links: list[dict[str, Any]] = []
 
         for entity in entities:
-            embedding = entity_embeddings.get(entity.name)
+            embedding = entity_embeddings.get(entity.entity_key)
             if not embedding:
                 continue
             try:
@@ -464,7 +736,7 @@ class KnowledgeGraphService:
                     if score >= self._code_link_min_score:
                         links.append(
                             {
-                                "entity_name": entity.name,
+                                "entity_key": entity.entity_key,
                                 "symbol_id": symbol_id,
                                 "score": score,
                             }
@@ -479,7 +751,7 @@ class KnowledgeGraphService:
         try:
             await self._neo4j.query(
                 "UNWIND $links AS link "
-                "MATCH (e:_Entity {name: link.entity_name}) "
+                "MATCH (e:_Entity {entity_key: link.entity_key}) "
                 "MATCH (c:CodeSymbol {id: link.symbol_id, project: $project_id}) "
                 "MERGE (e)-[r:RELATES_TO_CODE]->(c) "
                 "SET r.score = link.score, r.updated_at = datetime()",
@@ -518,49 +790,52 @@ class KnowledgeGraphService:
         await self._ensure_vector_index()
 
         try:
-            # Vector search for similar entities
             entity_rows = await self._neo4j.vector_search(
                 query_embedding=query_embedding,
                 limit=limit,
                 min_score=min_score,
+                project_id=project_id,
             )
 
             if not entity_rows:
                 return []
 
-            # Batch-fetch memory IDs for all entities in one query
-            entity_names = [r.get("name", "") for r in entity_rows if r.get("name")]
-            memory_map: dict[str, list[str]] = {n: [] for n in entity_names}
+            entity_keys = [r.get("entity_key", "") for r in entity_rows if r.get("entity_key")]
+            memory_map: dict[str, list[str]] = {key: [] for key in entity_keys}
 
-            if entity_names:
+            if entity_keys:
                 try:
                     mem_rows = await self._neo4j.query(
-                        "UNWIND $names AS entity_name "
-                        "MATCH ({name: entity_name})-[:MENTIONED_IN]->(m:Memory) "
+                        "UNWIND $entity_keys AS entity_key "
+                        "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE m.project_id = $project_id "
                         "OR ($project_id IS NULL AND m.project_id IS NULL) "
-                        "RETURN entity_name, m.memory_id AS memory_id",
-                        {"names": entity_names, "project_id": project_id},
+                        "RETURN entity_key, m.memory_id AS memory_id",
+                        {"entity_keys": entity_keys, "project_id": project_id},
                     )
                     for r in mem_rows:
-                        name = r.get("entity_name", "")
+                        key = r.get("entity_key", "")
                         mid = r.get("memory_id")
-                        if name in memory_map and mid:
-                            memory_map[name].append(mid)
+                        if key in memory_map and mid:
+                            memory_map[key].append(mid)
                 except Exception as e:
                     logger.debug(f"Failed to batch-fetch memory links: {e}")
 
             results = []
             for row in entity_rows:
+                key = row.get("entity_key", "")
                 name = row.get("name", "")
-                if not name:
+                if not key or not name:
                     continue
                 results.append(
                     {
+                        "entity_key": key,
                         "name": name,
+                        "entity_type": row.get("entity_type") or "entity",
+                        "project_id": row.get("project_id"),
                         "labels": row.get("labels", []),
                         "score": row.get("score", 0.0),
-                        "memory_ids": memory_map.get(name, []),
+                        "memory_ids": memory_map.get(key, []),
                     }
                 )
 
@@ -575,7 +850,7 @@ class KnowledgeGraphService:
 
     async def find_related_memory_ids(
         self,
-        entity_names: list[str],
+        entity_keys: list[str],
         max_hops: int = 2,
         limit: int = 20,
         project_id: str | None = None,
@@ -583,27 +858,27 @@ class KnowledgeGraphService:
         """Traverse from entities through relationships to find related memory IDs.
 
         Args:
-            entity_names: Starting entity names
+            entity_keys: Starting entity keys
             max_hops: Maximum relationship hops (1-3)
             limit: Maximum memory IDs to return
 
         Returns:
             List of memory IDs found via graph traversal
         """
-        if not entity_names:
+        if not entity_keys:
             return []
 
         max_hops = max(1, min(max_hops, 3))
 
         try:
             rows = await self._neo4j.query(
-                "UNWIND $names AS name "
-                f"MATCH (start {{name: name}})-[*1..{max_hops}]-(related)"
+                "UNWIND $entity_keys AS entity_key "
+                f"MATCH (start:_Entity {{entity_key: entity_key}})-[*1..{max_hops}]-(related:_Entity)"
                 "-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE m.project_id = $project_id "
                 "OR ($project_id IS NULL AND m.project_id IS NULL) "
                 "RETURN DISTINCT m.memory_id AS memory_id LIMIT $limit",
-                {"names": entity_names, "limit": limit, "project_id": project_id},
+                {"entity_keys": entity_keys, "limit": limit, "project_id": project_id},
             )
             return [r["memory_id"] for r in rows if r.get("memory_id")]
         except Neo4jConnectionError as e:
@@ -617,13 +892,17 @@ class KnowledgeGraphService:
     # Read path
     # -----------------------------------------------------------------------
 
-    async def get_entity_graph(self, limit: int = 500) -> dict[str, Any] | None:
+    async def get_entity_graph(
+        self,
+        limit: int = 500,
+        project_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Get the entity graph for visualization.
 
         Returns None if Neo4j is unreachable.
         """
         try:
-            return await self._neo4j.get_entity_graph(limit=limit)
+            return await self._neo4j.get_entity_graph(limit=limit, project_id=project_id)
         except Neo4jConnectionError as e:
             logger.warning(f"Neo4j unreachable: {e}")
             return None
@@ -631,13 +910,17 @@ class KnowledgeGraphService:
             logger.warning(f"Neo4j query failed: {e}")
             return None
 
-    async def get_entity_neighbors(self, name: str) -> dict[str, Any] | None:
+    async def get_entity_neighbors(
+        self,
+        entity_key: str,
+        project_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Get neighbors for a single entity.
 
         Returns None if Neo4j is unreachable.
         """
         try:
-            return await self._neo4j.get_entity_neighbors(name)
+            return await self._neo4j.get_entity_neighbors(entity_key, project_id=project_id)
         except Neo4jConnectionError as e:
             logger.warning(f"Neo4j unreachable: {e}")
             return None
@@ -663,7 +946,10 @@ class KnowledgeGraphService:
                 if results:
                     return [
                         {
+                            "entity_key": r["entity_key"],
                             "name": r["name"],
+                            "entity_type": r.get("entity_type") or "entity",
+                            "project_id": r.get("project_id"),
                             "labels": r["labels"],
                             "score": r["score"],
                         }
@@ -676,7 +962,9 @@ class KnowledgeGraphService:
         try:
             rows = await self._neo4j.query(
                 "MATCH (n:_Entity) WHERE toLower(n.name) CONTAINS toLower($query) "
-                "RETURN n.name AS name, labels(n) AS labels, properties(n) AS props "
+                "RETURN n.entity_key AS entity_key, n.name AS name, "
+                "n.entity_type AS entity_type, n.project_id AS project_id, "
+                "labels(n) AS labels, properties(n) AS props "
                 "LIMIT $limit",
                 {"query": query, "limit": limit},
             )

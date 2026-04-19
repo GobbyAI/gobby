@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 # Stable namespace for deterministic symbol UUIDs
 CODE_INDEX_UUID_NAMESPACE = uuid.UUID("c0de1de0-0000-4000-8000-000000000000")
@@ -14,6 +14,19 @@ CODE_INDEX_UUID_NAMESPACE = uuid.UUID("c0de1de0-0000-4000-8000-000000000000")
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def make_unresolved_callee_id(project_id: str, callee_name: str) -> str:
+    """Generate a stable ID for an unresolved same-project callee."""
+    key = f"unresolved:{project_id}:{callee_name}"
+    return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
+
+
+def make_external_symbol_id(project_id: str, callee_name: str, module: str | None = None) -> str:
+    """Generate a stable ID for an external call target."""
+    module_key = module or ""
+    key = f"external:{project_id}:{module_key}:{callee_name}"
+    return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
 
 @dataclass
@@ -131,6 +144,7 @@ class IndexedFile:
     byte_size: int = 0
     graph_synced: int = 0
     vectors_synced: int = 0
+    graph_sync_attempted_at: str | None = None
     indexed_at: str = ""
 
     def __post_init__(self) -> None:
@@ -154,6 +168,11 @@ class IndexedFile:
             byte_size=row["byte_size"],
             graph_synced=row["graph_synced"] if "graph_synced" in row.keys() else 0,
             vectors_synced=row["vectors_synced"] if "vectors_synced" in row.keys() else 0,
+            graph_sync_attempted_at=(
+                row["graph_sync_attempted_at"]
+                if "graph_sync_attempted_at" in row.keys()
+                else None
+            ),
             indexed_at=row["indexed_at"],
         )
 
@@ -168,6 +187,7 @@ class IndexedFile:
             "byte_size": self.byte_size,
             "graph_synced": self.graph_synced,
             "vectors_synced": self.vectors_synced,
+            "graph_sync_attempted_at": self.graph_sync_attempted_at,
             "indexed_at": self.indexed_at,
         }
 
@@ -246,6 +266,13 @@ class CallRelation:
     callee_name: str
     file_path: str
     line: int
+    callee_symbol_id: str | None = None
+    callee_target_kind: Literal["symbol", "unresolved", "external"] = "unresolved"
+    callee_external_module: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.callee_symbol_id:
+            self.callee_target_kind = "symbol"
 
 
 @dataclass

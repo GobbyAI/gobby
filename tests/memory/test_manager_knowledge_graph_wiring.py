@@ -106,7 +106,7 @@ class TestGraphDelegation:
         result = await manager.get_entity_graph(limit=100)
 
         assert result == expected
-        manager._kg_service.get_entity_graph.assert_called_once_with(limit=100)
+        manager._kg_service.get_entity_graph.assert_called_once_with(limit=100, project_id=None)
 
     async def test_get_entity_neighbors_delegates_to_kg_service(self) -> None:
         """get_entity_neighbors delegates to KnowledgeGraphService."""
@@ -126,7 +126,10 @@ class TestGraphDelegation:
         result = await manager.get_entity_neighbors("Josh")
 
         assert result == expected
-        manager._kg_service.get_entity_neighbors.assert_called_once_with("Josh")
+        manager._kg_service.get_entity_neighbors.assert_called_once_with(
+            "Josh",
+            project_id=None,
+        )
 
     async def test_get_entity_graph_returns_none_when_no_kg_service(self) -> None:
         """get_entity_graph returns None when KnowledgeGraphService is not available."""

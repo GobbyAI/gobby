@@ -34,11 +34,14 @@ CREATE TABLE IF NOT EXISTS code_indexed_files (
     symbol_count INTEGER NOT NULL DEFAULT 0,
     byte_size INTEGER NOT NULL DEFAULT 0,
     graph_synced INTEGER NOT NULL DEFAULT 0,
+    vectors_synced INTEGER NOT NULL DEFAULT 0,
+    graph_sync_attempted_at TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, file_path)
 );
 CREATE INDEX IF NOT EXISTS idx_cif_project ON code_indexed_files(project_id);
 CREATE INDEX IF NOT EXISTS idx_cif_graph_synced ON code_indexed_files(project_id, graph_synced);
+CREATE INDEX IF NOT EXISTS idx_cif_vectors_synced ON code_indexed_files(project_id, vectors_synced);
 
 CREATE TABLE IF NOT EXISTS code_symbols (
     id TEXT PRIMARY KEY,
@@ -66,6 +69,45 @@ CREATE INDEX IF NOT EXISTS idx_cs_name ON code_symbols(name);
 CREATE INDEX IF NOT EXISTS idx_cs_qualified ON code_symbols(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_cs_kind ON code_symbols(kind);
 CREATE INDEX IF NOT EXISTS idx_cs_parent ON code_symbols(parent_symbol_id);
+
+CREATE TABLE IF NOT EXISTS code_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    source_file TEXT NOT NULL,
+    target_module TEXT NOT NULL,
+    UNIQUE(project_id, source_file, target_module)
+);
+CREATE INDEX IF NOT EXISTS idx_ci_file ON code_imports(project_id, source_file);
+
+CREATE TABLE IF NOT EXISTS code_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    caller_symbol_id TEXT NOT NULL,
+    callee_symbol_id TEXT NOT NULL DEFAULT '',
+    callee_name TEXT NOT NULL,
+    callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+    callee_external_module TEXT NOT NULL DEFAULT '',
+    file_path TEXT NOT NULL,
+    line INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(
+        project_id,
+        caller_symbol_id,
+        callee_symbol_id,
+        callee_name,
+        callee_target_kind,
+        callee_external_module,
+        file_path,
+        line
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_cc_file ON code_calls(project_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_cc_target ON code_calls(
+    project_id,
+    callee_target_kind,
+    callee_symbol_id,
+    callee_name
+);
 
 CREATE TABLE IF NOT EXISTS code_content_chunks (
     id TEXT PRIMARY KEY,

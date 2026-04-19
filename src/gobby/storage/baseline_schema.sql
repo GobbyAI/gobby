@@ -907,6 +907,7 @@ CREATE TABLE code_indexed_files (
     byte_size INTEGER NOT NULL DEFAULT 0,
     graph_synced INTEGER NOT NULL DEFAULT 0,
     vectors_synced INTEGER NOT NULL DEFAULT 0,
+    graph_sync_attempted_at TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, file_path)
 );
@@ -959,12 +960,26 @@ CREATE TABLE code_calls (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL,
     caller_symbol_id TEXT NOT NULL,
+    callee_symbol_id TEXT NOT NULL DEFAULT '',
     callee_name TEXT NOT NULL,
+    callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+    callee_external_module TEXT NOT NULL DEFAULT '',
     file_path TEXT NOT NULL,
     line INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(project_id, caller_symbol_id, callee_name, file_path, line)
+    UNIQUE(
+        project_id,
+        caller_symbol_id,
+        callee_symbol_id,
+        callee_name,
+        callee_target_kind,
+        callee_external_module,
+        file_path,
+        line
+    )
 );
 CREATE INDEX idx_cc_file ON code_calls(project_id, file_path);
+CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+CREATE INDEX idx_cc_target ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
 
 CREATE TABLE code_content_chunks (
     id TEXT PRIMARY KEY,

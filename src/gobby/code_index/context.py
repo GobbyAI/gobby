@@ -74,3 +74,63 @@ class CodeIndexContext:
                 logger.warning(f"Vector collection delete failed for {collection}: {e}")
 
         logger.info(f"Invalidated code index for project {project_id}")
+
+    async def clear_graph(self, project_id: str) -> dict[str, Any]:
+        """Clear only the Neo4j code-graph projection for one project."""
+        if self._graph is None or not self._graph.available:
+            return {"success": False, "error": "Code graph not available", "project_id": project_id}
+
+        try:
+            files_marked = await asyncio.to_thread(
+                self._storage.reset_graph_sync_for_project,
+                project_id,
+            )
+            await self._graph.clear_project(project_id)
+            return {
+                "success": True,
+                "project_id": project_id,
+                "files_marked_pending": files_marked,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to clear code graph for {project_id}: {e}")
+            return {"success": False, "error": str(e), "project_id": project_id}
+
+    async def rebuild_graph(self, project_id: str, limit: int = 10_000) -> dict[str, Any]:
+        """Rebuild the Neo4j code graph for a project from SQLite source data."""
+        if self._graph is None or not self._graph.available:
+            return {"success": False, "error": "Code graph not available", "project_id": project_id}
+
+        from gobby.code_index.sync_worker import _sync_graph
+
+        files = await asyncio.to_thread(self._storage.list_files, project_id)
+        if limit > 0:
+            files = files[:limit]
+
+        try:
+            await self._graph.clear_project(project_id)
+            await asyncio.to_thread(self._storage.reset_graph_sync_for_project, project_id)
+        except Exception as e:
+            logger.warning(f"Failed to prepare code graph rebuild for {project_id}: {e}")
+            return {"success": False, "error": str(e), "project_id": project_id}
+
+        synced = 0
+        errors: list[str] = []
+
+        for file in files:
+            await asyncio.to_thread(self._storage.mark_graph_sync_attempted, file.id)
+            try:
+                await _sync_graph(self._storage, self._graph, project_id, file)
+                await asyncio.to_thread(self._storage.mark_graph_synced, file.id)
+                synced += 1
+            except Exception as e:
+                logger.warning(f"Code graph rebuild failed for {file.file_path}: {e}")
+                errors.append(f"{file.file_path}: {e}")
+
+        return {
+            "success": True,
+            "project_id": project_id,
+            "files_processed": len(files),
+            "files_synced": synced,
+            "files_failed": len(errors),
+            "errors": errors,
+        }

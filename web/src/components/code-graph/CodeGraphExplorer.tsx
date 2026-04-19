@@ -32,6 +32,8 @@ const NODE_COLORS: Record<string, string> = {
   constant: '#f97316',
   variable: '#64748b',
   type: '#a78bfa',
+  unresolved: '#ef4444',
+  external: '#fb7185',
 }
 
 const EDGE_COLORS: Record<string, string> = {
@@ -251,7 +253,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     if (blastMode) {
       const opts = node.type === 'file'
         ? { filePath: node.id }
-        : { symbolName: node.name }
+        : { symbolId: node.id }
       const data = await fetchBlastRadius(projectId, opts)
       if (data) {
         const affected = new Set(data.nodes.map((n: any) => n.id))
@@ -377,8 +379,14 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       if (!blastData.has(srcId) || !blastData.has(tgtId)) return 'rgba(60,60,60,0.1)'
     }
     if (isSearchActive) {
-      const srcMatch = String(srcId).toLowerCase().includes(searchLower)
-      const tgtMatch = String(tgtId).toLowerCase().includes(searchLower)
+      const srcLabel = typeof link.source === 'object'
+        ? (link.source.name ?? link.source.id)
+        : link.source
+      const tgtLabel = typeof link.target === 'object'
+        ? (link.target.name ?? link.target.id)
+        : link.target
+      const srcMatch = String(srcLabel).toLowerCase().includes(searchLower)
+      const tgtMatch = String(tgtLabel).toLowerCase().includes(searchLower)
       if (!srcMatch && !tgtMatch) return 'rgba(60,60,60,0.15)'
     }
     return link.color || edgeColor(link.type) || 'rgba(120,120,120,0.4)'

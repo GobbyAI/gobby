@@ -29,11 +29,6 @@ def _make_manager(
     db.execute = MagicMock()
 
     config = MemoryConfig()
-    # MemoryConfig uses extra="ignore", so graph-search knobs must be
-    # injected after construction for getattr() in the manager to find them.
-    object.__setattr__(config, "neo4j_graph_search", graph_search)
-    object.__setattr__(config, "neo4j_graph_min_score", graph_min_score)
-    object.__setattr__(config, "neo4j_rrf_k", rrf_k)
 
     return MemoryManager(
         db=db,
@@ -43,6 +38,9 @@ def _make_manager(
         embed_fn=embed_fn,
         neo4j_url=neo4j_url,
         neo4j_auth="neo4j:password" if neo4j_url else None,
+        neo4j_graph_search=graph_search,
+        neo4j_graph_min_score=graph_min_score,
+        neo4j_rrf_k=rrf_k,
     )
 
 
@@ -149,12 +147,21 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
+                    "entity_key": "__global__::python",
                     "name": "Python",
+                    "entity_type": "tool",
                     "labels": ["Tool"],
                     "score": 0.9,
                     "memory_ids": ["mem-1", "mem-2"],
                 },
-                {"name": "FastAPI", "labels": ["Framework"], "score": 0.8, "memory_ids": ["mem-3"]},
+                {
+                    "entity_key": "__global__::fastapi",
+                    "name": "FastAPI",
+                    "entity_type": "framework",
+                    "labels": ["Framework"],
+                    "score": 0.8,
+                    "memory_ids": ["mem-3"],
+                },
             ]
         )
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-4"])
@@ -180,7 +187,14 @@ class TestSearchGraphForMemories:
 
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "A", "labels": [], "score": 0.9, "memory_ids": ["mem-1"]},
+                {
+                    "entity_key": "__global__::a",
+                    "name": "A",
+                    "entity_type": "entity",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-1"],
+                },
             ]
         )
         # Traversal returns overlapping ID
@@ -239,7 +253,14 @@ class TestSearchMemoriesGraphIntegration:
         # Graph returns mem-2, mem-3
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "A", "labels": [], "score": 0.9, "memory_ids": ["mem-2", "mem-3"]},
+                {
+                    "entity_key": "__global__::a",
+                    "name": "A",
+                    "entity_type": "entity",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-2", "mem-3"],
+                },
             ]
         )
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
@@ -397,7 +418,14 @@ class TestGraphSearchProjectIdScoping:
 
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "Auth", "labels": [], "score": 0.9, "memory_ids": ["mem-1"]},
+                {
+                    "entity_key": "proj-A::auth",
+                    "name": "Auth",
+                    "entity_type": "concept",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-1"],
+                },
             ]
         )
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])

@@ -450,11 +450,11 @@ class TestEntityGraph:
         """GET /memories/graph/entities returns graph data."""
         mock_server.memory_manager._neo4j_client = MagicMock()
         mock_server.memory_manager.get_entity_graph = AsyncMock(
-            return_value={"nodes": [], "edges": []}
+            return_value={"entities": [], "relationships": []}
         )
         response = client.get("/api/memories/graph/entities")
         assert response.status_code == 200
-        assert "nodes" in response.json()
+        assert "entities" in response.json()
 
     def test_entity_graph_unreachable(self, client, mock_server) -> None:
         """GET /memories/graph/entities returns 502 when Neo4j unreachable."""
@@ -496,10 +496,12 @@ class TestEntityNeighbors:
     def test_neighbors_success(self, client, mock_server) -> None:
         """GET /memories/graph/entities/{name}/neighbors returns neighbors."""
         mock_server.memory_manager._neo4j_client = MagicMock()
-        mock_server.memory_manager.get_entity_neighbors = AsyncMock(return_value={"neighbors": []})
+        mock_server.memory_manager.get_entity_neighbors = AsyncMock(
+            return_value={"entities": [], "relationships": []}
+        )
         response = client.get("/api/memories/graph/entities/test-entity/neighbors")
         assert response.status_code == 200
-        assert "neighbors" in response.json()
+        assert "entities" in response.json()
 
     def test_neighbors_unreachable(self, client, mock_server) -> None:
         """GET /memories/graph/entities/{name}/neighbors returns 502 when unreachable."""
@@ -526,46 +528,56 @@ class TestEntityNeighbors:
 class TestRebuildKnowledgeGraph:
     """Test POST /memories/graph/rebuild endpoint."""
 
-    def test_no_kg_service(self, client, mock_server) -> None:
-        """POST /memories/graph/rebuild returns 400 when no KG service."""
-        mock_server.memory_manager.kg_service = None
+    def test_rebuild_returns_error_payload(self, client, mock_server) -> None:
+        """POST /memories/graph/rebuild returns 400 when manager reports failure."""
+        mock_server.memory_manager.rebuild_knowledge_graph = AsyncMock(
+            return_value={"success": False, "error": "Neo4j not configured"}
+        )
         response = client.post("/api/memories/graph/rebuild")
         assert response.status_code == 400
 
     def test_rebuild_success(self, client, mock_server) -> None:
         """POST /memories/graph/rebuild processes memories."""
-        mock_kg = MagicMock()
-        mock_kg.add_to_graph = AsyncMock()
-        mock_server.memory_manager.kg_service = mock_kg
-        mock_server.memory_manager.list_memories.return_value = [
-            _make_memory(id="mm-1"),
-        ]
+        mock_server.memory_manager.rebuild_knowledge_graph = AsyncMock(
+            return_value={
+                "success": True,
+                "memories_processed": 1,
+                "status_counts": {"success": 1},
+                "memories_extracted": 1,
+                "noop_no_entities": 0,
+                "errors": [],
+            }
+        )
         response = client.post("/api/memories/graph/rebuild")
         assert response.status_code == 200
         data = response.json()
+        assert data["memories_processed"] == 1
         assert data["memories_extracted"] == 1
-        assert data["errors"] == 0
+        assert data["errors"] == []
 
     def test_rebuild_partial_error(self, client, mock_server) -> None:
         """POST /memories/graph/rebuild handles per-memory errors."""
-        mock_kg = MagicMock()
-        mock_kg.add_to_graph = AsyncMock(side_effect=[None, RuntimeError("fail")])
-        mock_server.memory_manager.kg_service = mock_kg
-        mock_server.memory_manager.list_memories.return_value = [
-            _make_memory(id="mm-1"),
-            _make_memory(id="mm-2"),
-        ]
+        mock_server.memory_manager.rebuild_knowledge_graph = AsyncMock(
+            return_value={
+                "success": True,
+                "memories_processed": 2,
+                "status_counts": {"success": 1, "partial_failure": 1},
+                "memories_extracted": 1,
+                "noop_no_entities": 0,
+                "errors": ["mm-2:fail"],
+            }
+        )
         response = client.post("/api/memories/graph/rebuild")
         assert response.status_code == 200
         data = response.json()
         assert data["memories_extracted"] == 1
-        assert data["errors"] == 1
+        assert data["errors"] == ["mm-2:fail"]
 
     def test_rebuild_server_error(self, client, mock_server) -> None:
         """POST /memories/graph/rebuild returns 500 on total failure."""
-        mock_kg = MagicMock()
-        mock_server.memory_manager.kg_service = mock_kg
-        mock_server.memory_manager.list_memories.side_effect = RuntimeError("DB error")
+        mock_server.memory_manager.rebuild_knowledge_graph = AsyncMock(
+            side_effect=RuntimeError("DB error")
+        )
         response = client.post("/api/memories/graph/rebuild")
         assert response.status_code == 500
 
