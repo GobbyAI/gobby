@@ -465,6 +465,134 @@ class TestFormatDiscoveryResult:
 class TestEvaluateWorkflowRules:
     """Tests for _evaluate_workflow_rules."""
 
+    def test_routine_allow_logs_at_debug(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Routine allow decisions log at debug instead of info."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        manager.logger.info.assert_not_called()
+        manager.logger.debug.assert_called_once()
+        debug_message = manager.logger.debug.call_args[0][0]
+        assert "event=before_tool" in debug_message
+        assert "decision=allow" in debug_message
+        assert "session=session-123" in debug_message
+        assert "tool=Read" in debug_message
+        assert "mcp_calls=" not in debug_message
+        manager._dispatch_mcp_calls.assert_not_called()
+
+    def test_allow_with_mcp_calls_logs_at_info(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Allow decisions with MCP side effects remain info-level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="allow",
+            metadata={
+                "mcp_calls": [
+                    {"server": "gobby-memory", "tool": "search_memories"},
+                    {"server": "gobby-tasks", "tool": "list_tasks"},
+                ]
+            },
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=allow" in info_message
+        assert "tool=Write" in info_message
+        assert "mcp_calls=2" in info_message
+        assert "gobby-memory/search_memories" in info_message
+        assert "gobby-tasks/list_tasks" in info_message
+        manager._dispatch_mcp_calls.assert_called_once_with(
+            [
+                {"server": "gobby-memory", "tool": "search_memories"},
+                {"server": "gobby-tasks", "tool": "list_tasks"},
+            ],
+            event,
+        )
+
+    def test_allow_with_input_rewrite_logs_at_info(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Input rewriting and auto-approve stay visible at info level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="allow",
+            modified_input={"path": "rewritten.txt"},
+            auto_approve=True,
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        assert event.metadata["_modified_input"] == {"path": "rewritten.txt"}
+        assert event.metadata["_auto_approve"] is True
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=allow" in info_message
+        assert "rewrote_input=true" in info_message
+        assert "auto_approve=true" in info_message
+
+    def test_block_logs_at_info_once(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Blocked workflow outcomes log once at info level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="block",
+            reason="Blocked by rule",
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Bash"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking == HookResponse(decision="block", reason="Blocked by rule")
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=block" in info_message
+        assert "reason=Blocked by rule" in info_message
+
     def test_workflow_evaluation_exception_fails_open(
         self,
         manager_with_mocks: HookManager,

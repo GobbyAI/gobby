@@ -504,6 +504,55 @@ class HookManager:
 
         return False
 
+    @staticmethod
+    def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:
+        """Return compact server/tool labels for workflow-triggered MCP calls."""
+        targets: list[str] = []
+        for call in mcp_calls:
+            server = call.get("server")
+            tool = call.get("tool")
+            if isinstance(server, str) and isinstance(tool, str) and server and tool:
+                targets.append(f"{server}/{tool}")
+        return targets
+
+    def _log_workflow_evaluation(
+        self,
+        event: HookEvent,
+        workflow_response: HookResponse,
+        mcp_calls: list[dict[str, Any]],
+    ) -> None:
+        """Log workflow decisions, keeping routine allow decisions at debug level."""
+        session_id = event.metadata.get("_platform_session_id", "unknown")
+        event_name = event.event_type.value
+        tool_name = event.data.get("tool_name")
+        has_rewrite = bool(workflow_response.modified_input)
+        has_visible_side_effects = bool(mcp_calls) or has_rewrite or workflow_response.auto_approve
+
+        parts = [
+            f"Workflow rule evaluation: event={event_name}",
+            f"decision={workflow_response.decision}",
+            f"session={session_id}",
+        ]
+        if isinstance(tool_name, str) and tool_name:
+            parts.append(f"tool={tool_name}")
+        if mcp_calls:
+            parts.append(f"mcp_calls={len(mcp_calls)}")
+            mcp_targets = self._summarize_mcp_calls(mcp_calls)
+            if mcp_targets:
+                parts.append(f"mcp_targets={', '.join(mcp_targets)}")
+        if has_rewrite:
+            parts.append("rewrote_input=true")
+        if workflow_response.auto_approve:
+            parts.append("auto_approve=true")
+        if workflow_response.reason and workflow_response.decision != "allow":
+            parts.append(f"reason={workflow_response.reason}")
+
+        message = ", ".join(parts)
+        if workflow_response.decision != "allow" or has_visible_side_effects:
+            self.logger.info(message)
+        else:
+            self.logger.debug(message)
+
     def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects.
 
@@ -521,9 +570,6 @@ class HookManager:
             # Extract and dispatch mcp_calls BEFORE the block check —
             # they're explicit side effects that should fire regardless of decision
             mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
-            self.logger.info(
-                f"Rule evaluation for {event.event_type}: decision={workflow_response.decision}, mcp_calls={len(mcp_calls)}, session={event.metadata.get('_platform_session_id', 'unknown')}",
-            )
 
             with create_span(
                 "hook.rules.mcp_dispatch",
@@ -574,12 +620,11 @@ class HookManager:
                     break
 
             if block_override:
+                self._log_workflow_evaluation(event, block_override, mcp_calls)
                 return None, block_override
 
             if workflow_response.decision != "allow":
-                self.logger.info(
-                    f"Workflow blocked/modified event: {workflow_response.decision}, session={event.metadata.get('_platform_session_id', 'unknown')}",
-                )
+                self._log_workflow_evaluation(event, workflow_response, mcp_calls)
                 # Merge any auto-heal context into the block response
                 if extra_context and workflow_response.context:
                     workflow_response.context = (
@@ -594,6 +639,8 @@ class HookManager:
             if workflow_response.modified_input:
                 event.metadata["_modified_input"] = workflow_response.modified_input
                 event.metadata["_auto_approve"] = workflow_response.auto_approve
+
+            self._log_workflow_evaluation(event, workflow_response, mcp_calls)
 
             # Capture context to merge later
             workflow_context = workflow_response.context if workflow_response.context else None
