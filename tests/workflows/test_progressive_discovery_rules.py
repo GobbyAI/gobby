@@ -344,6 +344,7 @@ def _make_hook_event(
     event_type: HookEventType,
     tool_name: str = "",
     tool_input: dict | None = None,
+    source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     """Create a HookEvent for testing."""
     data = {"tool_name": tool_name}
@@ -352,7 +353,7 @@ def _make_hook_event(
     return HookEvent(
         event_type=event_type,
         session_id="test-session-ext",
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
         metadata={"_platform_session_id": "test-session"},
@@ -432,6 +433,19 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_get_tool_schema_allowed_for_pipeline_source(self, engine) -> None:
+        """Pipeline-sourced get_tool_schema should bypass discovery-order enforcement."""
+        variables = {"enforce_tool_schema_check": True, "listed_servers": []}
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            source=SessionSource.PIPELINE,
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_call_tool_blocked_when_schema_missing(self, engine) -> None:
         """call_tool should be blocked when get_tool_schema not called for tool."""
         variables = {
@@ -466,6 +480,26 @@ class TestRuleEngineIntegration:
                 "tool_name": "create_task",
                 "arguments": {"title": "test"},
             },
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_allowed_for_pipeline_source(self, engine) -> None:
+        """Pipeline-sourced call_tool should bypass schema lookup enforcement."""
+        variables = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "test"},
+            },
+            source=SessionSource.PIPELINE,
         )
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "allow"

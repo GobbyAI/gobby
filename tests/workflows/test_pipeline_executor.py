@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.workflows.definitions import PipelineDefinition, PipelineStep
+from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
@@ -2047,6 +2047,65 @@ class TestPipelineChildSession:
         )
 
         assert captured_context["parent_session_id"] == "original-caller"
+
+    @pytest.mark.asyncio
+    async def test_mcp_steps_use_child_session_id(
+        self, mock_db, mock_execution_manager, mock_llm_service
+    ) -> None:
+        """Pipeline MCP steps should execute under the child pipeline session."""
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        mock_session_manager = MagicMock()
+        child_session = MagicMock()
+        child_session.id = "child-session-mcp"
+        mock_session_manager.register.return_value = child_session
+
+        tool_proxy = AsyncMock()
+        tool_proxy.get_tool_schema.return_value = {
+            "success": True,
+            "tool": {"inputSchema": {}},
+        }
+        tool_proxy.call_tool.return_value = {"success": True, "executions": []}
+
+        pipeline = PipelineDefinition(
+            name="mcp-session-test",
+            steps=[
+                PipelineStep(
+                    id="reentry_check",
+                    mcp=MCPStepConfig(
+                        server="gobby-workflows",
+                        tool="list_pipeline_executions",
+                    ),
+                ),
+            ],
+        )
+
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=mock_session_manager,
+            tool_proxy_getter=lambda: tool_proxy,
+        )
+
+        await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id="proj-123",
+            session_id="cron-session-123",
+        )
+
+        tool_proxy.get_tool_schema.assert_called_once_with(
+            "gobby-workflows",
+            "list_pipeline_executions",
+            session_id="child-session-mcp",
+        )
+        tool_proxy.call_tool.assert_called_once_with(
+            "gobby-workflows",
+            "list_pipeline_executions",
+            {},
+            session_id="child-session-mcp",
+        )
 
     @pytest.mark.asyncio
     async def test_session_id_injected_into_inputs(

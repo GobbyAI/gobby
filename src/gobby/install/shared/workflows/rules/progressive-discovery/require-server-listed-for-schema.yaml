@@ -6,7 +6,7 @@ rules:
     event: before_tool
     enabled: true
     priority: 21
-    when: "event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema') and variables.get('enforce_tool_schema_check') and not is_server_listed(tool_input)"
+    when: "event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema') and variables.get('enforce_tool_schema_check') and not is_server_listed(tool_input) and source != 'pipeline'"
     effects:
       - type: block
         reason: >-
