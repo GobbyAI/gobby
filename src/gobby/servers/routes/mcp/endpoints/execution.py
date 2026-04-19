@@ -175,6 +175,27 @@ def _reset_context(tokens: _ContextTokens) -> None:
         reset_session_context(tokens.session)
 
 
+async def _emit_proxy_after_tool(
+    server: "HTTPServer",
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    result: dict[str, Any],
+    is_failure: bool = False,
+) -> None:
+    """Emit synthetic proxy AFTER_TOOL events for HTTP discovery routes."""
+    if server.tool_proxy is None:
+        return
+
+    await server.tool_proxy.emit_synthetic_proxy_after_tool(
+        session_id=get_current_session_id(),
+        tool_name=tool_name,
+        tool_input=tool_input,
+        result=result,
+        is_failure=is_failure,
+    )
+
+
 def _process_tool_proxy_result(
     result: Any,
     server_name: str,
@@ -323,26 +344,49 @@ async def list_mcp_tools(
                         server_name,
                         session_id=get_current_session_id(),
                     )
-                return {
+                result = {
                     "success": True,
                     "tools": tools,
                     "tool_count": len(tools),
                     "response_time_ms": response_time_ms,
                 }
+                await _emit_proxy_after_tool(
+                    server,
+                    tool_name="list_tools",
+                    tool_input={"server_name": server_name},
+                    result=result,
+                )
+                return result
             response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 "success": False,
                 "error": f"Internal server '{server_name}' not found",
                 "response_time_ms": response_time_ms,
             }
+            await _emit_proxy_after_tool(
+                server,
+                tool_name="list_tools",
+                tool_input={"server_name": server_name},
+                result=result,
+                is_failure=True,
+            )
+            return result
 
         if mcp_manager is None:
             response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 "success": False,
                 "error": "MCP manager not available",
                 "response_time_ms": response_time_ms,
             }
+            await _emit_proxy_after_tool(
+                server,
+                tool_name="list_tools",
+                tool_input={"server_name": server_name},
+                result=result,
+                is_failure=True,
+            )
+            return result
 
         # Check if server is configured
         if not mcp_manager.has_server(server_name):
@@ -356,14 +400,30 @@ async def list_mcp_tools(
             session = await mcp_manager.ensure_connected(server_name)
         except KeyError as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+            result = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+            await _emit_proxy_after_tool(
+                server,
+                tool_name="list_tools",
+                tool_input={"server_name": server_name},
+                result=result,
+                is_failure=True,
+            )
+            return result
         except Exception as e:
             response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 "success": False,
                 "error": f"MCP server '{server_name}' connection failed: {e}",
                 "response_time_ms": response_time_ms,
             }
+            await _emit_proxy_after_tool(
+                server,
+                tool_name="list_tools",
+                tool_input={"server_name": server_name},
+                result=result,
+                is_failure=True,
+            )
+            return result
 
         # List tools using MCP SDK
         try:
@@ -405,12 +465,19 @@ async def list_mcp_tools(
                     session_id=get_current_session_id(),
                 )
 
-            return {
+            result = {
                 "success": True,
                 "tools": tools,
                 "tool_count": len(tools),
                 "response_time_ms": response_time_ms,
             }
+            await _emit_proxy_after_tool(
+                server,
+                tool_name="list_tools",
+                tool_input={"server_name": server_name},
+                result=result,
+            )
+            return result
 
         except Exception as e:
             logger.error(
@@ -419,11 +486,19 @@ async def list_mcp_tools(
                 extra={"server": server_name},
             )
             response_time_ms = (time.perf_counter() - start_time) * 1000
-            return {
+            result = {
                 "success": False,
                 "error": f"Failed to list tools: {e}",
                 "response_time_ms": response_time_ms,
             }
+            await _emit_proxy_after_tool(
+                server,
+                tool_name="list_tools",
+                tool_input={"server_name": server_name},
+                result=result,
+                is_failure=True,
+            )
+            return result
 
     except HTTPException:
         raise
@@ -490,6 +565,12 @@ async def get_tool_schema(
                         }
                         if schema.get("description"):
                             result["description"] = schema["description"]
+                        await _emit_proxy_after_tool(
+                            server,
+                            tool_name="get_tool_schema",
+                            tool_input={"server_name": server_name, "tool_name": tool_name},
+                            result=result,
+                        )
                         return result
                     raise HTTPException(
                         status_code=404,
@@ -526,12 +607,26 @@ async def get_tool_schema(
                 }
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
+                await _emit_proxy_after_tool(
+                    server,
+                    tool_name="get_tool_schema",
+                    tool_input={"server_name": server_name, "tool_name": tool_name},
+                    result=response,
+                )
                 return response
 
             except (KeyError, ValueError) as e:
                 # Tool or server not found
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-                return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+                response = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+                await _emit_proxy_after_tool(
+                    server,
+                    tool_name="get_tool_schema",
+                    tool_input={"server_name": server_name, "tool_name": tool_name},
+                    result=response,
+                    is_failure=True,
+                )
+                return response
             except Exception as e:
                 # Connection, timeout, or internal errors
                 logger.error(
@@ -539,11 +634,19 @@ async def get_tool_schema(
                     exc_info=True,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-                return {
+                response = {
                     "success": False,
                     "error": f"Failed to get tool schema: {e}",
                     "response_time_ms": response_time_ms,
                 }
+                await _emit_proxy_after_tool(
+                    server,
+                    tool_name="get_tool_schema",
+                    tool_input={"server_name": server_name, "tool_name": tool_name},
+                    result=response,
+                    is_failure=True,
+                )
+                return response
         finally:
             _reset_context(ctx_token)
 

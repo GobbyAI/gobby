@@ -327,6 +327,34 @@ class TestListMCPTools:
             session_id="123e4567-e89b-12d3-a456-426614174000",
         )
 
+    def test_list_tools_emits_proxy_after_tool(self, session_storage: LocalSessionManager) -> None:
+        """Successful list_tools should emit the synthetic proxy AFTER_TOOL event."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        registry = FakeInternalRegistry(name="gobby-tasks")
+        server._internal_manager = FakeInternalManager([registry])
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
+
+        with TestClient(server.app) as client:
+            response = client.get(
+                "/api/mcp/gobby-tasks/tools",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+            )
+
+        assert response.status_code == 200
+        result = response.json()
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+            tool_name="list_tools",
+            tool_input={"server_name": "gobby-tasks"},
+            result=result,
+            is_failure=False,
+        )
+
     def test_list_tools_internal_server_fallthrough(
         self, session_storage: LocalSessionManager
     ) -> None:
@@ -835,6 +863,38 @@ class TestGetToolSchema:
             "gobby-tasks",
             "list_tasks",
             session_id="123e4567-e89b-12d3-a456-426614174000",
+        )
+
+    def test_get_schema_emits_proxy_after_tool(self, session_storage: LocalSessionManager) -> None:
+        """Successful get_tool_schema should emit the synthetic proxy AFTER_TOOL event."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(name="gobby-tasks"),
+            ]
+        )
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/schema",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+                json={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            )
+
+        assert response.status_code == 200
+        result = response.json()
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            result=result,
+            is_failure=False,
         )
 
     def test_get_schema_resolves_numeric_body_session_ref_via_header_session_project(
