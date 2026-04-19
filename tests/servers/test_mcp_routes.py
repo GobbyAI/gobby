@@ -837,6 +837,47 @@ class TestGetToolSchema:
             session_id="123e4567-e89b-12d3-a456-426614174000",
         )
 
+    def test_get_schema_resolves_numeric_body_session_ref_via_header_session_project(
+        self,
+        session_storage: LocalSessionManager,
+        project_storage: LocalProjectManager,
+        temp_dir: Path,
+    ) -> None:
+        """A body #N session ref should inherit project scope from the header session."""
+        project = project_storage.create(name="test-project", repo_path=str(temp_dir))
+        session = session_storage.register(
+            external_id="external-session-1",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project.id,
+        )
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager([FakeInternalRegistry(name="gobby-tasks")])
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/schema",
+                headers={"X-Gobby-Session-Id": session.id},
+                json={
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                    "session_id": f"#{session.seq_num}",
+                },
+            )
+
+        assert response.status_code == 200
+        server._tools_handler.tool_proxy.record_unlocked_tool.assert_called_once_with(
+            "gobby-tasks",
+            "list_tasks",
+            session_id=session.id,
+        )
+
     def test_get_schema_internal_server_tool_not_found(
         self, session_storage: LocalSessionManager
     ) -> None:
@@ -2324,9 +2365,7 @@ class TestHooksEndpoints:
             "input_data": {"session_id": "test-123", "cwd": "/tmp"},
         }
 
-    def test_execute_hook_codex_envelope_source(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_execute_hook_codex_envelope_source(self, session_storage: LocalSessionManager) -> None:
         """Envelope-shaped Codex requests should normalize before adapter dispatch."""
         server = create_http_server(
             port=60887,

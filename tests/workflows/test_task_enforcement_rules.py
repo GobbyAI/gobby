@@ -752,6 +752,20 @@ class TestInjectTransitionSkill:
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
 
+    def test_records_task_transitions_in_injected_skills(self, db, manager) -> None:
+        """The rule should persist task-transitions in the unified injected_skills ledger."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("inject-transition-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
+
+        assert len(set_effects) == 1
+        assert set_effects[0].variable == "injected_skills"
+        assert "task-transitions" in str(set_effects[0].value)
+
 
 def _make_reopen_event(task_id: str) -> HookEvent:
     """Create a direct MCP reopen_task before_tool event."""

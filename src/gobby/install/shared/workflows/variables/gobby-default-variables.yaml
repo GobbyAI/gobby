@@ -98,6 +98,3 @@ variables:
   context7_available:
     value: true
     description: "True when context7 MCP server is configured and available"
-  context7_loaded:
-    value: false
-    description: "True after context7 skill has been injected this session"

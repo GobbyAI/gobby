@@ -11,6 +11,7 @@ rules:
        or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
       and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
       and (tool_input.get('tool_name') or tool_input.get('tool')) in ('close_task', 'mark_task_needs_review', 'mark_task_review_approved', 'reopen_task', 'escalate_task', 'de_escalate_task')
+      and 'task-transitions' not in variables.get('injected_skills', [])
     effects:
       - type: mcp_call
         server: gobby-skills
@@ -18,3 +19,6 @@ rules:
         arguments:
           name: task-transitions
         inject_result: true
+      - type: set_variable
+        variable: injected_skills
+        value: "variables.get('injected_skills', []) + ['task-transitions']"

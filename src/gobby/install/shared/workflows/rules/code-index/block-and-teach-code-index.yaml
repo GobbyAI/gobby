@@ -7,7 +7,7 @@ rules:
     enabled: true
     priority: 30
     when: >
-      not variables.get('code_index_loaded')
+      'code-index' not in variables.get('injected_skills', [])
       and (
         (event.data.get('canonical_tool_kind') == 'read'
          and event.data.get('canonical_file_path', '').rpartition('.')[2]
@@ -30,5 +30,5 @@ rules:
           name: code-index
         inject_result: true
       - type: set_variable
-        variable: code_index_loaded
-        value: true
+        variable: injected_skills
+        value: "variables.get('injected_skills', []) + ['code-index']"

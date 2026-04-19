@@ -12,9 +12,6 @@ rules:
         variable: suggested_skill_names
         value: []
       - type: set_variable
-        variable: code_index_loaded
-        value: false
-      - type: set_variable
         variable: injected_skills
         value: []
       - type: set_variable

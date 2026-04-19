@@ -12,7 +12,7 @@ import pytest
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.app import DaemonConfig
-from gobby.llm.claude_models import DoneEvent, TextChunk
+from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.provider_backends import (
     CodexManagedChatSession,
@@ -146,6 +146,59 @@ class TestGeminiBackend:
 
         assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Gemini"]
         assert isinstance(events[-1], DoneEvent)
+
+    @pytest.mark.asyncio
+    async def test_managed_session_defers_tool_lifecycle_context_to_next_turn(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            side_effect=[
+                _async_stream(
+                    StreamEvent(
+                        event_type="tool_call",
+                        data={
+                            "tool_name": "Write",
+                            "tool_input": {"file_path": "/tmp/example.py"},
+                            "call_id": "call-1",
+                        },
+                    ),
+                    StreamEvent(
+                        event_type="tool_result",
+                        data={"call_id": "call-1", "success": True, "result": "ok"},
+                    ),
+                    StreamEvent(event_type="result", data={}),
+                ),
+                _async_stream(StreamEvent(event_type="result", data={})),
+            ]
+        )
+        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session._connected = True
+        session.sdk_session_id = "sess-1"
+        session._on_pre_tool = AsyncMock(return_value={"context": '<skill name="python">...'})
+        session._on_post_tool = AsyncMock(
+            return_value={"context": '<skill name="task-transitions">...'}
+        )
+
+        first_events = [event async for event in session.send_message("first")]
+        second_events = [event async for event in session.send_message("second")]
+
+        assert any(isinstance(event, ToolCallEvent) for event in first_events)
+        assert any(isinstance(event, ToolResultEvent) for event in first_events)
+        session._on_pre_tool.assert_awaited_once_with(
+            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/example.py"}}
+        )
+        session._on_post_tool.assert_awaited_once_with(
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/tmp/example.py"},
+                "tool_response": "ok",
+            }
+        )
+        assert isinstance(second_events[-1], DoneEvent)
+        assert '<skill name="python">...' in backend.send_message.call_args_list[1].args[1]
+        assert (
+            '<skill name="task-transitions">...' in backend.send_message.call_args_list[1].args[1]
+        )
 
 
 class TestQwenBackend:
@@ -416,3 +469,130 @@ class TestCodexBackend:
             result = await backend.handle_approval_request("tools/call", {"threadId": "thread-1"})
 
         assert result == backend._accept_response("tools/call")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_respects_managed_pre_tool_block(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "accept_edits"
+        session._thread_id = "thread-1"
+        session._on_pre_tool = AsyncMock(
+            return_value={"decision": "block", "context": '<skill name="task-transitions">...'}
+        )
+        backend._sessions_by_thread["thread-1"] = session
+
+        with (
+            patch.object(
+                backend,
+                "_translate_approval_request",
+                return_value=(
+                    "mcp__gobby__call_tool",
+                    {"server_name": "gobby-tasks", "tool_name": "close_task"},
+                ),
+            ),
+            patch(
+                "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+                return_value=None,
+            ),
+        ):
+            result = await backend.handle_approval_request(
+                "mcpServer/elicitation/request",
+                {"threadId": "thread-1"},
+            )
+
+        assert result == backend._decline_response("mcpServer/elicitation/request")
+        session._on_pre_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "close_task"},
+            }
+        )
+        assert session._consume_deferred_context() == '<skill name="task-transitions">...'
+
+    @pytest.mark.asyncio
+    async def test_send_message_replays_deferred_context_prefix(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            return_value=_async_stream(DoneEvent(tool_calls_count=0, sdk_session_id="thread-1"))
+        )
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._deferred_contexts.append('<skill name="code-index">...')
+
+        events = [event async for event in session.send_message("hello")]
+
+        assert isinstance(events[-1], DoneEvent)
+        assert backend.send_message.call_args.kwargs["context_prefix"] is not None
+        assert (
+            '<skill name="code-index">...'
+            in backend.send_message.call_args.kwargs["context_prefix"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_message_applies_post_tool_lifecycle_for_completed_items(self) -> None:
+        handlers: dict[str, list[Any]] = {}
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            for handler in handlers.get("item/completed", []):
+                handler(
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "type": "mcpToolCall",
+                            "server": "gobby-tasks",
+                            "tool": "close_task",
+                            "arguments": {"task_id": "#42"},
+                            "result": {"success": True},
+                        },
+                    },
+                )
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id="turn-1")
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._on_post_tool = AsyncMock(
+            return_value={"context": '<skill name="task-transitions">...'}
+        )
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+
+        events = [event async for event in backend.send_message(session, "hello")]
+
+        assert isinstance(events[-1], DoneEvent)
+        session._on_post_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby-tasks__close_task",
+                "tool_input": {"task_id": "#42"},
+                "tool_response": {"success": True},
+            }
+        )
+        assert session._consume_deferred_context() == '<skill name="task-transitions">...'

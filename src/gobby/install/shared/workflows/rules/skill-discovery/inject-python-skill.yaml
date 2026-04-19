@@ -8,8 +8,8 @@ rules:
     priority: 30
     when: >
       'python' not in variables.get('injected_skills', [])
-      and event.data.get('tool_name') in ('Write', 'Edit')
-      and tool_input.get('file_path', '').endswith('.py')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith('.py')
     effects:
       - type: block
         reason: >

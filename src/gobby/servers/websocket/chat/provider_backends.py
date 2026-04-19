@@ -189,6 +189,7 @@ class ManagedChatSessionBase:
     _needs_history_injection: bool = field(default=False, repr=False)
     _message_manager: Any | None = field(default=None, repr=False)
     _config: Any | None = field(default=None, repr=False)
+    _deferred_contexts: list[str] = field(default_factory=list, repr=False)
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
         default=None, repr=False
     )
@@ -267,6 +268,53 @@ class ManagedChatSessionBase:
     def provide_approval(self, decision: str) -> None:
         return None
 
+    def _queue_deferred_context(self, response: dict[str, Any] | None) -> None:
+        """Persist lifecycle context for the next prompt when it can't be injected live."""
+        if not isinstance(response, dict):
+            return
+        context = response.get("context")
+        if isinstance(context, str) and context.strip():
+            self._deferred_contexts.append(context.strip())
+
+    def _consume_deferred_context(self) -> str | None:
+        """Return and clear queued lifecycle context fragments."""
+        if not self._deferred_contexts:
+            return None
+        merged = "\n\n".join(part for part in self._deferred_contexts if part)
+        self._deferred_contexts.clear()
+        return merged or None
+
+    async def _apply_pre_tool_lifecycle(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Run managed BEFORE_TOOL hooks and queue any returned context."""
+        if self._on_pre_tool is None:
+            return None
+        response = await self._on_pre_tool({"tool_name": tool_name, "tool_input": tool_input})
+        self._queue_deferred_context(response)
+        return response
+
+    async def _apply_post_tool_lifecycle(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_response: Any,
+    ) -> dict[str, Any] | None:
+        """Run managed AFTER_TOOL hooks and queue any returned context."""
+        if self._on_post_tool is None:
+            return None
+        response = await self._on_post_tool(
+            {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "tool_response": tool_response,
+            }
+        )
+        self._queue_deferred_context(response)
+        return response
+
 
 @dataclass
 class GeminiManagedChatSession(
@@ -324,6 +372,9 @@ class GeminiManagedChatSession(
             plan_ctx = self._pop_plan_mode_context()
             if plan_ctx:
                 context_parts.append(plan_ctx)
+            deferred_context = self._consume_deferred_context()
+            if deferred_context:
+                context_parts.append(deferred_context)
 
             if self._on_before_agent:
                 resp = await self._on_before_agent(
@@ -341,6 +392,7 @@ class GeminiManagedChatSession(
 
             self._is_first_turn = False
             saw_content_delta = False
+            pending_tool_calls: dict[str, dict[str, Any]] = {}
 
             try:
                 async for stream_event in self._backend.send_message(self, full_prompt):
@@ -355,6 +407,44 @@ class GeminiManagedChatSession(
                             self._model = model_name
                     elif stream_event.event_type == "content_delta":
                         saw_content_delta = True
+
+                    if stream_event.event_type in {"tool_call", "call_tool"}:
+                        chat_event = self._translate_event(
+                            stream_event,
+                            allow_message_fallback=not saw_content_delta,
+                        )
+                        if isinstance(chat_event, ToolCallEvent):
+                            pending_tool_calls[chat_event.tool_call_id] = {
+                                "tool_name": chat_event.tool_name,
+                                "tool_input": chat_event.arguments,
+                            }
+                            await self._apply_pre_tool_lifecycle(
+                                chat_event.tool_name,
+                                chat_event.arguments,
+                            )
+                        if chat_event is not None:
+                            yield chat_event
+                        continue
+
+                    if stream_event.event_type == "tool_result":
+                        chat_event = self._translate_event(
+                            stream_event,
+                            allow_message_fallback=not saw_content_delta,
+                        )
+                        if isinstance(chat_event, ToolResultEvent):
+                            pending = pending_tool_calls.pop(chat_event.tool_call_id, {})
+                            await self._apply_post_tool_lifecycle(
+                                str(pending.get("tool_name", "")),
+                                (
+                                    pending.get("tool_input")
+                                    if isinstance(pending.get("tool_input"), dict)
+                                    else {}
+                                ),
+                                chat_event.result if chat_event.success else chat_event.error,
+                            )
+                        if chat_event is not None:
+                            yield chat_event
+                        continue
 
                     chat_event = self._translate_event(
                         stream_event,
@@ -504,6 +594,9 @@ class CodexManagedChatSession(
         plan_ctx = self._pop_plan_mode_context()
         if plan_ctx:
             context_parts.append(plan_ctx)
+        deferred_context = self._consume_deferred_context()
+        if deferred_context:
+            context_parts.append(deferred_context)
 
         if self._on_before_agent:
             resp = await self._on_before_agent({"prompt": prompt, "source": "codex_web_chat"})
@@ -938,6 +1031,11 @@ class CodexWebChatBackend:
         return {}
 
     @staticmethod
+    def _compose_mcp_tool_name(server_name: str, tool_name: str) -> str:
+        """Return the canonical MCP tool name used by shared lifecycle logic."""
+        return f"mcp__{server_name}__{tool_name}"
+
+    @staticmethod
     def _extract_mcp_tool_name(message: Any) -> str | None:
         if not isinstance(message, str):
             return None
@@ -946,6 +1044,111 @@ class CodexWebChatBackend:
             return None
         tool_name = match.group(1).strip()
         return tool_name or None
+
+    @staticmethod
+    def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
+        """Return the best-effort tool item payload from an item/completed event."""
+        item = params.get("item")
+        if isinstance(item, dict):
+            return item
+
+        toolish_fields = {
+            "type",
+            "itemType",
+            "name",
+            "toolName",
+            "tool_name",
+            "arguments",
+            "toolArgs",
+            "tool_input",
+            "input",
+            "output",
+            "result",
+            "toolResult",
+        }
+        if any(field in params for field in toolish_fields):
+            return params
+
+        return {}
+
+    @staticmethod
+    def _looks_like_tool_item(item: dict[str, Any]) -> bool:
+        """Identify completed Codex items that represent tool execution."""
+        item_type = item.get("type") or item.get("itemType")
+        if item_type in {"commandExecution", "fileChange", "mcpToolCall"}:
+            return True
+
+        if any(
+            isinstance(item.get(tool_type), dict)
+            for tool_type in ("commandExecution", "fileChange", "mcpToolCall")
+        ):
+            return True
+
+        toolish_fields = (
+            "name",
+            "toolName",
+            "tool_name",
+            "arguments",
+            "toolArgs",
+            "tool_input",
+            "input",
+            "output",
+            "result",
+            "toolResult",
+        )
+        return any(field in item for field in toolish_fields)
+
+    def _build_completed_tool_lifecycle_payload(
+        self,
+        params: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], Any] | None:
+        """Normalize completed Codex tool items into managed lifecycle payloads."""
+        item = self._extract_completed_item_payload(params)
+        if not item or not self._looks_like_tool_item(item):
+            return None
+
+        item_type = item.get("type") or item.get("itemType") or ""
+        nested_payload = item.get(item_type)
+
+        item_data: dict[str, Any] = {}
+        if isinstance(nested_payload, dict):
+            item_data.update(nested_payload)
+        item_data.update(item)
+
+        raw_tool_name = (
+            item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
+        )
+        if not raw_tool_name and item_type == "mcpToolCall":
+            server_name = item_data.get("server") or item_data.get("serverName")
+            mcp_tool = item_data.get("tool") or item_data.get("toolName") or item_data.get("name")
+            if (
+                isinstance(server_name, str)
+                and server_name
+                and isinstance(mcp_tool, str)
+                and mcp_tool
+            ):
+                raw_tool_name = self._compose_mcp_tool_name(server_name, mcp_tool)
+
+        if isinstance(raw_tool_name, str) and raw_tool_name:
+            from gobby.hooks.normalization import normalize_tool_fields
+
+            normalized = normalize_tool_fields({"tool_name": raw_tool_name})
+            tool_name = str(normalized.get("tool_name", raw_tool_name))
+        elif item_type == "commandExecution":
+            tool_name = "Bash"
+        elif item_type == "fileChange":
+            tool_name = "Write"
+        else:
+            return None
+
+        tool_input = self._extract_tool_args(item_data)
+        tool_response = (
+            item_data.get("tool_response")
+            or item_data.get("tool_result")
+            or item_data.get("output")
+            or item_data.get("result")
+        )
+        return tool_name, tool_input, tool_response
 
     def _translate_approval_request(
         self,
@@ -1039,6 +1242,10 @@ class CodexWebChatBackend:
         if not tool_name:
             return self._decline_response(method)
 
+        lifecycle_response = await session._apply_pre_tool_lifecycle(tool_name, input_data)
+        if isinstance(lifecycle_response, dict) and lifecycle_response.get("decision") == "block":
+            return self._decline_response(method)
+
         out_of_repo_path = find_out_of_repo_write_path(
             tool_name,
             input_data,
@@ -1127,6 +1334,7 @@ class CodexWebChatBackend:
             "thread/closed",
             "agent/messageDelta",
             "item/agentMessage/delta",
+            "item/completed",
         ]
         for method in event_methods:
             self._client.add_notification_handler(method, _enqueue)
@@ -1152,6 +1360,17 @@ class CodexWebChatBackend:
                     if delta:
                         saw_text_output = True
                         yield TextChunk(content=delta)
+                    continue
+
+                if method == "item/completed":
+                    payload = self._build_completed_tool_lifecycle_payload(params)
+                    if payload is not None:
+                        tool_name, tool_input, tool_response = payload
+                        await session._apply_post_tool_lifecycle(
+                            tool_name,
+                            tool_input,
+                            tool_response,
+                        )
                     continue
 
                 if method == "turn/started":

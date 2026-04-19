@@ -8,8 +8,8 @@ rules:
     priority: 30
     when: >
       'rust' not in variables.get('injected_skills', [])
-      and event.data.get('tool_name') in ('Write', 'Edit')
-      and tool_input.get('file_path', '').endswith('.rs')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith('.rs')
     effects:
       - type: block
         reason: >

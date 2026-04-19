@@ -63,13 +63,14 @@ def _set_context_for_request(
     Returns a _ContextTokens with project and session tokens for reset.
     """
     tokens = _ContextTokens()
+    header_session_id = request.headers.get("x-gobby-session-id") if request else None
 
     # 1. Try session_id from tool arguments
     session_id = arguments.get("session_id") if isinstance(arguments, dict) else None
 
     # 2. Try session_id from header (stdio proxy injects this once learned)
     if not session_id and request:
-        session_id = request.headers.get("x-gobby-session-id")
+        session_id = header_session_id
 
     # Resolve session → project (authoritative: session knows its project)
     if session_id and server.session_manager:
@@ -81,6 +82,28 @@ def _set_context_for_request(
         ref = session_id.lstrip("#") if session_id.startswith("#") else session_id
         if ref.isdigit():
             bootstrap_project_id = request.headers.get("x-gobby-project-id") if request else None
+            if not bootstrap_project_id and header_session_id:
+                try:
+                    header_ref = (
+                        header_session_id.lstrip("#")
+                        if header_session_id.startswith("#")
+                        else header_session_id
+                    )
+                    resolved_header_id = (
+                        resolve_session_reference(server.session_manager.db, header_session_id)
+                        if not header_ref.isdigit()
+                        else None
+                    )
+                    if resolved_header_id:
+                        header_session = server.session_manager.get(resolved_header_id)
+                        bootstrap_project_id = (
+                            header_session.project_id if header_session else bootstrap_project_id
+                        )
+                except (ValueError, Exception) as e:
+                    logger.debug(
+                        f"Failed to derive bootstrap project from header session "
+                        f"'{header_session_id}': {e}"
+                    )
             try:
                 resolved_id = resolve_session_reference(
                     server.session_manager.db, session_id, bootstrap_project_id

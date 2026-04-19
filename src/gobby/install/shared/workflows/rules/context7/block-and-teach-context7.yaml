@@ -7,9 +7,10 @@ rules:
     enabled: true
     priority: 31
     when: >
-      not variables.get('context7_loaded')
-      and event.data.get('tool_name') in ('Write', 'Edit')
-      and tool_input.get('file_path', '').rpartition('.')[2]
+      variables.get('context7_available', true)
+      and 'context7' not in variables.get('injected_skills', [])
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').rpartition('.')[2]
           in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
               'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala')
     effects:
@@ -28,5 +29,5 @@ rules:
           name: context7
         inject_result: true
       - type: set_variable
-        variable: context7_loaded
-        value: true
+        variable: injected_skills
+        value: "variables.get('injected_skills', []) + ['context7']"
