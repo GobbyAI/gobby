@@ -32,6 +32,7 @@ def _agent_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "mode": body.get("mode"),
         "model": body.get("model"),
         "isolation": body.get("isolation"),
+        "surfaces": body.get("surfaces", ["spawn"]),
         "has_steps": bool(body.get("steps")),
         "step_count": len(body.get("steps") or []),
         "enabled": row.enabled,
@@ -51,6 +52,7 @@ def _agent_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "model": body.get("model"),
         "mode": body.get("mode"),
         "isolation": body.get("isolation"),
+        "surfaces": body.get("surfaces", ["spawn"]),
         "base_branch": body.get("base_branch"),
         "timeout": body.get("timeout"),
         "max_turns": body.get("max_turns"),
@@ -72,6 +74,7 @@ def list_agent_definitions(
     def_manager: LocalWorkflowDefinitionManager,
     enabled: bool | None = None,
     project_id: str | None = None,
+    surface_filter: str | None = None,
 ) -> dict[str, Any]:
     """
     List agent definitions with optional filters.
@@ -86,6 +89,10 @@ def list_agent_definitions(
     """
     rows = def_manager.list_all(workflow_type="agent", enabled=enabled, project_id=project_id)
     agents = [_agent_summary(r) for r in rows]
+    if surface_filter:
+        agents = [
+            agent for agent in agents if surface_filter in agent.get("surfaces", ["spawn"])
+        ]
     return {"success": True, "agents": agents, "count": len(agents)}
 
 

@@ -149,7 +149,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
         sv_mgr = SessionVariableManager(self._session_storage.db)
         variables = sv_mgr.get_variables(session_id)
 
-        if variables.get("_agent_context_injected"):
+        identity_reinject = bool(variables.get("_agent_identity_reinject"))
+        if variables.get("_agent_context_injected") and not identity_reinject:
             return
 
         agent_name = variables.get("_agent_type", "default")
@@ -179,6 +180,14 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         parts: list[str] = []
 
+        if identity_reinject:
+            if agent_body.role:
+                parts.append(f"## Role\n{agent_body.role}")
+            if agent_body.goal:
+                parts.append(f"## Goal\n{agent_body.goal}")
+            if agent_body.personality:
+                parts.append(f"## Personality\n{agent_body.personality}")
+
         if agent_body.instructions:
             parts.append(f"## Instructions\n{agent_body.instructions}")
 
@@ -200,7 +209,13 @@ class AgentEventHandlerMixin(EventHandlersBase):
             else:
                 response.context = instructions_context
 
-        sv_mgr.set_variable(session_id, "_agent_context_injected", True)
+        sv_mgr.merge_variables(
+            session_id,
+            {
+                "_agent_context_injected": True,
+                "_agent_identity_reinject": False,
+            },
+        )
 
     def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
         """Intercept /gobby and /gobby skillname commands.

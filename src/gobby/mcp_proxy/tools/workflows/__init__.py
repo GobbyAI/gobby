@@ -493,15 +493,16 @@ def create_workflows_registry(
 
     @registry.tool(
         name="list_agent_definitions",
-        description="List agent definitions. Supports filtering by enabled status and project ID.",
+        description="List agent definitions. Supports filtering by enabled status, project ID, and usage surface.",
     )
     def _list_agent_definitions(
         enabled: bool | None = None,
         project_id: str | None = None,
+        surface_filter: str | None = None,
     ) -> dict[str, Any]:
         if _def_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return list_agent_definitions(_def_manager, enabled, project_id)
+        return list_agent_definitions(_def_manager, enabled, project_id, surface_filter)
 
     @registry.tool(
         name="get_agent_definition",

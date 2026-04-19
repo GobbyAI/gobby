@@ -364,7 +364,7 @@ class SessionStartMixin(EventHandlersBase):
         _t_activate = time.monotonic()
         # Step 2e: Deep load default agent (rules, skills, variables) for new session
         agent_result: AgentActivationResult | None = None
-        if session_id:
+        if session_id and not input_data.get("skip_default_agent_activation"):
             try:
                 agent_override = input_data.get("agent_name_override")
                 agent_result = self._activate_default_agent(

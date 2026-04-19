@@ -256,6 +256,36 @@ async def handle_set_agent(
         await mixin._send_error(websocket, "set_agent requires conversation_id and agent_name")
         return
 
+    session_manager = getattr(mixin, "session_manager", None)
+    if session_manager and agent_name != "default":
+        try:
+            existing_row = await asyncio.to_thread(session_manager.get, conversation_id)
+        except Exception:
+            existing_row = None
+        try:
+            from gobby.workflows.agent_resolver import resolve_agent
+
+            agent_body = await asyncio.to_thread(
+                resolve_agent,
+                agent_name,
+                session_manager.db,
+                getattr(existing_row, "source", None),
+                getattr(existing_row, "project_id", None),
+            )
+        except Exception as e:
+            logger.warning("Failed to resolve persona candidate '%s': %s", agent_name, e)
+            agent_body = None
+
+        if agent_body is None:
+            await mixin._send_error(websocket, f"Unknown agent definition '{agent_name}'")
+            return
+        if not agent_body.supports_surface("persona"):
+            await mixin._send_error(
+                websocket,
+                f"Agent definition '{agent_name}' is not persona-capable",
+            )
+            return
+
     # Tear down existing session (same pattern as set_worktree)
     session = mixin._chat_sessions.get(conversation_id)
     current_agent_name = getattr(session, "_pending_agent_name", None) if session else None
@@ -265,7 +295,6 @@ async def handle_set_agent(
     if session:
         await mixin._cancel_active_chat(conversation_id)
         if session.db_session_id:
-            session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
                     await asyncio.to_thread(

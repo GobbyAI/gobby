@@ -89,6 +89,9 @@ variables:
   _agent_context_injected:
     value: false
     description: "True after agent instructions/skills/code-index have been injected on first before_agent"
+  _agent_identity_reinject:
+    value: false
+    description: "True when the next before_agent should re-inject role/goal/personality after a persona switch"
   edit_write_pending:
     value: false
     description: "True when an Edit/Write tool call is pending (pre-tool fired, post-tool not yet succeeded)"

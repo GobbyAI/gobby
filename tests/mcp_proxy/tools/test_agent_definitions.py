@@ -76,11 +76,22 @@ class TestListAgentDefinitions:
 
     def test_summary_fields(self, tmp_path: Path) -> None:
         mgr = _setup(tmp_path)
-        _insert_agent(mgr, "summary-test", provider="gemini")
+        _insert_agent(mgr, "summary-test", provider="gemini", surfaces=["spawn", "persona"])
         result = list_agent_definitions(mgr)
         agent = result["agents"][0]
         assert agent["provider"] == "gemini"
         assert agent["source"] == "installed"
+        assert agent["surfaces"] == ["spawn", "persona"]
+
+    def test_filter_surface(self, tmp_path: Path) -> None:
+        mgr = _setup(tmp_path)
+        _insert_agent(mgr, "spawn-only", surfaces=["spawn"])
+        _insert_agent(mgr, "persona-ready", surfaces=["spawn", "persona"])
+
+        result = list_agent_definitions(mgr, surface_filter="persona")
+
+        assert result["count"] == 1
+        assert result["agents"][0]["name"] == "persona-ready"
 
 
 class TestGetAgentDefinition:

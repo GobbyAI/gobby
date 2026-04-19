@@ -6,6 +6,7 @@ description: |
 version: "1.0"
 enabled: true
 priority: 20
+surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.4
 reasoning_effort: xhigh

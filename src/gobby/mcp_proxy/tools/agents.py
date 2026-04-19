@@ -650,10 +650,9 @@ def create_agents_registry(
     @registry.tool(
         name="apply_persona",
         description=(
-            "Apply an agent definition's persona to the current session. "
-            "Sets agent type, activates matching rules and skills, creates step "
-            "workflow instance if the agent defines steps, and merges variables. "
-            "Does not spawn a new process or create a child session."
+            "Apply a persona-capable agent definition to the current session. "
+            "Updates prompt-facing persona state and skill selection without "
+            "spawning a child agent or changing provider/model/isolation."
         ),
     )
     async def apply_persona(

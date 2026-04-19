@@ -262,7 +262,7 @@ class TestSessionLifecycleTransitions:
         assert count == 1
 
     def test_reregister_resets_agent_context_injected(self) -> None:
-        """Test re-registration resets _agent_context_injected so instructions re-inject."""
+        """Test re-registration resets deferred persona injection flags."""
         mock_session_storage = MagicMock()
         mock_session_storage.list.side_effect = lambda status, limit: {
             "active": [
@@ -289,8 +289,12 @@ class TestSessionLifecycleTransitions:
 
         assert count == 1
         MockSVMgr.assert_called_once_with(mock_session_storage.db)
-        mock_sv_instance.set_variable.assert_called_once_with(
-            "session-1", "_agent_context_injected", False
+        mock_sv_instance.merge_variables.assert_called_once_with(
+            "session-1",
+            {
+                "_agent_context_injected": False,
+                "_agent_identity_reinject": False,
+            },
         )
 
 

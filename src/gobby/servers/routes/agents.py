@@ -28,6 +28,7 @@ class CreateAgentDefinitionRequest(BaseModel):
     project_id: str | None = None
     description: str | None = None
     sources: list[str] | None = None
+    surfaces: list[str] | None = None
     role: str | None = None
     goal: str | None = None
     personality: str | None = None
@@ -64,6 +65,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     sources: list[str] | None = None
+    surfaces: list[str] | None = None
     role: str | None = None
     goal: str | None = None
     personality: str | None = None
@@ -195,6 +197,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         project_id: str | None = Query(None),
         include_deleted: bool = Query(False),
         source_filter: str | None = Query(None),
+        surface_filter: str | None = Query(None),
     ) -> dict[str, Any]:
         """List all agent definitions from workflow_definitions."""
         try:
@@ -207,6 +210,12 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             items = [d for r in rows if (d := _row_to_api_dict(r)) is not None]
             if source_filter:
                 items = [d for d in items if d.get("sources") and source_filter in d["sources"]]
+            if surface_filter:
+                items = [
+                    d
+                    for d in items
+                    if surface_filter in d.get("definition", {}).get("surfaces", ["spawn"])
+                ]
             return {
                 "status": "success",
                 "definitions": items,
@@ -281,6 +290,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 name=request.name,
                 description=request.description,
                 sources=request.sources,
+                surfaces=request.surfaces,
                 role=request.role,
                 goal=request.goal,
                 personality=request.personality,
@@ -337,6 +347,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 "name",
                 "description",
                 "sources",
+                "surfaces",
                 "role",
                 "goal",
                 "personality",

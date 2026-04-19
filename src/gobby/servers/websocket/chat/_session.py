@@ -306,33 +306,18 @@ class ChatSessionMixin:
             except Exception as e:
                 logger.debug(f"Failed to resolve existing chat session {session_key}: {e}")
 
-        # Early agent resolution to determine provider (Codex vs Claude SDK)
-        pending_agents = getattr(self, "_pending_agents", {})
-        pending_agent = pending_agents.pop(session_key, None)
-        agent_name = pending_agent or "default"
-        agent_body = None
-        if session_manager:
-            try:
-                from gobby.workflows.agent_resolver import resolve_agent
+        # Resolve any queued persona selection early so session bootstrap can
+        # prepare persona-facing prompt context without treating the definition
+        # as an autonomous-agent runtime config.
+        pending_projects = getattr(self, "_pending_projects", {})
+        pending_project = pending_projects.get(session_key)
+        effective_project_for_agent = (
+            project_id
+            or pending_project
+            or getattr(existing_db_session, "project_id", None)
+            or PERSONAL_PROJECT_ID
+        )
 
-                agent_body = await asyncio.to_thread(
-                    resolve_agent,
-                    agent_name,
-                    session_manager.db,
-                    cli_source="claude",
-                    project_id=project_id
-                    or getattr(existing_db_session, "project_id", None)
-                    or PERSONAL_PROJECT_ID,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to resolve agent '{agent_name}' for provider check: {e}")
-
-        # Provider precedence: queued UI override > existing DB session source
-        # > explicit message provider > agent definition > default.
-        #
-        # Durable web-chat rows are the authoritative provider binding for an
-        # existing conversation. A stale frontend provider selection should not
-        # silently re-route a restored session onto a different backend.
         daemon_cfg = getattr(self, "daemon_config", None)
         pending_providers = getattr(self, "_pending_providers", {})
         pending_provider = _normalize_web_chat_provider(pending_providers.pop(session_key, None))
@@ -343,12 +328,41 @@ class ChatSessionMixin:
             )
         if not effective_provider:
             effective_provider = _normalize_web_chat_provider(provider)
-        if not effective_provider and agent_body:
-            effective_provider = _normalize_web_chat_provider(getattr(agent_body, "provider", None))
         if not effective_provider and daemon_cfg is not None:
             chat_cfg = getattr(daemon_cfg, "chat", None)
             effective_provider = _normalize_web_chat_provider(getattr(chat_cfg, "provider", None))
 
+        pending_agents = getattr(self, "_pending_agents", {})
+        pending_agent = pending_agents.pop(session_key, None)
+        agent_name = pending_agent or "default"
+        agent_body = None
+        persona_selected = False
+        if session_manager:
+            try:
+                from gobby.workflows.agent_resolver import resolve_agent
+
+                agent_body = await asyncio.to_thread(
+                    resolve_agent,
+                    agent_name,
+                    session_manager.db,
+                    cli_source=effective_provider or "claude",
+                    project_id=effective_project_for_agent,
+                )
+                persona_selected = bool(
+                    pending_agent
+                    and pending_agent != "default"
+                    and agent_body is not None
+                    and agent_body.supports_surface("persona")
+                )
+            except Exception as e:
+                logger.warning(f"Failed to resolve agent '{agent_name}' for session bootstrap: {e}")
+
+        # Provider precedence: queued UI override > existing DB session source
+        # > explicit message provider > default.
+        #
+        # Durable web-chat rows are the authoritative provider binding for an
+        # existing conversation. A stale frontend provider selection should not
+        # silently re-route a restored session onto a different backend.
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
         if runtime_manager is not None:
             current_web_chat_sandbox = runtime_manager.sandbox_config
@@ -466,7 +480,6 @@ class ChatSessionMixin:
         # Set project context on session BEFORE start() so env vars and CWD
         # are correctly configured for the CLI subprocess.
         # Precedence: explicit message project_id > pending from set_project > fallback
-        pending_projects = getattr(self, "_pending_projects", {})
         pending_project = pending_projects.pop(session_key, None)
         effective_pid = (
             project_id
@@ -687,34 +700,46 @@ class ChatSessionMixin:
         if wt_override:
             session.project_path = wt_override
 
-        # Agent was already resolved at the top of the method for provider detection.
-        # Use the cached agent_body to build the system prompt.
+        # Persona / agent prompt bootstrap.
         session._pending_agent_name = agent_name
 
         if agent_body and session_manager:
             try:
                 cli_source = effective_provider or "claude"
-                context_parts: list[str] = []
-                if effective_provider in {"gemini", "qwen"}:
-                    preamble = _build_agent_identity_preamble(agent_body)
-                else:
-                    preamble = agent_body.build_prompt_preamble()
-                if preamble:
-                    context_parts.append(preamble)
-                # Gemini/Qwen web chat defer instructions + skills to BEFORE_AGENT
-                # so the first prompt does not duplicate heavy context blocks.
-                if effective_provider not in {"gemini", "qwen"}:
-                    skills_text = await asyncio.to_thread(
-                        _inject_agent_skills,
+                if persona_selected:
+                    from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
+
+                    persona_context, _ = await asyncio.to_thread(
+                        build_session_persona_context,
                         agent_body,
                         session_manager.db,
-                        effective_pid,
-                        cli_source,
+                        cli_source=cli_source,
+                        identity_only=True,
                     )
-                    if skills_text:
-                        context_parts.append(skills_text)
-                if context_parts:
-                    session.system_prompt_override = "\n\n".join(context_parts)
+                    if persona_context:
+                        session.system_prompt_override = persona_context
+                else:
+                    context_parts: list[str] = []
+                    if effective_provider in {"gemini", "qwen"}:
+                        preamble = _build_agent_identity_preamble(agent_body)
+                    else:
+                        preamble = agent_body.build_prompt_preamble()
+                    if preamble:
+                        context_parts.append(preamble)
+                    # Gemini/Qwen web chat defer instructions + skills to BEFORE_AGENT
+                    # so the first prompt does not duplicate heavy context blocks.
+                    if effective_provider not in {"gemini", "qwen"}:
+                        skills_text = await asyncio.to_thread(
+                            _inject_agent_skills,
+                            agent_body,
+                            session_manager.db,
+                            effective_pid,
+                            cli_source,
+                        )
+                        if skills_text:
+                            context_parts.append(skills_text)
+                    if context_parts:
+                        session.system_prompt_override = "\n\n".join(context_parts)
             except Exception as e:
                 logger.warning(f"Failed to build agent system prompt for '{agent_name}': {e}")
 
@@ -763,11 +788,26 @@ class ChatSessionMixin:
             except Exception:
                 logger.debug("Failed to persist selected model for web-chat session", exc_info=True)
 
+        if persona_selected and session_manager and session.db_session_id:
+            try:
+                from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+
+                await apply_persona_impl(
+                    agent=agent_name,
+                    db=session_manager.db,
+                    session_id=session.db_session_id,
+                    cli_source=provider_name,
+                )
+            except Exception as e:
+                logger.warning("Failed to apply persona '%s' to session %s: %s", agent_name, session_key, e)
+
         self._chat_sessions[session_key] = session
 
         # Fire SESSION_START (informational, fire-and-forget)
         start_data: dict[str, Any] = {}
-        if pending_agent:
+        if persona_selected:
+            start_data["skip_default_agent_activation"] = True
+        elif pending_agent:
             start_data["agent_name_override"] = pending_agent
 
         def _log_session_start_error(task: asyncio.Task[Any]) -> None:

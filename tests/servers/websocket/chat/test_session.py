@@ -22,6 +22,8 @@ class DummyMixin(ChatSessionMixin):
         self._pending_modes: dict = {}
         self._pending_worktree_paths: dict = {}
         self._pending_agents: dict = {}
+        self._pending_projects: dict = {}
+        self._pending_providers: dict = {}
         self._session_create_locks: dict = {}
         self.session_manager = None
         self.daemon_config = None
@@ -366,6 +368,74 @@ class TestCreateChatSessionInner:
             )
             agent_body.build_prompt_preamble.assert_not_called()
             mock_inject_skills.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pending_persona_uses_next_session_provider_and_project_context(
+        self, mixin: DummyMixin
+    ) -> None:
+        mixin._pending_agents["conv-persona"] = "planner"
+        mixin._pending_projects["conv-persona"] = "proj-queued"
+        mixin._pending_providers["conv-persona"] = "gemini"
+
+        with (
+            patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
+            patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
+            patch(
+                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_context",
+                return_value=("## Role\nPlanner", None),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.apply_persona.apply_persona_impl",
+                new=AsyncMock(return_value={"success": True}),
+            ) as mock_apply_persona,
+        ):
+            agent_body = MagicMock()
+            agent_body.name = "planner"
+            agent_body.supports_surface.return_value = True
+            mock_resolve_agent.return_value = agent_body
+
+            mock_session = AsyncMock()
+            mock_session.provider = "gemini"
+            mock_session.chat_mode = "plan"
+            mock_session.db_session_id = None
+            mock_session.resume_session_id = None
+            mock_session.project_path = None
+            mock_session.project_id = None
+            mock_session.system_prompt_override = None
+            mixin.web_chat_runtime_manager = MagicMock()
+            mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+
+            mock_db_sess = MagicMock()
+            mock_db_sess.id = "db-id-persona"
+            mock_db_sess.seq_num = 11
+            mock_db_sess.usage_output_tokens = 0
+            mock_db_sess.chat_mode = "plan"
+            mock_db_sess.approved_tools_json = None
+
+            mixin.session_manager = MagicMock()
+            mixin.session_manager.db = MagicMock()
+            mixin.session_manager.register.return_value = mock_db_sess
+            mixin._fire_lifecycle = AsyncMock()
+
+            await mixin._create_chat_session_inner("conv-persona")
+            await asyncio.sleep(0)
+
+            assert mock_resolve_agent.call_args is not None
+            assert mock_resolve_agent.call_args.kwargs["cli_source"] == "gemini"
+            assert mock_resolve_agent.call_args.kwargs["project_id"] == "proj-queued"
+            mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
+                provider="gemini",
+                conversation_id="conv-persona",
+                model=None,
+                reasoning_effort=None,
+            )
+            assert mock_session.system_prompt_override == "## Role\nPlanner"
+            mock_apply_persona.assert_awaited_once()
+            mixin._fire_lifecycle.assert_awaited_once_with(
+                "conv-persona",
+                HookEventType.SESSION_START,
+                {"skip_default_agent_activation": True},
+            )
 
     @pytest.mark.asyncio
     async def test_existing_web_chat_source_wins_over_stale_message_provider(

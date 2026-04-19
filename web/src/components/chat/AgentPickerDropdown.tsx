@@ -32,7 +32,7 @@ export function AgentPickerDropdown({
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent className="max-w-sm p-0 gap-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <DialogTitle className="text-sm font-semibold">Select Agent</DialogTitle>
+          <DialogTitle className="text-sm font-semibold">Select Persona</DialogTitle>
           <button
             type="button"
             className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -41,7 +41,7 @@ export function AgentPickerDropdown({
             <CloseIcon />
           </button>
         </div>
-        <DialogDescription className="sr-only">Choose an agent for this conversation</DialogDescription>
+        <DialogDescription className="sr-only">Choose a persona for this conversation</DialogDescription>
         {showScopeToggle && (
           <div className="agent-picker-scope-toggle">
             <button

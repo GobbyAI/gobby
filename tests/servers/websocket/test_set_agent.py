@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.servers.websocket.session_control import SessionControlMixin
+from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -43,6 +44,16 @@ def _make_session(db_session_id: str | None = "db-123") -> MagicMock:
     session.db_session_id = db_session_id
     session.stop = AsyncMock()
     return session
+
+
+@pytest.fixture(autouse=True)
+def _mock_persona_resolution() -> Any:
+    with pytest.MonkeyPatch.context() as mp:
+        def _resolve_agent(*_args: Any, **_kwargs: Any) -> AgentDefinitionBody:
+            return AgentDefinitionBody(name="persona-agent", surfaces=["persona"])
+
+        mp.setattr("gobby.workflows.agent_resolver.resolve_agent", _resolve_agent)
+        yield
 
 
 class TestSetAgentValidation:
@@ -180,3 +191,33 @@ class TestSetAgentWithExistingSession:
         # Confirmation still sent
         assert server._pending_agents["conv-1"] == "new-agent"
         ws.send.assert_awaited_once()
+
+
+class TestSetAgentPersonaValidation:
+    async def test_unknown_agent_errors(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("gobby.workflows.agent_resolver.resolve_agent", lambda *_a, **_k: None)
+            await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "missing"})
+
+        server._send_error.assert_awaited_once()
+        assert "Unknown agent definition" in server._send_error.call_args.args[1]
+
+    async def test_non_persona_agent_errors(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                lambda *_a, **_k: AgentDefinitionBody(name="spawn-only"),
+            )
+            await server._handle_set_agent(
+                ws,
+                {"conversation_id": "conv-1", "agent_name": "spawn-only"},
+            )
+
+        server._send_error.assert_awaited_once()
+        assert "not persona-capable" in server._send_error.call_args.args[1]

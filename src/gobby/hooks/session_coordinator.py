@@ -273,7 +273,13 @@ class SessionCoordinator:
             from gobby.workflows.state_manager import SessionVariableManager
 
             sv_mgr = SessionVariableManager(self._session_storage.db)
-            sv_mgr.set_variable(session_id, "_agent_context_injected", False)
+            sv_mgr.merge_variables(
+                session_id,
+                {
+                    "_agent_context_injected": False,
+                    "_agent_identity_reinject": False,
+                },
+            )
         except Exception as e:
             self.logger.warning(
                 f"Failed to reset deferred injection flags for session {session_id}: {e}"

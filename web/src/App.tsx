@@ -505,7 +505,9 @@ export default function App() {
   const confirmSessionDeleted = sessionCatalog.confirmSessionDeleted;
   const markSessionDeleting = sessionCatalog.markSessionDeleting;
   const restoreSession = sessionCatalog.restoreSession;
-  const agentDefs = useAgentDefinitions(effectiveProjectId, selectedProvider ?? undefined);
+  const agentDefs = useAgentDefinitions(effectiveProjectId, {
+    surfaceFilter: "persona",
+  });
 
   useEffect(() => {
     let cancelled = false;

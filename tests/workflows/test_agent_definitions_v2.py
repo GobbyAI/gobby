@@ -1,9 +1,7 @@
 """Tests for AgentDefinitionBody, AgentWorkflows, and agent_scope on RuleDefinitionBody.
 
 Covers:
-- AgentDefinitionBody model (16 fields: name, description, extends, role, goal, personality,
-  instructions, provider, model, mode, isolation, base_branch, timeout, max_turns,
-  workflows, enabled)
+- AgentDefinitionBody model (current expanded field set including surfaces)
 - AgentWorkflows model (pipeline, rules, variables)
 - agent_scope field on RuleDefinitionBody (list[str] | None)
 - Serialization to/from workflow_definitions as workflow_type='agent'
@@ -53,6 +51,7 @@ class TestAgentDefinitionBodyModel:
         body = AgentDefinitionBody(name="developer")
         assert body.name == "developer"
         assert body.description is None
+        assert body.surfaces == ["spawn"]
         assert body.role is None
         assert body.goal is None
         assert body.personality is None
@@ -110,9 +109,20 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 25, f"Expected 25 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 26, f"Expected 26 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "surfaces" in fields
         assert "reasoning_required" in fields
         assert "fallback_agent" in fields
+
+    def test_surfaces_normalize_and_deduplicate(self) -> None:
+        """Persona/spawn usage surfaces normalize from YAML-ish inputs."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        body = AgentDefinitionBody(name="planner", surfaces=["persona", "spawn", "persona"])
+        assert body.surfaces == ["persona", "spawn"]
+
+        body = AgentDefinitionBody(name="planner", surfaces="persona")
+        assert body.surfaces == ["persona"]
 
     def test_workflows_default_empty(self) -> None:
         """Workflows defaults to empty AgentWorkflows."""

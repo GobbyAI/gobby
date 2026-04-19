@@ -317,11 +317,17 @@ class AgentDefinitionBody(BaseModel):
             for field, default in defaults.items():
                 if field in data and data[field] == "":
                     data[field] = default
+            if "surfaces" in data and data["surfaces"] == "":
+                data["surfaces"] = ["spawn"]
         return data
 
     name: str
     description: str | None = None
     sources: list[str] | None = None  # Session sources this agent applies to (None = all)
+    surfaces: list[Literal["spawn", "persona"]] = Field(
+        default_factory=lambda: ["spawn"],
+        description="Where this definition can be used: spawned execution, session personas, or both.",
+    )
     # Structured prompt fields (composed into preamble at spawn time)
     role: str | None = None
     goal: str | None = None
@@ -366,6 +372,27 @@ class AgentDefinitionBody(BaseModel):
         if not isinstance(value, str):
             raise ValueError("reasoning_effort must be a string")
         return normalize_reasoning_effort(value)
+
+    @field_validator("surfaces", mode="before")
+    @classmethod
+    def _normalize_surfaces(cls, value: Any) -> list[str]:
+        if value is None or value == "":
+            return ["spawn"]
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            normalized: list[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    raise ValueError("surfaces entries must be strings")
+                if item not in normalized:
+                    normalized.append(item)
+            return normalized
+        raise ValueError("surfaces must be a string or list of strings")
+
+    def supports_surface(self, surface: Literal["spawn", "persona"]) -> bool:
+        """Return True when the definition explicitly supports the requested usage surface."""
+        return surface in self.surfaces
 
     def build_prompt_preamble(self) -> str | None:
         """Build structured prompt preamble from role/goal/personality/instructions."""
