@@ -159,6 +159,46 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
     return mock_client, captured
 
 
+def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
+    """Client that fails with Ollama's missing-model 404 on first call, succeeds on second."""
+    from openai import NotFoundError
+
+    mock_client = AsyncMock()
+    captured: list[list[str]] = []
+    call_count = 0
+
+    async def fake_create(model: str, input: list[str]):
+        nonlocal call_count
+        call_count += 1
+        captured.append(input)
+
+        if call_count == 1:
+            raise NotFoundError(
+                message="Error code: 404",
+                response=AsyncMock(status_code=404, headers={}),
+                body={
+                    "message": f'model "{model}" not found, try pulling it first',
+                    "type": "not_found_error",
+                    "param": None,
+                    "code": None,
+                },
+            )
+
+        class FakeItem:
+            def __init__(self, embedding: list[float]):
+                self.embedding = embedding
+
+        class FakeResponse:
+            def __init__(self, items: list[FakeItem]):
+                self.data = items
+
+        items = [FakeItem([0.1] * dim) for _ in input]
+        return FakeResponse(items)
+
+    mock_client.embeddings.create = fake_create
+    return mock_client, captured
+
+
 @pytest.fixture(autouse=True)
 def _reset_reload_cooldown():
     """Reset the reload cooldown between tests."""
@@ -186,9 +226,9 @@ async def test_reload_on_eviction_lmstudio() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reload_on_eviction_ollama() -> None:
-    """Model eviction triggers reload for Ollama endpoints too."""
-    mock_client, captured = _make_evicting_client()
+async def test_reload_on_missing_model_ollama() -> None:
+    """Ollama missing-model 404 triggers pull/retry via try_autoload."""
+    mock_client, captured = _make_missing_model_client()
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -200,6 +240,7 @@ async def test_reload_on_eviction_ollama() -> None:
 
     assert result == [0.1] * 4
     mock_reload.assert_awaited_once_with("nomic-embed-text", "http://localhost:11434/v1")
+    assert len(captured) == 2  # first call failed, retry succeeded
 
 
 @pytest.mark.asyncio

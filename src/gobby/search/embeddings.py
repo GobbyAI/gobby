@@ -29,6 +29,8 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +251,53 @@ async def _try_reload_model(model: str, api_base: str) -> bool:
     return await try_autoload_embedding_model(model, api_base)
 
 
+def _get_api_error_message(error: Exception) -> str:
+    """Extract the provider error message from OpenAI-compatible SDK exceptions."""
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        message = body.get("message")
+        if isinstance(message, str):
+            return message
+        nested = body.get("error")
+        if isinstance(nested, dict):
+            nested_message = nested.get("message")
+            if isinstance(nested_message, str):
+                return nested_message
+        if isinstance(nested, str):
+            return nested
+    return str(error)
+
+
+def _is_ollama_endpoint(api_base: str | None) -> bool:
+    """Check if api_base points to an Ollama endpoint (port 11434)."""
+    if not api_base:
+        return False
+    try:
+        return urlparse(api_base).port == 11434
+    except (ValueError, AttributeError):
+        return False
+
+
+async def _retry_embeddings_after_reload(
+    client: Any,
+    texts: list[str],
+    model: str,
+    expected_dim: int | None,
+    api_base: str | None,
+) -> list[list[float]]:
+    """Retry a single embeddings request after the local model is reloaded."""
+    response = await client.embeddings.create(model=model, input=texts)
+    embeddings = [item.embedding for item in response.data]
+    _validate_embeddings_dim(
+        embeddings,
+        expected_dim=expected_dim,
+        model=model,
+        api_base=api_base,
+    )
+    logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
+    return embeddings
+
+
 def _validate_embeddings_dim(
     embeddings: list[list[float]],
     *,
@@ -311,28 +360,44 @@ async def _fetch_embeddings(
             logger.error(f"Embedding authentication failed: {e}")
             raise RuntimeError(f"Authentication failed: {e}") from e
         except NotFoundError as e:
-            logger.error(f"Embedding model not found: {e}")
-            raise RuntimeError(f"Model not found: {e}") from e
+            error_message = _get_api_error_message(e).lower()
+            if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):
+                logger.error(f"Embedding model not found: {e}")
+                raise RuntimeError(f"Model not found: {e}") from e
+            reloaded = await _try_reload_model(model, api_base)
+            if not reloaded:
+                raise RuntimeError(f"Model not found: {e}") from e
+            try:
+                return await _retry_embeddings_after_reload(
+                    client,
+                    texts,
+                    model,
+                    expected_dim,
+                    api_base,
+                )
+            except RuntimeError:
+                raise
+            except Exception as retry_err:
+                raise RuntimeError(
+                    f"Embedding failed after model reload: {retry_err}"
+                ) from retry_err
         except BadRequestError as e:
-            if "no models loaded" not in str(e).lower() or not api_base:
+            error_message = _get_api_error_message(e).lower()
+            if "no models loaded" not in error_message or not api_base:
                 logger.error(f"Failed to generate embeddings: {e}")
                 raise RuntimeError(f"Embedding generation failed: {e}") from e
             # Model was evicted from local inference server — try to reload
             reloaded = await _try_reload_model(model, api_base)
             if not reloaded:
                 raise RuntimeError(f"Embedding generation failed: {e}") from e
-            # Retry once after successful reload
             try:
-                response = await client.embeddings.create(model=model, input=texts)
-                embeddings = [item.embedding for item in response.data]
-                _validate_embeddings_dim(
-                    embeddings,
-                    expected_dim=expected_dim,
-                    model=model,
-                    api_base=api_base,
+                return await _retry_embeddings_after_reload(
+                    client,
+                    texts,
+                    model,
+                    expected_dim,
+                    api_base,
                 )
-                logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
-                return embeddings
             except RuntimeError:
                 raise
             except Exception as retry_err:
