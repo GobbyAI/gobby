@@ -270,9 +270,7 @@ class KnowledgeGraphService:
                 partial_errors.append(f"relates_to_code:{project_id}:{e}")
 
         status = (
-            KnowledgeGraphStatus.PARTIAL_FAILURE
-            if partial_errors
-            else KnowledgeGraphStatus.SUCCESS
+            KnowledgeGraphStatus.PARTIAL_FAILURE if partial_errors else KnowledgeGraphStatus.SUCCESS
         )
         return KnowledgeGraphResult(
             status=status,
@@ -617,9 +615,7 @@ class KnowledgeGraphService:
         if scope == "project":
             if project_id is None:
                 raise ValueError("project_id is required when scope='project'")
-            where_clause = (
-                "e.project_id = $project_id AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
-            )
+            where_clause = "e.project_id = $project_id AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
             params: dict[str, Any] = {"project_id": project_id}
         elif scope == "global":
             where_clause = "e.project_id IS NULL AND NOT (e)-[:MENTIONED_IN]->(:Memory)"
@@ -666,8 +662,12 @@ class KnowledgeGraphService:
                     {},
                 )
                 return {
-                    "memories_deleted": int(memory_count_rows[0]["total"]) if memory_count_rows else 0,
-                    "entities_deleted": int(entity_count_rows[0]["total"]) if entity_count_rows else 0,
+                    "memories_deleted": int(memory_count_rows[0]["total"])
+                    if memory_count_rows
+                    else 0,
+                    "entities_deleted": int(entity_count_rows[0]["total"])
+                    if entity_count_rows
+                    else 0,
                 }
             return await self.clear_project_graph(project_id)
         except Neo4jConnectionError as e:

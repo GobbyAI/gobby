@@ -1029,9 +1029,7 @@ class MemoryManager:
                         report["neo4j"]["errors"] += len(orphaned) - deleted
 
                     # Clean orphaned entities after removing memory nodes
-                    entities_deleted = await self._kg_service.remove_orphaned_entities(
-                        scope="all"
-                    )
+                    entities_deleted = await self._kg_service.remove_orphaned_entities(scope="all")
                     report["neo4j"]["orphan_entities_deleted"] = entities_deleted
             except Exception as e:
                 logger.error(f"Neo4j reconciliation failed: {e}")
@@ -1519,9 +1517,7 @@ class MemoryManager:
         if project_id:
             all_memories = (await self._fetch_all_project_memories(project_id))[:limit]
         else:
-            all_memories = await asyncio.to_thread(
-                self.list_memories, None, None, limit
-            )
+            all_memories = await asyncio.to_thread(self.list_memories, None, None, limit)
 
         status_counts = {status.value: 0 for status in KnowledgeGraphStatus}
         errors = 0

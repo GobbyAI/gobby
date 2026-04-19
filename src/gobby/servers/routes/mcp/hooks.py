@@ -69,8 +69,7 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
         fallback["hookSpecificOutput"] = {
             "hookEventName": contract.hook_event_name,
             "additionalContext": (
-                f"Gobby hook error (non-fatal): {error_msg}. "
-                "Tool execution will proceed normally."
+                f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
             ),
         }
     return fallback

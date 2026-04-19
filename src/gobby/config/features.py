@@ -162,6 +162,7 @@ class MetricsConfig(BaseModel):
         "Set higher for large installs to avoid underreporting. "
         "Use 0 for unbounded (uses COUNT queries instead of list).",
     )
+
     @field_validator("list_limit")
     @classmethod
     def validate_list_limit(cls, v: int) -> int:

@@ -338,10 +338,9 @@ class ClaudeCodeAdapter(BaseAdapter):
                     result.pop("hookSpecificOutput", None)
 
         cleanup_hook_output: Any = result.get("hookSpecificOutput")
-        if (
-            isinstance(cleanup_hook_output, dict)
-            and cleanup_hook_output == {"hookEventName": hook_event_name}
-        ):
+        if isinstance(cleanup_hook_output, dict) and cleanup_hook_output == {
+            "hookEventName": hook_event_name
+        }:
             result.pop("hookSpecificOutput", None)
 
         return result

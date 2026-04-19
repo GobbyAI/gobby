@@ -14,12 +14,8 @@ from gobby.code_index.models import make_external_symbol_id, make_unresolved_cal
 
 logger = logging.getLogger(__name__)
 
-_CALL_TARGET_PREDICATE = (
-    "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol"
-)
-_NEIGHBOR_PREDICATE = (
-    "neighbor:CodeSymbol OR neighbor:UnresolvedCallee OR neighbor:ExternalSymbol"
-)
+_CALL_TARGET_PREDICATE = "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol"
+_NEIGHBOR_PREDICATE = "neighbor:CodeSymbol OR neighbor:UnresolvedCallee OR neighbor:ExternalSymbol"
 _PROJECT_NODE_PREDICATE = (
     "n:CodeFile OR n:CodeSymbol OR n:CodeModule OR n:UnresolvedCallee OR n:ExternalSymbol"
 )

@@ -26,7 +26,7 @@ def _bucket_expression(column: str, granularity: str) -> str:
     return f"strftime('%Y-%m-%dT%H:00:00Z', {column})"
 
 
-def register_token_timeseries_routes(router: APIRouter, server: "HTTPServer") -> None:
+def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> None:
     @router.get("/tokens/timeseries")
     async def get_token_timeseries(
         hours: int = Query(24, ge=0, le=8760),

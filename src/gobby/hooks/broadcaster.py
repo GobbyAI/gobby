@@ -172,7 +172,10 @@ class HookEventBroadcaster:
                 }
 
                 if response.context:
-                    if isinstance(response.context, dict) and "context" in output_model_cls.model_fields:
+                    if (
+                        isinstance(response.context, dict)
+                        and "context" in output_model_cls.model_fields
+                    ):
                         response_dict["context"] = response.context
                     else:
                         response_dict["additionalContext"] = response.context
@@ -203,7 +206,9 @@ class HookEventBroadcaster:
                             if response.modified_input:
                                 decision_payload["updatedInput"] = response.modified_input
                             if response.updated_permissions:
-                                decision_payload["updatedPermissions"] = response.updated_permissions
+                                decision_payload["updatedPermissions"] = (
+                                    response.updated_permissions
+                                )
                         elif response.reason:
                             decision_payload["message"] = response.reason
                         response_dict["decision"] = decision_payload

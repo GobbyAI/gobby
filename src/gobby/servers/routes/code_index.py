@@ -106,7 +106,9 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         if code_indexer is None or code_indexer.graph is None or not code_indexer.graph.available:
             raise HTTPException(status_code=503, detail="Code graph not available")
         if bool(symbol_id) == bool(file_path):
-            raise HTTPException(status_code=400, detail="Provide exactly one of symbol_id or file_path")
+            raise HTTPException(
+                status_code=400, detail="Provide exactly one of symbol_id or file_path"
+            )
         try:
             result = await code_indexer.graph.get_blast_radius_graph(
                 symbol_id=symbol_id,

@@ -116,7 +116,9 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             payload = build_session_usage_payload(
                                 session_id=session_id,
                                 project_id=refreshed.project_id,
-                                model=model_name if isinstance(model_name, str) else refreshed.model,
+                                model=model_name
+                                if isinstance(model_name, str)
+                                else refreshed.model,
                                 context_window=refreshed.context_window,
                                 totals={
                                     "input_tokens": int(input_tokens or 0),

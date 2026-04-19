@@ -169,9 +169,7 @@ class IndexedFile:
             graph_synced=row["graph_synced"] if "graph_synced" in row.keys() else 0,
             vectors_synced=row["vectors_synced"] if "vectors_synced" in row.keys() else 0,
             graph_sync_attempted_at=(
-                row["graph_sync_attempted_at"]
-                if "graph_sync_attempted_at" in row.keys()
-                else None
+                row["graph_sync_attempted_at"] if "graph_sync_attempted_at" in row.keys() else None
             ),
             indexed_at=row["indexed_at"],
         )

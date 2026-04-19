@@ -406,9 +406,7 @@ def register_core_routes(
                     totals={
                         "input_tokens": int(body.get("input_tokens", 0) or 0),
                         "output_tokens": int(body.get("output_tokens", 0) or 0),
-                        "cache_creation_tokens": int(
-                            body.get("cache_creation_tokens", 0) or 0
-                        ),
+                        "cache_creation_tokens": int(body.get("cache_creation_tokens", 0) or 0),
                         "cache_read_tokens": int(body.get("cache_read_tokens", 0) or 0),
                     },
                     updated_at=now,

@@ -216,7 +216,9 @@ CLAUDE_NATIVE_HOOK_NAMES: tuple[str, ...] = tuple(
     contract.native_name for contract in CLAUDE_HOOK_CONTRACTS
 )
 CLAUDE_ADDITIONAL_CONTEXT_EVENT_NAMES: frozenset[str] = frozenset(
-    contract.hook_event_name for contract in CLAUDE_HOOK_CONTRACTS if contract.allows_additional_context
+    contract.hook_event_name
+    for contract in CLAUDE_HOOK_CONTRACTS
+    if contract.allows_additional_context
 )
 
 
@@ -234,7 +236,6 @@ def build_graceful_error_hook_response(error_msg: str) -> HookResponse:
     return HookResponse(
         decision="allow",
         context=(
-            f"Gobby hook error (non-fatal): {error_msg}. "
-            "Tool execution will proceed normally."
+            f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
         ),
     )

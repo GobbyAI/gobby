@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def register_usage_routes(router: APIRouter, server: "HTTPServer") -> None:
+def register_usage_routes(router: APIRouter, server: HTTPServer) -> None:
     @router.get("/usage")
     async def get_usage(
         hours: int = Query(0, ge=0, le=8760),

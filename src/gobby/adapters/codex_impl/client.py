@@ -549,7 +549,11 @@ class CodexAppServerClient:
                 self._turn_prompts.pop(turn_id, None)
             return params
 
-        if method in ("thread/archive", "thread/closed") and isinstance(thread_id, str) and thread_id:
+        if (
+            method in ("thread/archive", "thread/closed")
+            and isinstance(thread_id, str)
+            and thread_id
+        ):
             self._thread_cwds.pop(thread_id, None)
 
         return params
