@@ -1427,9 +1427,6 @@
   margin-bottom: 0.25rem;
 }
 
-/* NOTE: mobile hide rules for .conversation-picker and .sessions-sidebar
-   are placed AFTER their base definitions (end of file) to win in cascade */
-
 /* ============================================
    Mobile Chat Drawer (top pulldown)
    ============================================ */
@@ -1706,66 +1703,6 @@
   opacity: 0.6;
 }
 
-.session-show-more {
-  display: block;
-  width: 100%;
-  padding: 0.375rem 0.75rem;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font-size: 0.7rem;
-  cursor: pointer;
-  text-align: left;
-}
-
-.session-show-more:hover {
-  background: var(--bg-tertiary);
-}
-
-/* ConversationPicker */
-.conversation-picker {
-  width: var(--sidebar-width);
-  min-width: var(--sidebar-width);
-  background: var(--bg-tertiary);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  transition:
-    min-width 0.2s,
-    width 0.2s;
-}
-
-.conversation-picker.collapsed {
-  width: 40px;
-  min-width: 40px;
-}
-
-.conversation-picker-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-tertiary);
-}
-
-.conversation-picker-title {
-  font-size: calc(var(--font-size-base) * 0.85);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.conversation-picker.collapsed .conversation-picker-title {
-  display: none;
-}
-
-.conversation-picker-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-}
-
 .terminals-action-btn--spinning {
   animation: toolbar-spin 0.6s ease;
 }
@@ -1777,24 +1714,6 @@
   to {
     transform: rotate(360deg);
   }
-}
-
-.conversation-picker-search {
-  padding: 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.conversation-picker-content {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.conversation-picker .terminals-empty-sidebar {
-  padding: 1rem;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.85);
 }
 
 /* Session status bar: visible on desktop, hidden on mobile */
@@ -1810,10 +1729,6 @@
 
 /* Mobile: hide sidebars, use top drawer instead */
 @media (max-width: 768px) {
-  .conversation-picker {
-    display: none;
-  }
-
   .sessions-sidebar {
     display: none;
   }

@@ -13,7 +13,6 @@ import { useAuth } from "./hooks/useAuth";
 import { useChat } from "./hooks/useChat";
 import { useVoice } from "./hooks/useVoice";
 import { useSettings } from "./hooks/useSettings";
-import { useTerminal } from "./hooks/useTerminal";
 import { useTmuxSessions } from "./hooks/useTmuxSessions";
 import { useMcp } from "./hooks/useMcp";
 import { useSkills } from "./hooks/useSkills";
@@ -371,7 +370,6 @@ export default function App() {
     },
     isConnected,
   );
-  const { agents, refreshAgents } = useTerminal();
   const tmux = useTmuxSessions();
   const mcp = useMcp();
   const skillsHook = useSkills();
@@ -659,7 +657,6 @@ export default function App() {
   }, [selectedProjectId, projectReady]);
 
   // When project changes, start fresh chat context for the new project.
-  // The ConversationPicker will show the new project's conversations.
   const prevProjectRef = useRef<string | null>(null);
   useEffect(() => {
     if (!projectReady) return;
@@ -799,19 +796,6 @@ export default function App() {
     ],
   );
 
-  // View a CLI session from the sidebar (read-only, no WS subscription)
-  const handleViewCliSession = useCallback(
-    (session: GobbySession) => {
-      viewSession(session.id);
-    },
-    [viewSession],
-  );
-
-  // Clear terminal session view and restore web chat
-  const handleClearViewing = useCallback(() => {
-    clearViewingSession();
-  }, [clearViewingSession]);
-
   // Chat page: only web-chat sessions are selectable
   const handleSelectConversation = useCallback(
     (session: GobbySession) => {
@@ -892,39 +876,6 @@ export default function App() {
       refreshTmuxSessions();
     }
   }, [activeTab, refreshTmuxSessions]);
-
-  /* Navigate to Terminals tab and attach agent's tmux session */
-  const handleNavigateToAgent = useCallback(
-    (agent: {
-      run_id: string;
-      session_id?: string;
-      mode?: string;
-      tmux_session_name?: string;
-    }) => {
-      if (agent.tmux_session_name) {
-        // Verify the tmux session still exists before navigating
-        const sessionExists = tmux.sessions.some(
-          (s) => s.name === agent.tmux_session_name,
-        );
-        if (!sessionExists) {
-          // Agent's session is gone — refresh agent list to clear stale entries and notify user
-          refreshAgents();
-          showToast("Agent session has ended");
-          return;
-        }
-        setActiveTab("terminals");
-        tmux.attachSession(agent.tmux_session_name, "gobby");
-      } else if (agent.session_id) {
-        // Non-tmux agent — view its child session read-only in chat
-        if (viewingSessionId === agent.session_id) return;
-        setActiveTab("chat");
-        viewSession(agent.session_id);
-      } else {
-        showToast("Agent has no viewable session");
-      }
-    },
-    [tmux, refreshAgents, showToast, viewSession, viewingSessionId],
-  );
 
   /* Kill a running agent via the cancel endpoint */
   const handleKillAgent = useCallback(
@@ -1428,17 +1379,10 @@ export default function App() {
                   onSelectSession: handleSelectConversation,
                   onDeleteSession: handleDeleteConversation,
                   onRenameSession: sessionsHook.renameSession,
-                  agents,
-                  onNavigateToAgent: handleNavigateToAgent,
                   onKillAgent: handleKillAgent,
                   onExpireSession: handleExpireSession,
-                  // cliSessions hidden — agent-spawned terminals bleed into list (#9219).
-                  // Backend code intact; re-enable by uncommenting and passing cliSessions.
-                  // See commits: 65433c67, 401f2751, 206b27d1, 2769d980, 46ad405b
                   viewingSessionId,
                   attachedSessionId,
-                  onViewCliSession: handleViewCliSession,
-                  onDetachFromSession: handleClearViewing,
                 }}
                 currentModel={settings.model}
                 onModelChange={updateModel}
@@ -1451,7 +1395,6 @@ export default function App() {
                 agentHasGlobal={agentDefs.hasGlobal}
                 agentHasProject={agentDefs.hasProject}
                 paletteActions={commandPaletteActions}
-                onViewAgent={handleNavigateToAgent}
                 voice={{
                   sttEnabled: settings.sttEnabled,
                   ttsEnabled: settings.ttsEnabled,

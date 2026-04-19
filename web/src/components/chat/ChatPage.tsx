@@ -17,7 +17,6 @@ import { MessageList, type MessageListHandle } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
-import { ActiveSessionsModal } from "./ActiveSessionsModal";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
 import { VoiceStatusBar } from "./VoiceStatusBar";
@@ -59,12 +58,6 @@ interface ChatPageProps {
   ) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
-  // Active sessions modal
-  onViewAgent?: (agent: {
-    run_id: string;
-    session_id?: string;
-    mode?: string;
-  }) => void;
 }
 
 export function ChatPage({
@@ -84,7 +77,6 @@ export function ChatPage({
   reasoningPreferences = {},
   onReasoningPreferenceChange,
   paletteActions = [],
-  onViewAgent,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -160,13 +152,6 @@ export function ChatPage({
 
   // Session browsing via activity panel instead of Observing mode
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
-  const handleViewCliSession = useCallback(
-    (session: { id: string }) => {
-      setFocusSessionId(session.id);
-      showTab("sessions");
-    },
-    [showTab],
-  );
   const handleFocusSessionHandled = useCallback(() => {
     setFocusSessionId(null);
   }, []);
@@ -473,7 +458,6 @@ export function ChatPage({
 
   // Modals
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [showActiveSessions, setShowActiveSessions] = useState(false);
 
   useEffect(() => {
     if (chat.canvasPanel) {
@@ -650,12 +634,6 @@ export function ChatPage({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Cmd+K — Command Palette (handled in App.tsx chord, but also direct)
-      // Cmd+Shift+A — Active Sessions
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "A") {
-        e.preventDefault();
-        setShowActiveSessions(true);
-        return;
-      }
       // Cmd+` — Toggle Activity Panel
       if ((e.metaKey || e.ctrlKey) && e.key === "`") {
         e.preventDefault();
@@ -681,17 +659,13 @@ export function ChatPage({
           }
           sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
           onOpenPalette={() => setShowCommandPalette(true)}
-          onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
-          onTogglePanel={togglePanel}
-          agents={conversations.agents ?? []}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
           agentProjectDefs={agentProjectDefs}
           agentShowScopeToggle={agentShowScopeToggle}
           agentHasGlobal={agentHasGlobal}
           agentHasProject={agentHasProject}
-          isPanelPinned={isPinned}
         />
         {voice.sttEnabled &&
           voice.voiceInputMode === "vad" &&
@@ -865,20 +839,6 @@ export function ChatPage({
         onDeleteSession={conversations.onDeleteSession}
         onRenameSession={conversations.onRenameSession}
         actions={paletteActions}
-      />
-
-      {/* Active Sessions Modal */}
-      <ActiveSessionsModal
-        isOpen={showActiveSessions}
-        onClose={() => setShowActiveSessions(false)}
-        agents={conversations.agents ?? []}
-        cliSessions={conversations.cliSessions}
-        onViewAgent={(agent) => {
-          onViewAgent?.(agent);
-          setShowActiveSessions(false);
-        }}
-        onKillAgent={conversations.onKillAgent}
-        onViewCliSession={handleViewCliSession}
       />
     </div>
   );

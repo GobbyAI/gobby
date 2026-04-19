@@ -117,10 +117,6 @@ vi.mock('../hooks/useSettings', () => ({
   })),
 }))
 
-vi.mock('../hooks/useTerminal', () => ({
-  useTerminal: vi.fn(() => ({ agents: [], refreshAgents: vi.fn() })),
-}))
-
 vi.mock('../hooks/useTmuxSessions', () => ({
   useTmuxSessions: vi.fn(() => ({})),
 }))

@@ -106,10 +106,6 @@ vi.mock("../CommandPalette", () => ({
   CommandPalette: () => null,
 }));
 
-vi.mock("../ActiveSessionsModal", () => ({
-  ActiveSessionsModal: () => null,
-}));
-
 vi.mock("../../activity/ActivityPanel", () => ({
   ActivityPanel: ({
     onSwapSession,
@@ -314,8 +310,6 @@ function createConversations(): ConversationState {
     activeSessionId: null,
     onNewChat: vi.fn(),
     onSelectSession: vi.fn(),
-    agents: [],
-    onNavigateToAgent: vi.fn(),
   };
 }
 

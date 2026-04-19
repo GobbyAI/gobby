@@ -293,27 +293,10 @@ export interface ConversationState {
   onSelectSession: (session: GobbySession) => void;
   onDeleteSession?: (session: GobbySession) => void;
   onRenameSession?: (id: string, title: string) => void;
-  agents: Array<{
-    run_id: string;
-    provider: string;
-    pid?: number;
-    mode?: string;
-    started_at?: string;
-    tmux_session_name?: string;
-  }>;
-  onNavigateToAgent: (agent: {
-    run_id: string;
-    session_id?: string;
-    mode?: string;
-    tmux_session_name?: string;
-  }) => void;
   onKillAgent?: (runId: string) => void;
   onExpireSession?: (sessionId: string) => void;
-  cliSessions?: GobbySession[];
   viewingSessionId?: string | null;
   attachedSessionId?: string | null;
-  onViewCliSession?: (session: GobbySession) => void;
-  onDetachFromSession?: () => void;
 }
 
 export interface ProjectProps {

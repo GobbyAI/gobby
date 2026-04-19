@@ -3,31 +3,18 @@ import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { getSessionTitleText } from '../../lib/sessionTitle'
 import { SourceIcon } from '../shared/SourceIcon'
 
-interface RunningAgent {
-  run_id: string
-  provider: string
-  pid?: number
-  mode?: string
-  started_at?: string
-  session_id?: string
-}
-
 interface CommandBarProps {
   sessionRef: string | null
   title: string | null
   sessionSource?: string | null
   onOpenPalette: () => void
-  onOpenActiveSessions: () => void
   onNewChat: (agentName?: string) => void
-  onTogglePanel: () => void
-  agents: RunningAgent[]
   agentDefinitions?: AgentDefInfo[]
   agentGlobalDefs?: AgentDefInfo[]
   agentProjectDefs?: AgentDefInfo[]
   agentShowScopeToggle?: boolean
   agentHasGlobal?: boolean
   agentHasProject?: boolean
-  isPanelPinned: boolean
 }
 
 export function CommandBar({
@@ -35,9 +22,7 @@ export function CommandBar({
   title,
   sessionSource,
   onOpenPalette,
-  onOpenActiveSessions: _onOpenActiveSessions,
   onNewChat,
-  agents: _agents,
   agentDefinitions: _agentDefinitions = [],
   agentGlobalDefs: _agentGlobalDefs = [],
   agentProjectDefs: _agentProjectDefs = [],
@@ -75,7 +60,7 @@ export function CommandBar({
         </button>
       </div>
 
-      {/* Right cluster — Live activity */}
+      {/* Right cluster — Actions */}
       <div className="command-bar-right">
         <button
           type="button"
