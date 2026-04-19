@@ -139,6 +139,7 @@ class TestTokenMetricsTools:
         from datetime import UTC, datetime, timedelta
 
         storage = MagicMock()
+        storage.db = None  # Force fallback to session-based usage reporting
 
         # Create mock sessions with usage data
         now = datetime.now(UTC)

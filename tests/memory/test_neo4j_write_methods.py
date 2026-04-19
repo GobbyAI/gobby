@@ -25,6 +25,7 @@ class TestMergeNode:
         client.query = AsyncMock(return_value=[])
 
         await client.merge_node(
+            entity_key="josh",
             name="Josh",
             labels=["Person"],
             properties={"role": "engineer"},
@@ -35,7 +36,8 @@ class TestMergeNode:
         assert "MERGE" in cypher
         assert "ON CREATE SET" in cypher
         assert "ON MATCH SET" in cypher
-        assert params["name"] == "Josh"
+        assert params["entity_key"] == "josh"
+        assert params["props"]["name"] == "Josh"
         assert params["props"]["role"] == "engineer"
 
     async def test_merge_node_with_multiple_labels(self, client: Neo4jClient) -> None:
@@ -43,6 +45,7 @@ class TestMergeNode:
         client.query = AsyncMock(return_value=[])
 
         await client.merge_node(
+            entity_key="python",
             name="Python",
             labels=["Tool", "Language"],
             properties={},
@@ -57,7 +60,7 @@ class TestMergeNode:
         """merge_node works with empty labels list."""
         client.query = AsyncMock(return_value=[])
 
-        await client.merge_node(name="Unknown", labels=[], properties={})
+        await client.merge_node(entity_key="unknown", name="Unknown", labels=[], properties={})
 
         client.query.assert_called_once()
 
@@ -65,24 +68,29 @@ class TestMergeNode:
         """merge_node works with empty properties."""
         client.query = AsyncMock(return_value=[])
 
-        await client.merge_node(name="Gobby", labels=["Project"], properties={})
+        await client.merge_node(
+            entity_key="gobby", name="Gobby", labels=["Project"], properties={}
+        )
 
         client.query.assert_called_once()
         params = client.query.call_args[0][1]
-        assert params["name"] == "Gobby"
+        assert params["entity_key"] == "gobby"
+        assert params["props"]["name"] == "Gobby"
 
     async def test_merge_node_name_in_properties(self, client: Neo4jClient) -> None:
         """merge_node always sets name on the node."""
         client.query = AsyncMock(return_value=[])
 
         await client.merge_node(
+            entity_key="josh",
             name="Josh",
             labels=["Person"],
             properties={"org": "Anthropic"},
         )
 
         params = client.query.call_args[0][1]
-        assert params["name"] == "Josh"
+        assert params["entity_key"] == "josh"
+        assert params["props"]["name"] == "Josh"
 
 
 class TestMergeRelationship:
@@ -93,8 +101,8 @@ class TestMergeRelationship:
         client.query = AsyncMock(return_value=[])
 
         await client.merge_relationship(
-            source="Josh",
-            target="Gobby",
+            source_key="josh",
+            target_key="gobby",
             rel_type="works_on",
             properties={"since": "2024"},
         )
@@ -104,16 +112,16 @@ class TestMergeRelationship:
         assert "MATCH" in cypher
         assert "MERGE" in cypher
         assert "works_on" in cypher
-        assert params["source_name"] == "Josh"
-        assert params["target_name"] == "Gobby"
+        assert params["source_key"] == "josh"
+        assert params["target_key"] == "gobby"
 
     async def test_merge_relationship_without_properties(self, client: Neo4jClient) -> None:
         """merge_relationship works with no properties."""
         client.query = AsyncMock(return_value=[])
 
         await client.merge_relationship(
-            source="Gobby",
-            target="Python",
+            source_key="gobby",
+            target_key="python",
             rel_type="USES",
         )
 
@@ -126,8 +134,8 @@ class TestMergeRelationship:
         client.query = AsyncMock(return_value=[])
 
         await client.merge_relationship(
-            source="Josh",
-            target="Python",
+            source_key="josh",
+            target_key="python",
             rel_type="uses",
             properties={"version": "3.13"},
         )
@@ -142,8 +150,8 @@ class TestMergeRelationship:
         client.query = AsyncMock(return_value=[])
 
         await client.merge_relationship(
-            source="A",
-            target="B",
+            source_key="a",
+            target_key="b",
             rel_type="WORKS_ON",
         )
 
@@ -160,7 +168,7 @@ class TestSetNodeVector:
 
         embedding = [0.1, 0.2, 0.3]
         await client.set_node_vector(
-            node_name="Josh",
+            entity_key="josh",
             embedding=embedding,
         )
 
@@ -168,7 +176,7 @@ class TestSetNodeVector:
         cypher, params = client.query.call_args[0][0], client.query.call_args[0][1]
         assert "MATCH" in cypher
         assert "db.create.setNodeVectorProperty" in cypher
-        assert params["name"] == "Josh"
+        assert params["entity_key"] == "josh"
         assert params["embedding"] == embedding
 
     async def test_set_node_vector_with_custom_property(self, client: Neo4jClient) -> None:
@@ -176,7 +184,7 @@ class TestSetNodeVector:
         client.query = AsyncMock(return_value=[])
 
         await client.set_node_vector(
-            node_name="Josh",
+            entity_key="josh",
             embedding=[0.1],
             property_name="custom_embedding",
         )

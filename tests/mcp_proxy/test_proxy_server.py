@@ -73,6 +73,7 @@ def mock_mcp_manager():
 
     manager.mcp_db_manager = MagicMock()
     manager.mcp_db_manager.get_cached_tools.return_value = []
+    manager.get_available_servers = MagicMock(return_value=["server1"])
 
     # Lazy connection attributes (added in Sprint 13)
     manager.lazy_connect = True
@@ -94,6 +95,10 @@ def mock_llm_service():
     service.get_provider_for_feature.return_value = (provider, "test-model", "test prompt")
     # Mock generate directly on the service instance since RecommendationService calls it
     service.generate = AsyncMock(
+        return_value='{"recommendations": [{"server": "s1", "tool": "t1", "reason": "r1"}]}'
+    )
+    # RecommendationService calls llm_service.call_feature(config, prompt, caller=...)
+    service.call_feature = AsyncMock(
         return_value='{"recommendations": [{"server": "s1", "tool": "t1", "reason": "r1"}]}'
     )
     return service

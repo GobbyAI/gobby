@@ -239,6 +239,38 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 cache_read_tokens=request.cache_read_tokens,
             )
 
+            if success:
+                from datetime import UTC, datetime
+
+                from gobby.storage.token_events import (
+                    TokenEvent,
+                    TokenEventStore,
+                    canonicalize_event_timestamp,
+                )
+
+                try:
+                    session_row = server.session_manager.get(request.session_id)
+                    token_event_store = TokenEventStore(server.session_manager.db)
+                    token_event_store.record(
+                        TokenEvent(
+                            session_id=request.session_id,
+                            project_id=getattr(session_row, "project_id", None),
+                            message_id=None,
+                            source=getattr(session_row, "source", None) or "test",
+                            origin="test",
+                            model=None,
+                            input_tokens=request.input_tokens,
+                            output_tokens=request.output_tokens,
+                            cache_creation_tokens=request.cache_creation_tokens,
+                            cache_read_tokens=request.cache_read_tokens,
+                            event_at=canonicalize_event_timestamp(datetime.now(UTC)),
+                        )
+                    )
+                except Exception as event_err:
+                    logger.warning(
+                        f"Failed to record token_event for test session {request.session_id}: {event_err}"
+                    )
+
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             if success:
