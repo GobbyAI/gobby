@@ -39,6 +39,7 @@ def _make_memory(**overrides) -> Memory:
 def mock_server():
     """Create mock HTTPServer with memory_manager."""
     server = MagicMock()
+    server._background_tasks = set()
     server.memory_manager = MagicMock()
     server.memory_manager.create_memory = AsyncMock(return_value=_make_memory())
     server.memory_manager.search_memories = AsyncMock(return_value=[])
@@ -580,6 +581,59 @@ class TestRebuildKnowledgeGraph:
         )
         response = client.post("/api/memories/graph/rebuild")
         assert response.status_code == 500
+
+    def test_rebuild_background_starts_job(self, client, mock_server, monkeypatch) -> None:
+        """POST /memories/graph/rebuild?background=true starts a tracked background job."""
+        fake_task = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.memory.asyncio.create_task",
+            lambda coro, name=None: fake_task,
+        )
+
+        response = client.post("/api/memories/graph/rebuild", params={"background": "true"})
+
+        assert response.status_code == 202
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["started"] is True
+        assert data["job_id"]
+        assert fake_task in mock_server._background_tasks
+
+    def test_rebuild_background_status_reports_latest_job(
+        self, client, mock_server, monkeypatch
+    ) -> None:
+        """GET /memories/graph/rebuild/status returns the current background job state."""
+        fake_task = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.memory.asyncio.create_task",
+            lambda coro, name=None: fake_task,
+        )
+
+        started = client.post("/api/memories/graph/rebuild", params={"background": "true"})
+        job_id = started.json()["job_id"]
+        response = client.get("/api/memories/graph/rebuild/status", params={"job_id": job_id})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == job_id
+        assert data["status"] == "running"
+
+    def test_rebuild_background_reuses_running_job(self, client, mock_server, monkeypatch) -> None:
+        """Second background rebuild request should attach to the active job."""
+        fake_task = MagicMock()
+        monkeypatch.setattr(
+            "gobby.servers.routes.memory.asyncio.create_task",
+            lambda coro, name=None: fake_task,
+        )
+
+        first = client.post("/api/memories/graph/rebuild", params={"background": "true"})
+        second = client.post("/api/memories/graph/rebuild", params={"background": "true"})
+
+        assert first.status_code == 202
+        assert second.status_code == 202
+        data = second.json()
+        assert data["already_running"] is True
+        assert data["started"] is False
 
 
 # =============================================================================

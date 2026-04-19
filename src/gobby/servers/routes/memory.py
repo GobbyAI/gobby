@@ -6,10 +6,13 @@ Provides CRUD, search, and stats endpoints for the memory system.
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
 from gobby.storage.memories import Memory
 
@@ -74,6 +77,87 @@ class MemoryUpdateRequest(BaseModel):
 def create_memory_router(server: "HTTPServer") -> APIRouter:
     """Create memory router with endpoints bound to server instance."""
     router = APIRouter(prefix="/api/memories", tags=["memories"])
+    rebuild_state: dict[str, Any] = {
+        "job_id": None,
+        "status": "idle",
+        "project_id": None,
+        "started_at": None,
+        "updated_at": None,
+        "completed_at": None,
+        "memories_total": 0,
+        "memories_completed": 0,
+        "memories_marked_processed": 0,
+        "status_counts": {},
+        "errors": 0,
+        "failed_memories": [],
+        "result": None,
+        "error": None,
+    }
+    rebuild_state_lock = asyncio.Lock()
+
+    def _rebuild_snapshot() -> dict[str, Any]:
+        result = rebuild_state.get("result")
+        return {
+            **rebuild_state,
+            "status_counts": dict(rebuild_state.get("status_counts") or {}),
+            "failed_memories": list(rebuild_state.get("failed_memories") or []),
+            "result": dict(result) if isinstance(result, dict) else result,
+        }
+
+    async def _update_rebuild_state(**updates: Any) -> dict[str, Any]:
+        async with rebuild_state_lock:
+            rebuild_state.update(updates)
+            rebuild_state["updated_at"] = datetime.now(UTC).isoformat()
+            return _rebuild_snapshot()
+
+    async def _get_rebuild_state() -> dict[str, Any]:
+        async with rebuild_state_lock:
+            return _rebuild_snapshot()
+
+    async def _run_graph_rebuild(job_id: str, project_id: str | None) -> None:
+        async def _on_progress(progress: dict[str, Any]) -> None:
+            await _update_rebuild_state(
+                job_id=job_id,
+                status="running",
+                project_id=project_id,
+                memories_total=progress.get("memories_total", 0),
+                memories_completed=progress.get("memories_completed", 0),
+                memories_marked_processed=progress.get("memories_marked_processed", 0),
+                status_counts=progress.get("status_counts", {}),
+                errors=progress.get("errors", 0),
+                failed_memories=progress.get("failed_memories", []),
+                error=None,
+            )
+
+        try:
+            result = await server.memory_manager.rebuild_knowledge_graph(
+                project_id=project_id,
+                progress_callback=_on_progress,
+            )
+            await _update_rebuild_state(
+                job_id=job_id,
+                status="completed",
+                project_id=project_id,
+                completed_at=datetime.now(UTC).isoformat(),
+                memories_total=result.get("memories_processed", 0),
+                memories_completed=result.get("memories_processed", 0),
+                memories_marked_processed=result.get("memories_marked_processed", 0),
+                status_counts=result.get("status_counts", {}),
+                errors=result.get("errors", 0),
+                failed_memories=result.get("failed_memories", []),
+                result=result,
+                error=None,
+            )
+            logger.info("Background knowledge graph rebuild complete: %s", result)
+        except Exception as e:
+            await _update_rebuild_state(
+                job_id=job_id,
+                status="failed",
+                project_id=project_id,
+                completed_at=datetime.now(UTC).isoformat(),
+                error=str(e),
+            )
+            logger.error("Background knowledge graph rebuild failed: %s", e, exc_info=True)
 
     @router.get("")
     def list_memories(
@@ -261,12 +345,48 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             logger.error(f"Failed to clear knowledge graph: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    @router.post("/graph/rebuild")
+    @router.post("/graph/rebuild", response_model=None)
     async def rebuild_knowledge_graph(
         project_id: str | None = Query(None, description="Filter by project ID"),
-    ) -> dict[str, Any]:
+        background: bool = Query(False, description="Run rebuild in background and return a job"),
+    ) -> Any:
         """Extract entities from all existing memories into the knowledge graph."""
         try:
+            if background:
+                current = await _get_rebuild_state()
+                if current.get("status") == "running":
+                    current["started"] = False
+                    current["already_running"] = True
+                    return JSONResponse(status_code=202, content=current)
+
+                job_id = str(uuid4())
+                started_at = datetime.now(UTC).isoformat()
+                snapshot = await _update_rebuild_state(
+                    job_id=job_id,
+                    status="running",
+                    project_id=project_id,
+                    started_at=started_at,
+                    completed_at=None,
+                    memories_total=0,
+                    memories_completed=0,
+                    memories_marked_processed=0,
+                    status_counts={},
+                    errors=0,
+                    failed_memories=[],
+                    result=None,
+                    error=None,
+                )
+
+                task = asyncio.create_task(
+                    _run_graph_rebuild(job_id, project_id),
+                    name=f"memory-kg-rebuild:{job_id}",
+                )
+                server._background_tasks.add(task)
+                task.add_done_callback(server._background_tasks.discard)
+
+                snapshot["started"] = True
+                return JSONResponse(status_code=202, content=snapshot)
+
             result = await server.memory_manager.rebuild_knowledge_graph(project_id=project_id)
             if not result.get("success", False):
                 raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
@@ -276,6 +396,17 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error(f"Failed to rebuild knowledge graph: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.get("/graph/rebuild/status")
+    async def rebuild_knowledge_graph_status(
+        job_id: str | None = Query(None, description="Specific rebuild job ID to inspect"),
+    ) -> dict[str, Any]:
+        """Get status for the most recent background knowledge-graph rebuild."""
+        snapshot = await _get_rebuild_state()
+        current_job_id = snapshot.get("job_id")
+        if job_id and current_job_id != job_id:
+            raise HTTPException(status_code=404, detail=f"Rebuild job not found: {job_id}")
+        return snapshot
 
     @router.post("/reconcile")
     async def reconcile_memory_stores(

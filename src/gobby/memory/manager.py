@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -1509,6 +1509,7 @@ class MemoryManager:
         self,
         project_id: str | None = None,
         limit: int = MAX_REINDEX_LIMIT,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
         """Rebuild the Neo4j knowledge-graph projection from SQLite memories."""
         if not self._kg_service:
@@ -1521,14 +1522,32 @@ class MemoryManager:
 
         status_counts = {status.value: 0 for status in KnowledgeGraphStatus}
         errors = 0
+        processed = 0
+        failed_memories: list[dict[str, Any]] = []
 
         kg_service = self._kg_service
         kg_sem = asyncio.Semaphore(5)
         kg_done = 0
         kg_done_lock = asyncio.Lock()
 
+        async def _emit_progress() -> None:
+            if progress_callback is None:
+                return
+            progress = {
+                "project_id": project_id,
+                "memories_total": len(all_memories),
+                "memories_completed": kg_done,
+                "memories_marked_processed": processed,
+                "status_counts": dict(status_counts),
+                "errors": errors,
+                "failed_memories": list(failed_memories),
+            }
+            maybe_awaitable = progress_callback(progress)
+            if maybe_awaitable is not None:
+                await maybe_awaitable
+
         async def _rebuild_kg(mem: Memory) -> KnowledgeGraphResult:
-            nonlocal kg_done
+            nonlocal errors, kg_done, processed
             async with kg_sem:
                 result = await kg_service.add_to_graph(
                     mem.content,
@@ -1536,27 +1555,33 @@ class MemoryManager:
                     project_id=mem.project_id,
                 )
                 async with kg_done_lock:
+                    status_counts[result.status.value] += 1
                     kg_done += 1
+                    if result.status in (
+                        KnowledgeGraphStatus.SUCCESS,
+                        KnowledgeGraphStatus.NOOP_NO_ENTITIES,
+                    ):
+                        await asyncio.to_thread(self.mark_graph_processed, mem.id)
+                        processed += 1
+                    else:
+                        errors += 1
+                        failed_memories.append(
+                            {
+                                "memory_id": mem.id,
+                                "project_id": mem.project_id,
+                                "status": result.status.value,
+                                "errors": list(result.errors),
+                            }
+                        )
+                    await _emit_progress()
                     if kg_done % 50 == 0 or kg_done == len(all_memories):
                         logger.info(f"KG extraction progress: {kg_done}/{len(all_memories)}")
                 return result
 
+        await _emit_progress()
         kg_results = await asyncio.gather(*[_rebuild_kg(mem) for mem in all_memories])
-        processed = 0
-        for mem, result in zip(all_memories, kg_results, strict=False):
-            status_counts[result.status.value] += 1
-            if result.status in (
-                KnowledgeGraphStatus.SUCCESS,
-                KnowledgeGraphStatus.NOOP_NO_ENTITIES,
-            ):
-                await asyncio.to_thread(self.mark_graph_processed, mem.id)
-                processed += 1
-            elif result.status in (
-                KnowledgeGraphStatus.PARTIAL_FAILURE,
-                KnowledgeGraphStatus.RETRYABLE_FAILURE,
-                KnowledgeGraphStatus.DETERMINISTIC_FAILURE,
-            ):
-                errors += 1
+        # ``kg_results`` is retained so callers/tests can rely on full task completion here.
+        _ = kg_results
 
         logger.info(
             "KG rebuild complete for %s: %s",
@@ -1571,6 +1596,7 @@ class MemoryManager:
             "memories_extracted": status_counts[KnowledgeGraphStatus.SUCCESS.value],
             "noop_no_entities": status_counts[KnowledgeGraphStatus.NOOP_NO_ENTITIES.value],
             "errors": errors,
+            "failed_memories": failed_memories,
         }
 
     async def get_entity_graph(

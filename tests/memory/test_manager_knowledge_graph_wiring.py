@@ -223,6 +223,52 @@ class TestGraphDelegation:
         assert result["noop_no_entities"] == 1
         assert result["errors"] == 1
 
+    async def test_rebuild_knowledge_graph_reports_progress_and_failed_memory_ids(self) -> None:
+        """Rebuild progress snapshots and final result should identify failing rows."""
+        manager = _make_manager(
+            neo4j_url="http://localhost:7474",
+            llm_service=_mock_llm_service(),
+            vector_store=AsyncMock(),
+            embed_fn=AsyncMock(return_value=[0.1]),
+        )
+
+        mem1 = MagicMock(id="mem-1", content="First memory", project_id="proj-1")
+        mem2 = MagicMock(id="mem-2", content="Second memory", project_id="proj-1")
+        manager._fetch_all_project_memories = AsyncMock(return_value=[mem1, mem2])
+        manager._kg_service.add_to_graph = AsyncMock(
+            side_effect=[
+                KnowledgeGraphResult(KnowledgeGraphStatus.SUCCESS),
+                KnowledgeGraphResult(
+                    KnowledgeGraphStatus.DETERMINISTIC_FAILURE,
+                    errors=["bad-json"],
+                ),
+            ]
+        )
+        manager.mark_graph_processed = MagicMock()
+
+        progress_updates: list[dict[str, object]] = []
+
+        async def _on_progress(progress: dict[str, object]) -> None:
+            progress_updates.append(progress)
+
+        result = await manager.rebuild_knowledge_graph(
+            project_id="proj-1",
+            progress_callback=_on_progress,
+        )
+
+        assert progress_updates[0]["memories_total"] == 2
+        assert progress_updates[0]["memories_completed"] == 0
+        assert progress_updates[-1]["memories_completed"] == 2
+        assert progress_updates[-1]["errors"] == 1
+        assert result["failed_memories"] == [
+            {
+                "memory_id": "mem-2",
+                "project_id": "proj-1",
+                "status": "deterministic_failure",
+                "errors": ["bad-json"],
+            }
+        ]
+
 
 class TestGraphBackgroundTask:
     """Test that create_memory chains a graph background task."""

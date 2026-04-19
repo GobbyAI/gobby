@@ -462,6 +462,20 @@ class TestGracefulDegradation:
 
         mock_neo4j.merge_node.assert_not_called()
 
+    async def test_add_to_graph_logs_memory_id_on_entity_extraction_failure(
+        self,
+        service: KnowledgeGraphService,
+        mock_llm: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Entity extraction failure logs should include the memory_id."""
+        mock_llm.generate_json = AsyncMock(side_effect=Exception("bad-json"))
+
+        with caplog.at_level("WARNING"):
+            await service.add_to_graph("some content", memory_id="mem-123")
+
+        assert "memory mem-123" in caplog.text
+
 
 # ===========================================================================
 # Cross-graph linking: RELATES_TO_CODE
