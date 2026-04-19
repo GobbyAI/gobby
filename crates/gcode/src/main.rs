@@ -117,7 +117,7 @@ enum Command {
     Tree,
 
     // ── Dependency Graph (requires Gobby) ──────────────────────────────
-    /// Find callers of a symbol [requires Gobby]
+    /// Find callers of a symbol query, resolved to a canonical symbol ID [requires Gobby]
     Callers {
         symbol_name: String,
         #[arg(long, default_value = "10")]
@@ -126,7 +126,7 @@ enum Command {
         #[arg(long, default_value = "0")]
         offset: usize,
     },
-    /// Find all usages of a symbol — calls + imports [requires Gobby]
+    /// Find incoming call usages of a symbol query, resolved to a canonical symbol ID [requires Gobby]
     Usages {
         symbol_name: String,
         #[arg(long, default_value = "10")]
@@ -137,9 +137,9 @@ enum Command {
     },
     /// Show import graph for a file [requires Gobby]
     Imports { file: String },
-    /// Transitive impact analysis [requires Gobby]
+    /// Transitive impact analysis for a symbol query, resolved to a canonical symbol ID [requires Gobby]
     BlastRadius {
-        /// Symbol name or file path
+        /// Symbol query
         target: String,
         #[arg(long, default_value = "3")]
         depth: usize,

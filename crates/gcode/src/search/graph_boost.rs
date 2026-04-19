@@ -1,22 +1,33 @@
 //! Neo4j graph boost: find related symbols to boost in search ranking.
 //!
 //! Uses callers + usages as the boost set — symbols that are connected
-//! to the query term in the call/import graph get a ranking boost via RRF.
+//! to the resolved query symbol in the call graph get a ranking boost via RRF.
 //!
 //! Source: src/gobby/code_index/searcher.py (_graph_boost method)
 
 use std::collections::HashSet;
 
 use crate::config::Context;
+use crate::db;
 use crate::neo4j;
+use crate::search::fts;
 
 /// Get symbol IDs related to query via the call/import graph.
 ///
 /// Returns a ranked list of symbol IDs for use as an RRF source.
 /// Returns empty vec when Neo4j is unavailable (graceful degradation).
 pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
-    let callers = neo4j::find_callers(ctx, query, 0, 10).unwrap_or_default();
-    let usages = neo4j::find_usages(ctx, query, 0, 10).unwrap_or_default();
+    let conn = match db::open_readonly(&ctx.db_path) {
+        Ok(conn) => conn,
+        Err(_) => return vec![],
+    };
+    let (resolved, _) = fts::resolve_graph_symbol(&conn, query, &ctx.project_id);
+    let Some(symbol) = resolved else {
+        return vec![];
+    };
+
+    let callers = neo4j::find_callers(ctx, &symbol.id, 0, 10).unwrap_or_default();
+    let usages = neo4j::find_usages(ctx, &symbol.id, 0, 10).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -30,19 +41,19 @@ pub fn graph_boost(ctx: &Context, query: &str) -> Vec<String> {
 
 /// Expand the graph neighborhood of seed symbols found by FTS/semantic search.
 ///
-/// Takes symbol names from the top search results and queries Neo4j for their
+/// Takes symbol IDs from the top search results and queries Neo4j for their
 /// callees (what they call) and callers (who calls them). Callees are ranked
 /// first since they represent implementation details more useful for conceptual
 /// queries. Returns deduplicated symbol IDs for use as an RRF source.
-pub fn graph_expand(ctx: &Context, seed_names: &[String]) -> Vec<String> {
-    if seed_names.is_empty() {
+pub fn graph_expand(ctx: &Context, seed_ids: &[String]) -> Vec<String> {
+    if seed_ids.is_empty() {
         return vec![];
     }
 
     // Callees first — "what do these symbols call?" surfaces implementation details
-    let callees = neo4j::find_callees_batch(ctx, seed_names, 30).unwrap_or_default();
+    let callees = neo4j::find_callees_batch(ctx, seed_ids, 30).unwrap_or_default();
     // Callers second — "who calls these symbols?" surfaces broader context
-    let callers = neo4j::find_callers_batch(ctx, seed_names, 30).unwrap_or_default();
+    let callers = neo4j::find_callers_batch(ctx, seed_ids, 30).unwrap_or_default();
 
     let mut ids = Vec::new();
     let mut seen = HashSet::new();

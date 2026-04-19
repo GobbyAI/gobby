@@ -16,6 +16,9 @@ use serde_json::Value;
 use crate::config::{Context, Neo4jConfig};
 use crate::models::GraphResult;
 
+const CALL_TARGET_PREDICATE: &str =
+    "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol";
+
 /// Row from a Neo4j v2 query response.
 pub type Row = HashMap<String, Value>;
 
@@ -139,6 +142,7 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
             .get("caller_id")
             .or_else(|| row.get("callee_id"))
             .or_else(|| row.get("source_id"))
+            .or_else(|| row.get("node_id"))
             .or_else(|| row.get("symbol_id"))
             .or_else(|| row.get("id"))
             .and_then(|v| v.as_str())
@@ -148,6 +152,7 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
             .get("caller_name")
             .or_else(|| row.get("callee_name"))
             .or_else(|| row.get("source_name"))
+            .or_else(|| row.get("node_name"))
             .or_else(|| row.get("symbol_name"))
             .or_else(|| row.get("name"))
             .or_else(|| row.get("module_name"))
@@ -176,13 +181,16 @@ fn row_to_graph_result(row: &Row) -> GraphResult {
 // ── Graph query functions (read) ─────────────────────────────────────
 
 /// Count callers of a symbol (server-side COUNT for accurate pagination total).
-pub fn count_callers(ctx: &Context, symbol_name: &str) -> anyhow::Result<usize> {
+pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     with_neo4j(ctx, 0, |client| {
         let rows = client.query(
-            "MATCH (caller:CodeSymbol)-[:CALLS]->(callee:CodeSymbol {name: $name, project: $project}) \
+            &format!(
+                "MATCH (caller:CodeSymbol {{project: $project}})-[:CALLS]->(target {{id: $id, project: $project}}) \
+                 WHERE {CALL_TARGET_PREDICATE} \
              RETURN count(caller) AS cnt",
+            ),
             Some(serde_json::json!({
-                "name": symbol_name,
+                "id": symbol_id,
                 "project": ctx.project_id,
             })),
         )?;
@@ -196,14 +204,16 @@ pub fn count_callers(ctx: &Context, symbol_name: &str) -> anyhow::Result<usize> 
 }
 
 /// Count usages of a symbol (server-side COUNT for accurate pagination total).
-pub fn count_usages(ctx: &Context, symbol_name: &str) -> anyhow::Result<usize> {
+pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
     with_neo4j(ctx, 0, |client| {
         let rows = client.query(
-            "MATCH (n)-[r]->(target:CodeSymbol {name: $name, project: $project}) \
-             WHERE type(r) IN ['CALLS', 'IMPORTS'] \
-             RETURN count(n) AS cnt",
+            &format!(
+                "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
+                 WHERE {CALL_TARGET_PREDICATE} \
+                 RETURN count(source) AS cnt",
+            ),
             Some(serde_json::json!({
-                "name": symbol_name,
+                "id": symbol_id,
                 "project": ctx.project_id,
             })),
         )?;
@@ -216,21 +226,24 @@ pub fn count_usages(ctx: &Context, symbol_name: &str) -> anyhow::Result<usize> {
     })
 }
 
-/// Find symbols that call the given symbol name.
+/// Find symbols that call the given symbol id.
 pub fn find_callers(
     ctx: &Context,
-    symbol_name: &str,
+    symbol_id: &str,
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
     with_neo4j(ctx, vec![], |client| {
         let rows = client.query(
-            "MATCH (caller:CodeSymbol)-[r:CALLS]->(callee:CodeSymbol {name: $name, project: $project}) \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             SKIP $offset LIMIT $limit",
+            &format!(
+                "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
+                 WHERE {CALL_TARGET_PREDICATE} \
+                 RETURN caller.id AS caller_id, caller.name AS caller_name, \
+                        r.file AS file, r.line AS line \
+                 SKIP $offset LIMIT $limit",
+            ),
             Some(serde_json::json!({
-                "name": symbol_name,
+                "id": symbol_id,
                 "project": ctx.project_id,
                 "offset": offset,
                 "limit": limit,
@@ -240,22 +253,24 @@ pub fn find_callers(
     })
 }
 
-/// Find all usages of a symbol (callers + imports).
+/// Find incoming CALLS usages for a canonical, unresolved, or external target.
 pub fn find_usages(
     ctx: &Context,
-    symbol_name: &str,
+    symbol_id: &str,
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
     with_neo4j(ctx, vec![], |client| {
         let rows = client.query(
-            "MATCH (n)-[r]->(target:CodeSymbol {name: $name, project: $project}) \
-             WHERE type(r) IN ['CALLS', 'IMPORTS'] \
-             RETURN n.id AS source_id, n.name AS source_name, \
-                    type(r) AS rel_type, r.file AS file, r.line AS line \
-             SKIP $offset LIMIT $limit",
+            &format!(
+                "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
+                 WHERE {CALL_TARGET_PREDICATE} \
+                 RETURN source.id AS source_id, source.name AS source_name, \
+                        'CALLS' AS rel_type, r.file AS file, r.line AS line \
+                 SKIP $offset LIMIT $limit",
+            ),
             Some(serde_json::json!({
-                "name": symbol_name,
+                "id": symbol_id,
                 "project": ctx.project_id,
                 "offset": offset,
                 "limit": limit,
@@ -265,25 +280,27 @@ pub fn find_usages(
     })
 }
 
-/// Find symbols that call any of the given symbol names (batch).
+/// Find symbols that call any of the given target ids (batch).
 /// Used by graph expansion to find callers of top search results.
 pub fn find_callers_batch(
     ctx: &Context,
-    names: &[String],
+    symbol_ids: &[String],
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    if names.is_empty() {
+    if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
     with_neo4j(ctx, vec![], |client| {
         let rows = client.query(
-            "MATCH (caller:CodeSymbol)-[r:CALLS]->(callee:CodeSymbol {project: $project}) \
-             WHERE callee.name IN $names \
-             RETURN caller.id AS caller_id, caller.name AS caller_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT $limit",
+            &format!(
+                "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
+                 WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN $ids \
+                 RETURN caller.id AS caller_id, caller.name AS caller_name, \
+                        r.file AS file, r.line AS line \
+                 LIMIT $limit",
+            ),
             Some(serde_json::json!({
-                "names": names,
+                "ids": symbol_ids,
                 "project": ctx.project_id,
                 "limit": limit,
             })),
@@ -292,25 +309,27 @@ pub fn find_callers_batch(
     })
 }
 
-/// Find symbols called by any of the given symbol names (batch).
+/// Find call targets reached by any of the given source ids (batch).
 /// Used by graph expansion to find callees of top search results.
 pub fn find_callees_batch(
     ctx: &Context,
-    names: &[String],
+    symbol_ids: &[String],
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    if names.is_empty() {
+    if symbol_ids.is_empty() {
         return Ok(vec![]);
     }
     with_neo4j(ctx, vec![], |client| {
         let rows = client.query(
-            "MATCH (src:CodeSymbol {project: $project})-[r:CALLS]->(callee:CodeSymbol) \
-             WHERE src.name IN $names \
-             RETURN callee.id AS callee_id, callee.name AS callee_name, \
-                    r.file AS file, r.line AS line \
-             LIMIT $limit",
+            &format!(
+                "MATCH (src:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
+                 WHERE src.id IN $ids AND ({CALL_TARGET_PREDICATE}) \
+                 RETURN target.id AS callee_id, target.name AS callee_name, \
+                        r.file AS file, r.line AS line \
+                 LIMIT $limit",
+            ),
             Some(serde_json::json!({
-                "names": names,
+                "ids": symbol_ids,
                 "project": ctx.project_id,
                 "limit": limit,
             })),
@@ -334,29 +353,37 @@ pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphRe
     })
 }
 
+fn blast_radius_query(depth: usize) -> String {
+    format!(
+        "MATCH (target {{id: $id, project: $project}}) \
+         WHERE {CALL_TARGET_PREDICATE} \
+         MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
+         WITH affected, min(length(path)) AS distance \
+         OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
+         RETURN DISTINCT affected.id AS node_id, \
+                affected.name AS node_name, \
+                affected.kind AS kind, file.path AS file_path, \
+                affected.line_start AS line, \
+                distance, 'call' AS rel_type \
+         ORDER BY distance ASC, affected.name ASC \
+         LIMIT $limit"
+    )
+}
+
 /// Find transitive blast radius of changing a symbol.
-pub fn blast_radius(ctx: &Context, target: &str, depth: usize) -> anyhow::Result<Vec<GraphResult>> {
+pub fn blast_radius(
+    ctx: &Context,
+    symbol_id: &str,
+    depth: usize,
+) -> anyhow::Result<Vec<GraphResult>> {
     let depth = depth.clamp(1, 5);
     with_neo4j(ctx, vec![], |client| {
         // Neo4j doesn't support parameterized path length, so we interpolate depth
         // (it's clamped to 1-5, safe for interpolation)
-        let cypher = format!(
-            "MATCH path = (affected:CodeSymbol)-[:CALLS*1..{depth}]->(\
-                target:CodeSymbol {{name: $name, project: $project}}) \
-             WITH affected, min(length(path)) AS distance \
-             OPTIONAL MATCH (file:CodeFile)-[:DEFINES]->(affected) \
-             RETURN DISTINCT affected.id AS symbol_id, \
-                    affected.name AS symbol_name, \
-                    affected.kind AS kind, file.path AS file_path, \
-                    affected.line_start AS line, \
-                    distance \
-             ORDER BY distance ASC, affected.name ASC \
-             LIMIT $limit"
-        );
         let rows = client.query(
-            &cypher,
+            &blast_radius_query(depth),
             Some(serde_json::json!({
-                "name": target,
+                "id": symbol_id,
                 "project": ctx.project_id,
                 "limit": 100,
             })),
@@ -432,5 +459,35 @@ mod tests {
         let data = serde_json::json!({});
         let rows = parse_v2_response(&data);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn test_row_to_graph_result_prefers_blast_radius_node_fields() {
+        let row = HashMap::from([
+            ("node_id".to_string(), serde_json::json!("sym-1")),
+            ("node_name".to_string(), serde_json::json!("foo")),
+            ("file_path".to_string(), serde_json::json!("src/main.py")),
+            ("line".to_string(), serde_json::json!(42)),
+            ("rel_type".to_string(), serde_json::json!("call")),
+            ("distance".to_string(), serde_json::json!(2)),
+        ]);
+
+        let result = row_to_graph_result(&row);
+
+        assert_eq!(result.id, "sym-1");
+        assert_eq!(result.name, "foo");
+        assert_eq!(result.file_path, "src/main.py");
+        assert_eq!(result.line, 42);
+        assert_eq!(result.relation.as_deref(), Some("call"));
+        assert_eq!(result.distance, Some(2));
+    }
+
+    #[test]
+    fn test_blast_radius_query_targets_stable_ids_and_all_target_labels() {
+        let query = blast_radius_query(3);
+
+        assert!(query.contains("target {id: $id, project: $project}"));
+        assert!(query.contains(CALL_TARGET_PREDICATE));
+        assert!(query.contains("[:CALLS*1..3]"));
     }
 }

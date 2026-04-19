@@ -1,9 +1,17 @@
 //! FTS5 query sanitization and execution against SQLite.
 //! Ports logic from src/gobby/code_index/storage.py and searcher.py.
 
+use std::collections::HashSet;
+
 use rusqlite::Connection;
 
 use crate::models::{ContentSearchHit, SearchResult, Symbol};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedGraphSymbol {
+    pub id: String,
+    pub display_name: String,
+}
 
 /// Escape LIKE wildcards (`%`, `_`) and the backslash escape char itself.
 /// Must be paired with `ESCAPE '\'` in the SQL for SQLite to honor it.
@@ -143,76 +151,98 @@ pub fn search_symbols_by_name(
         .unwrap_or_default()
 }
 
-/// Resolve user input to a symbol name for graph queries.
+fn exact_symbol_matches(
+    conn: &Connection,
+    project_id: &str,
+    column: &str,
+    input: &str,
+    limit: usize,
+) -> Vec<Symbol> {
+    let sql = format!(
+        "SELECT * FROM code_symbols \
+         WHERE project_id = ?1 AND {column} = ?2 \
+         ORDER BY file_path, line_start \
+         LIMIT ?3"
+    );
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(
+        rusqlite::params![project_id, input, limit as i64],
+        Symbol::from_row,
+    )
+    .ok()
+    .map(|rows| rows.filter_map(|row| row.ok()).collect())
+    .unwrap_or_default()
+}
+
+fn suggestion_label(symbol: &Symbol) -> String {
+    format!(
+        "{} ({}:{})",
+        symbol.qualified_name, symbol.file_path, symbol.line_start
+    )
+}
+
+fn resolved_symbol(symbol: &Symbol) -> ResolvedGraphSymbol {
+    ResolvedGraphSymbol {
+        id: symbol.id.clone(),
+        display_name: symbol.name.clone(),
+    }
+}
+
+fn resolve_from_candidates(candidates: Vec<Symbol>) -> (Option<ResolvedGraphSymbol>, Vec<String>) {
+    match candidates.len() {
+        0 => (None, vec![]),
+        1 => (Some(resolved_symbol(&candidates[0])), vec![]),
+        _ => {
+            let mut suggestions = Vec::new();
+            let mut seen = HashSet::new();
+            for symbol in &candidates {
+                let label = suggestion_label(symbol);
+                if seen.insert(label.clone()) {
+                    suggestions.push(label);
+                }
+            }
+            (None, suggestions)
+        }
+    }
+}
+
+/// Resolve user input to a canonical symbol id for graph queries.
 ///
-/// Tries exact match first, then falls back to LIKE matching.
-/// Returns `(resolved_name, suggestions)` — suggestions populated when no exact match.
-pub fn resolve_symbol_name(
+/// Resolution is fail-closed: ambiguous matches return `None` with suggestions.
+pub fn resolve_graph_symbol(
     conn: &Connection,
     input: &str,
     project_id: &str,
-) -> (Option<String>, Vec<String>) {
-    // 1. Exact match on name
-    let exact: Option<String> = conn
-        .query_row(
-            "SELECT name FROM code_symbols WHERE project_id = ? AND name = ? LIMIT 1",
-            rusqlite::params![project_id, input],
-            |row| row.get(0),
-        )
-        .ok();
-    if let Some(name) = exact {
-        return (Some(name), vec![]);
+) -> (Option<ResolvedGraphSymbol>, Vec<String>) {
+    let ids = exact_symbol_matches(conn, project_id, "id", input, 2);
+    let (resolved, suggestions) = resolve_from_candidates(ids);
+    if resolved.is_some() || !suggestions.is_empty() {
+        return (resolved, suggestions);
     }
 
-    // 2. LIKE fallback — collect top matches as suggestions.
-    //    Escape %/_/\ in input and use ESCAPE clause so symbol names containing
-    //    underscores (common in snake_case) match literally, not as wildcards.
-    let pattern = format!("%{}%", escape_like(input));
-    let mut stmt = match conn.prepare(
-        "SELECT DISTINCT name FROM code_symbols \
-         WHERE project_id = ? AND (name LIKE ? ESCAPE '\\' OR qualified_name LIKE ? ESCAPE '\\') \
-         ORDER BY name LIMIT 5",
-    ) {
-        Ok(s) => s,
-        Err(_) => return (None, vec![]),
-    };
-    let names: Vec<String> = stmt
-        .query_map(rusqlite::params![project_id, &pattern, &pattern], |row| {
-            row.get(0)
-        })
-        .ok()
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default();
-
-    if names.len() == 1 {
-        return (Some(names[0].clone()), vec![]);
-    } else if !names.is_empty() {
-        let first = names[0].clone();
-        return (Some(first), names[1..].to_vec());
+    let qualified = exact_symbol_matches(conn, project_id, "qualified_name", input, 6);
+    let (resolved, suggestions) = resolve_from_candidates(qualified);
+    if resolved.is_some() || !suggestions.is_empty() {
+        return (resolved, suggestions);
     }
 
-    // 3. FTS5 fallback — search across names, signatures, docstrings
-    let fts_results = search_symbols_fts(conn, input, project_id, None, None, 5);
-    let mut seen = std::collections::HashSet::new();
-    let fts_names: Vec<String> = fts_results
-        .iter()
-        .filter_map(|s| {
-            if seen.insert(s.name.clone()) {
-                Some(s.name.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if fts_names.len() == 1 {
-        (Some(fts_names[0].clone()), vec![])
-    } else if fts_names.is_empty() {
-        (None, vec![])
-    } else {
-        let first = fts_names[0].clone();
-        (Some(first), fts_names[1..].to_vec())
+    let exact = exact_symbol_matches(conn, project_id, "name", input, 6);
+    let (resolved, suggestions) = resolve_from_candidates(exact);
+    if resolved.is_some() || !suggestions.is_empty() {
+        return (resolved, suggestions);
     }
+
+    let like_matches = search_symbols_by_name(conn, input, project_id, None, None, 6);
+    let (resolved, suggestions) = resolve_from_candidates(like_matches);
+    if resolved.is_some() || !suggestions.is_empty() {
+        return (resolved, suggestions);
+    }
+
+    let fts_results = search_symbols_fts(conn, input, project_id, None, None, 6);
+    resolve_from_candidates(fts_results)
 }
 
 /// Count matching symbols (FTS5 with LIKE fallback).
@@ -270,6 +300,135 @@ pub fn count_text(conn: &Connection, query: &str, project_id: &str, path: Option
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE code_symbols (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                qualified_name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                language TEXT NOT NULL,
+                byte_start INTEGER NOT NULL,
+                byte_end INTEGER NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                signature TEXT,
+                docstring TEXT,
+                parent_symbol_id TEXT,
+                content_hash TEXT,
+                summary TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            );
+            CREATE VIRTUAL TABLE code_symbols_fts USING fts5(name, signature, docstring, summary);",
+        )
+        .expect("create schema");
+        conn
+    }
+
+    fn insert_symbol(
+        conn: &Connection,
+        id: &str,
+        file_path: &str,
+        name: &str,
+        qualified_name: &str,
+        summary: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO code_symbols (
+                id, project_id, file_path, name, qualified_name, kind, language,
+                byte_start, byte_end, line_start, line_end, signature, docstring,
+                parent_symbol_id, content_hash, summary, created_at, updated_at
+            ) VALUES (
+                ?1, 'proj', ?2, ?3, ?4, 'function', 'python',
+                0, 10, 1, 1, '', '', NULL, '', ?5, '', ''
+            )",
+            rusqlite::params![id, file_path, name, qualified_name, summary],
+        )
+        .expect("insert symbol");
+        let rowid = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO code_symbols_fts(rowid, name, signature, docstring, summary)
+             VALUES (?1, ?2, '', '', ?3)",
+            rusqlite::params![rowid, name, summary.unwrap_or_default()],
+        )
+        .expect("insert fts row");
+    }
+
+    #[test]
+    fn resolve_graph_symbol_by_exact_name() {
+        let conn = setup_conn();
+        insert_symbol(&conn, "sym-1", "src/main.py", "foo", "foo", Some("helper"));
+
+        let (resolved, suggestions) = resolve_graph_symbol(&conn, "foo", "proj");
+
+        assert!(suggestions.is_empty());
+        assert_eq!(
+            resolved,
+            Some(ResolvedGraphSymbol {
+                id: "sym-1".to_string(),
+                display_name: "foo".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_graph_symbol_uses_like_fallback() {
+        let conn = setup_conn();
+        insert_symbol(
+            &conn,
+            "sym-1",
+            "src/mailer.py",
+            "render_email",
+            "render_email",
+            Some("helper"),
+        );
+
+        let (resolved, suggestions) = resolve_graph_symbol(&conn, "render", "proj");
+
+        assert!(suggestions.is_empty());
+        assert_eq!(resolved.map(|symbol| symbol.id), Some("sym-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_graph_symbol_uses_fts_fallback() {
+        let conn = setup_conn();
+        insert_symbol(
+            &conn,
+            "sym-1",
+            "src/mailer.py",
+            "send_email",
+            "send_email",
+            Some("mailer helper"),
+        );
+
+        let (resolved, suggestions) = resolve_graph_symbol(&conn, "mailer helper", "proj");
+
+        assert!(suggestions.is_empty());
+        assert_eq!(resolved.map(|symbol| symbol.id), Some("sym-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_graph_symbol_is_fail_closed_on_ambiguity() {
+        let conn = setup_conn();
+        insert_symbol(&conn, "sym-1", "src/a.py", "foo", "foo", Some("a"));
+        insert_symbol(&conn, "sym-2", "src/b.py", "foo", "foo", Some("b"));
+
+        let (resolved, suggestions) = resolve_graph_symbol(&conn, "foo", "proj");
+
+        assert!(resolved.is_none());
+        assert_eq!(suggestions.len(), 2);
+    }
 }
 
 /// Count matching content chunks (FTS5 with LIKE fallback).

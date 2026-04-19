@@ -8,12 +8,24 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 
 use crate::index::hasher::symbol_content_hash;
+use crate::index::import_resolution::{self, ExtractedImports, ImportBindings};
 use crate::index::languages;
 use crate::index::security;
-use crate::models::{CallRelation, ImportRelation, ParseResult, Symbol};
+use crate::models::{CallRelation, ParseResult, Symbol};
+
+pub use crate::index::import_resolution::{
+    ImportResolutionContext, build_import_resolution_context,
+};
 
 /// Maximum file size to index (10 MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallSyntaxKind {
+    Bare,
+    Member,
+    Other,
+}
 
 /// Parse a single file into symbols, imports, and calls.
 /// Returns None if the file should be skipped.
@@ -22,6 +34,7 @@ pub fn parse_file(
     project_id: &str,
     root_path: &Path,
     exclude_patterns: &[String],
+    import_context: &ImportResolutionContext,
 ) -> Option<ParseResult> {
     // Security checks
     if !security::validate_path(file_path, root_path) {
@@ -73,12 +86,28 @@ pub fn parse_file(
         &tree, &source, spec, language, &ts_lang, project_id, &rel_path,
     );
     link_parents(&mut symbols);
-    let imports = extract_imports(&tree, &source, spec, &ts_lang, &rel_path);
-    let calls = extract_calls(&tree, &source, spec, &ts_lang, &rel_path, &symbols);
+    let extracted_imports = extract_imports(
+        &tree,
+        &source,
+        spec,
+        language,
+        &ts_lang,
+        &rel_path,
+        import_context,
+    );
+    let calls = extract_calls(
+        &tree,
+        &source,
+        spec,
+        &ts_lang,
+        &rel_path,
+        &symbols,
+        &extracted_imports.bindings,
+    );
 
     Some(ParseResult {
         symbols,
-        imports,
+        imports: extracted_imports.imports,
         calls,
         source,
     })
@@ -288,16 +317,18 @@ fn extract_imports(
     tree: &tree_sitter::Tree,
     source: &[u8],
     spec: &languages::LanguageSpec,
+    language: &str,
     ts_lang: &tree_sitter::Language,
     rel_path: &str,
-) -> Vec<ImportRelation> {
+    import_context: &ImportResolutionContext,
+) -> ExtractedImports {
     if spec.import_query.trim().is_empty() {
-        return Vec::new();
+        return ExtractedImports::default();
     }
 
     let query = match Query::new(ts_lang, spec.import_query) {
         Ok(q) => q,
-        Err(_) => return Vec::new(),
+        Err(_) => return ExtractedImports::default(),
     };
 
     let mut cursor = QueryCursor::new();
@@ -307,7 +338,7 @@ fn extract_imports(
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let mut imports = Vec::new();
+    let mut extracted = ExtractedImports::default();
 
     while let Some(m) = matches.next() {
         for cap in m.captures {
@@ -317,15 +348,18 @@ fn extract_imports(
                     String::from_utf8_lossy(&source[cap.node.start_byte()..cap.node.end_byte()])
                         .trim()
                         .to_string();
-                imports.push(ImportRelation {
-                    file_path: rel_path.to_string(),
-                    module_name: text,
-                });
+                import_resolution::parse_import_statement(
+                    language,
+                    &text,
+                    rel_path,
+                    import_context,
+                    &mut extracted,
+                );
             }
         }
     }
 
-    imports
+    extracted
 }
 
 fn extract_calls(
@@ -335,6 +369,7 @@ fn extract_calls(
     ts_lang: &tree_sitter::Language,
     rel_path: &str,
     symbols: &[Symbol],
+    import_bindings: &ImportBindings,
 ) -> Vec<CallRelation> {
     if spec.call_query.trim().is_empty() {
         return Vec::new();
@@ -376,19 +411,444 @@ fn extract_calls(
             String::from_utf8_lossy(&source[name_n.start_byte()..name_n.end_byte()]).to_string();
 
         let target = call_node.unwrap_or(name_n);
-        let caller_id = symbols
-            .iter()
-            .rfind(|s| s.byte_start <= target.start_byte() && target.start_byte() <= s.byte_end)
-            .map(|s| s.id.clone())
-            .unwrap_or_default();
+        let caller_symbol = enclosing_symbol(symbols, target.start_byte());
+        let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
+        let syntax = call_syntax_kind(name_n, target);
+        let local_target = resolve_same_file_callee(symbols, caller_symbol, &callee_name, syntax);
+        let external_target = import_resolution::resolve_external_callee(
+            import_bindings,
+            symbols,
+            &callee_name,
+            member_root_alias(source, target, name_n).as_deref(),
+            syntax == CallSyntaxKind::Bare,
+        );
 
-        calls.push(CallRelation {
-            caller_id,
+        let mut call = CallRelation::new(
+            caller_symbol_id,
             callee_name,
-            file_path: rel_path.to_string(),
-            line: name_n.start_position().row + 1,
-        });
+            rel_path.to_string(),
+            name_n.start_position().row + 1,
+        );
+        match (local_target, external_target) {
+            (Some(callee_symbol_id), None) => {
+                call = call.with_symbol_target(callee_symbol_id);
+            }
+            (None, Some(external_target)) => {
+                call =
+                    call.with_external_target(external_target.callee_name, external_target.module);
+            }
+            _ => {}
+        }
+        calls.push(call);
     }
 
     calls
+}
+
+fn enclosing_symbol(symbols: &[Symbol], byte_offset: usize) -> Option<&Symbol> {
+    symbols
+        .iter()
+        .rfind(|s| s.byte_start <= byte_offset && byte_offset <= s.byte_end)
+}
+
+fn call_syntax_kind(name_node: tree_sitter::Node, call_node: tree_sitter::Node) -> CallSyntaxKind {
+    let Some(mut ancestor) = name_node.parent() else {
+        return CallSyntaxKind::Other;
+    };
+    if ancestor.id() == call_node.id() {
+        return CallSyntaxKind::Bare;
+    }
+
+    loop {
+        if is_memberish_kind(ancestor.kind()) {
+            return CallSyntaxKind::Member;
+        }
+        if ancestor.id() == call_node.id() {
+            return CallSyntaxKind::Other;
+        }
+        let Some(parent) = ancestor.parent() else {
+            return CallSyntaxKind::Other;
+        };
+        ancestor = parent;
+    }
+}
+
+fn is_memberish_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "attribute"
+            | "member_expression"
+            | "selector_expression"
+            | "field_expression"
+            | "member_access_expression"
+            | "member_call_expression"
+    )
+}
+
+fn is_callable_kind(kind: &str) -> bool {
+    matches!(kind, "function" | "method")
+}
+
+fn resolve_same_file_callee(
+    symbols: &[Symbol],
+    caller_symbol: Option<&Symbol>,
+    callee_name: &str,
+    syntax: CallSyntaxKind,
+) -> Option<String> {
+    match syntax {
+        CallSyntaxKind::Bare => unique_symbol_id(
+            symbols
+                .iter()
+                .filter(|symbol| symbol.name == callee_name && is_callable_kind(&symbol.kind)),
+        ),
+        CallSyntaxKind::Member => {
+            let parent_symbol_id =
+                caller_symbol.and_then(|symbol| symbol.parent_symbol_id.as_deref())?;
+            unique_symbol_id(symbols.iter().filter(|symbol| {
+                symbol.name == callee_name
+                    && symbol.kind == "method"
+                    && symbol.parent_symbol_id.as_deref() == Some(parent_symbol_id)
+            }))
+        }
+        CallSyntaxKind::Other => None,
+    }
+}
+
+fn unique_symbol_id<'a>(symbols: impl Iterator<Item = &'a Symbol>) -> Option<String> {
+    let mut symbols = symbols;
+    let first = symbols.next()?;
+    if symbols.next().is_some() {
+        None
+    } else {
+        Some(first.id.clone())
+    }
+}
+
+fn member_root_alias(
+    source: &[u8],
+    call_node: tree_sitter::Node,
+    name_node: tree_sitter::Node,
+) -> Option<String> {
+    let prefix = String::from_utf8_lossy(&source[call_node.start_byte()..name_node.start_byte()]);
+    let mut chars = prefix.chars().skip_while(|c| !is_identifier_start(*c));
+    let first = chars.next()?;
+    if !is_identifier_start(first) {
+        return None;
+    }
+
+    let mut alias = String::from(first);
+    for ch in chars {
+        if is_identifier_continue(ch) {
+            alias.push(ch);
+        } else {
+            break;
+        }
+    }
+
+    Some(alias)
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || matches!(ch, '_' | '$')
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$')
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn parse_source(file_name: &str, source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let root = tempdir.path();
+        for (path, contents) in extra_files {
+            let file_path = root.join(path);
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).expect("create parent dirs");
+            }
+            fs::write(&file_path, contents).expect("write extra source");
+        }
+
+        let path = root.join(file_name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent dirs");
+        }
+        fs::write(&path, source).expect("write test source");
+        let candidates = discover_supported_files(root);
+        let context = build_import_resolution_context(root, &candidates);
+        parse_file(&path, "proj", root, &[], &context).expect("parse file")
+    }
+
+    fn parse_python(source: &str) -> ParseResult {
+        parse_source("sample.py", source, &[])
+    }
+
+    fn parse_javascript(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/sample.js", source, extra_files)
+    }
+
+    fn parse_typescript(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+        parse_source("src/sample.ts", source, extra_files)
+    }
+
+    fn discover_supported_files(root: &Path) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path) = stack.pop() {
+            let entries = fs::read_dir(&path).expect("read dir");
+            for entry in entries {
+                let entry = entry.expect("dir entry");
+                let entry_path = entry.path();
+                if entry_path.is_dir() {
+                    stack.push(entry_path);
+                } else if let Some(language) =
+                    languages::detect_language(&entry_path.to_string_lossy())
+                    && !language.is_empty()
+                {
+                    candidates.push(entry_path);
+                }
+            }
+        }
+        candidates
+    }
+
+    #[test]
+    fn resolves_unique_same_file_bare_calls() {
+        let parsed = parse_python(
+            r#"
+def foo():
+    pass
+
+def bar():
+    foo()
+"#,
+        );
+
+        let foo = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "foo")
+            .expect("foo symbol");
+        let bar = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == "bar")
+            .expect("bar symbol");
+        let call = parsed.calls.first().expect("call");
+
+        assert_eq!(call.caller_symbol_id, bar.id);
+        assert_eq!(call.callee_symbol_id.as_deref(), Some(foo.id.as_str()));
+    }
+
+    #[test]
+    fn resolves_same_class_member_calls() {
+        let parsed = parse_python(
+            r#"
+class Greeter:
+    def greet(self):
+        self.render()
+
+    def render(self):
+        pass
+"#,
+        );
+
+        let render = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.qualified_name == "Greeter.render")
+            .expect("render method");
+        let call = parsed.calls.first().expect("call");
+
+        assert_eq!(call.callee_symbol_id.as_deref(), Some(render.id.as_str()));
+    }
+
+    #[test]
+    fn leaves_ambiguous_bare_calls_unresolved() {
+        let parsed = parse_python(
+            r#"
+def foo():
+    pass
+
+class A:
+    def foo(self):
+        pass
+
+def bar():
+    foo()
+"#,
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert!(call.callee_symbol_id.is_none());
+    }
+
+    #[test]
+    fn leaves_non_local_member_calls_unresolved() {
+        let parsed = parse_python(
+            r#"
+class A:
+    def bar(self):
+        obj.render()
+
+class B:
+    def render(self):
+        pass
+"#,
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert!(call.callee_symbol_id.is_none());
+    }
+
+    #[test]
+    fn classifies_external_python_from_import_calls() {
+        let parsed = parse_python(
+            r#"
+from requests import get as fetch
+
+def run():
+    fetch()
+"#,
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "get");
+        assert_eq!(call.callee_external_module.as_deref(), Some("requests"));
+    }
+
+    #[test]
+    fn leaves_local_python_imports_unresolved() {
+        let parsed = parse_source(
+            "pkg/main.py",
+            r#"
+from pkg.utils import helper
+
+def run():
+    helper()
+"#,
+            &[("pkg/utils.py", "def helper():\n    pass\n")],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+        assert!(call.callee_external_module.is_none());
+    }
+
+    #[test]
+    fn classifies_external_javascript_named_import_calls() {
+        let parsed = parse_javascript(
+            r#"
+import { useState } from "react";
+
+function run() {
+  useState();
+}
+"#,
+            &[(
+                "package.json",
+                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "useState");
+        assert_eq!(call.callee_external_module.as_deref(), Some("react"));
+    }
+
+    #[test]
+    fn classifies_external_javascript_namespace_member_calls() {
+        let parsed = parse_javascript(
+            r#"
+import * as React from "react";
+
+function run() {
+  React.useState();
+}
+"#,
+            &[(
+                "package.json",
+                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "useState");
+        assert_eq!(call.callee_external_module.as_deref(), Some("react"));
+    }
+
+    #[test]
+    fn leaves_relative_javascript_imports_unresolved() {
+        let parsed = parse_javascript(
+            r#"
+import { helper } from "./utils";
+
+function run() {
+  helper();
+}
+"#,
+            &[
+                (
+                    "package.json",
+                    r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+                ),
+                ("src/utils.js", "export function helper() {}\n"),
+            ],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
+
+    #[test]
+    fn classifies_external_typescript_default_member_calls() {
+        let parsed = parse_typescript(
+            r#"
+import React from "react";
+
+function run() {
+  React.useState();
+}
+"#,
+            &[(
+                "package.json",
+                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "external");
+        assert_eq!(call.callee_name, "useState");
+        assert_eq!(call.callee_external_module.as_deref(), Some("react"));
+    }
+
+    #[test]
+    fn leaves_unlisted_javascript_package_aliases_unresolved() {
+        let parsed = parse_javascript(
+            r#"
+import { helper } from "@/utils";
+
+function run() {
+  helper();
+}
+"#,
+            &[(
+                "package.json",
+                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
+            )],
+        );
+
+        let call = parsed.calls.first().expect("call");
+        assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    }
 }

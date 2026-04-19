@@ -58,6 +58,7 @@ pub fn index_directory(
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     let (candidates, content_only) = walker::discover_files(root_path, &excludes);
+    let import_context = parser::build_import_resolution_context(root_path, &candidates);
 
     // Build current hash map for incremental detection
     let mut current_hashes: HashMap<String, String> = HashMap::new();
@@ -101,7 +102,14 @@ pub fn index_directory(
             }
         }
 
-        match index_file(conn, path, project_id, root_path, &excludes) {
+        match index_file(
+            conn,
+            path,
+            project_id,
+            root_path,
+            &excludes,
+            &import_context,
+        ) {
             Some(count) => {
                 result.files_indexed += 1;
                 result.symbols_found += count;
@@ -162,6 +170,8 @@ pub fn index_files(
     };
 
     let excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+    let (candidates, _) = walker::discover_files(root_path, &excludes);
+    let import_context = parser::build_import_resolution_context(root_path, &candidates);
 
     for fp in file_paths {
         let abs = if Path::new(fp).is_absolute() {
@@ -176,7 +186,14 @@ pub fn index_files(
             continue;
         }
 
-        if let Some(count) = index_file(conn, &abs, project_id, root_path, &excludes) {
+        if let Some(count) = index_file(
+            conn,
+            &abs,
+            project_id,
+            root_path,
+            &excludes,
+            &import_context,
+        ) {
             result.files_indexed += 1;
             result.symbols_found += count;
         }
@@ -193,10 +210,17 @@ fn index_file(
     project_id: &str,
     root_path: &Path,
     exclude_patterns: &[String],
+    import_context: &parser::ImportResolutionContext,
 ) -> Option<usize> {
     let rel = relative_path(file_path, root_path).ok()?;
 
-    let parse_result = parser::parse_file(file_path, project_id, root_path, exclude_patterns)?;
+    let parse_result = parser::parse_file(
+        file_path,
+        project_id,
+        root_path,
+        exclude_patterns,
+        import_context,
+    )?;
 
     if parse_result.symbols.is_empty() {
         return Some(0);
@@ -589,15 +613,112 @@ fn upsert_calls(
     for call in calls {
         let _ = conn.execute(
             "INSERT OR IGNORE INTO code_calls \
-             (project_id, caller_symbol_id, callee_name, file_path, line) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
+              callee_target_kind, callee_external_module, file_path, line) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 project_id,
-                &call.caller_id,
+                &call.caller_symbol_id,
+                call.callee_symbol_id.as_deref().unwrap_or(""),
                 &call.callee_name,
+                call.callee_target_kind.as_str(),
+                call.callee_external_module.as_deref().unwrap_or(""),
                 &call.file_path,
                 call.line as i64,
             ],
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{CallRelation, CallTargetKind};
+
+    #[test]
+    fn upsert_calls_writes_new_contract_columns() {
+        let conn = Connection::open_in_memory().expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE code_calls (
+                project_id TEXT NOT NULL,
+                caller_symbol_id TEXT NOT NULL,
+                callee_symbol_id TEXT NOT NULL DEFAULT '',
+                callee_name TEXT NOT NULL,
+                callee_target_kind TEXT NOT NULL,
+                callee_external_module TEXT NOT NULL DEFAULT '',
+                file_path TEXT NOT NULL,
+                line INTEGER NOT NULL
+            );",
+        )
+        .expect("create table");
+
+        let resolved = CallRelation::new(
+            "caller-1".to_string(),
+            "foo".to_string(),
+            "src/main.py".to_string(),
+            12,
+        )
+        .with_symbol_target("callee-1".to_string());
+        let unresolved = CallRelation::new(
+            "caller-2".to_string(),
+            "bar".to_string(),
+            "src/main.py".to_string(),
+            18,
+        );
+
+        upsert_calls(
+            &conn,
+            "proj",
+            "src/main.py",
+            &[resolved.clone(), unresolved.clone()],
+        );
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT caller_symbol_id, callee_symbol_id, callee_name, \
+                        callee_target_kind, callee_external_module, file_path, line \
+                 FROM code_calls ORDER BY line",
+            )
+            .expect("prepare select");
+        let rows: Vec<(String, String, String, String, String, String, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .expect("query rows")
+            .map(|row| row.expect("read row"))
+            .collect();
+
+        assert_eq!(
+            rows[0],
+            (
+                "caller-1".to_string(),
+                "callee-1".to_string(),
+                "foo".to_string(),
+                CallTargetKind::Symbol.as_str().to_string(),
+                "".to_string(),
+                "src/main.py".to_string(),
+                12,
+            )
+        );
+        assert_eq!(
+            rows[1],
+            (
+                "caller-2".to_string(),
+                "".to_string(),
+                "bar".to_string(),
+                CallTargetKind::Unresolved.as_str().to_string(),
+                "".to_string(),
+                "src/main.py".to_string(),
+                18,
+            )
         );
     }
 }

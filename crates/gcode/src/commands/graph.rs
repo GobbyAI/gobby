@@ -3,7 +3,7 @@ use crate::db;
 use crate::models::PagedResponse;
 use crate::neo4j;
 use crate::output::{self, Format};
-use crate::search::fts;
+use crate::search::fts::{self, ResolvedGraphSymbol};
 
 const GOBBY_HINT: &str =
     "Graph commands require Neo4j, available with Gobby. See: https://github.com/GobbyAI/gobby";
@@ -36,25 +36,26 @@ fn empty_response_for_unresolved(ctx: &Context, format: Format) -> anyhow::Resul
     }
 }
 
-/// Resolve user input to a symbol name, printing suggestions on ambiguity.
+/// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
 /// Returns None and prints an error message if no match found.
-fn resolve_name(ctx: &Context, input: &str) -> Option<String> {
+fn resolve_symbol(ctx: &Context, input: &str) -> Option<ResolvedGraphSymbol> {
     let conn = match db::open_readonly(&ctx.db_path) {
         Ok(c) => c,
-        Err(_) => return Some(input.to_string()), // Can't resolve, pass through
+        Err(e) => {
+            eprintln!("Failed to open index for graph resolution: {e}");
+            return None;
+        }
     };
-    let (resolved, suggestions) = fts::resolve_symbol_name(&conn, input, &ctx.project_id);
-    match &resolved {
-        Some(name) if !suggestions.is_empty() => {
+    let (resolved, suggestions) = fts::resolve_graph_symbol(&conn, input, &ctx.project_id);
+    if resolved.is_none() {
+        if suggestions.is_empty() {
+            eprintln!("No symbol matching '{input}' found");
+        } else {
             eprintln!(
-                "Resolved '{input}' to '{name}' (also matched: {})",
+                "Ambiguous symbol '{input}'. Refine the query. Matches: {}",
                 suggestions.join(", ")
             );
         }
-        None => {
-            eprintln!("No symbol matching '{input}' found");
-        }
-        _ => {}
     }
     resolved
 }
@@ -66,12 +67,12 @@ pub fn callers(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let name = match resolve_name(ctx, symbol_name) {
-        Some(n) => n,
+    let symbol = match resolve_symbol(ctx, symbol_name) {
+        Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = neo4j::count_callers(ctx, &name)?;
-    let results = neo4j::find_callers(ctx, &name, offset, limit)?;
+    let total = neo4j::count_callers(ctx, &symbol.id)?;
+    let results = neo4j::find_callers(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -84,13 +85,16 @@ pub fn callers(
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
-                println!("No callers found for '{name}'");
+                println!("No callers found for '{}'", symbol.display_name);
                 print_graph_hint_text(ctx);
             } else if results.is_empty() {
                 eprintln!("No callers at offset {offset} (total {total})");
             } else {
                 for r in &results {
-                    println!("{}:{} {} -> {}", r.file_path, r.line, r.name, name);
+                    println!(
+                        "{}:{} {} -> {}",
+                        r.file_path, r.line, r.name, symbol.display_name
+                    );
                 }
                 if total > offset + results.len() {
                     eprintln!(
@@ -113,12 +117,12 @@ pub fn usages(
     offset: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let name = match resolve_name(ctx, symbol_name) {
-        Some(n) => n,
+    let symbol = match resolve_symbol(ctx, symbol_name) {
+        Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let total = neo4j::count_usages(ctx, &name)?;
-    let results = neo4j::find_usages(ctx, &name, offset, limit)?;
+    let total = neo4j::count_usages(ctx, &symbol.id)?;
+    let results = neo4j::find_usages(ctx, &symbol.id, offset, limit)?;
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -131,7 +135,7 @@ pub fn usages(
         }),
         Format::Text => {
             if results.is_empty() && offset == 0 {
-                println!("No usages found for '{name}'");
+                println!("No usages found for '{}'", symbol.display_name);
                 print_graph_hint_text(ctx);
             } else if results.is_empty() {
                 eprintln!("No usages at offset {offset} (total {total})");
@@ -140,7 +144,7 @@ pub fn usages(
                     let rel = r.relation.as_deref().unwrap_or("unknown");
                     println!(
                         "{}:{} [{}] {} -> {}",
-                        r.file_path, r.line, rel, r.name, name
+                        r.file_path, r.line, rel, r.name, symbol.display_name
                     );
                 }
                 if total > offset + results.len() {
@@ -189,11 +193,11 @@ pub fn blast_radius(
     depth: usize,
     format: Format,
 ) -> anyhow::Result<()> {
-    let name = match resolve_name(ctx, target) {
-        Some(n) => n,
+    let symbol = match resolve_symbol(ctx, target) {
+        Some(symbol) => symbol,
         None => return empty_response_for_unresolved(ctx, format),
     };
-    let results = neo4j::blast_radius(ctx, &name, depth)?;
+    let results = neo4j::blast_radius(ctx, &symbol.id, depth)?;
     let total = results.len();
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -206,7 +210,7 @@ pub fn blast_radius(
         }),
         Format::Text => {
             if results.is_empty() {
-                println!("No blast radius found for '{name}'");
+                println!("No blast radius found for '{}'", symbol.display_name);
                 print_graph_hint_text(ctx);
             } else {
                 for r in &results {
