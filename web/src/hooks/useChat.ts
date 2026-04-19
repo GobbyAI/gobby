@@ -429,6 +429,12 @@ function hasSessionUsage(session: Record<string, unknown> | null): boolean {
   );
 }
 
+function isWebChatSessionRecord(
+  session: Record<string, unknown> | null | undefined,
+): boolean {
+  return normalizeSessionType(session?.session_type) === "web_chat";
+}
+
 function buildContextUsageFromTotals(params: {
   totalInputTokens?: number | null;
   outputTokens?: number | null;
@@ -1036,6 +1042,7 @@ export function useChat() {
     loadViewingSessionMode(),
   );
   const initialViewingRestoreRef = useRef(false);
+  const initialViewingReconnectRetryRef = useRef(false);
 
   // Live terminal observation is distinct from interactive proxy mode.
   const [observedSessionId, setObservedSessionId] = useState<string | null>(
@@ -1593,37 +1600,15 @@ export function useChat() {
         }),
       );
 
-      // Sync current mode to backend on connect/reconnect — but skip if
-      // the server just sent an authoritative mode_changed (avoids loop)
-      if (
-        conversationIdRef.current &&
-        Date.now() - lastServerModeTimestampRef.current > 2000
-      ) {
+      // Rebind this client to the current main-chat conversation without
+      // mutating the server-owned session. The backend uses conversation_id
+      // on the websocket client metadata to scope broadcasts for the active
+      // chat stream and pending approvals.
+      if (conversationIdRef.current) {
         ws.send(
           JSON.stringify({
-            type: "set_mode",
-            mode: currentModeRef.current,
+            type: "heartbeat",
             conversation_id: conversationIdRef.current,
-          }),
-        );
-
-        // Re-sync current project on connect/reconnect
-        if (projectIdRef.current) {
-          ws.send(
-            JSON.stringify({
-              type: "set_project",
-              conversation_id: conversationIdRef.current,
-              project_id: projectIdRef.current,
-            }),
-          );
-        }
-
-        // Re-sync persisted agent on reconnect
-        ws.send(
-          JSON.stringify({
-            type: "set_agent",
-            conversation_id: conversationIdRef.current,
-            agent_name: activeAgentRef.current,
           }),
         );
       }
@@ -3435,14 +3420,11 @@ export function useChat() {
 
   const pendingPlanFeedbackRef = useRef<string | null>(null);
 
-  // Approve the current plan while keeping the session in plan mode.
+  // Approve the current plan. The backend's mode_changed event is authoritative.
   const approvePlan = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
     if (!planContentRef.current) return;
-    // Eagerly clear approval UI to prevent ghost flash when artifact panel closes
-    setPlanPendingApproval(false);
-    planContentRef.current = null;
     wsRef.current.send(
       JSON.stringify({
         type: "plan_approval_response",
@@ -3769,6 +3751,28 @@ export function useChat() {
   }, [viewSession]);
 
   useEffect(() => {
+    if (!isConnected) {
+      initialViewingReconnectRetryRef.current = false;
+      return;
+    }
+
+    const restoredViewingSessionId = initialViewingSessionIdRef.current;
+    if (
+      !restoredViewingSessionId ||
+      !initialViewingRestoreRef.current ||
+      initialViewingReconnectRetryRef.current ||
+      viewingSessionIdRef.current !== restoredViewingSessionId ||
+      viewingSessionMetaRef.current ||
+      messagesRef.current.length > 0
+    ) {
+      return;
+    }
+
+    initialViewingReconnectRetryRef.current = true;
+    viewSession(restoredViewingSessionId);
+  }, [isConnected, viewSession, viewingSessionId]);
+
+  useEffect(() => {
     const restoredViewingSessionId = initialViewingSessionIdRef.current;
     if (
       !restoredViewingSessionId ||
@@ -3835,25 +3839,80 @@ export function useChat() {
 
   // Connect on mount, handle page lifecycle and heartbeat
   useEffect(() => {
-    // Restore chat messages from server if we have an existing conversation
-    const existingConvId = conversationIdRef.current;
-    if (existingConvId && !initialViewingSessionIdRef.current) {
+    let cancelled = false;
+    const persistedMainSessionId = loadDbSessionId();
+
+    if (!initialViewingSessionIdRef.current) {
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-      setIsLoadingMessages(true);
-      fetch(`${baseUrl}/api/chat/${existingConvId}/messages`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (
-            !data?.messages?.length ||
-            conversationIdRef.current !== existingConvId
-          )
-            return;
-          const restored: ChatMessage[] = data.messages.map(mapStoredChatMessage);
-          setMessages(restored);
-          if (data.max_seq) lastSeqRef.current = data.max_seq;
-        })
-        .catch((err) => console.error("Failed to restore chat messages:", err))
-        .finally(() => setIsLoadingMessages(false));
+      void (async () => {
+        let restoreTargetId: string | null =
+          persistedMainSessionId || conversationIdRef.current || null;
+
+        if (persistedMainSessionId) {
+          try {
+            const response = await fetch(`${baseUrl}/api/sessions/${persistedMainSessionId}`);
+            const data = response.ok ? await response.json() : null;
+            if (cancelled) {
+              return;
+            }
+
+            const session = data?.session as Record<string, unknown> | undefined;
+            if (session && isWebChatSessionRecord(session)) {
+              if (dbSessionIdRef.current === persistedMainSessionId) {
+                applyMainSessionMeta(session);
+              }
+              restoreTargetId = persistedMainSessionId;
+            } else if (response.status === 404 || session) {
+              const activePersistedBinding =
+                dbSessionIdRef.current === persistedMainSessionId ||
+                conversationIdRef.current === persistedMainSessionId;
+              if (activePersistedBinding) {
+                bindActiveSession(null);
+              } else {
+                saveDbSessionId(null);
+                if (loadConversationId() === persistedMainSessionId) {
+                  saveConversationId("");
+                }
+              }
+              restoreTargetId =
+                conversationIdRef.current &&
+                conversationIdRef.current !== persistedMainSessionId
+                  ? conversationIdRef.current
+                  : null;
+            } else {
+              // Daemon startup or transient API failure: keep the persisted main-chat
+              // binding parked and let reconnect/catalog hydration recover it later.
+              restoreTargetId = null;
+            }
+          } catch (err) {
+            console.error("Failed to restore main session metadata:", err);
+            restoreTargetId = null;
+          }
+        }
+
+        if (!restoreTargetId) {
+          return;
+        }
+
+        setIsLoadingMessages(true);
+        fetch(`${baseUrl}/api/chat/${restoreTargetId}/messages?limit=100&after_seq=0`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (
+              !data?.messages?.length ||
+              conversationIdRef.current !== restoreTargetId
+            ) {
+              return;
+            }
+            const restored: ChatMessage[] = data.messages.map(mapStoredChatMessage);
+            setMessages(restored);
+            if (data.max_seq) {
+              lastSeqRef.current = data.max_seq;
+            }
+          })
+          .catch((err) => console.error("Failed to restore chat messages:", err))
+          .finally(() => setIsLoadingMessages(false));
+      })();
     }
 
     connect();
@@ -3899,6 +3958,7 @@ export function useChat() {
     }, 60_000);
 
     return () => {
+      cancelled = true;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       clearInterval(heartbeatInterval);
       if (reconnectTimeoutRef.current) {
@@ -3906,7 +3966,7 @@ export function useChat() {
       }
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [applyMainSessionMeta, connect]);
 
   return {
     messages,

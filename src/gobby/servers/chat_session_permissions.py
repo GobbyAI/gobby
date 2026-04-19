@@ -57,6 +57,10 @@ class ChatSessionPermissionsMixin:
     _plan_feedback: str | None
     _plan_approval_completed: bool
     _plan_file_path: str | None
+    _last_plan_content: str | None
+    _pending_plan_content: str | None
+    _pending_plan_allowed_prompts: list[str] | None
+    _pending_post_plan_mode: str | None
     _pending_plan_event: asyncio.Event | None
     _pending_plan_decision: str | None
     _on_mode_persist: Callable[[str], None] | None
@@ -111,7 +115,7 @@ class ChatSessionPermissionsMixin:
                 await self._on_mode_changed("plan", "agent_requested")
             return PermissionResultAllow(updated_input=input_data)
         if tool_name == "ExitPlanMode":
-            plan_content = self._plan_file_path or self._read_plan_file()
+            plan_content = self._read_plan_file()
             if not plan_content:
                 return PermissionResultDeny(
                     message=(
@@ -149,12 +153,19 @@ class ChatSessionPermissionsMixin:
             self._pending_plan_decision = None
 
             if decision == "approve":
+                approved_mode = self._pending_post_plan_mode or self.chat_mode
+                self._pending_post_plan_mode = None
+                if approved_mode != self.chat_mode:
+                    self.set_chat_mode(approved_mode)
                 self._plan_approved = True
+                self._clear_pending_plan_prompt()
                 if self._on_mode_changed:
-                    await self._on_mode_changed("plan", "plan_approved")
+                    await self._on_mode_changed(self.chat_mode, "plan_approved")
                 return PermissionResultAllow(updated_input=input_data)
             else:
                 # request_changes — deny so the agent stays in plan mode
+                self._pending_post_plan_mode = None
+                self._clear_pending_plan_prompt()
                 if self._on_mode_changed:
                     await self._on_mode_changed("plan", "plan_changes_requested")
                 feedback = self._plan_feedback or ""
@@ -355,10 +366,17 @@ class ChatSessionPermissionsMixin:
             self._plan_approved = False
             self._plan_feedback = None
             self._plan_file_path = None
+            self._last_plan_content = None
+            self._pending_plan_content = None
+            self._pending_plan_allowed_prompts = None
+            self._pending_post_plan_mode = None
         elif mode != "plan":
             # Leaving plan mode — clear plan state
             self._plan_approved = False
             self._plan_feedback = None
+            self._pending_plan_content = None
+            self._pending_plan_allowed_prompts = None
+            self._pending_post_plan_mode = None
         # Persist to DB (best-effort, fire-and-forget)
         if self._on_mode_persist:
             try:
@@ -389,6 +407,27 @@ class ChatSessionPermissionsMixin:
         """Whether an ExitPlanMode is currently awaiting a response."""
         return self._pending_plan_event is not None
 
+    def _clear_pending_plan_prompt(self) -> None:
+        """Clear the in-flight plan approval prompt shown in the UI."""
+        self._pending_plan_content = None
+        self._pending_plan_allowed_prompts = None
+
+    def _remember_plan_artifact(
+        self,
+        *,
+        file_path: str | None,
+        content: str | None,
+        allowed_prompts: list[str] | None = None,
+    ) -> None:
+        """Persist the active plan artifact for the current plan cycle."""
+        if file_path:
+            self._plan_file_path = file_path
+        if content:
+            self._last_plan_content = content
+            self._pending_plan_content = content
+        if allowed_prompts is not None:
+            self._pending_plan_allowed_prompts = allowed_prompts
+
     def _read_plan_file(self) -> str | None:
         """Read the plan file written during plan mode, if any.
 
@@ -415,9 +454,14 @@ class ChatSessionPermissionsMixin:
             try:
                 path = _resolve(Path(self._plan_file_path))
                 if path.exists():
-                    return path.read_text(encoding="utf-8")
+                    content = path.read_text(encoding="utf-8")
+                    self._last_plan_content = content
+                    return content
             except Exception as e:
                 logger.warning(f"Failed to read plan file {self._plan_file_path}: {e}")
+
+        if self._last_plan_content:
+            return self._last_plan_content
 
         # Fallback: find the most recently modified plan file
         try:
@@ -448,7 +492,9 @@ class ChatSessionPermissionsMixin:
                 newest = max(candidates, key=lambda p: p.stat().st_mtime)
                 logger.info(f"Plan file path not tracked; using most recent: {newest}")
                 self._plan_file_path = str(newest)
-                return newest.read_text(encoding="utf-8")
+                content = newest.read_text(encoding="utf-8")
+                self._last_plan_content = content
+                return content
         except Exception as e:
             logger.warning(f"Failed to find fallback plan file: {e}")
 

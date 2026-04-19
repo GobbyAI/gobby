@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 _BACKEND_START_TIMEOUT_SECONDS = 15.0
 _CODEX_TRANSCRIPT_RETRY_ATTEMPTS = 5
 _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS = 0.1
-_CODEX_WEB_CHAT_APPROVAL_POLICY = "unlessTrusted"
+_CODEX_WEB_CHAT_APPROVAL_POLICY = "on-request"
 
 # GeminiAdapter is stateless w.r.t. tool-name normalization; share one instance
 # instead of constructing a new adapter on every tool call.
@@ -104,6 +104,32 @@ def _extract_codex_delta(params: dict[str, Any]) -> str:
     return ""
 
 
+def _log_upstream_error_event(
+    provider: str,
+    session: ManagedChatSessionBase,
+    payload: dict[str, Any],
+) -> None:
+    """Emit structured diagnostics for upstream managed-session errors."""
+    message = payload.get("message", "Unknown error")
+    logger.warning(
+        "Managed %s upstream error for conversation=%s db_session=%s sdk_session=%s model=%s: %s",
+        provider,
+        session.conversation_id,
+        session.db_session_id,
+        session.sdk_session_id,
+        session.model,
+        message,
+        extra={
+            "provider": provider,
+            "conversation_id": session.conversation_id,
+            "db_session_id": session.db_session_id,
+            "sdk_session_id": session.sdk_session_id,
+            "model": session.model,
+            "raw_upstream_event": payload,
+        },
+    )
+
+
 @dataclass(slots=True)
 class ProviderBackendHealth:
     """Availability state for a provider backend."""
@@ -148,6 +174,10 @@ class ManagedChatSessionBase:
     _on_approved_tools_persist: Callable[[set[str]], None] | None = field(default=None, repr=False)
     _approved_tools: set[str] = field(default_factory=set, repr=False)
     _plan_file_path: str | None = field(default=None, repr=False)
+    _last_plan_content: str | None = field(default=None, repr=False)
+    _pending_plan_content: str | None = field(default=None, repr=False)
+    _pending_plan_allowed_prompts: list[str] | None = field(default=None, repr=False)
+    _pending_post_plan_mode: str | None = field(default=None, repr=False)
     _pending_agent_name: str | None = field(default=None, repr=False)
     _plan_approval_completed: bool = field(default=False, repr=False)
     _context_window_overrides: dict[str, int] = field(default_factory=dict, repr=False)
@@ -400,6 +430,7 @@ class GeminiManagedChatSession(
             )
 
         if event.event_type == "error":
+            _log_upstream_error_event(self.provider, self, event.data)
             message = event.data.get("message", "Unknown error")
             return TextChunk(content=f"Error: {message}")
 

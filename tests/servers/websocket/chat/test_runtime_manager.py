@@ -160,6 +160,26 @@ class TestQwenBackend:
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
 
+    def test_managed_session_logs_upstream_error_context(self, caplog: pytest.LogCaptureFixture) -> None:
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+        session.db_session_id = "db-qwen"
+        session.sdk_session_id = "sdk-qwen"
+        session._model = "qwen3-coder"
+
+        with caplog.at_level("WARNING"):
+            event = session._translate_event(
+                StreamEvent(
+                    event_type="error",
+                    data={"message": "Internal error", "code": "upstream_internal"},
+                )
+            )
+
+        assert isinstance(event, TextChunk)
+        assert event.content == "Error: Internal error"
+        assert any(
+            "Managed qwen upstream error" in record.message for record in caplog.records
+        )
+
 
 class TestCodexBackend:
     @pytest.mark.asyncio
@@ -182,7 +202,7 @@ class TestCodexBackend:
         client.start_thread.assert_awaited_once_with(
             cwd="/tmp/project",
             model="gpt-5.4",
-            approval_policy="unlessTrusted",
+            approval_policy="on-request",
             sandbox=None,
         )
         assert session.sdk_session_id == "thread-1"
@@ -212,7 +232,7 @@ class TestCodexBackend:
         client.start_thread.assert_awaited_once_with(
             cwd="/tmp/project",
             model="gpt-5.4",
-            approval_policy="unlessTrusted",
+            approval_policy="on-request",
             sandbox="read-only",
         )
 

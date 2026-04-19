@@ -420,12 +420,20 @@ class ChatSessionMixin:
 
         # Wire plan-ready callback so ExitPlanMode sends plan content to frontend
         async def _notify_plan_ready(content: str | None, input_data: dict[str, Any]) -> None:
+            session._pending_plan_content = content
+            allowed_prompts = input_data.get("allowedPrompts")
+            session._pending_plan_allowed_prompts = (
+                list(allowed_prompts)
+                if isinstance(allowed_prompts, list)
+                and all(isinstance(prompt, str) for prompt in allowed_prompts)
+                else None
+            )
             msg = json.dumps(
                 {
                     "type": "plan_pending_approval",
                     "conversation_id": session_key,
                     "plan_content": content,
-                    "allowed_prompts": input_data.get("allowedPrompts"),
+                    "allowed_prompts": session._pending_plan_allowed_prompts,
                 }
             )
             for ws, meta in list(self.clients.items()):
@@ -681,8 +689,7 @@ class ChatSessionMixin:
 
         # Agent was already resolved at the top of the method for provider detection.
         # Use the cached agent_body to build the system prompt.
-        if pending_agent:
-            session._pending_agent_name = pending_agent
+        session._pending_agent_name = agent_name
 
         if agent_body and session_manager:
             try:

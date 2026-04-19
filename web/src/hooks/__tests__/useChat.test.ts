@@ -112,6 +112,14 @@ describe("useChat", () => {
   });
 
   it("restores persisted chat messages as string content on mount", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        source: "claude",
+        session_type: "web_chat",
+        status: "active",
+      },
+    });
     mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages", {
       messages: [
         {
@@ -140,6 +148,14 @@ describe("useChat", () => {
   });
 
   it("restores protocol-tagged raw chat rows as system messages", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        source: "claude",
+        session_type: "web_chat",
+        status: "active",
+      },
+    });
     mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages", {
       messages: [
         {
@@ -162,6 +178,37 @@ describe("useChat", () => {
       expect(result.current.messages).toHaveLength(1);
       expect(result.current.messages[0].role).toBe("system");
     });
+  });
+
+  it("rejects persisted terminal session ids for main-chat restore", async () => {
+    localStorage.setItem("gobby-conversation-id", "terminal-session");
+    localStorage.setItem("gobby-db-session-id", "terminal-session");
+
+    mockFetch.mockJsonResponse("/api/sessions/terminal-session", {
+      session: {
+        id: "terminal-session",
+        source: "codex",
+        session_type: "terminal",
+        status: "active",
+        title: "Terminal Session",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.dbSessionId).toBeNull();
+      expect(result.current.conversationId).toBe("");
+    });
+
+    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-db-session-id");
+    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-conversation-id");
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes("/api/chat/terminal-session/messages"),
+      ),
+    ).toBe(false);
   });
 
   it("sets isConnected when WS opens", async () => {
@@ -188,6 +235,47 @@ describe("useChat", () => {
     expect(msg.events).toContain("session_message");
     expect(msg.events).toContain("session_usage_updated");
     expect(msg.events).toContain("token_event");
+  });
+
+  it("rebinds the active conversation with a heartbeat on reconnect", async () => {
+    vi.useFakeTimers();
+    try {
+      await loadModule();
+      renderHook(() => useChat());
+
+      const ws = mockWs.instances[0];
+      act(() => ws.simulateOpen());
+
+      act(() => ws.simulateClose());
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(mockWs.instances).toHaveLength(2);
+
+      const reconnected = mockWs.instances[1];
+      act(() => reconnected.simulateOpen());
+
+      const sentPayloads = reconnected.send.mock.calls.map(([raw]) =>
+        JSON.parse(raw as string),
+      );
+      expect(sentPayloads[0].type).toBe("subscribe");
+      expect(sentPayloads[1]).toEqual({
+        type: "heartbeat",
+        conversation_id: "test-conversation-id",
+      });
+      expect(sentPayloads.some((payload) => payload.type === "set_mode")).toBe(
+        false,
+      );
+      expect(
+        sentPayloads.some((payload) => payload.type === "set_project"),
+      ).toBe(false);
+      expect(sentPayloads.some((payload) => payload.type === "set_agent")).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("resets state on WS close", async () => {
@@ -2008,7 +2096,48 @@ describe("useChat", () => {
     expect(modeChanged).toHaveBeenCalledWith("bypass");
   });
 
+  it("keeps plan approval UI visible until plan_approved arrives", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "plan_pending_approval",
+        conversation_id: result.current.conversationId,
+        plan_content: "# My Plan\n\nStep 1...",
+      });
+    });
+
+    act(() => {
+      result.current.approvePlan();
+    });
+
+    expect(result.current.planPendingApproval).toBe(true);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "mode_changed",
+        mode: "normal",
+        reason: "plan_approved",
+        conversation_id: result.current.conversationId,
+      });
+    });
+
+    expect(result.current.planPendingApproval).toBe(false);
+  });
+
   it("hydrates resumed main-session metadata from session_continued", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        source: "claude",
+        session_type: "web_chat",
+        status: "active",
+      },
+    });
     mockFetch.mockJsonResponse("/api/sessions/db-session-continued", {
       session: {
         id: "db-session-continued",
@@ -2023,6 +2152,7 @@ describe("useChat", () => {
         usage_cache_read_tokens: 120,
         usage_cache_creation_tokens: 50,
         context_window: 200000,
+        session_type: "web_chat",
       },
     });
 
@@ -2237,6 +2367,39 @@ describe("useChat", () => {
     expect(result.current.planPendingApproval).toBe(true);
   });
 
+  it("hydrates persisted main-session metadata from the durable db session on mount", async () => {
+    mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages?limit=100&after_seq=0", {
+      messages: [],
+      max_seq: 0,
+    });
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        seq_num: 314,
+        title: "Persisted Main Chat",
+        source: "codex",
+        session_type: "web_chat",
+        chat_mode: "bypass",
+        git_branch: "feature/mobile-refresh",
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        context_window: null,
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessionTitle).toBe("Persisted Main Chat");
+      expect(result.current.sessionRef).toBe("#314");
+      expect(result.current.currentBranch).toBe("feature/mobile-refresh");
+      expect(result.current.selectedProvider).toBe("codex");
+    });
+  });
+
   it("contextUsage tracks token usage from chat_stream", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
@@ -2423,7 +2586,7 @@ describe("useChat", () => {
     });
   });
 
-  it("sends set_project message on connect if projectIdRef is set", async () => {
+  it("does not send set_project on connect when restoring an existing main chat", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());
 
@@ -2437,8 +2600,7 @@ describe("useChat", () => {
     const calls = ws.send.mock.calls.map((c) => JSON.parse(c[0]));
     const projectMsg = calls.find((m) => m.type === "set_project");
 
-    expect(projectMsg).toBeDefined();
-    expect(projectMsg.project_id).toBe("test-project-123");
+    expect(projectMsg).toBeUndefined();
   });
 
   it("sendProjectChange updates ref and sends WS message", async () => {

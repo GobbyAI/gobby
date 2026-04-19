@@ -363,6 +363,58 @@ describe("App wiring", () => {
     expect(startNewChat).not.toHaveBeenCalled();
   });
 
+  it("falls back to the most recent web chat when persisted main-chat storage points at a non-web-chat session", async () => {
+    const switchConversation = vi.fn();
+
+    vi.mocked(useChat).mockReturnValue({
+      ...makeChatHookState(),
+      switchConversation,
+    } as never);
+
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [
+        {
+          id: "db-session-1",
+          ref: "#101",
+          external_id: "server-session-1",
+          source: "claude",
+          project_id: "repo-project",
+          title: "Existing chat",
+          status: "active",
+          model: "sonnet",
+          message_count: 1,
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:01:00Z",
+          seq_num: 101,
+          summary_markdown: null,
+          digest_markdown: null,
+          git_branch: "main",
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          had_edits: false,
+          agent_depth: 0,
+          chat_mode: null,
+          agent_run_id: null,
+          parent_session_id: null,
+          session_type: "web_chat",
+          terminal_context: null,
+        },
+      ],
+    } as never);
+
+    localStorage.setItem("gobby-db-session-id", "terminal-session");
+    localStorage.setItem("gobby-conversation-id", "terminal-session");
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(switchConversation).toHaveBeenCalledWith("db-session-1");
+    });
+  });
+
   it("lands on chat for a stale #sessions hash", async () => {
     window.location.hash = "#sessions";
 

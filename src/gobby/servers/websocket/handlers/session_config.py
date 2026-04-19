@@ -106,6 +106,10 @@ async def handle_set_project(
     session = mixin._chat_sessions.get(conversation_id)
     old_project_id = getattr(session, "project_id", None) if session else None
 
+    if session and old_project_id == new_project_id:
+        logger.debug("Project unchanged for conversation %s", conversation_id[:8])
+        return
+
     if session:
         await mixin._cancel_active_chat(conversation_id)
         if session.db_session_id:
@@ -254,6 +258,10 @@ async def handle_set_agent(
 
     # Tear down existing session (same pattern as set_worktree)
     session = mixin._chat_sessions.get(conversation_id)
+    current_agent_name = getattr(session, "_pending_agent_name", None) if session else None
+    if session and current_agent_name == agent_name:
+        logger.debug("Agent unchanged for conversation %s", conversation_id[:8])
+        return
     if session:
         await mixin._cancel_active_chat(conversation_id)
         if session.db_session_id:
@@ -305,6 +313,10 @@ async def handle_set_provider(
 
     session = mixin._chat_sessions.get(conversation_id)
     old_provider = getattr(session, "provider", None) if session else None
+
+    if session and old_provider == provider:
+        logger.debug("Provider unchanged for conversation %s", conversation_id[:8])
+        return
 
     if session:
         await mixin._cancel_active_chat(conversation_id)

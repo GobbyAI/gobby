@@ -688,33 +688,43 @@ export default function App() {
       webChatSessions.some((s) => s.project_id === effectiveProjectId);
     if (!sessionsMatchProject) return;
 
-    initialReconciliationDone.current = true;
-
     const persistedConversationId = loadPersistedConversationId();
     const persistedDbSessionId = loadPersistedDbSessionId();
 
-    const match =
-      webChatSessions.find((s) => s.id === dbSessionId) ||
-      (persistedDbSessionId
-        ? webChatSessions.find((s) => s.id === persistedDbSessionId)
-        : undefined);
+    const activeMainChatId = dbSessionId || persistedDbSessionId;
+    const match = activeMainChatId
+      ? webChatSessions.find((s) => s.id === activeMainChatId)
+      : undefined;
 
     if (match) {
+      initialReconciliationDone.current = true;
+      if (dbSessionId === match.id) {
+        return;
+      }
       switchConversation(match.id, {
         preserveViewing: Boolean(viewingSessionId),
       });
-    } else if (viewingSessionId && !persistedDbSessionId) {
-      // Restored read-only session view with no parked main-chat session.
+    } else if (viewingSessionId) {
+      // Restored watched/attached terminal state owns the main-chat surface
+      // until the parked web-chat session can be recovered cleanly.
+      return;
+    } else if (persistedDbSessionId && webChatSessions.length === 0) {
+      // A persisted main-chat session exists, but the catalog has not
+      // confirmed a different fallback target. Keep the local restore target
+      // authoritative instead of jumping to the most recent unrelated chat.
       return;
     } else if (persistedConversationId && !persistedDbSessionId) {
+      initialReconciliationDone.current = true;
       // Preserve an explicit local fresh-chat ID so reloads do not jump back
       // to the most recent saved session before the user sends a first message.
       return;
     } else if (webChatSessions.length > 0) {
+      initialReconciliationDone.current = true;
       // Unknown conversation_id — switch to most recent session
       const mostRecent = webChatSessions[0]; // sorted newest-first
       switchConversation(mostRecent.id);
     } else {
+      initialReconciliationDone.current = true;
       // No sessions for this project — clear any stale messages from mount effect
       startNewChat();
     }
