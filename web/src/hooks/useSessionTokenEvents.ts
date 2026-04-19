@@ -8,13 +8,20 @@ function getBaseUrl(): string {
 }
 
 export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(Boolean(sessionId))
   const [error, setError] = useState<string | null>(null)
+  const [prevSessionId, setPrevSessionId] = useState(sessionId)
   const abortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const latestEventAtRef = useRef<string | null>(null)
 
   const { events, setEvents } = useTokenEventsStream({ sessionId, limit })
+
+  if (prevSessionId !== sessionId) {
+    setPrevSessionId(sessionId)
+    setError(null)
+    setIsLoading(Boolean(sessionId))
+  }
 
   useEffect(() => {
     latestEventAtRef.current = events[0]?.event_at ?? null
@@ -31,10 +38,6 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
       abortRef.current = controller
 
       try {
-        if (!options?.since) {
-          setIsLoading(true)
-        }
-
         let url = `${getBaseUrl()}/api/sessions/${encodeURIComponent(sessionId)}/token-events?limit=${limit}`
         if (options?.since) {
           url += `&since=${encodeURIComponent(options.since)}`
@@ -90,15 +93,13 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
   useEffect(() => {
     mountedRef.current = true
     if (!sessionId) {
-      setEvents([])
-      setError(null)
-      setIsLoading(false)
       return () => {
         mountedRef.current = false
         abortRef.current?.abort()
       }
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetchEvents calls setState after await; rule traces transitively
     void fetchEvents({ replace: true })
     const interval = window.setInterval(() => {
       void fetchEvents({ since: latestEventAtRef.current, replace: false })
@@ -109,7 +110,7 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
       window.clearInterval(interval)
       abortRef.current?.abort()
     }
-  }, [fetchEvents, sessionId, setEvents])
+  }, [fetchEvents, sessionId])
 
   const breakdown = useMemo(() => {
     const grouped = new Map<

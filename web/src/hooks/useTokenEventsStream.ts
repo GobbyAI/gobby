@@ -73,11 +73,16 @@ function normalizeTokenEvent(data: Record<string, unknown>): TokenEvent | null {
 
 export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options = {}) {
   const [events, setEvents] = useState<TokenEvent[]>([])
+  const [prevSessionId, setPrevSessionId] = useState(sessionId)
   const seenRef = useRef<Set<string>>(new Set())
+
+  if (prevSessionId !== sessionId) {
+    setPrevSessionId(sessionId)
+    setEvents([])
+  }
 
   useEffect(() => {
     seenRef.current = new Set()
-    setEvents([])
   }, [sessionId])
 
   const appendEvent = useCallback(

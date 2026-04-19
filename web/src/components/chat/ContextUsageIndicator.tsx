@@ -1,5 +1,3 @@
-import { useEffect, useState } from 'react'
-
 interface ContextUsageIndicatorProps {
   totalInputTokens: number
   outputTokens: number
@@ -20,11 +18,7 @@ export function ContextUsageIndicator({
   cacheReadTokens = 0,
   cacheCreationTokens = 0,
 }: ContextUsageIndicatorProps) {
-  const [isStale, setIsStale] = useState(Boolean(staleMs && staleMs >= 60_000))
-
-  useEffect(() => {
-    setIsStale(Boolean(staleMs && staleMs >= 60_000))
-  }, [staleMs])
+  const isStale = Boolean(staleMs && staleMs >= 60_000)
 
   // Context window is an INPUT limit — output tokens don't occupy it.
   // Only input tokens (uncached + cache_read + cache_creation) count toward context load.
