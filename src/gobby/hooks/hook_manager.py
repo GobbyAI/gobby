@@ -319,8 +319,17 @@ class HookManager:
                 reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
             )
 
-        # Resolve platform session_id from CLI external_id
-        self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
+        # SESSION_START is special: the handler establishes the canonical
+        # platform session first (including pre-created web-chat rows). Doing a
+        # generic lookup here can auto-register a stray duplicate before the
+        # handler gets a chance to bind the real session.
+        if event.event_type == HookEventType.SESSION_START:
+            if not event.project_id:
+                cwd = event.cwd or event.data.get("cwd")
+                event.project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
+        else:
+            # Resolve platform session_id from CLI external_id
+            self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
 
         # Translate #N session references to UUIDs for MCP tool calls.
         # #N is human-friendly but ambiguous across projects (seq_num is per-project).

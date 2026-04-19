@@ -14,7 +14,13 @@ import pytest
 
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -35,6 +41,15 @@ def mock_internal_manager():
     manager = MagicMock()
     manager.is_internal.return_value = False
     return manager
+
+
+@pytest.fixture
+def temp_db(tmp_path):
+    """Create a real workflow DB for integration-style rule tests."""
+    db_path = tmp_path / "test_tool_proxy_validation.db"
+    database = LocalDatabase(db_path)
+    run_migrations(database)
+    return database
 
 
 @pytest.fixture
@@ -1134,6 +1149,70 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         mock_hook_manager.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_proxy_schema_after_tool_injects_task_creation(
+        self, mock_mcp_manager, mock_internal_manager, temp_db
+    ) -> None:
+        """Codex terminal proxy schema shims should record task-creation in injected_skills."""
+        sync_bundled_rules(temp_db, get_bundled_rules_path())
+        temp_db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+
+        async def mock_dispatcher(
+            server_name: str, tool_name: str, arguments: dict[str, object], event: object
+        ) -> dict[str, object]:
+            assert server_name == "gobby-skills"
+            assert tool_name == "get_skill"
+            assert arguments["name"] == "task-creation"
+            return {
+                "success": True,
+                "result": {
+                    "success": True,
+                    "skill": {
+                        "name": "task-creation",
+                        "content": "# Task creation",
+                    },
+                },
+            }
+
+        workflow_handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db=temp_db, mcp_dispatcher=mock_dispatcher)
+        )
+
+        session = SimpleNamespace(
+            source="codex",
+            session_type="terminal",
+            project_id="project-123",
+            external_id="conv-123",
+        )
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+        session_manager.resolve_session_reference.side_effect = (
+            lambda session_id, project_id=None: session_id
+        )
+
+        hook_manager = MagicMock()
+        hook_manager._workflow_handler = workflow_handler
+        hook_manager._session_manager = session_manager
+        hook_manager._database = temp_db
+        hook_manager.handle = workflow_handler.evaluate
+
+        tool_proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+            hook_manager_resolver=lambda: hook_manager,
+        )
+
+        await tool_proxy.emit_synthetic_proxy_after_tool(
+            session_id="session-123",
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            result={"success": True, "tool": {"name": "create_task", "inputSchema": {}}},
+        )
+
+        variables = SessionVariableManager(temp_db).get_variables("session-123")
+        assert "task-creation" in variables.get("injected_skills", [])
 
 
 class TestStripUnknownParameters:

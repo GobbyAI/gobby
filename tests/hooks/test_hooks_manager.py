@@ -880,6 +880,42 @@ class TestHookManagerBroadcasting:
 class TestHookManagerSessionLookup:
     """Tests for session lookup and auto-registration."""
 
+    def test_session_start_precreated_session_skips_auto_registration(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        """Pre-created SESSION_START rows must bind in-place without a stray auto-register."""
+        manager = hook_manager_with_mocks
+        project_meta = (temp_dir / ".gobby" / "project.json").read_text()
+        project_id = json.loads(project_meta)["id"]
+        precreated = manager._session_storage.create_web_chat_session(
+            machine_id="test-machine-id",
+            project_id=project_id,
+            source="codex",
+            model="gpt-5.4",
+            sandbox_enabled=False,
+            sandbox_policy_hash="policy-hash",
+        )
+
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=precreated.id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir), "source": "startup"},
+            machine_id="test-machine-id",
+        )
+
+        with patch.object(
+            manager._session_manager,
+            "register_session",
+            wraps=manager._session_manager.register_session,
+        ) as mock_register:
+            response = manager.handle(event)
+
+        assert response.decision == "allow"
+        mock_register.assert_not_called()
+        assert event.metadata["_platform_session_id"] == precreated.id
+
     def test_handle_looks_up_session_from_database(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:

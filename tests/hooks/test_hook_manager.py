@@ -226,6 +226,26 @@ class TestHandleSessionStart:
 
         assert call_order == ["handler", "rules"]
 
+    def test_session_start_skips_pre_handler_session_lookup(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """SESSION_START must not resolve or auto-register a session before the handler runs."""
+        manager = manager_with_mocks
+        handler = MagicMock(return_value=HookResponse(decision="allow"))
+        manager._event_handlers.get_handler.return_value = handler
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        manager._resolve_project_id = MagicMock(return_value=PERSONAL_PROJECT_ID)
+
+        event = make_event(event_type=HookEventType.SESSION_START, data={"cwd": "/tmp/project"})
+        manager._handle_internal(event)
+
+        manager._session_lookup.resolve.assert_not_called()
+        assert event.project_id == PERSONAL_PROJECT_ID
+        handler.assert_called_once()
+
 
 class TestHandleNonSessionStart:
     """Tests for non-SESSION_START handler ordering (rules before handler)."""
