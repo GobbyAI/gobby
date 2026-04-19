@@ -160,7 +160,9 @@ class TestQwenBackend:
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
 
-    def test_managed_session_logs_upstream_error_context(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_managed_session_logs_upstream_error_context(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
         session.db_session_id = "db-qwen"
         session.sdk_session_id = "sdk-qwen"
@@ -176,8 +178,36 @@ class TestQwenBackend:
 
         assert isinstance(event, TextChunk)
         assert event.content == "Error: Internal error"
-        assert any(
-            "Managed qwen upstream error" in record.message for record in caplog.records
+        assert any("Managed qwen upstream error" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_attach_session_warms_local_openai_models(self) -> None:
+        client = MagicMock()
+        client.is_started = True
+        client.create_session = AsyncMock(return_value={"sessionId": "sess-qwen"})
+
+        backend = QwenWebChatBackend(client=client)
+        backend._health.available = True
+        backend.start = AsyncMock()
+
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+        session.project_path = "/tmp/project"
+        session._model = "qwen3.6-35b-a3b-q8-local(openai)"
+
+        with patch(
+            "gobby.servers.websocket.chat.provider_backends.ensure_qwen_local_openai_model_ready",
+            new=AsyncMock(),
+        ) as mock_warmup:
+            await backend.attach_session(session)
+
+        mock_warmup.assert_awaited_once_with(
+            "qwen3.6-35b-a3b-q8-local(openai)",
+            project_path="/tmp/project",
+        )
+        client.create_session.assert_awaited_once_with(
+            model="qwen3.6-35b-a3b-q8-local(openai)",
+            cwd="/tmp/project",
+            reasoning_effort=None,
         )
 
 

@@ -44,6 +44,9 @@ from gobby.servers.tool_approvals import (
     load_project_approval_rules_async,
     normalize_approved_tool_keys,
 )
+from gobby.servers.websocket.chat.local_openai_warmup import (
+    ensure_qwen_local_openai_model_ready,
+)
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.config_store import ConfigStore
 
@@ -770,6 +773,19 @@ class QwenWebChatBackend(GeminiWebChatBackend):
             display_name="Qwen",
             sandbox_config=sandbox_config,
         )
+
+    async def attach_session(
+        self,
+        session: GeminiManagedChatSession,
+        *,
+        model: str | None = None,
+    ) -> None:
+        resolved_model = model or session._model or self._default_model
+        await ensure_qwen_local_openai_model_ready(
+            resolved_model,
+            project_path=session.project_path,
+        )
+        await super().attach_session(session, model=model)
 
 
 class CodexWebChatBackend:

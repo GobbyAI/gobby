@@ -12,6 +12,7 @@ import pytest
 from websockets.exceptions import ConnectionClosedError
 
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
+from gobby.servers.websocket.chat.local_openai_warmup import LocalOpenAIModelWarmupError
 
 pytestmark = pytest.mark.unit
 
@@ -203,6 +204,25 @@ class TestSafeSend:
 
         # Should not raise despite websocket being disconnected
         await host._stream_chat_response(ws, "conv-3", "test", None)
+
+    @pytest.mark.asyncio
+    async def test_startup_warmup_error_is_sent_to_client(self, host: ChatMixinHost) -> None:
+        ws = MockWebSocket()
+        host.clients[ws] = {"conversation_id": "conv-warmup"}
+        host._create_chat_session = AsyncMock(
+            side_effect=LocalOpenAIModelWarmupError(
+                "Load the local model in LM Studio or enable Just-In-Time loading."
+            )
+        )
+
+        await host._stream_chat_response(ws, "conv-warmup", "test", None)
+
+        assert len(ws.sent_messages) == 1
+        payload = json.loads(ws.sent_messages[0])
+        assert payload["type"] == "chat_error"
+        assert payload["error"] == (
+            "Load the local model in LM Studio or enable Just-In-Time loading."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,9 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat._session import _resolve_git_branch
+from gobby.servers.websocket.chat.local_openai_warmup import (
+    LocalOpenAIModelWarmupError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -443,11 +446,14 @@ class ChatMessagingMixin:
                         "Failed to start chat session for conversation %s",
                         conversation_id,
                     )
+                    error_message = "Failed to start chat session. Please try again."
+                    if isinstance(e, LocalOpenAIModelWarmupError):
+                        error_message = str(e)
                     error_payload = _base_msg(
                         type="chat_error",
                         message_id=assistant_message_id,
                         conversation_id=conversation_id,
-                        error="Failed to start chat session. Please try again.",
+                        error=error_message,
                     )
                     if logger.isEnabledFor(logging.DEBUG):
                         error_payload["error_detail"] = f"{type(e).__name__}: {e}"
