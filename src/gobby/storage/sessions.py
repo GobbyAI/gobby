@@ -1131,7 +1131,7 @@ class LocalSessionManager:
         """
         Get sessions created since a given timestamp.
 
-        Used for aggregating usage over a time period (e.g., daily budget tracking).
+        Used for aggregating usage over a time period.
 
         Args:
             since: Datetime to query from (sessions created after this time)

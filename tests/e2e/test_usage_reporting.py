@@ -33,7 +33,7 @@ class TestUsageToolsAvailability:
         tool_names = [t["name"] for t in tools]
 
         assert "get_usage_report" in tool_names, "Missing get_usage_report"
-        assert "get_budget_status" not in tool_names, "Dead budget tool should be removed"
+        assert "get_budget_status" not in tool_names
 
     def test_get_usage_report_schema(
         self,

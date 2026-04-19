@@ -175,8 +175,8 @@ class TestTokenMetricsTools:
             session_storage=mock_session_storage,
         )
 
-    def test_get_budget_status_not_registered(self, token_metrics_tools) -> None:
-        """Budget tools are removed from the metrics registry."""
+    def test_removed_metrics_tool_not_registered(self, token_metrics_tools) -> None:
+        """Removed legacy metrics tools stay absent from the registry."""
         assert "get_budget_status" not in token_metrics_tools._tools
 
     def test_get_usage_report(self, token_metrics_tools, mock_session_storage) -> None:
