@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import type { SetStateAction } from 'react'
 
 import { useWebSocketEvent } from './useWebSocketEvent'
 import type { TokenEvent } from '../types/tokens'
@@ -72,18 +73,17 @@ function normalizeTokenEvent(data: Record<string, unknown>): TokenEvent | null {
 }
 
 export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options = {}) {
-  const [events, setEvents] = useState<TokenEvent[]>([])
+  const [events, setEventsState] = useState<TokenEvent[]>([])
   const [prevSessionId, setPrevSessionId] = useState(sessionId)
-  const seenRef = useRef<Set<string>>(new Set())
 
   if (prevSessionId !== sessionId) {
     setPrevSessionId(sessionId)
-    setEvents([])
+    setEventsState([])
   }
 
-  useEffect(() => {
-    seenRef.current = new Set()
-  }, [sessionId])
+  const setEvents = useCallback((next: SetStateAction<TokenEvent[]>) => {
+    setEventsState((prev) => (typeof next === 'function' ? next(prev) : next))
+  }, [])
 
   const appendEvent = useCallback(
     (nextEvent: TokenEvent | null) => {
@@ -94,21 +94,19 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
         return
       }
 
-      const key = eventKey(nextEvent)
-      if (seenRef.current.has(key)) {
-        return
-      }
-
-      seenRef.current.add(key)
       setEvents((prev) => {
+        const key = eventKey(nextEvent)
+        const seen = new Set(prev.map(eventKey))
+        if (seen.has(key)) {
+          return prev
+        }
         const merged = [nextEvent, ...prev]
           .sort((a, b) => new Date(b.event_at).getTime() - new Date(a.event_at).getTime())
           .slice(0, limit)
-        seenRef.current = new Set(merged.map(eventKey))
         return merged
       })
     },
-    [limit, sessionId],
+    [limit, sessionId, setEvents],
   )
 
   useWebSocketEvent(

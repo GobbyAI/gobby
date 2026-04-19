@@ -24,11 +24,17 @@ export function ModelDistributionBar({ items }: Props) {
   if (total <= 0) {
     return null
   }
+  const rawPercents = items.map((item) => (item.totalTokens / total) * 100)
+  const minPercent = 2
+  const clampedWidths = rawPercents.map((percent) => Math.max(percent, minPercent))
+  const clampedTotal = clampedWidths.reduce((sum, width) => sum + width, 0)
+  const scale = clampedTotal > 100 ? 100 / clampedTotal : 1
+  const widths = clampedWidths.map((width) => width * scale)
 
   return (
     <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-background/70">
       {items.map((item, index) => {
-        const width = Math.max((item.totalTokens / total) * 100, 2)
+        const width = widths[index] ?? 0
         return (
           <div
             key={item.family}

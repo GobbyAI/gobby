@@ -104,9 +104,10 @@ class GeminiTranscriptParser(BaseTranscriptParser):
 
     def _message_id_for(self, prefix: str, index: int, raw_id: Any = None) -> str:
         """Generate a stable message identifier for deduping token events."""
-        if isinstance(raw_id, str) and raw_id.strip():
-            return raw_id.strip()
         session_prefix = self.session_id or self.cli_name
+        if isinstance(raw_id, str) and raw_id.strip():
+            normalized = raw_id.strip()
+            return f"{session_prefix}:{prefix}:{index}:{normalized}"
         return f"{session_prefix}:{prefix}:{index}"
 
     def extract_last_messages(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from gobby.code_index.models import Symbol
@@ -142,3 +142,29 @@ def test_rebuild_graph_returns_500_on_exception(client: TestClient, mock_server:
 
     assert response.status_code == 500
     assert response.json()["detail"] == "boom"
+
+
+def test_clear_graph_preserves_http_exception(
+    client: TestClient, mock_server: MagicMock
+) -> None:
+    mock_server.services.code_indexer.clear_graph = AsyncMock(
+        side_effect=HTTPException(status_code=418, detail="teapot")
+    )
+
+    response = client.post("/api/code-index/graph/clear", params={"project_id": "proj-1"})
+
+    assert response.status_code == 418
+    assert response.json()["detail"] == "teapot"
+
+
+def test_rebuild_graph_preserves_http_exception(
+    client: TestClient, mock_server: MagicMock
+) -> None:
+    mock_server.services.code_indexer.rebuild_graph = AsyncMock(
+        side_effect=HTTPException(status_code=422, detail="bad rebuild request")
+    )
+
+    response = client.post("/api/code-index/graph/rebuild", params={"project_id": "proj-1"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "bad rebuild request"

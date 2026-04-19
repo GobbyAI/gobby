@@ -27,8 +27,8 @@ interface RunningAgent {
 interface SessionsTabProps {
   sessions?: GobbySession[];
   isLoadingSessions?: boolean;
-  onKillAgent?: (runId: string) => void;
-  onExpireSession?: (sessionId: string) => void;
+  onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   chatSessionId?: string;
   focusSessionId?: string | null;
@@ -488,12 +488,55 @@ export const SessionsTab = memo(function SessionsTab({
   const showSwapButton = Boolean(selectedEntry && onSwapSession && !hideResumeAndSwap);
 
   const handleExpire = useCallback(
-    (entry: WatchingSessionEntry) => {
-      setExpiringIds((prev) => new Set(prev).add(entry.id));
+    async (entry: WatchingSessionEntry) => {
+      const expireEntry = () => {
+        setExpiringIds((prev) => {
+          const next = new Set(prev);
+          next.add(entry.id);
+          return next;
+        });
+      };
+      const restoreEntry = () => {
+        setExpiringIds((prev) => {
+          const next = new Set(prev);
+          next.delete(entry.id);
+          return next;
+        });
+      };
+
       if (entry.type === "agent" && entry.runId) {
-        onKillAgent?.(entry.runId);
-      } else {
-        onExpireSession?.(entry.id);
+        if (!onKillAgent) {
+          return false;
+        }
+        expireEntry();
+        try {
+          const didCancel = await onKillAgent(entry.runId);
+          if (didCancel === false) {
+            restoreEntry();
+            return false;
+          }
+          return true;
+        } catch {
+          restoreEntry();
+          return false;
+        }
+      }
+
+      if (!onExpireSession) {
+        return false;
+      }
+
+      expireEntry();
+      try {
+        const didExpire = await onExpireSession(entry.id);
+        if (didExpire === false) {
+          restoreEntry();
+          return false;
+        }
+        return true;
+      } catch {
+        restoreEntry();
+        return false;
       }
     },
     [onExpireSession, onKillAgent],
@@ -791,7 +834,7 @@ export const SessionsTab = memo(function SessionsTab({
                   onClick={() => {
                     const entry = ctxMenu.entry;
                     closeCtxMenu();
-                    handleExpire(entry);
+                    void handleExpire(entry);
                   }}
                 >
                   Expire Session

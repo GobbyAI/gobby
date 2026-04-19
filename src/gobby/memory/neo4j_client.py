@@ -479,7 +479,7 @@ class Neo4jClient:
 
         _validate_cypher_identifier(index_name, "index name")
         candidate_limit = min(
-            max(limit * _VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR, limit),
+            limit * _VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR,
             _VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT,
         )
         cypher = (
@@ -502,8 +502,7 @@ class Neo4jClient:
         filtered = [
             row
             for row in rows
-            if row.get("project_id") == project_id
-            if row.get("score", 0.0) >= min_score
+            if row.get("project_id") == project_id and row.get("score", 0.0) >= min_score
         ]
         return filtered[:limit]
 

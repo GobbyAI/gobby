@@ -161,8 +161,8 @@ interface ActivityPanelProps {
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // Sessions tab
-  onKillAgent?: (runId: string) => void;
-  onExpireSession?: (sessionId: string) => void;
+  onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusSessionHandled?: () => void;

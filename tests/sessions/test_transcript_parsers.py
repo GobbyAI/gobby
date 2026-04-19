@@ -1743,6 +1743,37 @@ class TestGeminiTranscriptParser:
         for i, msg in enumerate(msgs):
             assert msg.index == i, f"Expected index {i}, got {msg.index} for {msg.content_type}"
 
+    def test_gemini_parse_session_json_message_ids_stay_unique(self, parser) -> None:
+        """A single Gemini message can expand into multiple parsed messages."""
+        data = {
+            "sessionId": "abc-123",
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "timestamp": "2024-01-01T10:00:01Z",
+                    "type": "gemini",
+                    "content": "OK",
+                    "toolCalls": [
+                        {
+                            "name": "tool1",
+                            "args": {},
+                            "result": [{"functionResponse": "r1"}],
+                        },
+                        {
+                            "name": "tool2",
+                            "args": {},
+                            "result": [{"functionResponse": "r2"}],
+                        },
+                    ],
+                },
+            ],
+        }
+
+        msgs = parser.parse_session_json(data)
+        message_ids = [msg.message_id for msg in msgs]
+        assert all(message_ids)
+        assert len(message_ids) == len(set(message_ids))
+
     def test_gemini_parse_session_json_result_as_dict(self, parser) -> None:
         """Test parse_session_json handles result as dict (backwards compat)."""
         data = {

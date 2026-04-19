@@ -29,7 +29,7 @@ export function useTokenTimeSeries(
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      let url = `/api/admin/tokens/timeseries?hours=${hours}&granularity=${granularity}`
+      let url = `/api/admin/tokens/timeseries?hours=${hours}&granularity=${encodeURIComponent(granularity)}`
       if (projectId) url += `&project_id=${encodeURIComponent(projectId)}`
       const resp = await fetch(url, { signal: controller.signal })
       if (!mountedRef.current) return

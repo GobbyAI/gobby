@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { SessionsTab } from "../SessionsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../test/mocks/fetch";
@@ -314,5 +314,40 @@ describe("SessionsTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Summary" }));
     expect(screen.getByText("No summary available")).toBeInTheDocument();
+  });
+
+  it("restores a session in the list when expire fails", async () => {
+    let resolveExpire: ((value: boolean) => void) | null = null;
+    const onExpireSession = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveExpire = resolve;
+        }),
+    );
+
+    render(
+      <SessionsTab
+        sessions={[PAUSED_SESSION]}
+        onExpireSession={onExpireSession}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expire Session" }));
+
+    expect(onExpireSession).toHaveBeenCalledWith("paused-1");
+    expect(screen.queryByText("#202: Paused Terminal")).toBeNull();
+
+    await act(async () => {
+      resolveExpire?.(false);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+    });
   });
 });

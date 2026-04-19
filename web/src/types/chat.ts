@@ -296,8 +296,8 @@ export interface ConversationState {
   onSelectSession: (session: GobbySession) => void;
   onDeleteSession?: (session: GobbySession) => void;
   onRenameSession?: (id: string, title: string) => void;
-  onKillAgent?: (runId: string) => void;
-  onExpireSession?: (sessionId: string) => void;
+  onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   viewingSessionId?: string | null;
   attachedSessionId?: string | null;
 }

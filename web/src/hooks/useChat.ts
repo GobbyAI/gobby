@@ -2279,10 +2279,14 @@ export function useChat() {
             markSessionUsageFresh(update.session_id, update.updated_at);
             setContextUsage((prev) =>
               buildContextUsageFromTotals({
-                totalInputTokens: update.usage_input_tokens ?? 0,
-                outputTokens: update.usage_output_tokens ?? 0,
-                cacheReadTokens: update.usage_cache_read_tokens ?? 0,
-                cacheCreationTokens: update.usage_cache_creation_tokens ?? 0,
+                totalInputTokens:
+                  update.usage_input_tokens ?? prev.totalInputTokens,
+                outputTokens: update.usage_output_tokens ?? prev.outputTokens,
+                cacheReadTokens:
+                  update.usage_cache_read_tokens ?? prev.cacheReadTokens,
+                cacheCreationTokens:
+                  update.usage_cache_creation_tokens ??
+                  prev.cacheCreationTokens,
                 contextWindow:
                   typeof update.context_window === "number"
                     ? update.context_window
@@ -2331,10 +2335,15 @@ export function useChat() {
             markSessionUsageFresh(eventData.session_id, eventData.event_at);
             setContextUsage((prev) =>
               buildContextUsageFromTotals({
-                totalInputTokens: sessionTotals.input_tokens ?? 0,
-                outputTokens: sessionTotals.output_tokens ?? 0,
-                cacheReadTokens: sessionTotals.cache_read_tokens ?? 0,
-                cacheCreationTokens: sessionTotals.cache_creation_tokens ?? 0,
+                totalInputTokens:
+                  sessionTotals.input_tokens ?? prev.totalInputTokens,
+                outputTokens:
+                  sessionTotals.output_tokens ?? prev.outputTokens,
+                cacheReadTokens:
+                  sessionTotals.cache_read_tokens ?? prev.cacheReadTokens,
+                cacheCreationTokens:
+                  sessionTotals.cache_creation_tokens ??
+                  prev.cacheCreationTokens,
                 contextWindow:
                   typeof eventData.context_window === "number"
                     ? eventData.context_window

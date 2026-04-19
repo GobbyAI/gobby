@@ -18,11 +18,22 @@ export function ModelBreakdownList({ items }: Props) {
     <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-2.5">
       {items.map((item) => {
         const isExpanded = expandedFamily === item.family
+        const familyId =
+          item.family
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '') || 'unknown'
+        const buttonId = `model-breakdown-toggle-${familyId}`
+        const panelId = `model-breakdown-panel-${familyId}`
+        const hasDetails = item.models.length > 0
         return (
           <div key={item.family} className="rounded-md bg-background/40 px-2 py-1.5">
             <button
               type="button"
+              id={buttonId}
               className="flex w-full items-center gap-3 text-left text-xs"
+              aria-expanded={hasDetails ? isExpanded : undefined}
+              aria-controls={hasDetails ? panelId : undefined}
               onClick={() =>
                 setExpandedFamily((current) => (current === item.family ? null : item.family))
               }
@@ -35,8 +46,15 @@ export function ModelBreakdownList({ items }: Props) {
                 {formatTokens(item.totalTokens)}
               </span>
             </button>
-            {isExpanded && item.models.length > 0 && (
-              <div className="mt-2 flex flex-col gap-1 border-t border-border/60 pt-2">
+            {hasDetails && (
+              <div
+                id={panelId}
+                role="region"
+                aria-labelledby={buttonId}
+                aria-hidden={!isExpanded}
+                hidden={!isExpanded}
+                className="mt-2 flex flex-col gap-1 border-t border-border/60 pt-2"
+              >
                 {item.models.map((model) => (
                   <div key={model.model} className="flex items-center gap-3 text-[11px]">
                     <span className="min-w-0 flex-1 truncate text-muted-foreground">

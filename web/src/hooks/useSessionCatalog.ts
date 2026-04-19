@@ -172,9 +172,27 @@ export function useSessionCatalog(projectId: string | null) {
 
   const renameSession = useCallback(
     async (id: string, title: string) => {
+      const previousSession = sessions.find((session) => session.id === id);
       setSessions((prev) =>
-        prev.map((session) => (session.id === id ? { ...session, title } : session)),
+        prev.map((session) => {
+          if (session.id !== id) {
+            return session;
+          }
+          return { ...session, title };
+        }),
       );
+
+      const restorePreviousTitle = () => {
+        if (!previousSession) {
+          return;
+        }
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === id ? { ...session, title: previousSession.title } : session,
+          ),
+        );
+      };
+
       try {
         const baseUrl = getBaseUrl();
         const response = await fetch(`${baseUrl}/api/sessions/${id}/rename`, {
@@ -184,14 +202,16 @@ export function useSessionCatalog(projectId: string | null) {
         });
         if (!response.ok) {
           console.error(`Rename failed: ${response.status}`);
+          restorePreviousTitle();
           await fetchSessions();
         }
       } catch (e) {
         console.error("Failed to rename session:", e);
+        restorePreviousTitle();
         await fetchSessions();
       }
     },
-    [fetchSessions],
+    [fetchSessions, sessions],
   );
 
   return {

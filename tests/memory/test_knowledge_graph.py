@@ -115,6 +115,7 @@ class TestRelationship:
 class TestAddToGraph:
     """Tests for KnowledgeGraphService.add_to_graph()."""
 
+    @pytest.mark.asyncio
     async def test_ensure_graph_schema_serializes_concurrent_initialization(
         self,
         service: KnowledgeGraphService,

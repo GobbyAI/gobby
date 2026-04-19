@@ -2302,6 +2302,83 @@ describe("useChat", () => {
     expect(result.current.contextUsageUpdatedAt).not.toBeNull();
   });
 
+  it("preserves existing totals when session_usage_updated omits fields", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 420,
+        usage_output_tokens: 33,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 10,
+        context_window: 200000,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_output_tokens: 44,
+      });
+    });
+
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 420,
+      outputTokens: 44,
+      cacheReadTokens: 120,
+      cacheCreationTokens: 10,
+      uncachedInputTokens: 290,
+      contextWindow: 200000,
+    });
+  });
+
+  it("preserves existing totals when token_event session totals are partial", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "test-conversation-id",
+        usage_input_tokens: 420,
+        usage_output_tokens: 33,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 10,
+        context_window: 200000,
+      });
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "token_event",
+        session_id: "test-conversation-id",
+        event_at: "2026-04-08T12:00:00Z",
+        session_totals: {
+          output_tokens: 44,
+        },
+      });
+    });
+
+    expect(result.current.contextUsage).toMatchObject({
+      totalInputTokens: 420,
+      outputTokens: 44,
+      cacheReadTokens: 120,
+      cacheCreationTokens: 10,
+      uncachedInputTokens: 290,
+      contextWindow: 200000,
+    });
+  });
+
   it("hydrates context usage from attach_to_session_result without changing the main chat id", async () => {
     await loadModule();
     const { result } = renderHook(() => useChat());

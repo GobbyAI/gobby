@@ -45,11 +45,16 @@ def _load_session_messages(session_id: str, session: Any) -> list[Any]:
     elif source == "codex":
         parser = CodexTranscriptParser(session_id=session_id)
 
-    if path.suffix == ".json" and hasattr(parser, "parse_session_json"):
-        data = json.loads(raw)
-        return cast(list[Any], parser.parse_session_json(data))
+    try:
+        if path.suffix == ".json" and hasattr(parser, "parse_session_json"):
+            data = json.loads(raw)
+            return cast(list[Any], parser.parse_session_json(data))
 
-    return cast(list[Any], parser.parse_lines(raw.splitlines(keepends=True), start_index=0))
+        return cast(list[Any], parser.parse_lines(raw.splitlines(keepends=True), start_index=0))
+    except Exception as exc:
+        raise click.ClickException(
+            f"Failed to parse transcript {transcript_path} for session {session_id}: {exc}"
+        ) from exc
 
 
 def _messages_to_events(
@@ -136,15 +141,18 @@ def audit_tokens(
         store = TokenEventStore(db)
 
         if audit_all:
-            rows = db.fetchall(
-                """
+            query = """
                 SELECT id
                 FROM sessions
                 WHERE transcript_path IS NOT NULL
                   AND source != 'system'
-                ORDER BY updated_at DESC
-                """
-            )
+            """
+            params: tuple[Any, ...] = ()
+            if project_id is not None:
+                query += "\n  AND project_id = ?"
+                params = (project_id,)
+            query += "\n                ORDER BY updated_at DESC"
+            rows = db.fetchall(query, params)
             session_ids = [str(row["id"]) for row in rows]
         else:
             assert session_ref is not None

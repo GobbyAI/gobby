@@ -53,6 +53,8 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
             params.append(project_id)
 
         where = " ".join(clauses)
+        # _bucket_expression() is safe to interpolate here because FastAPI validates
+        # granularity against ^(30m|1h|1d)$ before this query reaches db.fetchall().
         bucket_expr = _bucket_expression("created_at", granularity)
         rows = db.fetchall(
             f"""

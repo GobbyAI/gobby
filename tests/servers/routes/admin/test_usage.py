@@ -21,6 +21,7 @@ def test_app():
     return app, server_mock
 
 
+@pytest.mark.unit
 def test_usage_no_filters(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
@@ -79,6 +80,7 @@ def test_usage_no_filters(test_app):
     assert data["by_model"]["gpt-4"]["session_count"] == 2
 
 
+@pytest.mark.unit
 def test_usage_with_filters_and_fallback(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
@@ -121,6 +123,7 @@ def test_usage_with_filters_and_fallback(test_app):
     assert data["totals"]["input_tokens"] == 0  # because empty rows returned
 
 
+@pytest.mark.unit
 def test_usage_exceptions(test_app):
     app, server_mock = test_app
     db = server_mock.services.database

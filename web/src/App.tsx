@@ -855,11 +855,14 @@ export default function App() {
         );
         if (res.ok) {
           showToast("Agent cancelled");
+          return true;
         } else {
           showToast("Failed to cancel agent");
+          return false;
         }
       } catch {
         showToast("Failed to cancel agent");
+        return false;
       }
     },
     [showToast],
@@ -875,9 +878,12 @@ export default function App() {
         );
         if (!res.ok) {
           showToast("Failed to expire session");
+          return false;
         }
+        return true;
       } catch {
         showToast("Failed to expire session");
+        return false;
       }
     },
     [showToast],

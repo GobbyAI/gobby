@@ -435,7 +435,12 @@ def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
             if created_epoch > cutoff_epoch:
                 continue
             logger.warning("Dropping orphaned Postgres test schema %s", schema_name)
-            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name)))
+            try:
+                conn.execute(
+                    sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name))
+                )
+            except Exception:
+                logger.exception("Failed to drop orphaned schema %s", schema_name)
 
 
 @pytest.fixture(scope="session")
@@ -792,7 +797,7 @@ class MigrationRunner:
                 txn.execute(statement)
 ```
 
-`_split_statements_respecting_dollar_quotes` must treat semicolons outside any active quote/comment boundary as the only split points. It needs unit tests for nested or adjacent dollar-quoted tags (for example `$outer$...$inner$...$outer$`), single-quoted strings containing `;` or `$`, line comments and block comments containing `$tag$` patterns, and mixed contexts where quote-looking text appears inside a dollar-quoted body. Do not use the splitter in production migration runs until those tests pass.
+`_split_statements_respecting_dollar_quotes` must treat semicolons outside any active quote/comment boundary as the only split points. It needs unit tests for nested or adjacent dollar-quoted tags (for example `$outer$...$inner$...$outer$`), single-quoted strings containing `;` or `$`, line comments and block comments containing `$tag$` patterns, and mixed contexts where quote-looking text appears inside a dollar-quoted body. Production use stays blocked until those tests exist, pass in CI, and the migration-runner implementation includes an explicit gate that refuses to run without that coverage signal.
 
 Migration file layout:
 
@@ -1009,13 +1014,42 @@ For each call site, document:
 
 Any callback that reads database state from a session other than the writing one is flagged as "requires explicit transaction boundary." Phase 4.7 does not stop at reporting: fix each such case by moving the affected read inside the originating transaction, by forcing a fresh `BEGIN` on the reading session before the read, or by moving the logic into a post-snapshot-safe transaction. Audit every `savepoint()` / `conn.in_transaction` usage that assumes SQLite semantics and remediate the broken code paths in the same phase.
 
+Risk classification criteria:
+
+- High risk: callback reads from a different session, expects uncommitted writes to be visible, and lacks an explicit transaction boundary.
+- Medium risk: callback reads from a different session, but has a safe fallback when the read is stale.
+- Low risk: callback only reads through the same session, or it only performs external side-effects after commit.
+
 Deliverables:
 
 - a short report committed under `docs/postgres-callback-audit.md`, referenced from the cutover runbook (6.1)
 - remediation changes for every high-risk callback / transaction-boundary bug found by the audit
 - integration tests that open separate sessions under PostgreSQL MVCC and verify after-commit callbacks do not observe or expose stale / partial state across sessions
 
-Cutover is blocked until the Phase 4.7 report shows no unresolved high-risk callbacks, no known broken `savepoint()` / `conn.in_transaction` usages remain, and all new MVCC integration tests pass.
+Required integration scenarios:
+
+- callback spawns async work that reads from a pooled connection after commit; verify it sees only committed state
+- callback runs while another session holds a long-running transaction; verify snapshot isolation and stale-read handling
+- callback logic remains correct when wrapped in `savepoint()` / rollback flows that previously relied on SQLite `conn.in_transaction` semantics
+
+Example test names:
+
+- `test_workflow_audit_mvcc_safe`
+- `test_after_commit_async_reader_uses_committed_state`
+- `test_savepoint_callback_rollback_safe_with_pgbouncer`
+
+Audit report template:
+
+| Callback Site | Risk Level | Issue | Remediation | Test Coverage |
+| --- | --- | --- | --- | --- |
+| `TaskManager._notify_listeners` | Low | Same-session after-commit listener only | No change required | `test_workflow_audit_mvcc_safe` |
+
+Cutover is blocked until:
+
+- the Phase 4.7 audit report has zero unresolved High or Medium items
+- all remediation PRs identified by the audit are merged
+- all new MVCC integration tests pass in CI for three consecutive runs
+- no known broken `savepoint()` / `conn.in_transaction` usages remain
 
 ## Phase 5: One-shot SQLite → PostgreSQL migration tool
 

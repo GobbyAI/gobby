@@ -99,7 +99,7 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
         return default
     try:
         value = row[key]
-    except Exception:
+    except (KeyError, TypeError, IndexError):
         return default
 
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -420,7 +420,18 @@ class TokenEventStore:
                 if isinstance(loaded, dict):
                     parsed_metadata = loaded
             except json.JSONDecodeError:
-                logger.debug("Failed to parse token event metadata", exc_info=True)
+                logger.debug(
+                    "Failed to parse token event metadata",
+                    extra={
+                        "id": _coerce_int(_row_value(row, "id"), default=0),
+                        "session_id": _row_value(row, "session_id"),
+                        "project_id": _row_value(row, "project_id"),
+                        "message_id": _row_value(row, "message_id"),
+                        "model": _row_value(row, "model"),
+                        "raw_metadata": metadata,
+                    },
+                    exc_info=True,
+                )
 
         return {
             "id": _coerce_int(_row_value(row, "id"), default=0),
@@ -508,8 +519,8 @@ def merge_event_totals(events: Sequence[dict[str, Any]]) -> dict[str, int]:
         "cache_read_tokens": 0,
     }
     for event in events:
-        totals["input_tokens"] += int(event.get("input_tokens", 0) or 0)
-        totals["output_tokens"] += int(event.get("output_tokens", 0) or 0)
-        totals["cache_creation_tokens"] += int(event.get("cache_creation_tokens", 0) or 0)
-        totals["cache_read_tokens"] += int(event.get("cache_read_tokens", 0) or 0)
+        totals["input_tokens"] += _coerce_int(event.get("input_tokens"))
+        totals["output_tokens"] += _coerce_int(event.get("output_tokens"))
+        totals["cache_creation_tokens"] += _coerce_int(event.get("cache_creation_tokens"))
+        totals["cache_read_tokens"] += _coerce_int(event.get("cache_read_tokens"))
     return totals

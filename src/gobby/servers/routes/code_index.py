@@ -185,6 +185,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         scoped_project = _require_project_id(project_id)
         try:
             result = await code_indexer.clear_graph(scoped_project)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception(f"Failed to clear code graph for {scoped_project}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -203,6 +205,8 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         scoped_project = _require_project_id(project_id)
         try:
             result = await code_indexer.rebuild_graph(scoped_project, limit=limit)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception(f"Failed to rebuild code graph for {scoped_project}")
             raise HTTPException(status_code=500, detail=str(e)) from e

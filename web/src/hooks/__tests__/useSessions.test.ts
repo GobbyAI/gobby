@@ -175,4 +175,22 @@ describe("useSessionCatalog", () => {
       result.current.sessions.find((session) => session.id === "sess-1")?.title,
     ).toBe("Renamed");
   });
+
+  it("renameSession restores the previous title when the API call fails", async () => {
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
+
+    mockFetch.resetRoutes();
+    mockFetch.mockErrorResponse("/api/sessions/sess-1/rename", 500);
+    mockFetch.mockErrorResponse("/api/sessions", 500);
+
+    await act(async () => {
+      await result.current.renameSession("sess-1", "Renamed");
+    });
+
+    expect(
+      result.current.sessions.find((session) => session.id === "sess-1")?.title,
+    ).toBe("Test Session");
+  });
 });
