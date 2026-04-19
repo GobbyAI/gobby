@@ -29,6 +29,7 @@ class ChatMessagingMixin:
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
+    _pending_inject_contexts: dict[str, str]
 
     if TYPE_CHECKING:
 
@@ -231,7 +232,15 @@ class ChatMessagingMixin:
         client_info["conversation_id"] = conversation_id
 
         # Extract inject_context for tool result injection into LLM conversation
-        inject_context = data.get("inject_context")
+        pending_inject_contexts = getattr(self, "_pending_inject_contexts", {})
+        pending_inject_context = pending_inject_contexts.pop(conversation_id, None)
+        explicit_inject_context = data.get("inject_context")
+        inject_parts = [
+            value
+            for value in [pending_inject_context, explicit_inject_context]
+            if isinstance(value, str) and value.strip()
+        ]
+        inject_context = "\n\n".join(inject_parts) if inject_parts else None
 
         # Cancel any active stream for this conversation
         await self._cancel_active_chat(conversation_id)

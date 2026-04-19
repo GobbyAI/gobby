@@ -11,6 +11,7 @@ import type {
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { ArtifactType } from "../../types/artifacts";
+import type { GobbySession } from "../../types/sessions";
 import { useArtifacts } from "../../hooks/useArtifacts";
 import { ArtifactContext } from "./artifacts/ArtifactContext";
 import { MessageList, type MessageListHandle } from "./MessageList";
@@ -58,6 +59,8 @@ interface ChatPageProps {
   ) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
+  allProjectSessions?: GobbySession[];
+  allProjectSessionsLoading?: boolean;
 }
 
 export function ChatPage({
@@ -77,6 +80,8 @@ export function ChatPage({
   reasoningPreferences = {},
   onReasoningPreferenceChange,
   paletteActions = [],
+  allProjectSessions = [],
+  allProjectSessionsLoading = false,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -196,6 +201,19 @@ export function ChatPage({
       }
     },
     [chat, conversations, isMobile, parkCurrentSession, setIsPinned],
+  );
+
+  const handleResumeSessionFromActivity = useCallback(
+    async (sessionId: string) => {
+      if (!chat.continueSessionInChat) {
+        return "";
+      }
+      parkCurrentSession(sessionId);
+      return chat.continueSessionInChat(sessionId, projectId ?? undefined, {
+        fallbackContext: "auto",
+      });
+    },
+    [chat, parkCurrentSession, projectId],
   );
 
   // Available LLM providers — fetched from daemon API
@@ -318,6 +336,7 @@ export function ChatPage({
         model: effectiveInputModel,
         reasoningEffort: effectiveInputReasoning,
         chatMode: viewingMeta?.chatMode ?? null,
+        fallbackContext: "auto",
       },
     );
   }, [
@@ -366,6 +385,7 @@ export function ChatPage({
         model,
         reasoningEffort,
         chatMode: viewingMeta?.chatMode ?? null,
+        fallbackContext: "auto",
       });
     },
     [
@@ -819,12 +839,15 @@ export function ChatPage({
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
         projectId={projectId}
+        sessions={allProjectSessions}
+        sessionsLoading={allProjectSessionsLoading}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={activityPanelChatSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
         onSwapSession={handleSwapSession}
+        onResumeSession={handleResumeSessionFromActivity}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />

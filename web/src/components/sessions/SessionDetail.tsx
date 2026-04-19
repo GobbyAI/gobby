@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import type { GobbySession } from '../../hooks/useSessions'
+import type { GobbySession } from '../../types/sessions'
 import type { SessionMessage } from '../../hooks/useSessionDetail'
 import { SourceIcon } from '../shared/SourceIcon'
 import { BranchIcon, ChatIcon, SummaryIcon } from '../shared/Icons'

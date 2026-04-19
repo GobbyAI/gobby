@@ -1,312 +1,178 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
-import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
 
-// Mock useWebSocketEvent to avoid real WS connections
-vi.mock('../useWebSocketEvent', () => ({
+import { createMockFetch, type MockFetchInstance } from "../../test/mocks/fetch";
+
+vi.mock("../useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
-}))
+}));
 
-import { useSessions } from '../useSessions'
+import { useSessionCatalog } from "../useSessionCatalog";
 
-let mockFetch: MockFetchInstance
-let consoleSpy: { log: ReturnType<typeof vi.spyOn>; error: ReturnType<typeof vi.spyOn>; warn: ReturnType<typeof vi.spyOn> }
+let mockFetch: MockFetchInstance;
 
 const SAMPLE_SESSIONS = [
   {
-    id: 'sess-1',
-    ref: '#100',
-    external_id: 'ext-1',
-    source: 'claude',
-    project_id: 'proj-1',
-    title: 'Test Session',
-    status: 'active',
-    model: 'claude-4',
+    id: "sess-1",
+    ref: "#100",
+    external_id: "ext-1",
+    source: "claude",
+    project_id: "proj-1",
+    title: "Test Session",
+    status: "active",
+    model: "claude-4",
     message_count: 5,
-    created_at: '2026-03-01T00:00:00Z',
-    updated_at: '2026-03-01T12:00:00Z',
+    created_at: "2026-03-01T00:00:00Z",
+    updated_at: "2026-03-01T12:00:00Z",
     seq_num: 100,
     summary_markdown: null,
-    git_branch: 'main',
+    digest_markdown: null,
+    git_branch: "main",
     usage_input_tokens: 1000,
     usage_output_tokens: 500,
     had_edits: true,
     agent_depth: 0,
     chat_mode: null,
+    agent_run_id: null,
     parent_session_id: null,
+    session_type: "web_chat",
+    terminal_context: null,
   },
   {
-    id: 'sess-2',
-    ref: '#101',
-    external_id: 'ext-2',
-    source: 'gemini',
-    project_id: 'proj-1',
-    title: 'Another Session',
-    status: 'completed',
+    id: "sess-2",
+    ref: "#101",
+    external_id: "ext-2",
+    source: "gemini",
+    project_id: "proj-1",
+    title: "Another Session",
+    status: "expired",
     model: null,
     message_count: 10,
-    created_at: '2026-03-02T00:00:00Z',
-    updated_at: '2026-03-02T12:00:00Z',
+    created_at: "2026-03-02T00:00:00Z",
+    updated_at: "2026-03-02T12:00:00Z",
     seq_num: 101,
     summary_markdown: null,
+    digest_markdown: null,
     git_branch: null,
     usage_input_tokens: 2000,
     usage_output_tokens: 1000,
     had_edits: false,
     agent_depth: 0,
     chat_mode: null,
+    agent_run_id: null,
     parent_session_id: null,
+    session_type: "terminal",
+    terminal_context: null,
   },
-]
+];
 
 beforeEach(() => {
-  consoleSpy = {
-    log: vi.spyOn(console, 'log').mockImplementation(() => {}),
-    error: vi.spyOn(console, 'error').mockImplementation(() => {}),
-    warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
-  }
-  mockFetch = createMockFetch()
-  mockFetch.mockJsonResponse('/api/sessions', { sessions: SAMPLE_SESSIONS })
-  mockFetch.mockJsonResponse('/api/files/projects', [
-    { id: 'proj-1', name: 'Test Project', repo_path: '/tmp/test' },
-  ])
-})
+  mockFetch = createMockFetch();
+  mockFetch.mockJsonResponse("/api/sessions", { sessions: SAMPLE_SESSIONS });
+});
 
 afterEach(() => {
-  mockFetch.restore()
-  consoleSpy.log.mockRestore()
-  consoleSpy.error.mockRestore()
-  consoleSpy.warn.mockRestore()
-  vi.restoreAllMocks()
-})
+  mockFetch.restore();
+  vi.restoreAllMocks();
+});
 
-describe('useSessions', () => {
-  it('fetches sessions on mount', async () => {
-    const { result } = renderHook(() => useSessions())
+describe("useSessionCatalog", () => {
+  it("fetches sessions on mount", async () => {
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.sessions).toHaveLength(2)
-    expect(result.current.sessions[0].title).toBe('Test Session')
-  })
+    expect(result.current.sessions).toHaveLength(2);
+    expect(result.current.sessions[0].title).toBe("Another Session");
+  });
 
-  it('fetches projects on mount', async () => {
-    const { result } = renderHook(() => useSessions())
+  it("passes the project filter to the sessions API", async () => {
+    renderHook(() => useSessionCatalog("proj-1"));
 
-    await waitFor(() => expect(result.current.projects).toHaveLength(1))
+    await waitFor(() => {
+      expect(
+        mockFetch.fn.mock.calls.some(([url]) =>
+          String(url).includes("/api/sessions?limit=200&project_id=proj-1"),
+        ),
+      ).toBe(true);
+    });
+  });
 
-    expect(result.current.projects[0].name).toBe('Test Project')
-  })
-
-  it('filters hidden statuses (deleted, handoff_ready, expired)', async () => {
-    mockFetch.resetRoutes()
-    mockFetch.mockJsonResponse('/api/sessions', {
+  it("keeps expired and handoff_ready rows but hides deleted rows", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/sessions", {
       sessions: [
         ...SAMPLE_SESSIONS,
-        { ...SAMPLE_SESSIONS[0], id: 'sess-deleted', status: 'deleted' },
-        { ...SAMPLE_SESSIONS[0], id: 'sess-expired', status: 'expired' },
-        { ...SAMPLE_SESSIONS[0], id: 'sess-handoff', status: 'handoff_ready' },
+        {
+          ...SAMPLE_SESSIONS[0],
+          id: "sess-handoff",
+          status: "handoff_ready",
+          updated_at: "2026-03-03T12:00:00Z",
+        },
+        { ...SAMPLE_SESSIONS[0], id: "sess-deleted", status: "deleted" },
       ],
-    })
-    mockFetch.mockJsonResponse('/api/files/projects', [])
+    });
 
-    const { result } = renderHook(() => useSessions())
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.sessions).toHaveLength(2)
-    expect(result.current.sessions.every(s => !['deleted', 'expired', 'handoff_ready'].includes(s.status))).toBe(true)
-  })
+    expect(result.current.sessions.map((session) => session.id)).toEqual([
+      "sess-handoff",
+      "sess-2",
+      "sess-1",
+    ]);
+  });
 
-  it('sorts sessions by newest first by default', async () => {
-    const { result } = renderHook(() => useSessions())
+  it("handles fetch error gracefully", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockErrorResponse("/api/sessions", 500);
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
 
-    const filtered = result.current.filteredSessions
-    expect(filtered[0].ref).toBe('#101') // newer updated_at
-    expect(filtered[1].ref).toBe('#100')
-  })
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-  it('sorts sessions by oldest when sortOrder changed', async () => {
-    const { result } = renderHook(() => useSessions())
+    expect(result.current.error).toBeTruthy();
+    expect(result.current.sessions).toHaveLength(0);
+  });
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+  it("markSessionDeleting tracks a pending delete", async () => {
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
 
-    act(() => {
-      result.current.setFilters(prev => ({ ...prev, sortOrder: 'oldest' }))
-    })
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
 
-    const filtered = result.current.filteredSessions
-    expect(filtered[0].ref).toBe('#100')
-    expect(filtered[1].ref).toBe('#101')
-  })
+    act(() => result.current.markSessionDeleting("sess-1"));
 
-  it('filters sessions by search term (title)', async () => {
-    const { result } = renderHook(() => useSessions())
+    expect(result.current.deletingIds.has("sess-1")).toBe(true);
+  });
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+  it("confirmSessionDeleted removes the session and clears deletingIds", async () => {
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
 
-    act(() => {
-      result.current.setFilters(prev => ({ ...prev, search: 'another' }))
-    })
-
-    expect(result.current.filteredSessions).toHaveLength(1)
-    expect(result.current.filteredSessions[0].title).toBe('Another Session')
-  })
-
-  it('filters sessions by search term (ref)', async () => {
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
 
     act(() => {
-      result.current.setFilters(prev => ({ ...prev, search: '#100' }))
-    })
+      result.current.markSessionDeleting("sess-1");
+      result.current.confirmSessionDeleted("sess-1");
+    });
 
-    expect(result.current.filteredSessions).toHaveLength(1)
-  })
+    expect(result.current.sessions).toHaveLength(1);
+    expect(result.current.deletingIds.has("sess-1")).toBe(false);
+  });
 
-  it('handles fetch error gracefully', async () => {
-    mockFetch.resetRoutes()
-    mockFetch.mockErrorResponse('/api/sessions', 500)
-    mockFetch.mockJsonResponse('/api/files/projects', [])
+  it("renameSession updates title optimistically", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/sess-1/rename", { ok: true });
 
-    const { result } = renderHook(() => useSessions())
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
 
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    await waitFor(() => expect(result.current.sessions).toHaveLength(2));
 
-    expect(result.current.error).toBeTruthy()
-    expect(result.current.sessions).toHaveLength(0)
-  })
+    await act(async () => {
+      await result.current.renameSession("sess-1", "Renamed");
+    });
 
-  it('removeSession removes from list', async () => {
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2))
-
-    act(() => result.current.removeSession('sess-1'))
-
-    expect(result.current.sessions).toHaveLength(1)
-    expect(result.current.sessions[0].id).toBe('sess-2')
-  })
-
-  it('markSessionDeleting adds to deletingIds', async () => {
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2))
-
-    act(() => result.current.markSessionDeleting('sess-1'))
-
-    expect(result.current.deletingIds.has('sess-1')).toBe(true)
-  })
-
-  it('confirmSessionDeleted removes by session id', async () => {
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2))
-
-    act(() => result.current.confirmSessionDeleted('sess-1'))
-
-    expect(result.current.sessions).toHaveLength(1)
-    expect(result.current.sessions[0].external_id).toBe('ext-2')
-  })
-
-  it('restoreSession clears deletingIds', async () => {
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2))
-
-    act(() => result.current.markSessionDeleting('sess-1'))
-    expect(result.current.deletingIds.has('sess-1')).toBe(true)
-
-    act(() => result.current.restoreSession('sess-1'))
-    expect(result.current.deletingIds.has('sess-1')).toBe(false)
-  })
-
-  it('renameSession optimistically updates title', async () => {
-    mockFetch.mockJsonResponse('/api/sessions/sess-1/rename', { ok: true })
-
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.sessions).toHaveLength(2))
-
-    act(() => {
-      result.current.renameSession('sess-1', 'Renamed')
-    })
-
-    expect(result.current.sessions.find(s => s.id === 'sess-1')?.title).toBe('Renamed')
-  })
-
-  it('refresh re-fetches sessions', async () => {
-    const { result } = renderHook(() => useSessions())
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-
-    act(() => result.current.refresh())
-
-    expect(result.current.isLoading).toBe(true)
-    await waitFor(() => expect(result.current.isLoading).toBe(false))
-  })
-
-  it('retries fetching projects on failure', async () => {
-    mockFetch.resetRoutes()
-
-    // First call fails, second succeeds
-    let calls = 0
-    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.includes('/api/files/projects')) {
-        calls++
-        if (calls === 1) {
-          return new Response('Error', { status: 500 })
-        }
-        return new Response(JSON.stringify([{ id: 'proj-1', name: 'Test Project' }]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      }
-      if (url.includes('/api/sessions')) {
-        return new Response(JSON.stringify({ sessions: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      }
-      return new Response('Not Found', { status: 404 })
-    })
-
-    const { result } = renderHook(() => useSessions())
-
-    // Initial state: projects empty
-    expect(result.current.projects).toHaveLength(0)
-
-    // Wait for retry (2s delay) + fetch time
-    await waitFor(() => expect(result.current.projects).toHaveLength(1), { timeout: 5000 })
-    expect(result.current.projects[0].name).toBe('Test Project')
-    expect(calls).toBe(2)
-  }, 10000)
-
-  it('eventually fails projects fetch after 3 retries', async () => {
-    mockFetch.resetRoutes()
-
-    // All 4 attempts fail
-    let calls = 0
-    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.includes('/api/files/projects')) {
-        calls++
-        return new Response('Error', { status: 500 })
-      }
-      if (url.includes('/api/sessions')) {
-        return new Response(JSON.stringify({ sessions: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-      }
-      return new Response('Not Found', { status: 404 })
-    })
-
-    const { result } = renderHook(() => useSessions())
-
-    // Initial state: projects empty
-    expect(result.current.projects).toHaveLength(0)
-
-    // Wait for all retries (2s * 3 retries = 6s)
-    await waitFor(() => expect(result.current.error).toBeTruthy(), { timeout: 15000 })
-    expect(calls).toBe(4)
-  }, 20000)
-})
+    expect(
+      result.current.sessions.find((session) => session.id === "sess-1")?.title,
+    ).toBe("Renamed");
+  });
+});

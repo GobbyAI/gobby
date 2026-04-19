@@ -13,6 +13,7 @@ import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
 import type { Artifact } from "../../types/artifacts";
+import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 
 export type ActivityTab =
@@ -155,6 +156,8 @@ interface ActivityPanelProps {
   fetchDiff?: (path: string) => Promise<string>;
   // Tasks tab
   projectId?: string | null;
+  sessions?: GobbySession[];
+  sessionsLoading?: boolean;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // Sessions tab
@@ -164,6 +167,7 @@ interface ActivityPanelProps {
   focusSessionId?: string | null;
   onFocusSessionHandled?: () => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
+  onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   isMobile?: boolean;
 }
 
@@ -246,6 +250,8 @@ export function ActivityPanel({
   changedFiles = [],
   fetchDiff,
   projectId,
+  sessions = [],
+  sessionsLoading = false,
   onAddFileToChat,
   onKillAgent,
   onExpireSession,
@@ -253,6 +259,7 @@ export function ActivityPanel({
   focusSessionId,
   onFocusSessionHandled,
   onSwapSession,
+  onResumeSession,
   isMobile = false,
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
@@ -312,14 +319,15 @@ export function ActivityPanel({
       case "sessions":
         return (
           <SessionsTab
-            projectId={projectId}
+            sessions={sessions}
+            isLoadingSessions={sessionsLoading}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
             chatSessionId={chatSessionId ?? undefined}
             focusSessionId={focusSessionId}
             onFocusHandled={onFocusSessionHandled}
             onSwapSession={onSwapSession}
-            isMobile={useOverlay}
+            onResumeSession={onResumeSession}
           />
         );
       case "pipelines":

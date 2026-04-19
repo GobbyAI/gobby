@@ -428,6 +428,45 @@ describe("useChat", () => {
     expect(continueMsg?.model).toBe("gpt-5.4");
   });
 
+  it("continueSessionInChat forwards fallback_context when requested", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/source-session", {
+      session: {
+        id: "source-session",
+        project_id: "proj-source",
+        source: "codex",
+        model: "gpt-5.4",
+        chat_mode: "accept_edits",
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        context_window: null,
+      },
+    });
+    mockFetch.mockJsonResponse(
+      "/api/sessions/source-session/messages?limit=100",
+      {
+        messages: [],
+      },
+    );
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      await result.current.continueSessionInChat("source-session", "proj-source", {
+        fallbackContext: "auto",
+      });
+    });
+
+    const continueMsg = ws.send.mock.calls
+      .map(([raw]) => JSON.parse(raw))
+      .find((msg) => msg.type === "continue_in_chat");
+    expect(continueMsg?.fallback_context).toBe("auto");
+  });
+
   it("restores a watched session on mount without hydrating the parked main chat over it", async () => {
     localStorage.setItem("gobby-viewing-session-id", "sess-view");
     localStorage.setItem("gobby-viewing-session-mode", "observe");

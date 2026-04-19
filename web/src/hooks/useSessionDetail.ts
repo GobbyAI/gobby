@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { GobbySession } from './useSessions'
+import type { GobbySession } from '../types/sessions'
 import { useWebSocketEvent } from './useWebSocketEvent'
 import type { ContentBlock, TokenUsage, ToolCall } from '../types/chat'
 

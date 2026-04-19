@@ -108,17 +108,22 @@ vi.mock("../CommandPalette", () => ({
 
 vi.mock("../../activity/ActivityPanel", () => ({
   ActivityPanel: ({
+    sessions,
     onSwapSession,
+    onResumeSession,
     chatSessionId,
     onApprovePlan,
     onRequestPlanChanges,
   }: {
+    sessions?: Array<{ id: string }>
     onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
+    onResumeSession?: (sessionId: string) => void
     chatSessionId?: string | null
     onApprovePlan?: () => void
     onRequestPlanChanges?: (feedback: string) => void
   }) => (
     <div data-testid="activity-panel">
+      <span data-testid="activity-panel-session-count">{sessions?.length ?? 0}</span>
       <span data-testid="activity-panel-chat-session-id">
         {chatSessionId ?? ""}
       </span>
@@ -147,6 +152,13 @@ vi.mock("../../activity/ActivityPanel", () => ({
         }
       >
         Swap Autonomous
+      </button>
+      <button
+        type="button"
+        data-testid="resume-activity-session"
+        onClick={() => onResumeSession?.("resume-target")}
+      >
+        Resume Session
       </button>
       <button
         type="button"
@@ -535,6 +547,88 @@ describe("ChatPage", () => {
     ).toHaveTextContent("terminal-2");
   });
 
+  it("threads the shared session catalog into the activity panel and resumes with auto fallback", async () => {
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            dbSessionId: "web-main-1",
+            continueSessionInChat,
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+          projectId="proj-1"
+          allProjectSessions={[
+            {
+              id: "session-1",
+              ref: "#11",
+              external_id: "ext-11",
+              source: "claude",
+              project_id: "proj-1",
+              title: "Session One",
+              status: "active",
+              model: "sonnet",
+              message_count: 1,
+              created_at: "2026-04-01T00:00:00Z",
+              updated_at: "2026-04-01T00:00:00Z",
+              seq_num: 11,
+              summary_markdown: null,
+              digest_markdown: null,
+              git_branch: "main",
+              usage_input_tokens: 0,
+              usage_output_tokens: 0,
+              had_edits: false,
+              agent_depth: 0,
+              chat_mode: null,
+              agent_run_id: null,
+              parent_session_id: null,
+              session_type: "web_chat",
+              terminal_context: null,
+            },
+            {
+              id: "session-2",
+              ref: "#12",
+              external_id: "ext-12",
+              source: "codex",
+              project_id: "proj-1",
+              title: "Session Two",
+              status: "expired",
+              model: "gpt-5.4",
+              message_count: 2,
+              created_at: "2026-04-02T00:00:00Z",
+              updated_at: "2026-04-02T00:00:00Z",
+              seq_num: 12,
+              summary_markdown: null,
+              digest_markdown: null,
+              git_branch: "main",
+              usage_input_tokens: 0,
+              usage_output_tokens: 0,
+              had_edits: false,
+              agent_depth: 0,
+              chat_mode: null,
+              agent_run_id: null,
+              parent_session_id: null,
+              session_type: "terminal",
+              terminal_context: null,
+            },
+          ]}
+        />,
+      );
+    });
+
+    expect(screen.getByTestId("activity-panel-session-count")).toHaveTextContent("2");
+
+    fireEvent.click(screen.getByTestId("resume-activity-session"));
+
+    await waitFor(() => {
+      expect(continueSessionInChat).toHaveBeenCalledWith("resume-target", "proj-1", {
+        fallbackContext: "auto",
+      });
+    });
+  });
+
   it("hides the entire chat input pane while watching a swapped terminal", async () => {
     await act(async () => {
       render(
@@ -694,6 +788,7 @@ describe("ChatPage", () => {
       model: "sonnet",
       reasoningEffort: "auto",
       chatMode: null,
+      fallbackContext: "auto",
     });
   });
 

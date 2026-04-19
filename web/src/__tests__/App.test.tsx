@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, act, waitFor } from '@testing-library/react'
-import App from '../App'
-import { useChat } from '../hooks/useChat'
-import { useSessions } from '../hooks/useSessions'
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, act, waitFor, screen } from "@testing-library/react";
 
-// Mock all hooks used by App.tsx
-vi.mock('../hooks/useAuth', () => ({
+import App from "../App";
+import { useChat } from "../hooks/useChat";
+import { useSessionCatalog } from "../hooks/useSessionCatalog";
+
+vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
     authRequired: false,
     authenticated: true,
@@ -13,21 +13,23 @@ vi.mock('../hooks/useAuth', () => ({
     login: vi.fn(),
     logout: vi.fn(),
   })),
-}))
+}));
 
-const mockSendProjectChange = vi.fn()
-const mockSetProjectIdRef = vi.fn()
+const mockSendProjectChange = vi.fn();
+const mockSetProjectIdRef = vi.fn();
 
 function makeChatHookState() {
   return {
     messages: [],
-    conversationId: 'conv-123',
+    conversationId: "conv-123",
     conversationSwitchKey: 0,
     sessionRef: null,
+    sessionTitle: null,
     dbSessionId: null,
     currentBranch: null,
     worktreePath: null,
     isConnected: true,
+    isReconnecting: false,
     isStreaming: false,
     isThinking: false,
     isLoadingMessages: false,
@@ -47,18 +49,24 @@ function makeChatHookState() {
     requestPlanChanges: vi.fn(),
     switchConversation: vi.fn(),
     startNewChat: vi.fn(),
+    switchProvider: vi.fn(),
     continueSessionInChat: vi.fn(),
     setOnModeChanged: vi.fn(),
     setOnPlanReady: vi.fn(),
     addSystemMessage: vi.fn(),
     viewSession: vi.fn(),
     clearViewingSession: vi.fn(),
+    mainSessionMeta: null,
+    observeSession: vi.fn(),
     viewingSessionId: null,
     viewingSessionMeta: null,
+    isContinuingSession: false,
     attachToViewed: vi.fn(),
     detachFromSession: vi.fn(),
     attachedSessionId: null,
     attachedSessionMeta: null,
+    sessionInteractionMode: "none",
+    proxyDeliveryNotice: null,
     wsRef: { current: null },
     handleVoiceMessageRef: { current: null },
     handleBinaryMessageRef: { current: null },
@@ -66,180 +74,318 @@ function makeChatHookState() {
     canvasPanel: null,
     onCanvasInteraction: vi.fn(),
     setOnChatDeleted: vi.fn(),
-    activeAgent: 'default',
+    activeAgent: "default",
     sendAgentChange: vi.fn(),
-  }
+    selectedProvider: "claude",
+    setSelectedProvider: vi.fn(),
+  };
 }
 
-function makeSessionsHookState() {
+function makeProjectsHookState() {
   return {
-    projects: [{ id: 'p1', name: 'Personal' }],
+    allProjects: [
+      {
+        id: "personal",
+        name: "_personal",
+        display_name: "_personal",
+        repo_path: null,
+        github_url: null,
+        github_repo: null,
+        linear_team_id: null,
+        approval_rules: [],
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        session_count: 0,
+        open_task_count: 0,
+        last_activity_at: null,
+      },
+      {
+        id: "repo-project",
+        name: "gobby",
+        display_name: "gobby",
+        repo_path: "/tmp/gobby",
+        github_url: null,
+        github_repo: null,
+        linear_team_id: null,
+        approval_rules: [],
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        session_count: 0,
+        open_task_count: 0,
+        last_activity_at: null,
+      },
+      {
+        id: "hidden",
+        name: "_orphaned",
+        display_name: "_orphaned",
+        repo_path: null,
+        github_url: null,
+        github_repo: null,
+        linear_team_id: null,
+        approval_rules: [],
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        session_count: 0,
+        open_task_count: 0,
+        last_activity_at: null,
+      },
+    ],
+  };
+}
+
+function makeSessionCatalogState() {
+  return {
     sessions: [],
     isLoading: false,
+    error: null,
     refresh: vi.fn(),
-    setFilters: vi.fn(),
-    filteredSessions: [],
-  }
+    removeSession: vi.fn(),
+    markSessionDeleting: vi.fn(),
+    confirmSessionDeleted: vi.fn(),
+    restoreSession: vi.fn(),
+    deletingIds: new Set<string>(),
+    renameSession: vi.fn(),
+  };
 }
 
-vi.mock('../hooks/useChat', () => ({
+vi.mock("../hooks/useChat", () => ({
   useChat: vi.fn(() => makeChatHookState()),
-}))
+}));
 
-vi.mock('../hooks/useVoice', () => ({
+vi.mock("../hooks/useVoice", () => ({
   useVoice: vi.fn(() => ({
+    voiceAvailable: false,
+    voiceReady: false,
+    voiceLoading: false,
+    isListening: false,
+    isSpeechDetected: false,
+    isRecording: false,
+    isTranscribing: false,
+    isSpeaking: false,
+    voiceError: null,
     handleVoiceMessage: vi.fn(),
     handleBinaryMessage: vi.fn(),
+    startRecording: vi.fn(),
+    stopRecording: vi.fn(),
+    cancelRecording: vi.fn(),
+    stopTTS: vi.fn(),
   })),
-}))
+}));
 
-vi.mock('../hooks/useSettings', () => ({
+vi.mock("../hooks/useSettings", () => ({
   useSettings: vi.fn(() => ({
     settings: {
       fontSize: 16,
-      model: 'gpt-4',
-      chatMode: 'plan',
-      theme: 'dark',
-      defaultChatMode: 'plan',
+      model: "gpt-4",
+      chatMode: "plan",
+      theme: "dark",
+      defaultChatMode: "plan",
+      postPlanChatMode: "plan",
       sttEnabled: false,
       ttsEnabled: false,
-      voiceInputMode: 'ptt',
+      voiceInputMode: "ptt",
     },
     updateFontSize: vi.fn(),
     updateModel: vi.fn(),
     updateChatMode: vi.fn(),
     updateTheme: vi.fn(),
     updateDefaultChatMode: vi.fn(),
+    updatePostPlanChatMode: vi.fn(),
     updateSttEnabled: vi.fn(),
     updateTtsEnabled: vi.fn(),
     updateVoiceInputMode: vi.fn(),
     resetSettings: vi.fn(),
   })),
-}))
+}));
 
-vi.mock('../hooks/useTmuxSessions', () => ({
-  useTmuxSessions: vi.fn(() => ({})),
-}))
+vi.mock("../hooks/useProjects", () => ({
+  useProjects: vi.fn(() => makeProjectsHookState()),
+}));
 
-vi.mock('../hooks/useMcp', () => ({
+vi.mock("../hooks/useSessionCatalog", () => ({
+  useSessionCatalog: vi.fn(() => makeSessionCatalogState()),
+}));
+
+vi.mock("../hooks/useMcp", () => ({
   useMcp: vi.fn(() => ({ servers: [], toolsByServer: {}, fetchToolSchema: vi.fn() })),
-}))
+}));
 
-vi.mock('../hooks/useSkills', () => ({
+vi.mock("../hooks/useSkills", () => ({
   useSkills: vi.fn(() => ({ skills: [] })),
-}))
+}));
 
-vi.mock('../hooks/useColonAutocomplete', () => ({
+vi.mock("../hooks/useColonAutocomplete", () => ({
   useColonAutocomplete: vi.fn(() => ({
     paletteItems: [],
     filterInput: vi.fn(),
     parseColonCommand: vi.fn(),
     resolveInjectContext: vi.fn(),
   })),
-}))
+}));
 
-vi.mock('../hooks/useSessions', () => ({
-  useSessions: vi.fn(() => makeSessionsHookState()),
-}))
+vi.mock("../hooks/useAgentDefinitions", () => ({
+  useAgentDefinitions: vi.fn(() => ({
+    definitions: [],
+    globalDefs: [],
+    projectDefs: [],
+    showScopeToggle: false,
+    hasGlobal: false,
+    hasProject: false,
+  })),
+}));
 
-vi.mock('../hooks/useAgentDefinitions', () => ({
-  useAgentDefinitions: vi.fn(() => ({})),
-}))
+vi.mock("../components/Sidebar", () => ({
+  Sidebar: () => null,
+}));
 
-// Mock CSS imports
-vi.mock('./App.css', () => ({}))
+vi.mock("../components/ProjectSelector", () => ({
+  ProjectSelector: () => <div data-testid="project-selector" />,
+}));
 
-// Mock lazy components
-vi.mock('./components/dashboard/DashboardPage', () => ({ DashboardPage: () => <div>Dashboard</div> }))
-vi.mock('./components/chat/ChatPage', () => ({ ChatPage: () => <div>Chat</div> }))
-vi.mock('./components/sessions/SessionsPage', () => ({ SessionsPage: () => <div>Sessions</div> }))
+vi.mock("../components/dashboard/DashboardPage", () => ({
+  DashboardPage: () => <div>Dashboard</div>,
+}));
 
-// Mock window.matchMedia
-Object.defineProperty(window, 'matchMedia', {
+vi.mock("../components/chat/ChatPage", () => ({
+  ChatPage: () => <div>Chat</div>,
+}));
+
+Object.defineProperty(window, "matchMedia", {
   writable: true,
-  value: vi.fn().mockImplementation(query => ({
+  value: vi.fn().mockImplementation((query) => ({
     matches: false,
     media: query,
     onchange: null,
-    addListener: vi.fn(), // Deprecated
-    removeListener: vi.fn(), // Deprecated
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })),
-})
+});
 
-describe('App wiring', () => {
+describe("App wiring", () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    const storage = new Map<string, string>()
-    Object.defineProperty(globalThis, 'localStorage', {
+    vi.clearAllMocks();
+    window.location.hash = "";
+
+    const storage = new Map<string, string>();
+    Object.defineProperty(globalThis, "localStorage", {
       value: {
         getItem: vi.fn((key: string) => storage.get(key) ?? null),
         setItem: vi.fn((key: string, value: string) => {
-          storage.set(key, value)
+          storage.set(key, value);
         }),
         removeItem: vi.fn((key: string) => {
-          storage.delete(key)
+          storage.delete(key);
         }),
         clear: vi.fn(() => {
-          storage.clear()
+          storage.clear();
         }),
       },
       configurable: true,
       writable: true,
-    })
-    // Mock fetch for UI settings
-    globalThis.fetch = vi.fn(() => Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({ selectedProjectId: 'p1' })
-    })) as any
-  })
+    });
 
-  it('calls sendProjectChange and setProjectIdRef when effectiveProjectId is set', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      }),
+    ) as unknown as typeof fetch;
+  });
+
+  it("uses projects from useProjects to resolve the effective project", async () => {
     await act(async () => {
-      render(<App />)
-    })
+      render(<App />);
+    });
 
     await waitFor(() => {
-      expect(mockSetProjectIdRef).toHaveBeenCalled()
-      expect(mockSendProjectChange).toHaveBeenCalled()
-    })
-  })
+      expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
+      expect(mockSendProjectChange).toHaveBeenCalledWith("repo-project");
+    });
+  });
 
-  it('preserves an explicit fresh local conversation instead of restoring the most recent session', async () => {
-    const switchConversation = vi.fn()
-    const startNewChat = vi.fn()
+  it("preserves an explicit fresh local conversation instead of restoring the most recent session", async () => {
+    const switchConversation = vi.fn();
+    const startNewChat = vi.fn();
 
     vi.mocked(useChat).mockReturnValue({
       ...makeChatHookState(),
-      conversationId: 'local-new-chat',
+      conversationId: "local-new-chat",
       switchConversation,
       startNewChat,
-    } as any)
-    vi.mocked(useSessions).mockReturnValue({
-      ...makeSessionsHookState(),
-      filteredSessions: [
+    } as never);
+
+    vi.mocked(useSessionCatalog).mockReturnValue({
+      ...makeSessionCatalogState(),
+      sessions: [
         {
-          id: 'db-session-1',
-          external_id: 'server-session-1',
-          project_id: 'p1',
-          session_type: 'web_chat',
+          id: "db-session-1",
+          ref: "#101",
+          external_id: "server-session-1",
+          source: "claude",
+          project_id: "repo-project",
+          title: "Existing chat",
+          status: "active",
+          model: "sonnet",
+          message_count: 1,
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:01:00Z",
+          seq_num: 101,
+          summary_markdown: null,
+          digest_markdown: null,
+          git_branch: "main",
+          usage_input_tokens: 0,
+          usage_output_tokens: 0,
+          had_edits: false,
+          agent_depth: 0,
+          chat_mode: null,
+          agent_run_id: null,
+          parent_session_id: null,
+          session_type: "web_chat",
+          terminal_context: null,
         },
       ],
-    } as any)
+    } as never);
 
-    localStorage.setItem('gobby-conversation-id', 'local-new-chat')
+    localStorage.setItem("gobby-conversation-id", "local-new-chat");
 
     await act(async () => {
-      render(<App />)
-    })
+      render(<App />);
+    });
 
     await waitFor(() => {
-      expect(mockSetProjectIdRef).toHaveBeenCalled()
-    })
+      expect(mockSetProjectIdRef).toHaveBeenCalled();
+    });
 
-    expect(switchConversation).not.toHaveBeenCalled()
-    expect(startNewChat).not.toHaveBeenCalled()
-  })
-})
+    expect(switchConversation).not.toHaveBeenCalled();
+    expect(startNewChat).not.toHaveBeenCalled();
+  });
+
+  it("lands on chat for a stale #sessions hash", async () => {
+    window.location.hash = "#sessions";
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    expect(await screen.findByText("Chat")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#chat");
+    });
+  });
+
+  it("lands on chat for a stale #terminals hash", async () => {
+    window.location.hash = "#terminals";
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    expect(await screen.findByText("Chat")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#chat");
+    });
+  });
+});

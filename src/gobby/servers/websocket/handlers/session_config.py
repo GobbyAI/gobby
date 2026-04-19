@@ -86,8 +86,8 @@ async def handle_set_project(
     """Handle set_project message to switch the project for a conversation.
 
     Stops the existing CLI subprocess so the next message creates a fresh
-    session with the correct CWD and project context. Conversation history
-    is preserved via database-backed history injection.
+    session with the correct CWD and project context while keeping the
+    conversation_id stable.
 
     Message format:
     {
@@ -148,8 +148,7 @@ async def handle_set_worktree(
     """Handle set_worktree message to switch the worktree for a conversation.
 
     Stops the existing CLI subprocess so the next message creates a fresh
-    session with the worktree's CWD. Conversation history is preserved via
-    database-backed history injection.
+    session with the worktree's CWD while keeping the conversation_id stable.
 
     Message format:
     {
@@ -237,8 +236,7 @@ async def handle_set_agent(
     """Handle set_agent message to switch the active agent for a conversation.
 
     Stops the existing CLI subprocess so the next message creates a fresh
-    session with the new agent context. Conversation history is preserved
-    via database-backed history injection.
+    session with the new agent context while keeping the conversation_id stable.
 
     Message format:
     {

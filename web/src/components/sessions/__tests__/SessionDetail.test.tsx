@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { SessionDetail } from '../SessionDetail'
-import type { GobbySession } from '../../../hooks/useSessions'
+import type { GobbySession } from '../../../types/sessions'
 
 // Mock sub-components
 vi.mock('../SessionTranscript', () => ({
@@ -39,6 +39,7 @@ const SAMPLE_SESSION: GobbySession = {
   updated_at: '2026-03-01T12:00:00Z',
   seq_num: 100,
   summary_markdown: null,
+  digest_markdown: null,
   git_branch: 'feature/test',
   usage_input_tokens: 10000,
   usage_output_tokens: 5000,

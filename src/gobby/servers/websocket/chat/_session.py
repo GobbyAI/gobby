@@ -155,6 +155,7 @@ class ChatSessionMixin:
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
     _pending_providers: dict[str, str]
+    _pending_inject_contexts: dict[str, str]
     _session_create_locks: dict[str, asyncio.Lock]
 
     def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
@@ -756,8 +757,6 @@ class ChatSessionMixin:
                 logger.debug("Failed to persist selected model for web-chat session", exc_info=True)
 
         self._chat_sessions[session_key] = session
-
-        # History injection via message_manager removed (session_messages table dropped)
 
         # Fire SESSION_START (informational, fire-and-forget)
         start_data: dict[str, Any] = {}

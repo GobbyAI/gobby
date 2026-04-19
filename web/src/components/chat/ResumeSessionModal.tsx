@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Dialog, DialogContent } from "./ui/Dialog";
-import type { GobbySession } from "../../hooks/useSessions";
+import type { GobbySession } from "../../types/sessions";
 import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";
 import { SOURCE_COLORS, SOURCE_LABELS } from "../shared/sourceTheme";

@@ -13,15 +13,16 @@ import { useAuth } from "./hooks/useAuth";
 import { useChat } from "./hooks/useChat";
 import { useVoice } from "./hooks/useVoice";
 import { useSettings } from "./hooks/useSettings";
-import { useTmuxSessions } from "./hooks/useTmuxSessions";
 import { useMcp } from "./hooks/useMcp";
 import { useSkills } from "./hooks/useSkills";
 import { useColonAutocomplete } from "./hooks/useColonAutocomplete";
 import type { PaletteItem } from "./hooks/useColonAutocomplete";
-import { useSessions } from "./hooks/useSessions";
 import { useAgentDefinitions } from "./hooks/useAgentDefinitions";
+import { useProjects } from "./hooks/useProjects";
+import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
+import type { GobbySession } from "./types/sessions";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
@@ -32,7 +33,6 @@ import { SlashCommandModal } from "./components/command-browser/SlashCommandModa
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
 import { Button } from "./components/chat/ui/Button";
-import type { GobbySession } from "./hooks/useSessions";
 import type { CommandPaletteAction } from "./components/chat/CommandPalette";
 import { FilesProvider } from "./contexts/FilesContext";
 import {
@@ -82,19 +82,6 @@ function loadReasoningPreferences(): Record<string, string> {
     return {};
   }
 }
-
-
-// Lazy-load non-default page components for code splitting
-const SessionsPage = lazy(() =>
-  import("./components/sessions/SessionsPage").then((m) => ({
-    default: m.SessionsPage,
-  })),
-);
-const TerminalsPage = lazy(() =>
-  import("./components/terminals/TerminalsPage").then((m) => ({
-    default: m.TerminalsPage,
-  })),
-);
 const MemoryPage = lazy(() =>
   import("./components/memory/MemoryPage").then((m) => ({
     default: m.MemoryPage,
@@ -370,9 +357,9 @@ export default function App() {
     },
     isConnected,
   );
-  const tmux = useTmuxSessions();
   const mcp = useMcp();
   const skillsHook = useSkills();
+  const projectsHook = useProjects();
   const {
     paletteItems,
     filterInput: filterColonInput,
@@ -387,15 +374,12 @@ export default function App() {
   const [activeModal, setActiveModal] = useState<
     "skills" | "gobby" | "mcp" | null
   >(null);
-  const sessionsHook = useSessions();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>(() => {
     const hash = window.location.hash.slice(1);
     const validTabs = new Set([
       "dashboard",
       "chat",
-      "sessions",
-      "terminals",
       "projects",
       "tasks",
       "workflows",
@@ -429,12 +413,6 @@ export default function App() {
     setInitialTraceId(traceId);
     setActiveTab("traces");
   }, []);
-
-  const setSessionFilters = sessionsHook.setFilters;
-  const confirmSessionDeleted = sessionsHook.confirmSessionDeleted;
-  const markSessionDeleting = sessionsHook.markSessionDeleting;
-  const restoreSession = sessionsHook.restoreSession;
-  const refreshTmuxSessions = tmux.refreshSessions;
 
   // Global keyboard: Cmd+K opens command palette (or chord Cmd+K → t for quick capture)
   const chordPendingRef = useRef(false);
@@ -490,13 +468,16 @@ export default function App() {
   // Build project options for the selector (exclude internal system projects)
   const projectOptions = useMemo(
     () =>
-      sessionsHook.projects
+      projectsHook.allProjects
         .filter((p) => !HIDDEN_PROJECTS.has(p.name))
         .map((p) => ({
           id: p.id,
-          name: p.name === "_personal" ? "Personal" : p.name,
+          name:
+            p.name === "_personal"
+              ? "Personal"
+              : p.display_name || p.name,
         })),
-    [sessionsHook.projects],
+    [projectsHook.allProjects],
   );
 
   // Default to first repo-backed project, fall back to Personal
@@ -520,6 +501,10 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
+  const sessionCatalog = useSessionCatalog(effectiveProjectId);
+  const confirmSessionDeleted = sessionCatalog.confirmSessionDeleted;
+  const markSessionDeleting = sessionCatalog.markSessionDeleting;
+  const restoreSession = sessionCatalog.restoreSession;
   const agentDefs = useAgentDefinitions(effectiveProjectId, selectedProvider ?? undefined);
 
   useEffect(() => {
@@ -671,15 +656,6 @@ export default function App() {
     prevProjectRef.current = effectiveProjectId ?? null;
   }, [effectiveProjectId, startNewChat, projectReady]);
 
-  // Sync global project filter into sessions hook for cross-page filtering
-  useEffect(() => {
-    if (!projectReady) return;
-    setSessionFilters((prev) => ({
-      ...prev,
-      projectId: effectiveProjectId ?? null,
-    }));
-  }, [effectiveProjectId, projectReady, setSessionFilters]);
-
   // Keep useChat's projectIdRef in sync with App's effectiveProjectId
   useEffect(() => {
     setProjectIdRef(effectiveProjectId);
@@ -688,13 +664,12 @@ export default function App() {
     }
   }, [effectiveProjectId, setProjectIdRef, sendProjectChange]);
 
+  const allProjectSessions = sessionCatalog.sessions;
+
   // Web-chat sessions for main conversation list
   const webChatSessions = useMemo(
-    () =>
-      sessionsHook.filteredSessions.filter(
-        (s) => s.session_type === "web_chat",
-      ),
-    [sessionsHook.filteredSessions],
+    () => allProjectSessions.filter((session) => session.session_type === "web_chat"),
+    [allProjectSessions],
   );
 
   // Auto-select most recent server session on initial load (cross-device sync)
@@ -703,7 +678,7 @@ export default function App() {
   useEffect(() => {
     if (!projectReady) return;
     if (initialReconciliationDone.current) return;
-    if (!effectiveProjectId || sessionsHook.isLoading) return;
+    if (!effectiveProjectId || sessionCatalog.isLoading) return;
 
     // Guard: ensure fetched sessions belong to the current project.
     // After a project switch, the fetch for the new project may still be in-flight
@@ -746,7 +721,7 @@ export default function App() {
   }, [
     projectReady,
     effectiveProjectId,
-    sessionsHook.isLoading,
+    sessionCatalog.isLoading,
     webChatSessions,
     dbSessionId,
     viewingSessionId,
@@ -870,13 +845,6 @@ export default function App() {
     ],
   );
 
-  // Refresh terminal list when switching to terminals tab
-  useEffect(() => {
-    if (activeTab === "terminals") {
-      refreshTmuxSessions();
-    }
-  }, [activeTab, refreshTmuxSessions]);
-
   /* Kill a running agent via the cancel endpoint */
   const handleKillAgent = useCallback(
     async (runId: string) => {
@@ -915,54 +883,15 @@ export default function App() {
     [showToast],
   );
 
-  /* "Ask Gobby about this session" from Sessions page */
-  const handleAskGobby = useCallback(
-    (context: string) => {
-      setActiveTab("chat");
-      // Defer to next macrotask so the tab switch state update is flushed
-      setTimeout(() => {
-        try {
-          if (!isConnected) {
-            console.warn("Cannot ask Gobby: disconnected");
-            return;
-          }
-          const sent = sendMessage(
-            context,
-            settings.model,
-            undefined,
-            undefined,
-            undefined,
-            currentMainReasoning,
-          );
-          if (!sent) {
-            console.error("Failed to send message to Gobby");
-          }
-        } catch (e) {
-          console.error("Error in handleAskGobby:", e);
-        }
-      }, 0);
-    },
-    [currentMainReasoning, sendMessage, settings.model, isConnected],
-  );
-
   /* "Resume Session" from Sessions page — continue CLI session in web chat */
   const handleContinueInChat = useCallback(
     async (session: GobbySession) => {
       setActiveTab("chat");
-      await continueSessionInChat(session.id, session.project_id);
+      await continueSessionInChat(session.id, session.project_id, {
+        fallbackContext: "auto",
+      });
     },
     [continueSessionInChat],
-  );
-
-  /* "Watch in Chat" from Sessions page — observe CLI session in real-time */
-  const handleWatchInChat = useCallback(
-    (session: GobbySession) => {
-      setActiveTab("chat");
-      if (viewingSessionId !== session.id) {
-        viewSession(session.id);
-      }
-    },
-    [viewSession, viewingSessionId],
   );
 
   // Wire voice message handlers into useChat's WebSocket routing
@@ -994,7 +923,7 @@ export default function App() {
   // Drafts are seeded by handleStartNewChat; observed sessions sync mode through
   // useChat's authoritative session metadata and mode_changed events.
   useEffect(() => {
-    if (sessionsHook.isLoading) return;
+    if (sessionCatalog.isLoading) return;
     if (!dbSessionId) return;
     const session = webChatSessions.find((s) => s.id === dbSessionId);
     if (!session) return;
@@ -1003,7 +932,7 @@ export default function App() {
       normalizeChatMode(settings.defaultChatMode);
     updateChatMode(restoredMode);
     sendMode(restoredMode);
-  }, [conversationSwitchKey, sessionsHook.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [conversationSwitchKey, sessionCatalog.isLoading, dbSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleInputChange = useCallback(
     (value: string) => {
@@ -1155,7 +1084,6 @@ export default function App() {
     // Navigation items
     const navPages: Array<{ id: string; label: string }> = [
       { id: "dashboard", label: "Dashboard" },
-      { id: "sessions", label: "Sessions" },
       { id: "tasks", label: "Tasks" },
       { id: "workflows", label: "Workflows" },
       { id: "reports", label: "Reports" },
@@ -1209,7 +1137,6 @@ export default function App() {
 
   const navItems = [
     { id: "chat", label: "Chat", icon: <ChatIcon /> },
-    { id: "sessions", label: "Sessions", icon: <SessionsIcon /> },
     {
       id: "dashboard",
       label: "Dashboard",
@@ -1371,14 +1298,16 @@ export default function App() {
                   dbSessionId,
                   conversationSwitchKey,
                 }}
+                allProjectSessions={allProjectSessions}
+                allProjectSessionsLoading={sessionCatalog.isLoading}
                 conversations={{
                   sessions: webChatSessions,
                   activeSessionId: dbSessionId,
-                  deletingIds: sessionsHook.deletingIds,
+                  deletingIds: sessionCatalog.deletingIds,
                   onNewChat: handleStartNewChat,
                   onSelectSession: handleSelectConversation,
                   onDeleteSession: handleDeleteConversation,
-                  onRenameSession: sessionsHook.renameSession,
+                  onRenameSession: sessionCatalog.renameSession,
                   onKillAgent: handleKillAgent,
                   onExpireSession: handleExpireSession,
                   viewingSessionId,
@@ -1413,32 +1342,6 @@ export default function App() {
                   cancelRecording: voice.cancelRecording,
                   stopTTS: voice.stopTTS,
                 }}
-              />
-            ) : activeTab === "sessions" ? (
-              <SessionsPage
-                sessions={sessionsHook.filteredSessions}
-                filters={sessionsHook.filters}
-                onFiltersChange={sessionsHook.setFilters}
-                isLoading={sessionsHook.isLoading}
-                onAskGobby={handleAskGobby}
-                onContinueInChat={handleContinueInChat}
-                onWatchInChat={handleWatchInChat}
-                onRenameSession={sessionsHook.renameSession}
-              />
-            ) : activeTab === "terminals" ? (
-              <TerminalsPage
-                sessions={tmux.sessions}
-                attachedSession={tmux.attachedSession}
-                streamingId={tmux.streamingId}
-                sessionEnded={tmux.sessionEnded}
-                attachSession={tmux.attachSession}
-                createSession={tmux.createSession}
-                killSession={tmux.killSession}
-                refreshTerminal={tmux.refreshTerminal}
-                dismissEndedSession={tmux.dismissEndedSession}
-                sendInput={tmux.sendInput}
-                resizeTerminal={tmux.resizeTerminal}
-                onOutput={tmux.onOutput}
               />
             ) : activeTab === "projects" ? (
               <ProjectsPage projectId={effectiveProjectId} />
@@ -1503,7 +1406,7 @@ export default function App() {
       <ResumeSessionModal
         isOpen={resumeModalOpen}
         onClose={() => setResumeModalOpen(false)}
-        sessions={sessionsHook.sessions}
+        sessions={allProjectSessions}
         onResume={handleContinueInChat}
       />
 
@@ -1771,25 +1674,6 @@ function ChatIcon() {
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       <path d="M8 10h8" />
       <path d="M8 14h4" />
-    </svg>
-  );
-}
-
-function SessionsIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-      <line x1="8" y1="21" x2="16" y2="21" />
-      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   );
 }

@@ -1,4 +1,4 @@
-import type { GobbySession } from "../hooks/useSessions";
+import type { GobbySession } from "./sessions";
 import type { PaletteItem } from "../hooks/useColonAutocomplete";
 
 export type ChatMode = "accept_edits" | "bypass" | "normal" | "plan";
@@ -192,6 +192,7 @@ export interface SessionObservationMeta {
 }
 
 export type SessionInteractionMode = "none" | "observe" | "proxy";
+export type FallbackContextMode = "auto" | "summary" | "digest" | "none";
 
 export interface SwappedSessionTarget {
   sessionId: string;
@@ -249,6 +250,7 @@ export interface ChatState {
       model?: string | null;
       reasoningEffort?: string | null;
       chatMode?: string | null;
+      fallbackContext?: FallbackContextMode;
     },
   ) => Promise<string>;
   planPendingApproval: boolean;

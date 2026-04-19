@@ -4,6 +4,7 @@ import type {
   ToolCall,
   ChatMode,
   ContentBlock,
+  FallbackContextMode,
   SessionInteractionMode,
   SessionObservationMeta,
   TokenUsage,
@@ -2730,11 +2731,13 @@ export function useChat() {
         model?: string | null;
         reasoningEffort?: string | null;
         chatMode?: string | null;
+        fallbackContext?: FallbackContextMode;
       },
     ): Promise<string> => {
       const reasoningEffort = normalizeReasoningEffort(
         options?.reasoningEffort ?? null,
       );
+      const fallbackContext = options?.fallbackContext ?? null;
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         return "";
       }
@@ -2854,6 +2857,7 @@ export function useChat() {
           model: continuationModel,
           reasoning_effort: reasoningEffort,
           chat_mode: sourceChatMode,
+          fallback_context: fallbackContext,
         }),
       );
 
