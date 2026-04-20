@@ -239,6 +239,62 @@ class TestHandleSessionEnd:
             resp = handler.handle_session_end(event)
             assert resp.decision == "allow"  # Exceptions are swallowed
 
+    def test_handle_session_end_releases_interactive_lock_labels(self) -> None:
+        """When a session ends, remove its interactive-plan lock labels across
+        all tasks. Skill's own terminal cleanup handles the common case; this
+        sweep is the safety net for sessions that die before reaching cleanup.
+        """
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END, data={"cwd": "/tmp"})
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        t1 = MagicMock()
+        t1.id = "uuid-task-1"
+        t2 = MagicMock()
+        t2.id = "uuid-task-2"
+        handler._task_manager.list_tasks.return_value = [t1, t2]
+
+        handler.handle_session_end(event)
+
+        # Every matching task has the session-specific label removed
+        expected_label = "interactive:planning-in-progress:sess-1"
+        handler._task_manager.list_tasks.assert_any_call(label=expected_label, limit=200)
+        handler._task_manager.remove_label.assert_any_call("uuid-task-1", expected_label)
+        handler._task_manager.remove_label.assert_any_call("uuid-task-2", expected_label)
+        assert handler._task_manager.remove_label.call_count == 2
+
+    def test_handle_session_end_lock_sweep_failure_does_not_fail_session_end(self) -> None:
+        """If list_tasks / remove_label raises, session-end still returns allow."""
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END)
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        handler._task_manager.list_tasks.side_effect = Exception("db down")
+
+        resp = handler.handle_session_end(event)
+        assert resp.decision == "allow"
+
+    def test_handle_session_end_per_task_remove_failure_is_isolated(self) -> None:
+        """A failure removing a lock on one task must not prevent removing it
+        from the next task in the sweep."""
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END)
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        t1 = MagicMock()
+        t1.id = "uuid-a"
+        t2 = MagicMock()
+        t2.id = "uuid-b"
+        handler._task_manager.list_tasks.return_value = [t1, t2]
+
+        # First remove fails, second succeeds
+        handler._task_manager.remove_label.side_effect = [Exception("lost row"), None]
+
+        resp = handler.handle_session_end(event)
+        assert resp.decision == "allow"
+        # Both tasks were attempted
+        assert handler._task_manager.remove_label.call_count == 2
+
 
 class TestSessionStartAndHelpers:
     """Tests for handle_session_start and its internal helpers."""

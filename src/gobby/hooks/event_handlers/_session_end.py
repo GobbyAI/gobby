@@ -91,6 +91,33 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.debug(f"Failed to notify pane monitor for session {session_id}: {e}")
 
+        # Release any interactive plan-adversary lock labels owned by this
+        # session. The skill's terminal cleanup handles this on every clean
+        # exit; this sweep is the safety net for sessions that die before
+        # reaching terminal cleanup (browser tab closed, tmux pane killed,
+        # daemon crash mid-run). Must be best-effort — session-end must not
+        # fail because of a cleanup hiccup.
+        if session_id and self._task_manager:
+            try:
+                lock_label = f"interactive:planning-in-progress:{session_id}"
+                stale = self._task_manager.list_tasks(label=lock_label, limit=200)
+                for task in stale:
+                    try:
+                        self._task_manager.remove_label(task.id, lock_label)
+                        self.logger.info(
+                            f"SESSION_END: released interactive-plan lock on task {task.id} "
+                            f"(session {session_id})"
+                        )
+                    except Exception as inner_e:
+                        self.logger.warning(
+                            f"SESSION_END: failed to remove interactive-plan lock on "
+                            f"task {task.id}: {inner_e}"
+                        )
+            except Exception as e:
+                self.logger.warning(
+                    f"SESSION_END: orphan-lock sweep failed for session {session_id}: {e}"
+                )
+
         # Mark as handoff_ready if session is ending due to /clear or /compact,
         # so the new session can find this parent and generate handoff summaries.
         # Claude Code session-end uses 'reason' field (not 'source').
