@@ -56,6 +56,8 @@ sqlite3.register_converter("date", _convert_date)
 
 logger = logging.getLogger(__name__)
 
+_SQLITE_BUSY_TIMEOUT_MS = 10_000
+
 
 @runtime_checkable
 class DatabaseProtocol(Protocol):
@@ -190,10 +192,12 @@ class LocalDatabase:
                 str(self.db_path),
                 check_same_thread=False,
                 isolation_level=None,  # Autocommit mode
+                timeout=_SQLITE_BUSY_TIMEOUT_MS / 1000,
             )
             conn.row_factory = sqlite3.Row
             # Enable foreign keys
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute(f"PRAGMA busy_timeout = {_SQLITE_BUSY_TIMEOUT_MS}")
             # Last-resort safety: if test somehow connects to production DB, block writes
             if os.environ.get("GOBBY_TEST_PROTECT") == "1":
                 if self.db_path.resolve() == _PRODUCTION_DB_PATH:

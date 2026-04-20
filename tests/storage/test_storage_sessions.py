@@ -1,6 +1,7 @@
 """Tests for the LocalSessionManager storage layer."""
 
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -1042,6 +1043,95 @@ class TestLocalSessionManager:
         assert recent_after.status == "expired"
         assert nonempty_after.status == "expired"
         assert paused_after.status == "paused"
+
+    def test_prune_empty_sessions_skips_retained_references(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Prune should skip empty expired sessions still referenced by retained history."""
+        child_parent = session_manager.register(
+            external_id="child-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        task_ref = session_manager.register(
+            external_id="task-ref",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        memory_ref = session_manager.register(
+            external_id="memory-ref",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        agent_run_ref = session_manager.register(
+            external_id="agent-run-ref",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        for session_id in (child_parent.id, task_ref.id, memory_ref.id, agent_run_ref.id):
+            session_manager.update_status(session_id, "expired")
+
+        session_manager.db.execute(
+            """
+            UPDATE sessions
+            SET updated_at = datetime('now', '-2 hours')
+            WHERE id IN (?, ?, ?, ?)
+            """,
+            (child_parent.id, task_ref.id, memory_ref.id, agent_run_ref.id),
+        )
+
+        session_manager.register(
+            external_id="child-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=child_parent.id,
+        )
+        session_manager.db.execute(
+            """
+            INSERT INTO tasks (
+                id, project_id, title, created_in_session_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (str(uuid4()), sample_project["id"], "Retained task history", task_ref.id),
+        )
+        session_manager.db.execute(
+            """
+            INSERT INTO memories (
+                id, project_id, memory_type, content, source_session_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                str(uuid4()),
+                sample_project["id"],
+                "note",
+                "Retained memory history",
+                memory_ref.id,
+            ),
+        )
+        session_manager.db.execute(
+            """
+            INSERT INTO agent_runs (
+                id, parent_session_id, provider, prompt, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (str(uuid4()), agent_run_ref.id, "claude", "retained prompt", "success"),
+        )
+
+        count = session_manager.prune_empty_sessions(min_age_hours=1)
+        assert count == 0
+
+        assert session_manager.get(child_parent.id) is not None
+        assert session_manager.get(task_ref.id) is not None
+        assert session_manager.get(memory_ref.id) is not None
+        assert session_manager.get(agent_run_ref.id) is not None
 
     def test_transcript_processing_lifecycle(
         self,

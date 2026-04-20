@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 import uvicorn
 
+from gobby.telemetry import shutdown_telemetry
+
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
@@ -676,16 +678,16 @@ async def run_daemon(runner: GobbyRunner) -> None:
         await _shutdown_websocket_server(runner)
 
         try:
+            await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
+        except TimeoutError:
+            logger.warning("Lifecycle manager shutdown timed out")
+
+        try:
             logger.debug("Waiting for HTTP server lifespan shutdown")
             await asyncio.wait_for(server_task, timeout=uvicorn_drain_timeout + 5)
             logger.debug("HTTP server lifespan shutdown complete")
         except TimeoutError:
             logger.warning("HTTP server shutdown timed out")
-
-        try:
-            await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
-        except TimeoutError:
-            logger.warning("Lifecycle manager shutdown timed out")
 
         if runner.agent_lifecycle_monitor:
             try:
@@ -887,6 +889,16 @@ async def run_daemon(runner: GobbyRunner) -> None:
             logger.warning("MCP disconnect timed out")
 
         await _reap_remaining_child_processes()
+
+        try:
+            shutdown_telemetry()
+        except Exception as e:
+            logger.warning(f"Telemetry shutdown failed: {e}")
+
+        try:
+            runner.database.close()
+        except Exception as e:
+            logger.warning(f"Database close failed: {e}")
 
         # Clean up PID file on graceful shutdown
         cleanup_pid_file()

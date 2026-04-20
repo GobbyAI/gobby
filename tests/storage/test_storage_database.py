@@ -209,3 +209,8 @@ class TestLocalDatabase:
         """Test that foreign keys are enabled."""
         row = temp_db.fetchone("PRAGMA foreign_keys")
         assert row[0] == 1
+
+    def test_busy_timeout_configured(self, temp_db: LocalDatabase) -> None:
+        """Connections should wait briefly instead of failing on immediate lock contention."""
+        row = temp_db.fetchone("PRAGMA busy_timeout")
+        assert row[0] == 10000

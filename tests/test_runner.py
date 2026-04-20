@@ -983,6 +983,58 @@ class TestGobbyRunnerShutdown:
                     await asyncio.wait_for(runner.run(), timeout=10.0)
 
     @pytest.mark.asyncio
+    async def test_run_stops_lifecycle_manager_before_http_shutdown_completes(self, mock_config):
+        """Lifecycle cleanup should stop before we wait for HTTP lifespan shutdown."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.connect_all = AsyncMock()
+        mock_mcp_manager.disconnect_all = AsyncMock()
+
+        lifecycle_stopped = False
+        mock_lifecycle_manager = AsyncMock()
+        mock_lifecycle_manager.start = AsyncMock()
+
+        async def stop_lifecycle() -> None:
+            nonlocal lifecycle_stopped
+            lifecycle_stopped = True
+
+        mock_lifecycle_manager.stop = AsyncMock(side_effect=stop_lifecycle)
+
+        patches = create_base_patches(
+            mock_config=mock_config,
+            mock_mcp_manager=mock_mcp_manager,
+        )
+        patches = [p for p in patches if "SessionLifecycleManager" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.SessionLifecycleManager", return_value=mock_lifecycle_manager)
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            async def trigger_shutdown() -> None:
+                await asyncio.sleep(0)
+                runner._shutdown_requested = True
+
+            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
+                mock_server = MagicMock()
+                mock_server.should_exit = False
+
+                async def serve() -> None:
+                    while not mock_server.should_exit:
+                        await asyncio.sleep(0)
+                    await asyncio.sleep(0)
+                    assert lifecycle_stopped is True
+
+                mock_server.serve = AsyncMock(side_effect=serve)
+                mock_server_cls.return_value = mock_server
+
+                with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    asyncio.create_task(trigger_shutdown())
+                    await asyncio.wait_for(runner.run(), timeout=10.0)
+
+    @pytest.mark.asyncio
     async def test_run_handles_message_processor_shutdown_timeout(self, mock_config):
         """Test that run handles message processor shutdown timeout."""
         import asyncio
@@ -1841,6 +1893,43 @@ class TestGobbyRunnerShutdownExtended:
 
             # Disconnect should always be called (cleanup)
             mock_mcp_manager.disconnect_all.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_shuts_down_telemetry_before_closing_database(self, mock_config):
+        """Telemetry flush should happen before the main daemon DB is closed."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.connect_all = AsyncMock()
+        mock_mcp_manager.disconnect_all = AsyncMock()
+
+        patches = create_base_patches(
+            mock_config=mock_config,
+            mock_mcp_manager=mock_mcp_manager,
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            runner._shutdown_requested = True
+            events: list[str] = []
+            runner.database.close.side_effect = lambda: events.append("database")
+
+            with (
+                patch("uvicorn.Config"),
+                patch("uvicorn.Server") as mock_server_cls,
+                patch(
+                    "gobby.runner_lifecycle.shutdown_telemetry",
+                    side_effect=lambda: events.append("telemetry"),
+                ),
+            ):
+                mock_server = AsyncMock()
+                mock_server.serve = AsyncMock()
+                mock_server_cls.return_value = mock_server
+
+                with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    await runner.run()
+
+            assert events == ["telemetry", "database"]
 
 
 class TestGobbyRunnerInitEdgeCases:
