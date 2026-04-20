@@ -1,7 +1,7 @@
 ---
 name: plan
-description: This skill should be used when the user asks to "/gobby plan", "create plan", "plan feature", "write specification". Guide users through structured specification planning. Does NOT create tasks - use /gobby expand for that.
-version: "1.0.0"
+description: This skill should be used when the user asks to "/gobby plan", "create plan", "plan feature", "write specification". Guide users through structured specification planning. Does NOT create tasks - use /gobby expand for that (or the built-in adversarial loop ending in Step 8).
+version: "2.0.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -10,236 +10,410 @@ metadata:
     depth: 0
 ---
 
-# /gobby plan - Implementation Planning Skill
+# /gobby plan — Interactive Implementation Planning
 
-Guide users through structured requirements gathering and specification writing.
-**This skill creates the plan document only.** Use `/gobby expand <plan-file>` to create tasks.
+Guide the user through structured requirements gathering and specification writing, optionally with an **adversarial review loop** that spawns the `plan-adversary` agent to critique each revision before handoff to `/gobby expand`.
+
+The **drafting methodology** (phase structure, task format, TDD rules, categories, hierarchy, verification checklist) lives in the `plan-draft` skill — load it via `get_skill(name="plan-draft")` on `gobby-skills` during Step 3. Do not inline that methodology here.
+
+The **review methodology** for the adversarial loop lives in the `plan-review` skill — the spawned `plan-adversary` agent loads it; you do not need to load it in this skill.
 
 ## Workflow Overview
 
-1. **Requirements Gathering** - Ask questions to understand the feature
-2. **Draft Plan** - Write structured plan document
-3. **Plan Verification** - Check for TDD anti-patterns and dependency issues
-4. **User Approval** - Present plan for review
-5. **Hand off to /gobby expand** - User runs `/gobby expand` on the plan file
+| # | Name | Notes |
+|---|------|-------|
+| 0 | Enter Plan Mode | Required prelude; native `EnterPlanMode` boundary. |
+| 1 | Mode & Parent Task | A/P menu; attach guard; session-owned lock. |
+| 2 | Requirements Gathering | Elicit goal, constraints, risks. |
+| 3 | Draft Plan Structure | Load `plan-draft` skill; structure the plan. |
+| 4 | Write Plan Document | Write the artifact per `plan-draft` template. |
+| 5 | Plan Verification | Run `plan-draft`'s verification checklist. |
+| 6 | User Approval | Route through real `ExitPlanMode`; branch on mode. |
+| 7 | Adversarial Review Loop | Spawn `plan-adversary`; wait; revise; re-approve. |
+| 8 | Approval Handoff / Expansion | Run `expand-task` pipeline with retry/escalate. |
+| 9 | Round-budget Exhausted / Abort | Bypass / abort / restart with cleanup. |
 
-## Step 0: **REQUIRED** ENTER PLAN MODE
+Terminal cleanup is mandatory on every exit path — see the bottom of this file.
 
-Before creating any plan, you must enter Claude Code's plan mode to explore the codebase
-and design the implementation approach.
+---
 
-**How to enter**: Use the `EnterPlanMode` tool or respond with a planning-focused message
-that triggers plan mode. Plan mode allows you to read files and design without making edits.
+## Step 0: **REQUIRED** Enter Plan Mode
 
-**Why required**: Plan creation requires understanding existing code patterns, architecture
-constraints, and dependencies before proposing new work.
+Before creating any plan, enter Claude Code's plan mode so exploration happens without edits.
 
-## Step 1: Requirements Gathering
+**How to enter**: Use the `EnterPlanMode` tool or respond with a planning-focused message that triggers plan mode.
+
+**Why required**: Plan creation requires reading existing code without making edits.
+
+---
+
+## Step 1: Mode & Parent Task (NEW)
+
+### 1a. Mode menu
+
+Present the user:
+
+```
+How would you like to review this plan?
+  A) Adversarial — spawn plan-adversary each round, iterate until approved
+     (recommended; bundled in this skill)
+  P) Plain — draft, approve, hand off to /gobby expand manually
+Choice [A]:
+```
+
+- `A` → adversarial loop. Ask for `max_rounds` (default **3**, any positive integer).
+- `P` → existing manual handoff.
+
+**Always** record the choice:
+
+```python
+set_variable(name="plan_review_mode", value="adversarial" | "plain", session_id="#<self>")
+```
+
+Never omit this. `plan_review_mode` is persistent across `ExitPlanMode`; a stale adversarial value from a previous run could otherwise steer a fresh plain run into the wrong branch.
+
+Do **not** overload `plan_mode` — that is an existing boolean referenced by a dozen rules and `ExitPlanMode` resets it to `false`.
+
+### 1b. Parent-task selection
+
+Ask:
+
+```
+Attach this plan to an existing task #N, or create a new planning root?
+```
+
+- **New** →
+  ```python
+  create_task(task_type="epic", category="planning", title="<from user>")
+  ```
+  Parent task reference is what the user supplied (`#N`) or the newly created epic.
+
+- **Existing `#N`** → `get_task(#N)` and run the **attach guard** below.
+
+### 1c. Attach guard (HARD BLOCK)
+
+Two-sided mutual exclusion with the autonomous front-half orchestrator:
+
+**Active-front-half check.**
+```python
+active_fh = "conductor:front-half" in labels and "conductor:front-half-complete" not in labels
+```
+
+**Live stage-child check.** Do **not** run a single `list_tasks(parent_task_id=#N)` — the default limit hides live children on large parents. Query each stage label explicitly:
+
+```python
+STAGE_LABELS = [
+    "conductor-stage:requirements",
+    "conductor-stage:planning",
+    "conductor-stage:expansion",
+    "conductor-stage:test-architecture",
+]
+has_live_stage_child = False
+for stage in STAGE_LABELS:
+    children = list_tasks(parent_task_id=plan_parent_ref, label=stage, limit=200)
+    if any(c.status != "closed" for c in children):
+        has_live_stage_child = True
+        break
+```
+
+If `active_fh` **or** `has_live_stage_child` is true, error out:
+
+> Parent #N is under active autonomous front-half management. Wait for that flow to complete, detach it, or start a new planning root.
+
+Skill exits. A parent that previously went through autonomous planning **and completed cleanly** (both `conductor:front-half` AND `conductor:front-half-complete` present, no live stage children) is allowed.
+
+**Concurrent interactive-session lock check.** Enumerate **all** labels on the parent matching the prefix `interactive:planning-in-progress:` (labels accumulate — `add_label` only dedupes exact strings and `remove_label` only removes exact strings). For each such label, extract the session suffix and classify:
+
+| Class | Predicate | Action |
+|-------|-----------|--------|
+| **Ours** | suffix == current `session_id` | Resume; skip live/stale classification for this label. |
+| **Live** | session record exists AND one of: `status in {"active","paused","waiting"}`, `can_proxy_attach=True`, `has_terminal_liveness=True` | Error out: "Parent #N is under an active interactive planning session `<ref>`. Wait, abort, or start a new planning root." Skill exits. |
+| **Orphaned** | session absent, terminal-status (`ended`, `archived`, `crashed`), or fails the liveness predicate | Queue for removal. |
+
+Liveness is **deliberately conservative** — `paused`/`waiting` are routine between-turn states (`hooks/event_handlers/_agent.py:370`, `:392`) and must not be reaped. When uncertain, classify as live.
+
+After the sweep:
+
+- Remove every queued-orphan label: `remove_label(task_id=plan_parent_ref, label=<exact orphan string>)`.
+- Surface one notice to the user if any were recovered: "Recovered N orphaned planning locks from terminated sessions."
+- If any label was classified as "ours", fall through to **resume** instead of acquiring a new lock.
+- Otherwise, proceed to lock acquisition.
+
+### 1d. Acquire the session-owned lock
+
+Immediately after the guard passes:
+
+```python
+lock_label = f"interactive:planning-in-progress:{self_session_id}"
+add_label(task_id=plan_parent_ref, label=lock_label)
+set_variable(name="interactive_lock_label", value=lock_label, session_id="#<self>")
+set_variable(name="plan_parent_ref",        value=plan_parent_ref, session_id="#<self>")
+set_variable(name="max_rounds",             value=max_rounds,      session_id="#<self>")  # adversarial only
+```
+
+Persisting the **exact** label string is load-bearing. `remove_label` is exact-match only; terminal cleanup must pass the same string back.
+
+The companion rule `block-front-half-on-interactive-lock` blocks autonomous `front_half_tick` on this parent until the label is removed (belt-and-suspenders; the guard above is the authoritative protection).
+
+### 1e. Resume detection
+
+On skill entry, before showing the mode menu, check:
+
+```python
+existing_task_id = get_variable(name="planning_task_id", session_id="#<self>")
+if existing_task_id:
+    task = get_task(existing_task_id)
+    if task.status != "closed":
+        # resume path
+```
+
+If a prior planning task is still live, present **resume / abort / restart** instead of the A/P menu:
+
+- **Resume** — read `planning_task_id`, `artifact_path`, `current_round` from vars; jump to Step 7.4.
+- **Abort** — close the planning task with reason "User aborted resumed planning"; run terminal cleanup.
+- **Restart** — close the planning task; run terminal cleanup; re-enter Step 1 fresh.
+
+---
+
+## Step 2: Requirements Gathering
 
 Ask the user:
+
 1. "What is the name/title for this feature or project?"
-2. "What is the high-level goal? (1-2 sentences)"
+2. "What is the high-level goal? (1–2 sentences)"
 3. "Are there any constraints or requirements I should know about?"
 4. "What are the unknowns or risks?"
 
-## Step 2: Draft Plan Structure
+---
 
-Create a plan with:
-- **Epic title**: The overall feature name
-- **Phases**: Logical groupings of work (e.g., "Foundation", "Core Implementation", "Polish")
-- **Tasks**: Atomic units of work under each phase
-- **Dependencies**: Which tasks block which (use notation: `depends: #N` or `depends: Phase N`)
+## Step 3: Draft Plan Structure
 
-## Step 3: Write Plan Document
-
-Write to `.gobby/plans/{kebab-name}.md`:
-
-```markdown
-# {Epic Title}
-
-## Overview
-{Goal and context from Step 1}
-
-## Constraints
-{Constraints from Step 1}
-
-## Phase 1: {Phase Name}
-
-**Goal**: {One sentence outcome}
-
-### 1.1 {Task Title} [category: code]
-
-Target: `src/module/file.py`
-
-{Full implementation specification for this task. Everything here becomes the
-subtask description during expansion — the implementing agent sees ONLY this section.}
-
-Include:
-- File paths to create/modify
-- Code examples (classes, functions, schemas)
-- Behavioral specs and edge cases
-- SQL migrations, config snippets, etc.
+Load the drafting methodology as your first action:
 
 ```python
-class Example(Base):
-    """Show the shape of the solution with concrete code."""
-    __tablename__ = "examples"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
-
-    def validate(self) -> bool:
-        return len(self.name) > 0
+call_tool("gobby-skills", "get_skill", {"name": "plan-draft"})
 ```
 
-### 1.2 {Task Title} [category: code] (depends: 1.1)
+Follow that skill's "Plan Structure" + "Dependency Notation" sections to sketch the epic title, phases, and task outline.
 
-Target: `src/module/other.py`
+**Do not inline plan-draft's content into this skill.** If anything in the drafting methodology is unclear, re-read the `plan-draft` skill — it is authoritative.
 
-{Full implementation specification — code examples, behavioral specs, edge cases...}
+---
 
-## Phase 2: {Phase Name}
+## Step 4: Write Plan Document
 
-**Goal**: {One sentence outcome}
+Write the plan to **`.gobby/plans/task-<parent_seq>-plan.md`** (canonical path — adversary and `expand-task` both read from here). Follow `plan-draft`'s canonical template verbatim.
 
-### 2.1 {Task Title} [category: config] (depends: Phase 1)
+Remember the two load-bearing rules from `plan-draft`:
 
-Target: `config/settings.yaml`
+- **Plan content = subtask descriptions** — each `### N.N` section must be self-contained; the implementing agent sees ONLY that section.
+- **No explicit test tasks** — expansion auto-inserts TDD wrappers; `[TDD]`/`[IMPL]`/`[REF]` prefixes in a draft are bugs.
 
-{Full specification including config schema, defaults, validation rules...}
+Persist the path:
 
-```yaml
-settings:
-  timeout: 30
-  retries: 3
-  # Show exact config structure the agent should produce
+```python
+set_variable(name="artifact_path", value=".gobby/plans/task-<parent_seq>-plan.md", session_id="#<self>")
 ```
 
-## Task Mapping
+---
 
-<!-- Updated after task creation -->
-| Plan Item | Task Ref | Status |
-|-----------|----------|--------|
+## Step 5: Plan Verification
+
+Run `plan-draft`'s **Verification Checklist** (5 items: no explicit test tasks, valid dependency tree, valid categories, canonical phase syntax, self-contained sections). Fix anything that fails **before** presenting to the user.
+
+Report the verification output in the exact format `plan-draft` specifies.
+
+---
+
+## Step 6: User Approval
+
+Present the plan to the user and route the decision through the real native **`ExitPlanMode`** / `provide_plan_decision` boundary — do **not** synthesize a "user approved?" prompt. The native boundary is the only place `chat_session_permissions` records a real approval.
+
+On approval, read `plan_review_mode` and branch:
+
+- `"plain"` → tell the user to run `/gobby expand <artifact_path>`; run **terminal cleanup**; skill exits.
+- `"adversarial"` → proceed to Step 7.
+
+---
+
+## Step 7: Adversarial Review Loop (NEW, adversarial mode only)
+
+### 7.1. Create the planning epic (once per attempt)
+
+If `planning_task_id` is not already set in session vars:
+
+```python
+planning = create_task(
+    parent_task_id=plan_parent_ref,
+    task_type="epic",
+    title=f"Interactive plan for {parent_ref}",
+    category="planning",
+    labels=["interactive:planning", "planning-round:0"],
+)
+set_variable(name="planning_task_id", value=planning.id, session_id="#<self>")
 ```
 
-**Dependency Notation:**
-- Use `(depends: 1.1)` or `(depends: Phase N)` on task headings
-- Dependencies are resolved when tasks are created via `create_task` with `parent_task_id`
+Task type is **epic** so `close_task` does not require `changes_summary` (leaf-close requirement doesn't apply to orchestration containers). **Do NOT** apply `conductor:front-half` — that label is reserved for autonomous flows.
 
-## Plan Content = Subtask Descriptions
+The parent lock was already acquired in Step 1; do not re-acquire here.
 
-**Everything under a `### N.N` task heading becomes that subtask's description during expansion.**
+### 7.2. Anchor the artifact
 
-When `/gobby expand` processes your plan, it extracts each `### N.N` section and uses its
-full content as the subtask description. The implementing agent only sees its own subtask —
-it does NOT have access to the full plan document.
+If the plan file is not already at `.gobby/plans/task-<parent_seq>-plan.md`, move/write it there. The adversary and `expand-task` both read from this canonical location.
 
-**Each task section must be self-contained:**
-- File paths to create or modify
-- Code examples (classes, functions, method signatures)
-- Config snippets, SQL migrations, YAML schemas
-- ASCII diagrams, data flow descriptions
-- Behavioral specs and edge cases
-- Everything the implementing agent needs to do the work
+### 7.3. Round accounting
 
-**Do NOT defer detail.** If you know the model fields, list them. If you know the SQL
-schema, write it. If you know the function signature, include it. Brief bullets like
-"implement the user model" force the implementing agent to guess — and it will guess wrong.
+Read `current_round` from the `planning-round:N` label on the planning epic (default `0`). **Internal state is 0-indexed** (matches autonomous front-half convention); **all user-visible and adversary-facing surfaces use `current_round + 1`**. First round is `planning-round:0` internally but "Round 1" in every message.
 
-## Step 4: Plan Verification (REQUIRED)
+Surface: `Round {current_round + 1} of {max_rounds}`.
 
-Before presenting to the user, verify the plan does NOT contain TDD anti-patterns:
+### 7.4. Spawn the adversary
 
-### Check 1: No Explicit Test Tasks
+Mirror the autonomous front-half's prompt shape (`_front_half.py::_adversary_prompt`):
 
-Scan for tasks that should NOT exist (TDD sandwich creates these automatically):
-
-**FORBIDDEN patterns - remove these if found:**
-- `"Write tests for..."` or `"Add tests for..."`
-- `"Test..."` as task title prefix
-- `"[TDD]..."` or `"[IMPL]..."` or `"[REF]..."`
-- `"Ensure tests pass"` or `"Run tests"`
-- `"Add unit tests"` or `"Add integration tests"`
-- Any task with `test` as the primary verb
-
-**ALLOWED (these are fine):**
-- `"Add TestClient fixture"` (not a test task, but test infrastructure)
-- `"Configure pytest settings"` (configuration, not test writing)
-
-### Check 2: Dependency Tree Validation
-
-Verify the dependency structure is valid:
-
-1. **No circular dependencies**: Task A → B → A is invalid
-2. **No missing dependencies**: If Task B depends on Task A, Task A must exist
-3. **Phase dependencies are valid**: `depends: Phase N` must reference an existing phase
-4. **Leaf tasks are implementation work**: Bottom-level tasks should be concrete work, not meta-tasks
-
-### Check 3: Task Categorization
-
-Ensure each task has a valid category:
-- `code` - Implementation tasks (gets TDD triplets)
-- `config` - Configuration changes (gets TDD triplets)
-- `docs` - Documentation tasks (no TDD)
-- `refactor` - Refactoring tasks, including updating existing tests (no TDD)
-- `test` - Test infrastructure (no TDD)
-- `research` - Investigation tasks (no TDD)
-- `planning` - Architecture/design (no TDD)
-- `manual` - Manual verification (no TDD)
-
-### Verification Output
-
-After verification, report:
-```
-Plan Verification:
-✓ No explicit test tasks found
-✓ Dependency tree is valid (no cycles, all refs exist)
-✓ Categories assigned correctly
-
-Ready for user approval.
+```python
+run = spawn_agent(
+    agent="plan-adversary",
+    task_id=planning_task_id,
+    parent_session_id=<self>,
+    prompt=(
+        f"Plan artifact: {artifact_path}\n"
+        f"Parent task: {plan_parent_ref}\n"
+        f"Display round: {current_round + 1}\n"
+        f"... (any docs the parent references)"
+    ),
+)
+set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 ```
 
-Or if issues found:
-```
-Plan Verification:
-✗ Found 2 explicit test tasks (removed):
-  - "Add tests for user authentication" → REMOVED
-  - "Ensure all tests pass" → REMOVED
-✓ Dependency tree is valid
-✓ Categories assigned correctly
+The spawn path auto-injects `assigned_task_id` and auto-claims the task for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here.
 
-Plan updated. Ready for user approval.
+### 7.5. Wait for the adversary
+
+Surface "Adversary reviewing — blocking turn", then:
+
+```python
+wait_for_completion(completion_id=adversary_run_id)
 ```
 
-## Step 5: User Approval & Handoff
+This is push-based via `asyncio.Event` (`events/completion_registry.py:101-120`). It fires on agent exit, and if the adversary finishes before the wait is called the stored result still returns immediately — no polling, no early-completion race.
 
-Present the plan to the user:
-- Show the full plan document
-- Show verification results
-- Ask: "Does this plan look correct? Would you like any changes?"
-- Make changes if requested
+### 7.6. Interpret the result
 
-Once approved, tell the user:
+`get_task(planning_task_id)` and branch on status:
+
+- **`review_approved`** → go to Step 8.
+- **`escalated`** with `escalation_reason` starting `planning_changes_requested:`
+  1. Extract the section `## Adversary Findings — Round {current_round + 1}` from the planning task description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
+  2. Present it verbatim to the user.
+  3. Bump the round label: `update_task(planning_task_id, labels=["interactive:planning", f"planning-round:{current_round + 1}"])`.
+  4. `de_escalate_task(task_id=planning_task_id, reason="Adversary requested changes; starting next revision round", target_status="open")` — all three args spelled out; signature per `_lifecycle_status.py:461-476`.
+  5. If `current_round + 1 >= max_rounds` → go to Step 9.
+  6. Otherwise **re-enter plan mode** (call `EnterPlanMode`), revise the plan file with the user, route the revised plan through the real `ExitPlanMode` approval boundary again, then loop back to 7.4.
+
+- **`escalated`** with `escalation_reason` starting `needs_requirements:`
+  1. Surface the questions to the user.
+  2. `de_escalate_task(task_id=planning_task_id, reason="User providing clarifications", target_status="open")`.
+  3. Re-enter plan mode, gather clarifications, revise the plan, route through `ExitPlanMode`, loop to 7.4.
+
+- **Any other terminal state** → treat as adversary crash. Surface the state + raw `wait_for_completion` result. Go to Step 9.
+
+**Why re-enter plan mode each round:** the user's native approval boundary — the whole point of pair-programming around a spec — runs through `ExitPlanMode` / `provide_plan_decision` (`chat_session_permissions.py:117`), which is only active while `plan_mode=true`. Pure file edits outside plan mode would silently skip the approval gate. Rounds 2+ must also go through the boundary, so every revision round re-enters plan mode. `ExitPlanMode` clears `plan_mode` and `plan_skill_loaded` only — our `plan_review_mode` and other session vars survive.
+
+Chat-session plan-state reset also clears UI plan-artifact vars like `_plan_file_path` on mode changes (`chat_session_permissions.py:362`); we re-write `artifact_path` and the plan file on each re-entry so that is harmless.
+
+---
+
+## Step 8: Approval Handoff / Expansion (NEW)
+
+The skill stays in control through success and failure — no "exit and run a raw tool" paths. The `expand-task` pipeline owns the run and validation (`expand-task.yaml:66,:74`); retry, planning-epic close, and state cleanup are the skill's job.
+
+### 8.1. Run the pipeline
+
+```python
+execution = run_pipeline(
+    name="expand-task",
+    inputs={"task_id": plan_parent_ref, "plan_file": artifact_path},
+)
+wait_for_completion(completion_id=execution.execution_id)
 ```
-Plan approved! To create tasks from this plan, run:
 
-/gobby expand <plan-file-path>
+### 8.2. Branch on outcome
 
-This will:
-1. Create a root epic from the plan title
-2. Create phase sub-epics under the root (one per ## Phase section)
-3. For each phase, create feature tasks with TDD sandwiches
-4. Wire up intra-phase and cross-phase dependencies
+- **Success** —
+  1. `get_pipeline_status(execution_id)` — report child-task count to the user.
+  2. `close_task(planning_task_id, reason="Interactive planning complete; expansion launched")`. The planning epic needs no `changes_summary` (epic exemption).
+  3. Run **terminal cleanup** (clear all session vars, remove `interactive_lock_label` from parent).
+  4. Skill exits.
+
+- **Failure** — surface the pipeline error. **Do not close the planning task.** Present three choices:
+  1. **Retry** (default) — loop back to 8.1 with the same inputs. Count failures; after **3 consecutive failures** fall through to Escalate.
+  2. **Retry with overrides** — ask for `provider`/`model` overrides; loop to 8.1 with those added to `inputs`.
+  3. **Escalate** — `escalate_task(planning_task_id, reason=f"expansion_failed: {error}")`; run terminal cleanup; skill exits. The user can pick the escalated planning epic up later.
+
+### 8.3. Stay out of test-architecture
+
+Do **not** advance into the test-architecture stage. That is the autonomous front-half's domain; the interactive skill ends at expansion.
+
+---
+
+## Step 9: Round-budget Exhausted / Abort (NEW)
+
+Entered when `current_round + 1 >= max_rounds` or the adversary crashed.
+
+Present the final `## Adversary Findings` and any escalation reasons to the user. Offer three choices; **each one runs terminal cleanup** before the skill exits so the planning epic is disposed of and the parent lock is released.
+
+| Choice | Disposition of the planning epic | Then |
+|--------|----------------------------------|------|
+| **Revise manually + run `/gobby expand` directly** | `close_task(planning_task_id, reason="User bypassed adversarial gate; running /gobby expand manually")` | Terminal cleanup; plan file stays in place. |
+| **Abort** | `close_task(planning_task_id, reason="User aborted adversarial planning")` | Terminal cleanup. |
+| **Restart** | `close_task(planning_task_id, reason="Restart: planning round budget exhausted, beginning a new attempt")` | Terminal cleanup (releases the lock); re-enter Step 1 fresh. |
+
+Restart is a full re-seed — the user gets the A/P menu again, re-confirms `max_rounds`, and the guard re-runs against current parent state. We deliberately do not carry "same attempt" state across restart; doing so would require owner semantics deeper than we want to add for this feature.
+
+---
+
+## Terminal Cleanup (MANDATORY)
+
+Every exit path from this skill — Step 6 plain-mode exit, Step 8 success, Step 8 failure/Escalate, Step 9 bypass/abort/restart, adversary crash — **must** run the same cleanup:
+
+```python
+lock_label = get_variable(name="interactive_lock_label", session_id="#<self>")
+if lock_label:
+    remove_label(task_id=plan_parent_ref, label=lock_label)
+
+# Clear session vars — last so the lock-release always has the stored label.
+for name in (
+    "plan_review_mode",
+    "plan_parent_ref",
+    "planning_task_id",
+    "artifact_path",
+    "adversary_run_id",
+    "current_round",
+    "max_rounds",
+    "interactive_lock_label",
+):
+    set_variable(name=name, value=None, session_id="#<self>")
 ```
 
-**This skill ends here.** Task creation is handled by `/gobby expand`.
+Using the **exact** value stored in `interactive_lock_label` is critical — `remove_label` is exact-match only. Using the un-suffixed prefix would silently do nothing.
 
-## Task Hierarchy (IMPORTANT)
+---
 
-Plans with multiple phases **must** produce a hierarchical task tree, not a flat list.
-`/gobby expand` creates this hierarchy automatically from the plan's `## Phase` headings.
+## Edge Cases
 
-### Required Structure
+- **User cancels mid-wait.** `wait_for_completion` is interruptible. The adversary still owns the claim; on the next skill invocation, the resume-detection branch in Step 1 picks it up and offers resume / abort / restart.
+- **Adversary crashes or never completes.** `wait_for_completion` returns an error/timeout (or wakes when the lifecycle monitor notifies on agent death). Route to Step 9 as "adversary crash." If the adversary died mid-claim, the restart path can force-release via `reopen_task` or `de_escalate_task`.
+- **Session compaction mid-wait.** `context-handoff` rules re-inject task context on compaction; session vars persist; skill re-enters at the right branch based on task status and var presence.
+- **Web UI vs CLI.** Entirely daemon-driven. The web UI sees a long-running tool call during `wait_for_completion` — same as any async MCP tool. No UI-specific work.
+- **Stale plan file from pre-adversarial drafting.** Step 4/7.2 always anchors the artifact at the canonical path; adversary and `expand-task` both read from there.
+- **Early-completion race.** Handled by the completion registry — `notify()` stores results against the registered `run_id`; a later `wait()` returns immediately if the event has already fired.
+
+---
+
+## Task Hierarchy Produced by `/gobby expand`
+
+(For reference — the tree produced after Step 8 succeeds.)
 
 ```
 L1: Root Epic (from plan title)
@@ -250,241 +424,10 @@ L1: Root Epic (from plan title)
         └── [REF] Refactor with green tests ← TDD sandwich (auto-generated)
 ```
 
-### Why Phases Must Be Sub-Epics
-
-- **TDD sandwiches are per-phase**, not per-epic — each phase gets its own [TEST]/[REF] wrapper
-- **Parallel dispatch**: phases with no cross-dependencies can be dispatched independently
-- **Progress tracking**: phase completion is visible without scanning 30+ flat tasks
-- **Dependency scoping**: intra-phase deps are local, cross-phase deps are explicit
-
-### How /gobby expand Handles Phases
-
-When expand processes a plan file:
-
-1. Creates root epic from `# Title`
-2. For each `## Phase N: Name` section:
-   - Creates a sub-epic under the root
-   - Saves an expansion spec with that phase's `### N.N` tasks
-   - Executes expansion with `tdd=true` — adds [TEST] and [REF] wrappers per phase
-3. Wires cross-phase dependencies (e.g., `depends: Phase N` becomes dependency on phase sub-epic)
-
-### Manual Hierarchy Creation (when expand pipeline is unavailable)
-
-If the expand pipeline fails, create the hierarchy manually:
-
-```python
-# 1. Create root epic
-epic = call_tool("gobby-tasks", "create_task", {
-    "title": "Plan Title", "task_type": "epic", "category": "code"
-})
-
-# 2. For each phase, create sub-epic
-phase1 = call_tool("gobby-tasks", "create_task", {
-    "title": "Phase 1: Foundation",
-    "task_type": "epic", "category": "code",
-    "parent_task_id": epic["ref"]
-})
-
-# 3. Start an expansion run per phase (or on the root task when phases are not split manually)
-call_tool("gobby-tasks-expansion", "start_expansion_run", {
-    "task_id": phase1["ref"],
-    "plan_file": "path/to/plan.md",
-    "auto_apply": true
-})
-
-# 4. Inspect the resulting run if needed
-call_tool("gobby-tasks-expansion", "get_latest_expansion_run", {
-    "task_id": phase1["ref"]
-})
-
-# 5. Wire cross-phase dependencies
-call_tool("gobby-tasks", "add_dependency", {
-    "task_id": phase2_first_task, "depends_on": phase1["ref"]
-})
-
-# Selective task-level handoff
-call_tool("gobby-tasks", "add_dependency", {
-    "task_id": phase2_codegen_task, "depends_on": phase1_schema_task
-})
-```
-
-Use the phase-level pattern when all of Phase 2 must wait for the whole Phase 1
-sub-epic. Use the task-level pattern when only one downstream task needs a
-specific upstream task.
+The detailed semantics (why phases must be sub-epics, how cross-phase deps wire) are covered in the `plan-draft` skill — load it with `get_skill` if you need a refresher.
 
 ---
 
-## Plan Format Reference (for /gobby expand)
-
-The following sections describe what `/gobby expand` expects and how it will process your plan.
-
-## Phase Heading Syntax
-
-Canonical form is `## Phase N: Name` (colon). Use this in new plans — all
-examples in this skill follow it.
-
-The parser also tolerates em-dash (`## Phase N — Name`), en-dash
-(`## Phase N – Name`), and ASCII hyphen (`## Phase N - Name`) for
-compatibility with existing plans, but `:` is preferred. Anything else
-(no separator, unusual punctuation) will not be recognized as a phase
-heading and that phase will be silently skipped during expansion.
-
-## Task Granularity Guidelines
-
-Each task should be:
-- **Atomic**: Completable in one AI session
-- **Testable**: Has clear pass/fail criteria
-- **Verb-led**: Starts with action verb (Add, Create, Implement, Update, Remove)
-- **Scoped**: References specific files/functions when possible
-- **Self-contained**: Each task section contains ALL implementation detail the agent needs — code examples, schemas, file paths, and behavioral specs written directly in the section
-
-Good: "Add TaskEnricher class to src/gobby/tasks/enrich.py"
-Bad: "Implement enrichment" (too vague)
-
-## TDD Compatibility (IMPORTANT)
-
-When `/gobby expand` processes your plan, it applies TDD to each code/config task automatically.
-
-### TDD Triplet Pattern
-
-Each feature task (category: code) gets expanded into three children:
-- **[TDD]** - Write failing tests first
-- **[IMPL]** - Make tests pass
-- **[REF]** - Refactor while keeping tests green
-
-```
-Feature Task
-├── [TDD] Write failing tests for feature
-├── [IMPL] Implement feature
-└── [REF] Clean up, verify tests pass
-```
-
-### Task Categories
-
-Valid categories (from `src/gobby/storage/tasks.py`):
-- `code` - Implementation tasks (gets TDD triplets)
-- `config` - Configuration changes (gets TDD triplets)
-- `docs` - Documentation tasks (no TDD)
-- `refactor` - Refactoring tasks, including updating existing tests (no TDD)
-- `test` - Test infrastructure tasks (fixtures, helpers) (no TDD)
-- `research` - Investigation tasks (no TDD)
-- `planning` - Architecture/design tasks (no TDD)
-- `manual` - Manual functional testing (observe output) (no TDD)
-
-### What /gobby plan Creates vs What /gobby expand Creates
-
-**Your plan document should contain:**
-- Feature tasks with implied `category: code` or `category: config`
-- Documentation tasks with implied `category: docs`
-- Clear phase structure and dependencies
-
-**Your plan should NOT contain:**
-- `[TDD]`, `[IMPL]`, `[REF]` prefixed tasks
-- "Write tests for: ..." tasks
-- "Ensure tests pass" tasks
-- Separate test tasks alongside implementation
-
-**When you run `/gobby expand <plan-file>`:**
-
-```
-Input: .gobby/plans/memory-v3.md
-
-Output task tree:
-#100 [epic] Memory V3 Backend                           L1 (root epic)
-├── #101 [epic] Phase 1: Protocol Layer                  L2 (phase sub-epic)
-│   ├── [TEST] Phase 1: Write failing tests              L3 (TDD sandwich)
-│   ├── #102 [task] Create protocol.py (✓ Protocol class exists with required methods)  L3 (from plan § 1.1)
-│   ├── #103 [task] Create backends/__init__.py (✓ Factory function works)               L3 (from plan § 1.2)
-│   └── [REF] Phase 1: Refactor with green tests         L3 (TDD sandwich)
-├── #104 [epic] Phase 2: Configuration -> depends-on: #101  L2 (phase sub-epic)
-│   ├── [TEST] Phase 2: Write failing tests              L3 (TDD sandwich)
-│   ├── #105 [task] Add config schema (✓ Config loads and validates)                     L3 (from plan § 2.1)
-│   └── [REF] Phase 2: Refactor with green tests         L3 (TDD sandwich)
-```
-
-**NOTE**: Each phase gets its own TDD [TEST]/[REF] sandwich. `/gobby expand` preserves
-the full plan section content in each task description. Cross-phase dependencies are wired
-between phase sub-epics (for example, `/gobby expand` will show `-> depends-on: #101`
-when Phase 2 is gated on the Phase 1 sub-epic).
-
-## Example Usage
-
-```
-User: /gobby plan
-Agent: "What feature would you like to plan?"
-User: "Add dark mode support to the app"
-Agent: [Asks clarifying questions]
-Agent: [Writes plan to .gobby/plans/dark-mode.md]
-Agent: [Runs verification - checks for TDD anti-patterns]
-Agent: "Here's the plan. Does this look correct?"
-User: "Yes, looks good"
-Agent: "Plan approved! To create tasks, run:
-        /gobby expand .gobby/plans/dark-mode.md"
-
-User: /gobby expand .gobby/plans/dark-mode.md
-Agent: [Creates root epic, phase sub-epics, feature tasks with TDD sandwiches per phase]
-Agent: "Created 3 phases, 12 feature tasks under epic #47 with TDD and validation criteria."
-```
-
 ## Optional: Workflow-Enforced Planning
 
-For stricter enforcement of the planning process with step gates and tool restrictions,
-you can activate the `plan-expansion` workflow instead of following this skill manually.
-
-### When to Use the Workflow
-
-Use the workflow when you want:
-- **Hard step gates** - Can't proceed to task creation without approval
-- **Tool restrictions** - Edit/Write blocked during discovery and gather phases
-- **Loop enforcement** - Expansion loop can't be skipped or abandoned
-- **State persistence** - Workflow state survives context compaction
-
-### How to Activate
-
-After gathering requirements (Step 1), activate the workflow:
-
-```python
-call_tool("gobby-workflows", "activate_workflow", {
-    "name": "plan-expansion",
-    "variables": {
-        "context_analyzed": false,  # Start from discovery
-        "apc_choice": null
-    }
-})
-```
-
-Or skip discovery if you've already analyzed the codebase:
-
-```python
-call_tool("gobby-workflows", "activate_workflow", {
-    "name": "plan-expansion",
-    "step": "gather",  # Start from requirements elicitation
-    "variables": {
-        "context_analyzed": true
-    }
-})
-```
-
-### Workflow Steps
-
-1. **discover** - Analyze existing context (blocks Edit/Write)
-2. **gather** - A/P/C elicitation menu (blocks Edit/Write)
-3. **draft_plan** - Write plan document (only .gobby/plans/ allowed)
-4. **verify_plan** - Check structure and dependencies
-5. **create_hierarchy** - Create epic → phase → task structure
-6. **expand_loop** - Auto-expand feature tasks with TDD
-7. **cleanup** - Evaluate tree, fix deps, identify duplicates, offer cleanup
-8. **verify_tasks** - Confirm task tree and update plan
-9. **complete** - Workflow finished
-
-### Hybrid Approach
-
-The skills and workflow are complementary:
-- **`/gobby plan`**: Interactive flexibility for requirements and drafting
-- **`/gobby expand`**: Creates tasks with TDD and validation
-- **Workflow**: Deterministic expansion with enforced gates
-
-Recommended pattern:
-1. Use `/gobby plan` for Steps 1-5 (requirements through approval)
-2. Use `/gobby expand <plan-file>` to create tasks
-3. Or activate `plan-expansion` workflow for stricter enforcement
+The `plan-expansion` workflow template still exists as a stricter alternative (hard step gates, tool restrictions, loop enforcement). It is documented in `docs/guides/workflows-overview.md`. `/gobby plan` does **not** activate it automatically — use whichever activation path you have configured today.
