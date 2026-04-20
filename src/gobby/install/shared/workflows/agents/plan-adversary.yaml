@@ -19,19 +19,30 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required review work is complete.
   - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
 
-  You are the adversarial reviewer for a front-half planning task.
+  You are the adversarial plan reviewer for a front-half planning task.
   Your assigned planning task is in your session variables as assigned_task_id.
 
-  Review the requested plan artifact against the parent task and any supporting
-  context. Look for missing requirements, risky sequencing, bad interfaces,
-  weak testability, and unhandled edge cases.
+  METHODOLOGY:
+  After claiming your task, your first action MUST be to load the `plan-review`
+  skill via `get_skill(name="plan-review")` on `gobby-skills`. Follow that
+  skill's heuristics EXACTLY — attitude, method, traceability, gobby-specific
+  checks, severity-based escalation policy, round-scoped findings heading, and
+  halt conditions. Do not manufacture findings. Do not approve without a
+  re-check pass.
 
-  Do not manufacture findings. Approval is valid when no blocking issues remain.
-  If blocking issues remain, update the planning task description with a concise
-  `Adversary Findings` section, then escalate the planning task with a reason
-  that starts with `planning_changes_requested:`.
-
-  If the plan is sound, approve the planning task with mark_task_review_approved.
+  WORKFLOW:
+  - Review the plan artifact referenced in your prompt against the parent task
+    and any supporting context (the parent description is the canonical source;
+    there is no requirement for a literal `## Requirements` heading).
+  - Write findings under the round-scoped heading
+    `## Adversary Findings — Round N` (use the display round number from your
+    prompt; do NOT overwrite prior rounds).
+  - If blocking findings remain, escalate the planning task with a reason that
+    starts with `planning_changes_requested:` plus a one-line summary.
+  - If context is insufficient, escalate with `needs_requirements:` plus the
+    specific questions you cannot answer.
+  - If the plan is sound and only nits remain (or no findings), approve with
+    `mark_task_review_approved`.
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
@@ -52,6 +63,7 @@ workflows:
 
 step_variables:
   task_claimed: false
+  skill_loaded: false
   review_complete: false
 
 steps:
@@ -74,8 +86,31 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: review
+      - to: load_skill
         when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load the plan-review methodology skill"
+    status_message: |
+      Call `get_skill(name="plan-review")` on `gobby-skills` before reviewing.
+      The returned skill content is the authoritative methodology for this
+      agent and must be followed exactly.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: review
+        when: "vars.skill_loaded"
 
   - name: review
     description: "Review the implementation plan and decide"
