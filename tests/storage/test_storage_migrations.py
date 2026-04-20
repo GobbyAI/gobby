@@ -185,6 +185,21 @@ def test_tasks_claimed_session_fk_is_set_null_on_fresh_db(tmp_path) -> None:
     assert claimed_fk["on_delete"] == "SET NULL"
 
 
+def test_prune_empty_session_indexes_exist_on_fresh_db(tmp_path) -> None:
+    """Fresh databases should include the prune_empty_sessions indexes."""
+    db_path = tmp_path / "prune_empty_session_indexes.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    session_indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(sessions)")}
+    assert "idx_sessions_prune_status_updated_at" in session_indexes
+    assert "idx_sessions_parent_session" in session_indexes
+
+    memory_indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(memories)")}
+    assert "idx_memories_source_session" in memory_indexes
+
+
 def test_migration_211_adds_claimed_session_id_to_agent_runs(tmp_path) -> None:
     """Migration 211 should add the claimed_session_id column to existing databases."""
     db_path = tmp_path / "agent_runs_claim_owner_partial.db"

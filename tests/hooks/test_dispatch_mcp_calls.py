@@ -327,7 +327,12 @@ class TestDispatchMcpCallsProxyNone:
 class TestDispatchMcpCallsSessionResolution:
     """Tests for external_id → platform UUID resolution in the dispatcher."""
 
-    def _proxy_with_session_manager(self, *, resolve_to: str | None, resolve_exc=None):
+    def _proxy_with_session_manager(
+        self,
+        *,
+        resolve_to: str | None,
+        resolve_exc=None,
+    ) -> tuple[AsyncMock, MagicMock]:
         """Build an AsyncMock proxy whose _mcp_manager.session_manager resolves refs."""
         session_manager = MagicMock()
         session_manager.db = MagicMock()

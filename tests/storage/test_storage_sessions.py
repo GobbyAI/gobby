@@ -1133,6 +1133,78 @@ class TestLocalSessionManager:
         assert session_manager.get(memory_ref.id) is not None
         assert session_manager.get(agent_run_ref.id) is not None
 
+    def test_prune_empty_sessions_large_batch_preserves_retained_refs(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Large prune batches should delete stale empties while keeping referenced rows."""
+        retained_parent = session_manager.register(
+            external_id="retained-parent",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        retained_memory = session_manager.register(
+            external_id="retained-memory",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        stale_sessions = [
+            session_manager.register(
+                external_id=f"bulk-prune-{index}",
+                machine_id="machine",
+                source="claude",
+                project_id=sample_project["id"],
+            )
+            for index in range(200)
+        ]
+
+        stale_ids = [retained_parent.id, retained_memory.id, *(s.id for s in stale_sessions)]
+        for session_id in stale_ids:
+            session_manager.update_status(session_id, "expired")
+
+        placeholders = ", ".join("?" for _ in stale_ids)
+        session_manager.db.execute(
+            f"""
+            UPDATE sessions
+            SET updated_at = datetime('now', '-3 hours')
+            WHERE id IN ({placeholders})
+            """,
+            tuple(stale_ids),
+        )
+
+        session_manager.register(
+            external_id="retained-child",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=retained_parent.id,
+        )
+        session_manager.db.execute(
+            """
+            INSERT INTO memories (
+                id, project_id, memory_type, content, source_session_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (
+                str(uuid4()),
+                sample_project["id"],
+                "note",
+                "Retained memory history",
+                retained_memory.id,
+            ),
+        )
+
+        count = session_manager.prune_empty_sessions(min_age_hours=1)
+
+        assert count == len(stale_sessions)
+        assert session_manager.get(retained_parent.id) is not None
+        assert session_manager.get(retained_memory.id) is not None
+        assert all(session_manager.get(session.id) is None for session in stale_sessions)
+
     def test_transcript_processing_lifecycle(
         self,
         session_manager: LocalSessionManager,

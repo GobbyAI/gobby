@@ -887,6 +887,37 @@ def _migrate_add_token_events(db: LocalDatabase) -> None:
             )
 
 
+def _add_prune_empty_session_indexes(db: LocalDatabase) -> None:
+    """Add the missing indexes used by prune_empty_sessions().
+
+    Targets:
+    - candidate filtering on ``sessions(status, updated_at)``
+    - self-reference guards on ``sessions(parent_session_id)``
+    - retained-memory guards on ``memories(source_session_id)``
+
+    We intentionally do not add:
+    - ``workflow_audit_log(session_id)`` because the baseline schema already has
+      ``idx_audit_session``
+    - ``pending_approvals(session_id)`` because that table is not part of the
+      current live schema
+    """
+    for statement in (
+        """
+        CREATE INDEX IF NOT EXISTS idx_sessions_prune_status_updated_at
+            ON sessions(status, updated_at)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_sessions_parent_session
+            ON sessions(parent_session_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_memories_source_session
+            ON memories(source_session_id)
+        """,
+    ):
+        db.execute(statement)
+
+
 # Migrations beyond v171.
 # Add new migrations here. Do not modify the baseline schema above.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
@@ -1430,6 +1461,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         217,
         "Add token_events ledger for event-granular token accounting",
         _migrate_add_token_events,
+    ),
+    (
+        218,
+        "Add prune_empty_sessions candidate and reference indexes",
+        _add_prune_empty_session_indexes,
     ),
 ]
 

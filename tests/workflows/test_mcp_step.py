@@ -172,8 +172,7 @@ def mock_tool_proxy():
     proxy.call_tool = AsyncMock(return_value={"success": True, "task_id": "#42"})
     # Default no-op session_manager stub so the helper's resolution branch is a
     # pass-through when tests don't care about external_id lookups.
-    proxy._mcp_manager = MagicMock()
-    proxy._mcp_manager.session_manager = None
+    proxy.session_manager = None
     return proxy
 
 
@@ -183,9 +182,9 @@ def _attach_session_manager(
     resolve_to: str | None,
     resolve_exc=None,
     external_id: str | None = None,
-):
+) -> MagicMock:
     """Attach a session_manager stub to a mock tool_proxy so the helper
-    resolves session refs via the MCP manager."""
+    resolves session refs via ToolProxyService.session_manager."""
     session_manager = MagicMock()
     session_manager.db = MagicMock()
     if resolve_exc is not None:
@@ -196,7 +195,7 @@ def _attach_session_manager(
     session.external_id = external_id
     session.project_id = "proj-abc"
     session_manager.get.return_value = session
-    proxy._mcp_manager.session_manager = session_manager
+    proxy.session_manager = session_manager
     return session_manager
 
 
@@ -237,6 +236,7 @@ class TestExecuteMCPStep:
             mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
         )
 
+        _attach_session_manager(mock_tool_proxy, resolve_to="pipeline-session-123")
         context: dict = {"inputs": {}, "steps": {}, "session_id": "pipeline-session-123"}
         await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 

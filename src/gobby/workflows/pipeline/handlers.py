@@ -35,9 +35,7 @@ async def execute_mcp_step(
     )
 
     pipeline_session_id = context.get("session_id")
-    session_manager = None
-    if hasattr(tool_proxy, "_mcp_manager"):
-        session_manager = getattr(tool_proxy._mcp_manager, "session_manager", None)
+    session_manager = tool_proxy.session_manager
     tokens = resolve_and_seed_contexts(
         session_ref=pipeline_session_id,
         session_manager=session_manager,

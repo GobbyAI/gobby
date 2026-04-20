@@ -76,6 +76,11 @@ class ToolProxyService:
         self._tool_filter = tool_filter
         self._hook_manager_resolver = hook_manager_resolver
 
+    @property
+    def session_manager(self) -> Any | None:
+        """Expose the MCP manager session manager for shared context helpers."""
+        return getattr(self._mcp_manager, "session_manager", None)
+
     def _resolve_server_name(self, server_name: str) -> str:
         """Auto-redirect known server name aliases to the correct server."""
         return self._SERVER_SUGGESTIONS.get(server_name, server_name)

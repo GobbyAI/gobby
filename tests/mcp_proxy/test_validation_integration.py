@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,14 +9,12 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.utils.session_context import session_context_for_test
 
-pytestmark = pytest.mark.unit
-
 
 # close_task requires an active session context after Change 4 — seed one for
 # every test in this module; tests that need to exercise the guard itself live
 # in tests/mcp_proxy/tools/test_task_lifecycle_coverage.py.
 @pytest.fixture(autouse=True)
-def _seed_session_context():
+def _seed_session_context() -> Generator:
     with session_context_for_test("validation-integration-session"):
         yield
 
