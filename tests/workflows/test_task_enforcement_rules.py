@@ -50,6 +50,7 @@ TASK_ENFORCEMENT_RULES = {
     "block-native-task-tools-unclaimed",
     "block-native-todo-write",
     "block-reopen-task",
+    "block-front-half-on-interactive-lock",
     "inject-transition-skill",
     "require-task-before-edit",
     "require-commit-before-status",
@@ -734,6 +735,107 @@ class TestBlockReopenTask:
         )
 
         assert response.decision == "allow"
+
+
+class TestBlockFrontHalfOnInteractiveLock:
+    """Verify block-front-half-on-interactive-lock is the mutex between the
+    interactive plan-adversary loop and the autonomous front-half orchestrator.
+    """
+
+    def test_rule_syncs(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        assert row is not None
+
+    def test_blocks_front_half_tick(self, db, manager) -> None:
+        """Rule targets the gobby-tasks-ops front_half_tick MCP call with a block effect."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.effects[0].type == "block"
+        assert "front_half_tick" in (body.when or "")
+        assert "gobby-tasks-ops" in (body.when or "")
+
+    def test_uses_task_has_label_prefix_helper(self, db, manager) -> None:
+        """The condition must call task_has_label_prefix on the target task with the
+        interactive-planning-in-progress: prefix — that's what makes it detect any
+        session's lock without caring about ownership."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert "task_has_label_prefix" in (body.when or "")
+        assert "interactive:planning-in-progress:" in (body.when or "")
+
+    def test_reason_explains_recovery(self, db, manager) -> None:
+        """The block reason must tell the operator how to clear the lock."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        reason = body.effects[0].reason or ""
+        assert "interactive plan-adversary" in reason
+        assert "lock" in reason
+
+    def test_when_condition_blocks_locked_parent_and_allows_unlocked(self) -> None:
+        """End-to-end: the when-expression evaluates True when the parent carries
+        ANY interactive:planning-in-progress:* label, and False otherwise."""
+        from gobby.workflows.safe_evaluator import (
+            SafeExpressionEvaluator,
+            build_condition_helpers,
+        )
+
+        class _FakeTask:
+            def __init__(self, labels: list[str] | None) -> None:
+                self.labels = labels
+
+        class _FakeTaskManager:
+            def __init__(self, labels: list[str] | None) -> None:
+                self._t = _FakeTask(labels)
+
+            def get_task(self, _task_id: str) -> _FakeTask:
+                return self._t
+
+        condition = (
+            "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') "
+            "and tool_input.get('server_name') == 'gobby-tasks-ops' "
+            "and tool_input.get('tool_name') == 'front_half_tick' "
+            "and task_has_label_prefix("
+            "  (tool_input.get('arguments') or {}).get('task_id'),"
+            "  'interactive:planning-in-progress:')"
+        )
+
+        event = type("E", (), {"data": {"tool_name": "mcp__gobby__call_tool"}})()
+        tool_input = {
+            "server_name": "gobby-tasks-ops",
+            "tool_name": "front_half_tick",
+            "arguments": {"task_id": "#42"},
+        }
+        ctx = {"event": event, "tool_input": tool_input}
+
+        # Locked parent → blocks
+        locked_funcs = build_condition_helpers(
+            task_manager=_FakeTaskManager(
+                ["planning-round:1", "interactive:planning-in-progress:sess-a"]
+            ),
+            context=ctx,
+        )
+        assert SafeExpressionEvaluator(ctx, locked_funcs).evaluate(condition) is True
+
+        # No lock → does not block
+        unlocked_funcs = build_condition_helpers(
+            task_manager=_FakeTaskManager(["planning-round:1"]),
+            context=ctx,
+        )
+        assert SafeExpressionEvaluator(ctx, unlocked_funcs).evaluate(condition) is False
+
+        # Different MCP call → does not block
+        tool_input_other = {
+            "server_name": "gobby-tasks-ops",
+            "tool_name": "something_else",
+            "arguments": {"task_id": "#42"},
+        }
+        ctx_other = {"event": event, "tool_input": tool_input_other}
+        assert SafeExpressionEvaluator(ctx_other, locked_funcs).evaluate(condition) is False
 
 
 class TestInjectTransitionSkill:

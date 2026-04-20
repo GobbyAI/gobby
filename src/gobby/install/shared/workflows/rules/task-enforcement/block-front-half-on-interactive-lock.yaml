@@ -1,0 +1,23 @@
+tags: [task-enforcement, enforcement, tasks, gobby, default]
+
+rules:
+  block-front-half-on-interactive-lock:
+    description: "Block front_half_tick when the target parent carries any interactive-planning lock"
+    event: before_tool
+    enabled: true
+    priority: 35
+    when: >-
+      event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
+      and tool_input.get('server_name') == 'gobby-tasks-ops'
+      and tool_input.get('tool_name') == 'front_half_tick'
+      and task_has_label_prefix(
+        (tool_input.get('arguments') or {}).get('task_id'),
+        'interactive:planning-in-progress:'
+      )
+    effects:
+      - type: block
+        reason: |
+          Parent task is under an active interactive plan-adversary loop.
+          Wait for that flow to complete (it removes the lock on terminal exit),
+          or ask the user to abort the interactive session before running the
+          autonomous front-half orchestrator on this parent.
