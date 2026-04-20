@@ -549,12 +549,8 @@ async def get_tool_schema(
                     schema = registry.get_schema(tool_name)
                     if schema:
                         response_time_ms = (time.perf_counter() - start_time) * 1000
-                        if server.tool_proxy:
-                            server.tool_proxy.record_unlocked_tool(
-                                server_name,
-                                tool_name,
-                                session_id=get_current_session_id(),
-                            )
+                        # unlocked_tools is owned by the track-schema-lookup
+                        # rule fired off the synthetic AFTER_TOOL emitted below.
                         # Build response with description only if present
                         result: dict[str, Any] = {
                             "success": True,
@@ -590,12 +586,8 @@ async def get_tool_schema(
             try:
                 tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
-                if server.tool_proxy:
-                    server.tool_proxy.record_unlocked_tool(
-                        server_name,
-                        tool_name,
-                        session_id=get_current_session_id(),
-                    )
+                # unlocked_tools is owned by the track-schema-lookup rule fired
+                # off the synthetic AFTER_TOOL emitted below.
 
                 # Build response with description only if present
                 response: dict[str, Any] = {

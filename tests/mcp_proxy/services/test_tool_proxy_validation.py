@@ -960,32 +960,11 @@ class TestWorkflowBeforeToolEnforcement:
             ["gobby-tasks"],
         )
 
-    @pytest.mark.asyncio
-    async def test_get_tool_schema_records_unlocked_tool_for_session(
-        self, tool_proxy_with_hooks, mock_internal_manager
-    ):
-        """Successful schema lookup should persist unlocked_tools for the session."""
-        mock_internal_manager.is_internal.return_value = True
-        mock_registry = MagicMock()
-        mock_registry.get_schema.return_value = {
-            "name": "create_task",
-            "inputSchema": {"type": "object"},
-        }
-        mock_internal_manager.get_registry.return_value = mock_registry
-
-        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
-            result = await tool_proxy_with_hooks.get_tool_schema(
-                "gobby-tasks",
-                "create_task",
-                session_id="session-123",
-            )
-
-        assert result["success"] is True
-        mock_svm_cls.return_value.append_to_set_variable.assert_called_once_with(
-            "session-123",
-            "unlocked_tools",
-            ["gobby-tasks:create_task"],
-        )
+    # NOTE: A previous test asserted that get_tool_schema directly mutated
+    # `unlocked_tools` via SessionVariableManager. That direct write was
+    # removed in favor of the `track-schema-lookup` rule firing off the
+    # synthetic AFTER_TOOL event (see TestSyntheticCodexMcpAfterTool below
+    # and tests/workflows/test_codex_skill_injection.py for end-to-end coverage).
 
 
 class TestSyntheticCodexMcpAfterTool:

@@ -309,9 +309,15 @@ class ToolProxyService:
         *,
         servers_listed: bool = False,
         listed_server: str | None = None,
-        unlocked_tool: tuple[str, str] | None = None,
     ) -> None:
-        """Persist discovery state directly for proxy-executed discovery calls."""
+        """Persist discovery state directly for proxy-executed discovery calls.
+
+        Note: ``unlocked_tools`` is intentionally NOT written here. It is owned
+        by the ``track-schema-lookup`` rule, which fires on the synthesized
+        AFTER_TOOL event for ``mcp__gobby__get_tool_schema`` (Codex via the
+        rollout-tail path in SessionMessageProcessor; Claude via its native
+        post-tool-use hook). Two writers for the same variable invites drift.
+        """
         resolved_session_id = self._resolve_platform_session_id(session_id)
         if not resolved_session_id:
             return
@@ -331,13 +337,6 @@ class ToolProxyService:
                 session_var_manager.append_to_set_variable(
                     resolved_session_id, "listed_servers", [listed_server]
                 )
-            if unlocked_tool:
-                server_name, tool_name = unlocked_tool
-                session_var_manager.append_to_set_variable(
-                    resolved_session_id,
-                    "unlocked_tools",
-                    [f"{server_name}:{tool_name}"],
-                )
         except Exception as exc:
             logger.debug("Failed to record discovery state for %s: %s", resolved_session_id, exc)
 
@@ -348,15 +347,6 @@ class ToolProxyService:
     def record_listed_server(self, server_name: str, session_id: str | None = None) -> None:
         """Record a successful list_tools call for a specific server."""
         self._record_discovery_state(session_id, listed_server=server_name)
-
-    def record_unlocked_tool(
-        self,
-        server_name: str,
-        tool_name: str,
-        session_id: str | None = None,
-    ) -> None:
-        """Record a successful get_tool_schema call for a specific tool."""
-        self._record_discovery_state(session_id, unlocked_tool=(server_name, tool_name))
 
     def _prepare_arguments(
         self,
@@ -1096,8 +1086,6 @@ class ToolProxyService:
             if registry:
                 schema = registry.get_schema(tool_name)
                 if schema:
-                    if record_discovery:
-                        self.record_unlocked_tool(server_name, tool_name, session_id=session_id)
                     return {"success": True, "tool": schema}
                 return {
                     "success": False,
@@ -1120,8 +1108,6 @@ class ToolProxyService:
         # Use MCP manager for external servers
         try:
             result = await self._mcp_manager.get_tool_input_schema(server_name, tool_name)
-            if record_discovery and result.get("success"):
-                self.record_unlocked_tool(server_name, tool_name, session_id=session_id)
             return result
         except Exception as e:
             raise MCPError(f"Failed to get schema for {tool_name} on {server_name}: {e}") from e

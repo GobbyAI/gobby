@@ -835,10 +835,15 @@ class TestGetToolSchema:
         assert data["server"] == "gobby-tasks"
         assert "inputSchema" in data
 
-    def test_get_schema_records_session_discovery_state(
+    def test_get_schema_emits_after_tool_with_session_header(
         self, session_storage: LocalSessionManager
     ) -> None:
-        """Session header should drive unlocked_tools tracking for schema lookups."""
+        """Session header should propagate to the synthetic AFTER_TOOL event.
+
+        ``unlocked_tools`` is now owned by the ``track-schema-lookup`` rule
+        firing off this synthetic event (no direct mutation), so the test
+        asserts the dispatch carries the session id.
+        """
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -850,6 +855,7 @@ class TestGetToolSchema:
             ]
         )
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -859,10 +865,13 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        server._tools_handler.tool_proxy.record_unlocked_tool.assert_called_once_with(
-            "gobby-tasks",
-            "list_tasks",
+        result = response.json()
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
             session_id="123e4567-e89b-12d3-a456-426614174000",
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            result=result,
+            is_failure=False,
         )
 
     def test_get_schema_emits_proxy_after_tool(self, session_storage: LocalSessionManager) -> None:
@@ -919,6 +928,7 @@ class TestGetToolSchema:
         )
         server._internal_manager = FakeInternalManager([FakeInternalRegistry(name="gobby-tasks")])
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -932,10 +942,12 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        server._tools_handler.tool_proxy.record_unlocked_tool.assert_called_once_with(
-            "gobby-tasks",
-            "list_tasks",
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
             session_id=session.id,
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            result=response.json(),
+            is_failure=False,
         )
 
     def test_get_schema_internal_server_tool_not_found(
