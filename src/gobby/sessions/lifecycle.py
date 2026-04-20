@@ -475,9 +475,7 @@ class SessionLifecycleManager:
             # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
             # records (Codex MCP tool-call lifecycle); this token-event path
             # only consumes ParsedMessage fields (model, usage, message_id).
-            parsed_records = parser.parse_lines(
-                raw.splitlines(keepends=True), start_index=0
-            )
+            parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
             messages = [r for r in parsed_records if isinstance(r, ParsedMessage)]
 
         if not messages:

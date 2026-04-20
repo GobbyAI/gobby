@@ -330,9 +330,7 @@ class SessionMessageProcessor:
 
         logger.debug(f"Processed {len(parsed_messages)} messages for {session_id}")
 
-    async def _dispatch_tool_events(
-        self, session_id: str, events: list[ParsedToolEvent]
-    ) -> None:
+    async def _dispatch_tool_events(self, session_id: str, events: list[ParsedToolEvent]) -> None:
         """Synthesize BEFORE_TOOL/AFTER_TOOL HookEvents from rollout records.
 
         Codex CLI's experimental hooks fire PreToolUse/PostToolUse for shell
@@ -370,9 +368,7 @@ class SessionMessageProcessor:
                 )
 
     @staticmethod
-    def _build_codex_hook_event(
-        session_id: str, event: ParsedToolEvent
-    ) -> HookEvent | None:
+    def _build_codex_hook_event(session_id: str, event: ParsedToolEvent) -> HookEvent | None:
         if not event.server or not event.tool:
             return None
 
@@ -399,15 +395,13 @@ class SessionMessageProcessor:
 
         normalize_tool_fields(data)
 
-        timestamp = event.timestamp if event.timestamp.tzinfo else event.timestamp.replace(
-            tzinfo=UTC
+        timestamp = (
+            event.timestamp if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=UTC)
         )
 
         return HookEvent(
             event_type=(
-                HookEventType.BEFORE_TOOL
-                if event.phase == "begin"
-                else HookEventType.AFTER_TOOL
+                HookEventType.BEFORE_TOOL if event.phase == "begin" else HookEventType.AFTER_TOOL
             ),
             session_id=session_id,
             source=SessionSource.CODEX,
