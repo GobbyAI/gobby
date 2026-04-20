@@ -348,9 +348,26 @@ class SessionMessageProcessor:
         if source != "codex":
             return
 
+        # ``HookEvent.session_id`` on the wire is the *external_id* (Codex
+        # thread UUID) — HookManager's session_lookup treats it that way and
+        # resolves via the composite UNIQUE index on the sessions table:
+        # (external_id, machine_id, source, project_id). Passing the platform
+        # UUID as session_id would miss the index and fall through to
+        # auto-register-as-new-session, creating a phantom duplicate row
+        # that receives all rule effects instead of the real row.
+        # Load the registered session and rehydrate the full composite so
+        # the resolver lands on the exact row deterministically.
+        session_context = self._load_session_context(session_id)
+        if session_context is None:
+            logger.debug(
+                "Skipping Codex tool synthesis for %s: session row not resolvable",
+                session_id,
+            )
+            return
+
         for event in events:
             try:
-                hook_event = self._build_codex_hook_event(session_id, event)
+                hook_event = self._build_codex_hook_event(session_context, event)
             except Exception as exc:
                 logger.warning(
                     "Failed to build hook event from Codex tool record (%s): %s",
@@ -370,8 +387,32 @@ class SessionMessageProcessor:
                     exc,
                 )
 
+    def _load_session_context(self, session_id: str) -> dict[str, Any] | None:
+        """Rehydrate the composite-key context HookManager needs to resolve
+        the synthesized event back to the correct platform session row."""
+        if self.session_manager is None:
+            return None
+        try:
+            session = self.session_manager.get(session_id)
+        except Exception:
+            return None
+        if session is None:
+            return None
+        external_id = getattr(session, "external_id", None)
+        if not isinstance(external_id, str) or not external_id:
+            return None
+        return {
+            "external_id": external_id,
+            "machine_id": getattr(session, "machine_id", None),
+            "project_id": getattr(session, "project_id", None),
+            "platform_session_id": session_id,
+        }
+
     @staticmethod
-    def _build_codex_hook_event(session_id: str, event: ParsedToolEvent) -> HookEvent | None:
+    def _build_codex_hook_event(
+        session_context: dict[str, Any],
+        event: ParsedToolEvent,
+    ) -> HookEvent | None:
         if not event.server or not event.tool:
             return None
 
@@ -402,15 +443,23 @@ class SessionMessageProcessor:
             event.timestamp if event.timestamp.tzinfo else event.timestamp.replace(tzinfo=UTC)
         )
 
+        machine_id = session_context.get("machine_id")
+        project_id = session_context.get("project_id")
+
         return HookEvent(
             event_type=(
                 HookEventType.BEFORE_TOOL if event.phase == "begin" else HookEventType.AFTER_TOOL
             ),
-            session_id=session_id,
+            session_id=session_context["external_id"],
             source=SessionSource.CODEX,
             timestamp=timestamp,
             data=data,
-            metadata={"_synthesized_from": "codex_rollout"},
+            machine_id=machine_id if isinstance(machine_id, str) else None,
+            project_id=project_id if isinstance(project_id, str) else None,
+            metadata={
+                "_synthesized_from": "codex_rollout",
+                "_platform_session_id": session_context.get("platform_session_id"),
+            },
         )
 
     async def _process_json_session(self, session_id: str, transcript_path: str) -> None:

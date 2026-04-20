@@ -841,6 +841,23 @@ def _codex_event_msg(payload_type: str, **payload_extra) -> str:
     )
 
 
+def _fake_session_manager(
+    *,
+    external_id: str = "external-sid",
+    machine_id: str = "machine-xyz",
+    project_id: str = "project-abc",
+) -> MagicMock:
+    """Session manager stub that resolves 'sid' to a composite-key session."""
+    row = MagicMock(
+        external_id=external_id,
+        machine_id=machine_id,
+        project_id=project_id,
+    )
+    mgr = MagicMock()
+    mgr.get.return_value = row
+    return mgr
+
+
 class TestCodexMcpHookSynthesis:
     """Synthesis of BEFORE/AFTER_TOOL hook events from Codex rollout tail."""
 
@@ -849,7 +866,11 @@ class TestCodexMcpHookSynthesis:
         self, mock_db, tmp_path
     ) -> None:
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+        processor = SessionMessageProcessor(
+            mock_db,
+            hook_manager=hook_manager,
+            session_manager=_fake_session_manager(),
+        )
 
         transcript = tmp_path / "rollout.jsonl"
         invocation = {
@@ -881,7 +902,12 @@ class TestCodexMcpHookSynthesis:
 
         assert before.event_type == HookEventType.BEFORE_TOOL
         assert before.source == SessionSource.CODEX
-        assert before.session_id == "sid"
+        # session_id is the external_id (what HookManager's resolver expects);
+        # the platform UUID is stashed in metadata for downstream consumers.
+        assert before.session_id == "external-sid"
+        assert before.machine_id == "machine-xyz"
+        assert before.project_id == "project-abc"
+        assert before.metadata["_platform_session_id"] == "sid"
         assert before.data["tool_name"] == "mcp__gobby__get_tool_schema"
         # mcp_server/mcp_tool reflect the proxy boundary; the rule keys for
         # inject-task-creation-on-schema actually read `tool_input.server_name`
@@ -906,7 +932,11 @@ class TestCodexMcpHookSynthesis:
         self, mock_db, tmp_path
     ) -> None:
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+        processor = SessionMessageProcessor(
+            mock_db,
+            hook_manager=hook_manager,
+            session_manager=_fake_session_manager(),
+        )
 
         transcript = tmp_path / "rollout.jsonl"
         invocation = {
@@ -975,7 +1005,11 @@ class TestCodexMcpHookSynthesis:
         Register must not skip on a missing file; the next poll catches up.
         """
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+        processor = SessionMessageProcessor(
+            mock_db,
+            hook_manager=hook_manager,
+            session_manager=_fake_session_manager(),
+        )
 
         transcript = tmp_path / "future-rollout.jsonl"
         assert not transcript.exists()
@@ -1009,7 +1043,11 @@ class TestCodexMcpHookSynthesis:
     @pytest.mark.asyncio
     async def test_after_tool_with_err_marks_error(self, mock_db, tmp_path) -> None:
         hook_manager = MagicMock()
-        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+        processor = SessionMessageProcessor(
+            mock_db,
+            hook_manager=hook_manager,
+            session_manager=_fake_session_manager(),
+        )
 
         transcript = tmp_path / "rollout.jsonl"
         invocation = {

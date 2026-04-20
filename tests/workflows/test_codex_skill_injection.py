@@ -108,7 +108,15 @@ async def test_synthesized_after_tool_fires_inject_task_creation_rule(
         duration_ns=18_695_333,
     )
 
-    hook_event = SessionMessageProcessor._build_codex_hook_event("sid", tool_event)
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "external-sid",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
     assert hook_event is not None
 
     engine = RuleEngine(db)
@@ -137,7 +145,15 @@ async def test_synthesized_event_skipped_when_skill_already_injected(
         raw_json={},
         result={"ok": True},
     )
-    hook_event = SessionMessageProcessor._build_codex_hook_event("sid", tool_event)
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "external-sid",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
     assert hook_event is not None
 
     engine = RuleEngine(db)
@@ -164,7 +180,15 @@ async def test_synthesized_event_for_unrelated_server_does_not_fire(
         raw_json={},
         result={"ok": True},
     )
-    hook_event = SessionMessageProcessor._build_codex_hook_event("sid", tool_event)
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "external-sid",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
     assert hook_event is not None
 
     engine = RuleEngine(db)
