@@ -50,6 +50,7 @@ async def _broadcast_tts_status(
         except (ConnectionClosed, ConnectionClosedError):
             pass
 
+
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
     from gobby.voice.tts import TTSProvider

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -325,7 +325,7 @@ class AgentDefinitionBody(BaseModel):
     description: str | None = None
     sources: list[str] | None = None  # Session sources this agent applies to (None = all)
     surfaces: list[Literal["spawn", "persona"]] = Field(
-        default_factory=lambda: ["spawn"],
+        default_factory=lambda: cast(list[Literal["spawn", "persona"]], ["spawn"]),
         description="Where this definition can be used: spawned execution, session personas, or both.",
     )
     # Structured prompt fields (composed into preamble at spawn time)

@@ -221,9 +221,7 @@ class KnowledgeGraphService:
                     relationships=len(relationships),
                 )
             except Exception as e:
-                logger.warning(
-                    f"Failed to merge relationship {rel} for memory {memory_ref}: {e}"
-                )
+                logger.warning(f"Failed to merge relationship {rel} for memory {memory_ref}: {e}")
                 partial_errors.append(f"merge_relationship:{rel.relationship}:{e}")
 
         entity_embeddings: dict[str, list[float]] = {}

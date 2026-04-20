@@ -104,13 +104,15 @@ def _prepare_turbo_conditionals(
     t3_cond_prompt_tokens = None
     if plen := model.t3.hp.speech_cond_prompt_len:
         tokenizer = model.s3gen.tokenizer
-        t3_cond_prompt_tokens, _ = tokenizer.forward([ref_16k_wav[: model.ENC_COND_LEN]], max_len=plen)
-        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)
+        t3_cond_prompt_tokens, _ = tokenizer.forward(
+            [ref_16k_wav[: model.ENC_COND_LEN]], max_len=plen
+        )
+        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)  # type: ignore[no-untyped-call]
 
     ve_embed_array = np.asarray(
         _coerce_conditioning_audio(model.ve.embeds_from_wavs([ref_16k_wav], sample_rate=s3_sr))
     )
-    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)
+    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)  # type: ignore[call-overload]
 
     t3_cond = chatterbox_turbo.T3Cond(
         speaker_emb=ve_embed,
@@ -236,7 +238,10 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                 raise RuntimeError(reference_error)
 
             if not self._conditioning_ready:
-                logger.info("Preparing Chatterbox Turbo reference conditioning from %s", self._reference_audio)
+                logger.info(
+                    "Preparing Chatterbox Turbo reference conditioning from %s",
+                    self._reference_audio,
+                )
                 try:
                     await asyncio.to_thread(self._prepare_reference_conditioning, self._model)
                 except Exception as exc:
@@ -261,6 +266,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         model = await self._ensure_model()
 
         try:
+
             def _generate() -> Any:
                 return model.generate(
                     text,

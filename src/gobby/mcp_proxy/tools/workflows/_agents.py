@@ -90,9 +90,7 @@ def list_agent_definitions(
     rows = def_manager.list_all(workflow_type="agent", enabled=enabled, project_id=project_id)
     agents = [_agent_summary(r) for r in rows]
     if surface_filter:
-        agents = [
-            agent for agent in agents if surface_filter in agent.get("surfaces", ["spawn"])
-        ]
+        agents = [agent for agent in agents if surface_filter in agent.get("surfaces", ["spawn"])]
     return {"success": True, "agents": agents, "count": len(agents)}
 
 

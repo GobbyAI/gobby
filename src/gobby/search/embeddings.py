@@ -364,6 +364,7 @@ async def _fetch_embeddings(
             if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):
                 logger.error(f"Embedding model not found: {e}")
                 raise RuntimeError(f"Model not found: {e}") from e
+            assert api_base is not None  # guaranteed: _is_ollama_endpoint(api_base) was True above
             reloaded = await _try_reload_model(model, api_base)
             if not reloaded:
                 raise RuntimeError(f"Model not found: {e}") from e

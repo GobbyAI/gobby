@@ -799,7 +799,9 @@ class ChatSessionMixin:
                     cli_source=provider_name,
                 )
             except Exception as e:
-                logger.warning("Failed to apply persona '%s' to session %s: %s", agent_name, session_key, e)
+                logger.warning(
+                    "Failed to apply persona '%s' to session %s: %s", agent_name, session_key, e
+                )
 
         self._chat_sessions[session_key] = session
 

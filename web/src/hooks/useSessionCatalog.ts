@@ -171,15 +171,11 @@ export function useSessionCatalog(projectId: string | null) {
 
   const renameSession = useCallback(
     async (id: string, title: string) => {
-      let previousSession: GobbySession | undefined
+      const previousSession = sessions.find((s) => s.id === id)
       setSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === id) {
-            previousSession = session
-            return { ...session, title }
-          }
-          return session
-        }),
+        prev.map((session) =>
+          session.id === id ? { ...session, title } : session,
+        ),
       );
 
       const restorePreviousTitle = () => {
@@ -212,7 +208,7 @@ export function useSessionCatalog(projectId: string | null) {
         await fetchSessions();
       }
     },
-    [fetchSessions],
+    [fetchSessions, sessions],
   );
 
   return {

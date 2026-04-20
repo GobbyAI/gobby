@@ -122,7 +122,9 @@ class SessionControlMixin:
                         )
                     )
                 except Exception:
-                    logger.debug("Failed to rebroadcast pending plan for %s", conv_id, exc_info=True)
+                    logger.debug(
+                        "Failed to rebroadcast pending plan for %s", conv_id, exc_info=True
+                    )
 
             if not session.db_session_id:
                 continue

@@ -134,9 +134,7 @@ def build_session_persona_changes(
     changes: dict[str, Any] = {
         "_agent_type": agent_body.name,
         "_active_skill_names": list(active_skills) if active_skills is not None else None,
-        "_skill_format": (
-            agent_body.workflows.skill_format if agent_body.workflows else None
-        ),
+        "_skill_format": (agent_body.workflows.skill_format if agent_body.workflows else None),
         "_agent_context_injected": False,
         "_agent_identity_reinject": True,
     }
