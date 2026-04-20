@@ -1063,6 +1063,37 @@ class TestSyntheticCodexMcpAfterTool:
         assert event.data["mcp_tool"] == "create_task"
 
     @pytest.mark.asyncio
+    async def test_internal_tool_success_resolves_numbered_session_ref(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ) -> None:
+        """Synthetic AFTER_TOOL events should resolve #N refs before session lookup."""
+        resolved_session_id = "f4b198e5-7688-45d5-82f5-5606732c7a96"
+        session = mock_hook_manager._session_manager.get.return_value
+        mock_hook_manager._session_manager.resolve_session_reference.side_effect = (
+            lambda session_id, project_id=None: (
+                resolved_session_id if session_id == "#2985" else session_id
+            )
+        )
+        mock_hook_manager._session_manager.get.side_effect = (
+            lambda session_id: session if session_id == resolved_session_id else None
+        )
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="create_task",
+            arguments={"title": "Test task"},
+            session_id="#2985",
+        )
+
+        mock_hook_manager.handle.assert_called_once()
+        event = mock_hook_manager.handle.call_args.args[0]
+        assert event.metadata["_platform_session_id"] == resolved_session_id
+
+    @pytest.mark.asyncio
     async def test_internal_tool_exception_marks_synthetic_after_tool_failure(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
@@ -1154,7 +1185,7 @@ class TestSyntheticCodexMcpAfterTool:
     async def test_proxy_schema_after_tool_injects_task_creation(
         self, mock_mcp_manager, mock_internal_manager, temp_db
     ) -> None:
-        """Codex terminal proxy schema shims should record task-creation in injected_skills."""
+        """Codex terminal proxy schema shims should resolve #N refs before injecting skills."""
         sync_bundled_rules(temp_db, get_bundled_rules_path())
         temp_db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
@@ -1185,10 +1216,16 @@ class TestSyntheticCodexMcpAfterTool:
             project_id="project-123",
             external_id="conv-123",
         )
+        numbered_session_ref = "#2985"
+        resolved_session_id = "f4b198e5-7688-45d5-82f5-5606732c7a96"
         session_manager = MagicMock()
-        session_manager.get.return_value = session
+        session_manager.get.side_effect = (
+            lambda session_id: session if session_id == resolved_session_id else None
+        )
         session_manager.resolve_session_reference.side_effect = (
-            lambda session_id, project_id=None: session_id
+            lambda session_id, project_id=None: (
+                resolved_session_id if session_id == numbered_session_ref else session_id
+            )
         )
 
         hook_manager = MagicMock()
@@ -1205,13 +1242,13 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         await tool_proxy.emit_synthetic_proxy_after_tool(
-            session_id="session-123",
+            session_id=numbered_session_ref,
             tool_name="get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
             result={"success": True, "tool": {"name": "create_task", "inputSchema": {}}},
         )
 
-        variables = SessionVariableManager(temp_db).get_variables("session-123")
+        variables = SessionVariableManager(temp_db).get_variables(resolved_session_id)
         assert "task-creation" in variables.get("injected_skills", [])
 
 

@@ -208,8 +208,8 @@ class ToolProxyService:
         return ToolProxyErrorCode.EXECUTION_ERROR.value
 
     @staticmethod
-    def _get_effective_session_id(session_id: str | None) -> str | None:
-        """Return the explicit session_id or the current session context UUID."""
+    def _get_requested_session_id(session_id: str | None) -> str | None:
+        """Return the explicit session reference or the current session context UUID."""
         if session_id:
             return session_id
 
@@ -217,6 +217,10 @@ class ToolProxyService:
 
         ctx = get_session_context()
         return ctx.session_id if ctx else None
+
+    def _get_effective_session_id(self, session_id: str | None) -> str | None:
+        """Return the resolved platform session UUID for a session reference."""
+        return self._resolve_platform_session_id(session_id)
 
     def _resolve_hook_manager(self) -> "HookManager | None":
         """Resolve HookManager lazily to avoid startup-order cycles."""
@@ -231,26 +235,27 @@ class ToolProxyService:
 
     def _resolve_platform_session_id(self, session_id: str | None) -> str | None:
         """Resolve the best available session reference to a platform session UUID."""
-        effective_session_id = self._get_effective_session_id(session_id)
-        if not effective_session_id:
+        requested_session_id = self._get_requested_session_id(session_id)
+        if not requested_session_id:
             return None
 
         hook_manager = self._resolve_hook_manager()
         session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
         if session_manager is None:
-            return effective_session_id
+            return requested_session_id
 
         try:
             from gobby.utils.project_context import get_project_context
 
             project_ctx = get_project_context()
             project_id = project_ctx.get("id") if project_ctx else None
-            return cast(
+            resolved_session_id = cast(
                 "str | None",
-                session_manager.resolve_session_reference(effective_session_id, project_id),
+                session_manager.resolve_session_reference(requested_session_id, project_id),
             )
+            return resolved_session_id or requested_session_id
         except Exception:
-            return effective_session_id
+            return requested_session_id
 
     def _resolve_tool_event_context(
         self,
