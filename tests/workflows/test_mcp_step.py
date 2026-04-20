@@ -318,7 +318,7 @@ class TestExecuteMCPStep:
     async def test_execute_mcp_step_unresolvable_session_id_skips_set_session_context(
         self, mock_tool_proxy, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Unresolvable session ref logs warning and falls through to the raw ref."""
+        """Unresolvable session ref logs warning and falls through to the no-session path."""
         import logging as _logging
 
         _attach_session_manager(
@@ -334,8 +334,8 @@ class TestExecuteMCPStep:
         await execute_mcp_step(step, context, lambda: mock_tool_proxy)
 
         assert any("could not resolve session ref" in rec.message for rec in caplog.records)
-        # Falls through to raw ref — propagation is the only reliable thing here
-        assert mock_tool_proxy.call_tool.call_args.kwargs["session_id"] == "bogus-ref"
+        assert mock_tool_proxy.get_tool_schema.call_args.kwargs["session_id"] is None
+        assert mock_tool_proxy.call_tool.call_args.kwargs["session_id"] is None
 
     @pytest.mark.asyncio
     async def test_mcp_step_raises_on_failure_result(self) -> None:

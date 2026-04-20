@@ -284,7 +284,7 @@ def dispatch_mcp_calls(
                     logger.warning("dispatch_mcp_calls: tool_proxy_getter returned None")
                     return {"success": False, "error": "tool_proxy_getter returned None"}
 
-                resolved_sid = tokens.resolved_session_id or _sid or None
+                resolved_sid = tokens.resolved_session_id
                 # Proxy self-routing: _proxy/* calls route to ToolProxyService
                 # methods directly instead of going through call_tool dispatch
                 if s == "_proxy":

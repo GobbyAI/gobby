@@ -404,3 +404,5 @@ class TestDispatchMcpCallsSessionResolution:
             loop.close()
 
         assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        called_kwargs = proxy.call_tool.call_args.kwargs
+        assert called_kwargs.get("session_id") is None

@@ -127,3 +127,5 @@ class TestCallToolSessionResolution:
         )
 
         assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        positional = handler.tool_proxy.call_tool.call_args.args
+        assert positional[3] is None

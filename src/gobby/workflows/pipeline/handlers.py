@@ -44,7 +44,7 @@ async def execute_mcp_step(
         project_ref=None,
         db=(session_manager.db if session_manager else None),
     )
-    effective_session_id = tokens.resolved_session_id or pipeline_session_id
+    effective_session_id = tokens.resolved_session_id
     try:
         if pipeline_session_id:
             # Internal pipeline execution still needs to satisfy progressive

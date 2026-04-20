@@ -238,9 +238,9 @@ class GobbyDaemonTools:
             for leaked_key in ("server_name", "tool_name", "project_id"):
                 effective_arguments.pop(leaked_key, None)
 
-        # Propagate the resolved platform UUID, not the raw ref — the tool
-        # proxy prefers the explicit session_id arg over the ContextVar.
-        effective_session_id = tokens.resolved_session_id or session_id
+        # Propagate only the resolved platform UUID. Falling back to the raw
+        # ref would re-poison workflow checks and synthetic after-tool events.
+        effective_session_id = tokens.resolved_session_id
 
         try:
             result = await self.tool_proxy.call_tool(
