@@ -73,6 +73,24 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         if not task:
             return {"error": f"Task {task_id} not found"}
 
+        # close_task is the only task-lifecycle tool that persists a
+        # *_in_session_id audit column. When the ContextVar is empty, prefer
+        # the task's existing claimed_by_session_id over silently writing NULL.
+        if not session_id:
+            fallback_session_id = get_claimed_session_id(task)
+            if fallback_session_id:
+                logger.warning(
+                    "close_task: no session context; falling back to task.claimed_by_session_id=%s",
+                    fallback_session_id,
+                )
+                session_id = fallback_session_id
+            else:
+                return {
+                    "error": "no_session_context",
+                    "message": "close_task requires an active session context "
+                    "or a previously-claimed task",
+                }
+
         # Get project repo_path for git commands (needed before link_commit)
         repo_path = ctx.get_project_repo_path(task.project_id)
         cwd = repo_path or "."

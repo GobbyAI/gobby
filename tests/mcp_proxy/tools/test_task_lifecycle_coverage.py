@@ -86,6 +86,15 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
 class TestCloseTask:
     """Tests for the close_task lifecycle tool."""
 
+    # close_task now requires an active session context or task.claimed_by_session_id
+    # (Change 4). The original tests in this class predate that guard and don't
+    # exercise it — seed a SessionContext so they continue to test the
+    # non-audit-guard paths.
+    @pytest.fixture(autouse=True)
+    def _seed_session_context(self):
+        with session_context_for_test("legacy-test-session"):
+            yield
+
     @pytest.mark.asyncio
     async def test_close_task_get_returns_none(self, mock_task_manager, mock_sync_manager):
         """Returns error when get_task returns None after resolve."""
@@ -848,3 +857,100 @@ class TestIsUuid:
 
     def test_none_value(self):
         assert _is_uuid(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Session-context guards (Change 4)
+# ---------------------------------------------------------------------------
+
+
+class TestCloseTaskSessionContextGuard:
+    """close_task fallback to task.claimed_by_session_id / error when no ContextVar."""
+
+    @pytest.mark.asyncio
+    async def test_close_task_without_session_context_falls_back_to_claimed_by_session_id(
+        self, mock_task_manager, mock_sync_manager, caplog
+    ) -> None:
+        """No SessionContext → uses task.claimed_by_session_id for the audit write."""
+        import logging as _logging
+
+        claimed_session = "claimed-session-uuid"
+        task = _make_task(assignee=claimed_session, commits=None)
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+
+        caplog.set_level(_logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._lifecycle_close")
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            registry = _create_registry(mock_task_manager, mock_sync_manager)
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "done"},
+            )
+
+        # Warning fired with the fallback session id
+        assert any(
+            "no session context" in rec.message and claimed_session in rec.message
+            for rec in caplog.records
+        )
+        # Storage got the resolved platform UUID for audit, not NULL
+        assert "error" not in result
+        close_kwargs = mock_task_manager.close_task.call_args.kwargs
+        assert close_kwargs.get("closed_in_session_id") == "resolved-session"
+
+    @pytest.mark.asyncio
+    async def test_close_task_without_session_context_or_claimed_by_errors(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        """No SessionContext and no claimed_by → explicit no_session_context error."""
+        task = _make_task(assignee=None, commits=None)
+        mock_task_manager.get_task.return_value = task
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        result = await registry.call(
+            "close_task",
+            {"task_id": task.id, "changes_summary": "done"},
+        )
+
+        assert result.get("error") == "no_session_context"
+        assert "active session context" in result.get("message", "")
+        mock_task_manager.close_task.assert_not_called()
+
+
+class TestEscalateTaskSessionContextGuard:
+    """escalate_task / de_escalate_task must error without an active session context."""
+
+    @pytest.mark.asyncio
+    async def test_escalate_task_without_session_context_errors(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        task = _make_task(status="in_progress")
+        mock_task_manager.get_task.return_value = task
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        result = await registry.call(
+            "escalate_task",
+            {"task_id": task.id, "reason": "blocked"},
+        )
+
+        assert "No session context available" in result.get("error", "")
+        mock_task_manager.escalate_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_de_escalate_task_without_session_context_errors(
+        self, mock_task_manager, mock_sync_manager
+    ) -> None:
+        task = _make_task(status="escalated")
+        mock_task_manager.get_task.return_value = task
+
+        registry = _create_registry(mock_task_manager, mock_sync_manager)
+        result = await registry.call(
+            "de_escalate_task",
+            {"task_id": task.id, "reason": "unblocked"},
+        )
+
+        assert "No session context available" in result.get("error", "")
+        mock_task_manager.de_escalate_task.assert_not_called()

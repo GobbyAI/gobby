@@ -16,16 +16,11 @@ from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
 from gobby.storage.session_resolution import resolve_session_reference
 from gobby.telemetry.instruments import inc_counter, observe_histogram
-from gobby.utils.project_context import (
-    reset_project_context,
-    set_project_context,
-    set_project_context_from_session,
-)
 from gobby.utils.session_context import (
-    SessionContext,
+    SeededContextTokens,
     get_current_session_id,
-    reset_session_context,
-    set_session_context,
+    reset_seeded_contexts,
+    resolve_and_seed_contexts,
 )
 
 if TYPE_CHECKING:
@@ -36,19 +31,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _ContextTokens:
-    """Holds project + session context tokens for cleanup."""
-
-    __slots__ = ("project", "session")
-
-    def __init__(self) -> None:
-        self.project: Any = None
-        self.session: Any = None
+# Backwards-compatible alias — older call sites (and tests) may still reach for
+# ``_ContextTokens``. The returned shape is now ``SeededContextTokens``; callers
+# treat it as an opaque handle for ``_reset_context`` / ``reset_seeded_contexts``.
+_ContextTokens = SeededContextTokens
 
 
 def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
-) -> _ContextTokens:
+) -> SeededContextTokens:
     """Set project and session context vars from the best available source.
 
     Priority:
@@ -60,119 +51,51 @@ def _set_context_for_request(
     project_id is always correct. The daemon's CWD is NOT — it points to the
     gobby project regardless of which project the caller is in.
 
-    Returns a _ContextTokens with project and session tokens for reset.
+    Returns seeded tokens; pass them to ``_reset_context`` after the tool call.
     """
-    tokens = _ContextTokens()
     header_session_id = request.headers.get("x-gobby-session-id") if request else None
+    project_id_header = request.headers.get("x-gobby-project-id") if request else None
 
-    # 1. Try session_id from tool arguments
+    # 1. Harvest the session ref from arguments, then header.
     session_id = arguments.get("session_id") if isinstance(arguments, dict) else None
-
-    # 2. Try session_id from header (stdio proxy injects this once learned)
     if not session_id and request:
         session_id = header_session_id
 
-    # Resolve session → project (authoritative: session knows its project)
-    if session_id and server.session_manager:
-        # If session_id is a #N or numeric reference, resolve to UUID first.
-        # set_project_context_from_session expects a UUID — passing #N causes
-        # silent failure and falls through to the header fallback, which can
-        # resolve to a different project's session with the same seq_num.
-        resolved_id = session_id
-        ref = session_id.lstrip("#") if session_id.startswith("#") else session_id
-        if ref.isdigit():
-            bootstrap_project_id = request.headers.get("x-gobby-project-id") if request else None
-            if not bootstrap_project_id and header_session_id:
-                try:
-                    header_ref = (
-                        header_session_id.lstrip("#")
-                        if header_session_id.startswith("#")
-                        else header_session_id
-                    )
-                    resolved_header_id = (
-                        resolve_session_reference(server.session_manager.db, header_session_id)
-                        if not header_ref.isdigit()
-                        else None
-                    )
-                    if resolved_header_id:
-                        header_session = server.session_manager.get(resolved_header_id)
-                        bootstrap_project_id = (
-                            header_session.project_id if header_session else bootstrap_project_id
-                        )
-                except (ValueError, Exception) as e:
-                    logger.debug(
-                        f"Failed to derive bootstrap project from header session "
-                        f"'{header_session_id}': {e}"
-                    )
-            try:
-                resolved_id = resolve_session_reference(
-                    server.session_manager.db, session_id, bootstrap_project_id
-                )
-            except (ValueError, Exception) as e:
-                logger.debug(
-                    f"Failed to resolve session ref '{session_id}' "
-                    f"(project_id={bootstrap_project_id}): {e}"
-                )
-                resolved_id = None
-
-        if resolved_id:
-            # Set session context (always, when we have a resolved UUID)
-            conversation_id = None
-            try:
-                session = server.session_manager.get(resolved_id)
-                if session:
-                    conversation_id = session.external_id
-            except Exception as e:
-                logger.debug(f"Failed to get session for context: {e}")
-            tokens.session = set_session_context(
-                SessionContext(session_id=resolved_id, conversation_id=conversation_id)
+    # HTTP-specific bootstrap: when the incoming session_id is #N/numeric and
+    # the X-Gobby-Project-Id header is missing, derive a project scope from the
+    # header-session UUID so the #N lookup can succeed. (After Change 1,
+    # resolve_session_reference handles external_id UUIDs in the header too.)
+    canonical_project_ref = project_id_header
+    if (
+        not canonical_project_ref
+        and header_session_id
+        and session_id
+        and server.session_manager
+        and session_id.lstrip("#").isdigit()
+    ):
+        try:
+            bootstrap_id = resolve_session_reference(server.session_manager.db, header_session_id)
+            bootstrap_session = server.session_manager.get(bootstrap_id)
+            if bootstrap_session:
+                canonical_project_ref = bootstrap_session.project_id
+        except Exception as e:
+            logger.debug(
+                f"HTTP project bootstrap from header session {header_session_id!r} failed: {e}"
             )
 
-            # Set project context
-            try:
-                token = set_project_context_from_session(
-                    resolved_id, server.session_manager, server.session_manager.db
-                )
-                if token is not None:
-                    tokens.project = token
-                    return tokens
-            except Exception as e:
-                logger.debug(f"Failed to set project context from session_id '{resolved_id}': {e}")
-
-    # 3. Fallback: project_id from header (always available from stdio startup)
-    if request:
-        project_id = request.headers.get("x-gobby-project-id")
-        if project_id:
-            # Enrich from DB if possible (gives tools project_path, name, etc.)
-            if server.session_manager:
-                try:
-                    from gobby.storage.projects import LocalProjectManager
-
-                    pm = LocalProjectManager(server.session_manager.db)
-                    project = pm.get(project_id)
-                    if project:
-                        tokens.project = set_project_context(
-                            {
-                                "id": project.id,
-                                "name": project.name,
-                                "project_path": project.repo_path,
-                            }
-                        )
-                        return tokens
-                except Exception as e:
-                    logger.debug(f"Failed to enrich project context for '{project_id}': {e}")
-            # Minimal fallback — id alone is enough for scoping
-            tokens.project = set_project_context({"id": project_id})
-
-    return tokens
+    db = server.session_manager.db if server.session_manager else None
+    return resolve_and_seed_contexts(
+        session_ref=session_id,
+        session_manager=server.session_manager if server.session_manager else None,
+        project_ref=canonical_project_ref,
+        project_ref_is_fallback=True,
+        db=db,
+    )
 
 
-def _reset_context(tokens: _ContextTokens) -> None:
+def _reset_context(tokens: SeededContextTokens) -> None:
     """Reset project and session context vars."""
-    if tokens.project is not None:
-        reset_project_context(tokens.project)
-    if tokens.session is not None:
-        reset_session_context(tokens.session)
+    reset_seeded_contexts(tokens)
 
 
 async def _emit_proxy_after_tool(

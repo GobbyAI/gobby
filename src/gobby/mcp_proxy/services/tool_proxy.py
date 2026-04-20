@@ -244,18 +244,27 @@ class ToolProxyService:
         if session_manager is None:
             return requested_session_id
 
-        try:
-            from gobby.utils.project_context import get_project_context
+        from gobby.utils.project_context import get_project_context
 
-            project_ctx = get_project_context()
-            project_id = project_ctx.get("id") if project_ctx else None
+        project_ctx = get_project_context()
+        project_id = project_ctx.get("id") if project_ctx else None
+        try:
             resolved_session_id = cast(
                 "str | None",
                 session_manager.resolve_session_reference(requested_session_id, project_id),
             )
-            return resolved_session_id or requested_session_id
-        except Exception:
+        except ValueError as exc:
+            # Visibility over silence: resolver failures should be actionable,
+            # not hidden. The fallback to the unresolved ref is preserved so
+            # best-effort call sites keep working.
+            logger.warning(
+                "Could not resolve session reference %r (project_id=%s): %s",
+                requested_session_id,
+                project_id,
+                exc,
+            )
             return requested_session_id
+        return resolved_session_id or requested_session_id
 
     def _resolve_tool_event_context(
         self,

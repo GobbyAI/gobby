@@ -170,7 +170,34 @@ def mock_tool_proxy():
     proxy = AsyncMock()
     proxy.get_tool_schema = AsyncMock(return_value={"success": True, "tool": {"inputSchema": {}}})
     proxy.call_tool = AsyncMock(return_value={"success": True, "task_id": "#42"})
+    # Default no-op session_manager stub so the helper's resolution branch is a
+    # pass-through when tests don't care about external_id lookups.
+    proxy._mcp_manager = MagicMock()
+    proxy._mcp_manager.session_manager = None
     return proxy
+
+
+def _attach_session_manager(
+    proxy,
+    *,
+    resolve_to: str | None,
+    resolve_exc=None,
+    external_id: str | None = None,
+):
+    """Attach a session_manager stub to a mock tool_proxy so the helper
+    resolves session refs via the MCP manager."""
+    session_manager = MagicMock()
+    session_manager.db = MagicMock()
+    if resolve_exc is not None:
+        session_manager.resolve_session_reference.side_effect = resolve_exc
+    else:
+        session_manager.resolve_session_reference.return_value = resolve_to
+    session = MagicMock()
+    session.external_id = external_id
+    session.project_id = "proj-abc"
+    session_manager.get.return_value = session
+    proxy._mcp_manager.session_manager = session_manager
+    return session_manager
 
 
 class TestExecuteMCPStep:
@@ -264,6 +291,51 @@ class TestExecuteMCPStep:
         context: dict = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="returned None"):
             await execute_mcp_step(step, context, lambda: None)
+
+    @pytest.mark.asyncio
+    async def test_execute_mcp_step_resolves_external_id_before_session_context(
+        self, mock_tool_proxy
+    ) -> None:
+        """External_id passed as session_id resolves to platform UUID before dispatch."""
+        _attach_session_manager(
+            mock_tool_proxy,
+            resolve_to="platform-uuid-999",
+            external_id="external-uuid-abc",
+        )
+        step = PipelineStep(
+            id="test_step",
+            mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
+        )
+
+        context: dict = {"inputs": {}, "steps": {}, "session_id": "external-uuid-abc"}
+        await execute_mcp_step(step, context, lambda: mock_tool_proxy)
+
+        # Schema prefetch and call_tool both see the resolved platform UUID
+        assert mock_tool_proxy.get_tool_schema.call_args.kwargs["session_id"] == "platform-uuid-999"
+        assert mock_tool_proxy.call_tool.call_args.kwargs["session_id"] == "platform-uuid-999"
+
+    @pytest.mark.asyncio
+    async def test_execute_mcp_step_unresolvable_session_id_skips_set_session_context(
+        self, mock_tool_proxy, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Unresolvable session ref logs warning and falls through to the raw ref."""
+        import logging as _logging
+
+        _attach_session_manager(
+            mock_tool_proxy, resolve_to=None, resolve_exc=ValueError("Session not found")
+        )
+        step = PipelineStep(
+            id="test_step",
+            mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
+        )
+
+        context: dict = {"inputs": {}, "steps": {}, "session_id": "bogus-ref"}
+        caplog.set_level(_logging.WARNING, logger="gobby.utils.session_context")
+        await execute_mcp_step(step, context, lambda: mock_tool_proxy)
+
+        assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        # Falls through to raw ref — propagation is the only reliable thing here
+        assert mock_tool_proxy.call_tool.call_args.kwargs["session_id"] == "bogus-ref"
 
     @pytest.mark.asyncio
     async def test_mcp_step_raises_on_failure_result(self) -> None:

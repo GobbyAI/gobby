@@ -1,5 +1,6 @@
 """Additional coverage tests for GobbyDaemonTools in server.py."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -57,3 +58,72 @@ class TestSearchToolsExceptionHandling:
 
 # TestListHookHandlers, TestTestHookEvent, TestListPlugins, TestReloadPlugin
 # moved to tests/mcp_proxy/tools/test_plugins.py (gobby-plugins internal registry)
+
+
+class TestCallToolSessionResolution:
+    """call_tool() must resolve external_id refs and propagate the platform UUID."""
+
+    def _make_handler(self, *, resolve_to: str | None = None, resolve_exc=None):
+        session_manager = MagicMock()
+        session_manager.db = MagicMock()
+        if resolve_exc is not None:
+            session_manager.resolve_session_reference.side_effect = resolve_exc
+        else:
+            session_manager.resolve_session_reference.return_value = resolve_to
+        session = MagicMock()
+        session.external_id = "ext-xyz"
+        session.project_id = "proj-abc"
+        session_manager.get.return_value = session
+
+        mcp_manager = MagicMock()
+        mcp_manager.project_id = "test-project-id"
+        mcp_manager.connections = {}
+        mcp_manager.health = {}
+        mcp_manager.server_configs = []
+
+        handler = GobbyDaemonTools(
+            mcp_manager=mcp_manager,
+            daemon_port=8787,
+            websocket_port=8788,
+            start_time=1000.0,
+            internal_manager=MagicMock(),
+            session_manager=session_manager,
+        )
+        handler.tool_proxy = MagicMock()
+        handler.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
+        return handler, session_manager
+
+    @pytest.mark.asyncio
+    async def test_call_tool_resolves_external_id_to_platform_uuid(self) -> None:
+        """External_id argument resolves to platform UUID before hitting tool_proxy.call_tool."""
+        handler, _ = self._make_handler(resolve_to="platform-uuid-7")
+
+        await handler.call_tool(
+            server_name="gobby-tasks",
+            tool_name="suggest_next_task",
+            arguments={"parent_task_id": "#1"},
+            session_id="11111111-1111-1111-1111-111111111111",
+        )
+
+        positional = handler.tool_proxy.call_tool.call_args.args
+        # (server_name, tool_name, effective_arguments, effective_session_id)
+        assert positional[3] == "platform-uuid-7"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_skips_session_context_when_unresolvable(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Unresolvable session ref → warning + no SessionContext planted."""
+        handler, _ = self._make_handler(
+            resolve_to=None, resolve_exc=ValueError("Session not found")
+        )
+        caplog.set_level(logging.WARNING, logger="gobby.utils.session_context")
+
+        await handler.call_tool(
+            server_name="gobby-tasks",
+            tool_name="suggest_next_task",
+            arguments={},
+            session_id="22222222-2222-2222-2222-222222222222",
+        )
+
+        assert any("could not resolve session ref" in rec.message for rec in caplog.records)

@@ -359,25 +359,35 @@ async def test_call_tool_success_returns_raw_result(daemon_tools):
 
 @pytest.mark.asyncio
 async def test_call_tool_with_project_id_override(daemon_tools):
-    """Explicit project_id sets project context via set_project_context_from_ref."""
+    """Explicit project_id sets project context via set_project_context_from_ref.
+
+    The helper now canonicalizes project_ref (UUID-or-name → UUID) via
+    LocalProjectManager.resolve_ref before calling set_project_context_from_ref,
+    so we mock the manager to return a project whose id echoes the caller ref.
+    """
     from unittest.mock import sentinel
 
     daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
 
-    # Give daemon_tools a session_manager with a db
     mock_sm = MagicMock()
     mock_sm.db = MagicMock()
     daemon_tools._session_manager = mock_sm
 
     mock_token = sentinel.token
+    mock_project = MagicMock()
+    mock_project.id = "other-project"
 
     with (
+        patch(
+            "gobby.storage.projects.LocalProjectManager",
+        ) as mock_pm_class,
         patch(
             "gobby.utils.project_context.set_project_context_from_ref",
             return_value=mock_token,
         ) as mock_ref,
         patch("gobby.utils.project_context.reset_project_context") as mock_reset,
     ):
+        mock_pm_class.return_value.resolve_ref.return_value = mock_project
         result = await daemon_tools.call_tool(
             "gobby-tasks", "list_tasks", {}, project_id="other-project"
         )
@@ -397,9 +407,9 @@ async def test_call_tool_with_invalid_project_id(daemon_tools):
     daemon_tools._session_manager = mock_sm
 
     with patch(
-        "gobby.utils.project_context.set_project_context_from_ref",
-        return_value=None,
-    ):
+        "gobby.storage.projects.LocalProjectManager",
+    ) as mock_pm_class:
+        mock_pm_class.return_value.resolve_ref.return_value = None
         result = await daemon_tools.call_tool(
             "gobby-tasks", "list_tasks", {}, project_id="nonexistent"
         )
@@ -441,8 +451,13 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
     daemon_tools._session_manager = mock_sm
 
     mock_token = sentinel.token
+    mock_project = MagicMock()
+    mock_project.id = "override-project"
 
     with (
+        patch(
+            "gobby.storage.projects.LocalProjectManager",
+        ) as mock_pm_class,
         patch(
             "gobby.utils.project_context.set_project_context_from_ref",
             return_value=mock_token,
@@ -451,6 +466,7 @@ async def test_call_tool_project_id_priority_over_session(daemon_tools):
             "gobby.utils.project_context.reset_project_context",
         ),
     ):
+        mock_pm_class.return_value.resolve_ref.return_value = mock_project
         result = await daemon_tools.call_tool(
             "gobby-tasks",
             "list_tasks",

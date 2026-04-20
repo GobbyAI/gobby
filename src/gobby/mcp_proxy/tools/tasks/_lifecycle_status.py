@@ -144,6 +144,9 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
+        if not session_id:
+            return {"error": "No session context available. Ensure session_id is set."}
+
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
@@ -478,6 +481,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
+        if not session_id:
+            return {"error": "No session context available. Ensure session_id is set."}
 
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
