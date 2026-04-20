@@ -141,20 +141,35 @@ def _canonicalize_project_ref(project_ref: str | None, db: Any | None) -> str | 
     the caller-supplied ref as-is so the minimal-fallback path at the end of
     ``resolve_and_seed_contexts`` can still emit a ``{"id": ref}`` project
     context for HTTP-header bootstrap.
+
+    Raises:
+        Any non-``LookupError`` raised by ``LocalProjectManager`` (DB / config
+        failures) propagates — callers should not silently downgrade those to
+        "not found". Returns ``None`` only when ``resolve_ref`` itself returns
+        ``None`` (ref genuinely does not exist).
     """
     if not project_ref:
         return None
     if db is None:
         return project_ref
-    try:
-        from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.projects import LocalProjectManager
 
-        pm = LocalProjectManager(db)
-        project = pm.resolve_ref(project_ref)
-    except Exception as exc:
-        logger.debug(f"Failed to canonicalize project_ref {project_ref!r}: {exc}")
-        return None
+    pm = LocalProjectManager(db)
+    project = pm.resolve_ref(project_ref)
     return project.id if project else None
+
+
+def _ref_requires_project_scope(session_ref: str) -> bool:
+    """``#N`` / numeric refs need a project to resolve; UUIDs and prefixes do not.
+
+    An external_id UUID must resolve authoritatively across projects — the
+    caller-supplied or header-derived project_ref is a *context* hint, not a
+    constraint on which project the referenced session belongs to. Scoping the
+    session lookup by that hint would break cross-project tool calls and HTTP
+    header bootstrap for UUID-shaped refs.
+    """
+    stripped = session_ref[1:] if session_ref.startswith("#") else session_ref
+    return stripped.isdigit()
 
 
 def resolve_and_seed_contexts(
@@ -167,8 +182,13 @@ def resolve_and_seed_contexts(
 ) -> SeededContextTokens:
     """Resolve session and project refs, seed both ContextVars, return tokens.
 
-    ``project_ref`` is always used for session-scoping. The mode flag only
-    affects project *context* precedence when a session also resolves:
+    Session-scoping rule: ``project_ref`` is passed to the resolver only when
+    the session_ref is ``#N`` / numeric (which requires a project scope by
+    definition). For UUID or prefix refs, the resolver is called with
+    ``project_id=None`` — an ``external_id`` UUID is authoritative across
+    projects and must not be constrained by a project *context* override.
+
+    The mode flag affects project *context* precedence when a session resolves:
 
     * override mode (default, ``project_ref_is_fallback=False``) — explicit
       caller intent: project_ref > session-derived project. Use when the caller
@@ -188,6 +208,10 @@ def resolve_and_seed_contexts(
 
     On ``session_ref`` unresolvable: ``SessionContext`` is not set; project
     context is set per the precedence rules above.
+
+    Unexpected errors (DB failures, config errors) from project canonicalization
+    or session resolution propagate. Only ``ValueError`` from the session
+    resolver is logged-and-swallowed as a normal not-found / ambiguous path.
     """
     from gobby.utils.project_context import (
         set_project_context,
@@ -201,21 +225,17 @@ def resolve_and_seed_contexts(
 
     resolved_session_id: str | None = None
     if session_ref and session_manager is not None:
+        # UUID / prefix refs resolve globally; only #N needs project scope.
+        session_scope = canonical_project_id if _ref_requires_project_scope(session_ref) else None
         try:
             resolved_session_id = str(
-                session_manager.resolve_session_reference(session_ref, canonical_project_id)
+                session_manager.resolve_session_reference(session_ref, session_scope)
             )
         except ValueError as exc:
             logger.warning(
                 "resolve_and_seed_contexts: could not resolve session ref %r (project_id=%s): %s",
                 session_ref,
-                canonical_project_id,
-                exc,
-            )
-        except Exception as exc:
-            logger.warning(
-                "resolve_and_seed_contexts: session resolution raised unexpectedly for ref %r: %s",
-                session_ref,
+                session_scope,
                 exc,
             )
 

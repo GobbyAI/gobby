@@ -142,8 +142,45 @@ def test_override_mode_project_ref_uuid_beats_session_derived_project() -> None:
         reset_seeded_contexts(tokens)
 
 
-def test_override_mode_project_ref_name_canonicalized() -> None:
-    """project_ref='my-project' (a name) is canonicalized to a UUID before scoping."""
+def test_override_mode_project_ref_name_canonicalized_for_context_not_session_scope() -> None:
+    """project_ref='my-project' (a name) is canonicalized to a UUID for the
+    project *context*, but the session resolver is still called with
+    project_id=None because the ref is a UUID (UUIDs are authoritative)."""
+    mgr = _make_session_manager()
+    with (
+        patch(
+            "gobby.storage.projects.LocalProjectManager",
+        ) as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value="tok",
+        ) as mock_from_ref,
+    ):
+        mock_pm = MagicMock()
+        project = MagicMock()
+        project.id = PROJECT_B_UUID
+        mock_pm.resolve_ref.return_value = project
+        mock_pm_class.return_value = mock_pm
+
+        tokens = resolve_and_seed_contexts(
+            session_ref=SESSION_EXTERNAL_UUID,
+            session_manager=mgr,
+            project_ref="my-project",
+            db=mgr.db,
+        )
+    try:
+        # UUID session_ref is authoritative across projects — resolver is NOT
+        # scoped by the project override.
+        mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, None)
+        # Project *context*, on the other hand, uses the canonical UUID.
+        assert tokens.resolved_project_id == PROJECT_B_UUID
+        mock_from_ref.assert_called_once_with(PROJECT_B_UUID, mgr.db)
+    finally:
+        reset_seeded_contexts(tokens)
+
+
+def test_override_mode_hash_n_ref_uses_project_ref_as_session_scope() -> None:
+    """#N refs must be scoped by the canonical project UUID for resolution."""
     mgr = _make_session_manager()
     with (
         patch(
@@ -161,15 +198,46 @@ def test_override_mode_project_ref_name_canonicalized() -> None:
         mock_pm_class.return_value = mock_pm
 
         tokens = resolve_and_seed_contexts(
-            session_ref=SESSION_EXTERNAL_UUID,
+            session_ref="#5",
             session_manager=mgr,
             project_ref="my-project",
             db=mgr.db,
         )
     try:
-        # Resolver scoped by the canonical UUID, not the name
-        mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, PROJECT_B_UUID)
-        assert tokens.resolved_project_id == PROJECT_B_UUID
+        mgr.resolve_session_reference.assert_called_once_with("#5", PROJECT_B_UUID)
+    finally:
+        reset_seeded_contexts(tokens)
+
+
+def test_fallback_mode_uuid_session_ref_not_scoped_by_header_project() -> None:
+    """HTTP header project is a context hint, not a scope for UUID session refs."""
+    mgr = _make_session_manager()
+    with (
+        patch(
+            "gobby.storage.projects.LocalProjectManager",
+        ) as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_session",
+            return_value="session-derived-token",
+        ),
+    ):
+        mock_pm = MagicMock()
+        project = MagicMock()
+        project.id = PROJECT_B_UUID
+        mock_pm.resolve_ref.return_value = project
+        mock_pm_class.return_value = mock_pm
+
+        tokens = resolve_and_seed_contexts(
+            session_ref=SESSION_EXTERNAL_UUID,
+            session_manager=mgr,
+            project_ref=PROJECT_B_UUID,
+            project_ref_is_fallback=True,
+            db=mgr.db,
+        )
+    try:
+        # Header project is NOT passed to the session resolver — UUID refs must
+        # resolve across projects regardless of header.
+        mgr.resolve_session_reference.assert_called_once_with(SESSION_EXTERNAL_UUID, None)
     finally:
         reset_seeded_contexts(tokens)
 
@@ -422,3 +490,33 @@ def test_reset_seeded_contexts_safe_on_empty_and_partial_tokens() -> None:
     assert tokens.session_token is None
     assert tokens.project_token is not None
     reset_seeded_contexts(tokens)  # must not raise
+
+
+# --- Propagation of unexpected infrastructure failures --------------------
+
+
+def test_canonicalize_project_ref_propagates_db_error() -> None:
+    """DB failure during LocalProjectManager.resolve_ref must surface, not
+    be silently downgraded to "project not found"."""
+    from gobby.utils.session_context import _canonicalize_project_ref
+
+    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_class:
+        mock_pm = MagicMock()
+        mock_pm.resolve_ref.side_effect = RuntimeError("database unavailable")
+        mock_pm_class.return_value = mock_pm
+
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            _canonicalize_project_ref("some-project", MagicMock())
+
+
+def test_resolve_and_seed_contexts_propagates_non_valueerror_from_resolver() -> None:
+    """A non-ValueError from resolve_session_reference surfaces; it is not
+    treated as a routine not-found fallback."""
+    mgr = _make_session_manager(resolve_exc=RuntimeError("DB lock timeout"))
+    with pytest.raises(RuntimeError, match="DB lock timeout"):
+        resolve_and_seed_contexts(
+            session_ref=SESSION_EXTERNAL_UUID,
+            session_manager=mgr,
+            project_ref=None,
+            db=mgr.db,
+        )
