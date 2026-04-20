@@ -274,6 +274,41 @@ class TestHandleSessionEnd:
         resp = handler.handle_session_end(event)
         assert resp.decision == "allow"
 
+    def test_handle_session_end_sweep_is_scoped_to_current_session(self) -> None:
+        """The sweep must only remove THIS session's lock label, never another
+        session's. We verify this at the list_tasks boundary: the handler
+        queries with label=interactive:planning-in-progress:<self>, so tasks
+        carrying another session's lock are never returned and never touched.
+        """
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END)
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        # Simulate a task that belongs to a *different* session and should
+        # not surface under list_tasks(label=...for sess-1...).
+        def fake_list_tasks(label: str, limit: int = 200) -> list:
+            # Only sess-1's label returns anything
+            if label == "interactive:planning-in-progress:sess-1":
+                return []
+            return [MagicMock(id="other-session-task")]
+
+        handler._task_manager.list_tasks.side_effect = fake_list_tasks
+
+        handler.handle_session_end(event)
+
+        # Only sess-1's label was queried; never another session's
+        called_labels = [
+            call.kwargs.get("label") for call in handler._task_manager.list_tasks.call_args_list
+        ]
+        assert "interactive:planning-in-progress:sess-1" in called_labels
+        assert not any(
+            lbl and lbl.startswith("interactive:planning-in-progress:")
+            and lbl != "interactive:planning-in-progress:sess-1"
+            for lbl in called_labels
+        )
+        # Nothing to remove, so remove_label is never called
+        handler._task_manager.remove_label.assert_not_called()
+
     def test_handle_session_end_per_task_remove_failure_is_isolated(self) -> None:
         """A failure removing a lock on one task must not prevent removing it
         from the next task in the sweep."""
