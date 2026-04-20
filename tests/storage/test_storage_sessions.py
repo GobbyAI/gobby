@@ -899,6 +899,150 @@ class TestLocalSessionManager:
         assert stale is not None
         assert stale.status == "expired"
 
+    def test_expire_empty_sessions(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Zero-message active and paused sessions should fast-expire."""
+        active_session = session_manager.register(
+            external_id="empty-active",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        paused_session = session_manager.register(
+            external_id="empty-paused",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.update_status(paused_session.id, "paused")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-3 hours') WHERE id IN (?, ?)",
+            (active_session.id, paused_session.id),
+        )
+
+        count = session_manager.expire_empty_sessions(timeout_hours=2)
+        assert count == 2
+
+        active_after = session_manager.get(active_session.id)
+        paused_after = session_manager.get(paused_session.id)
+        assert active_after is not None
+        assert paused_after is not None
+        assert active_after.status == "expired"
+        assert paused_after.status == "expired"
+
+    def test_expire_empty_sessions_ignores_non_empty_and_non_active_statuses(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Fast-expire should skip sessions that are non-empty or already expired."""
+        nonempty_active = session_manager.register(
+            external_id="nonempty-active",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        expired_empty = session_manager.register(
+            external_id="already-expired-empty",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.update_stats(nonempty_active.id, message_count=1)
+        session_manager.update_status(expired_empty.id, "expired")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-3 hours') WHERE id IN (?, ?)",
+            (nonempty_active.id, expired_empty.id),
+        )
+
+        count = session_manager.expire_empty_sessions(timeout_hours=2)
+        assert count == 0
+
+        nonempty_after = session_manager.get(nonempty_active.id)
+        expired_after = session_manager.get(expired_empty.id)
+        assert nonempty_after is not None
+        assert expired_after is not None
+        assert nonempty_after.status == "active"
+        assert expired_after.status == "expired"
+
+    def test_prune_empty_sessions(
+        self,
+        session_manager: LocalSessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Prune should only hard-delete old expired zero-message sessions."""
+        prune_me = session_manager.register(
+            external_id="prune-me",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        recent_expired = session_manager.register(
+            external_id="recent-expired",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        expired_nonempty = session_manager.register(
+            external_id="expired-nonempty",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        paused_empty = session_manager.register(
+            external_id="paused-empty",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        session_manager.update_stats(expired_nonempty.id, message_count=1)
+        session_manager.update_status(prune_me.id, "expired")
+        session_manager.update_status(recent_expired.id, "expired")
+        session_manager.update_status(expired_nonempty.id, "expired")
+        session_manager.update_status(paused_empty.id, "paused")
+        session_manager.db.execute(
+            """
+            UPDATE sessions
+            SET updated_at = CASE
+                WHEN id = ? THEN datetime('now', '-2 hours')
+                WHEN id = ? THEN datetime('now', '-30 minutes')
+                WHEN id = ? THEN datetime('now', '-2 hours')
+                WHEN id = ? THEN datetime('now', '-2 hours')
+            END
+            WHERE id IN (?, ?, ?, ?)
+            """,
+            (
+                prune_me.id,
+                recent_expired.id,
+                expired_nonempty.id,
+                paused_empty.id,
+                prune_me.id,
+                recent_expired.id,
+                expired_nonempty.id,
+                paused_empty.id,
+            ),
+        )
+
+        count = session_manager.prune_empty_sessions(min_age_hours=1)
+        assert count == 1
+
+        assert session_manager.get(prune_me.id) is None
+        recent_after = session_manager.get(recent_expired.id)
+        nonempty_after = session_manager.get(expired_nonempty.id)
+        paused_after = session_manager.get(paused_empty.id)
+        assert recent_after is not None
+        assert nonempty_after is not None
+        assert paused_after is not None
+        assert recent_after.status == "expired"
+        assert nonempty_after.status == "expired"
+        assert paused_after.status == "paused"
+
     def test_transcript_processing_lifecycle(
         self,
         session_manager: LocalSessionManager,

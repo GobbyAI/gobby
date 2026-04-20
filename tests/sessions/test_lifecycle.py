@@ -73,10 +73,12 @@ class TestSessionLifecycleManager:
         manager.session_manager.pause_inactive_active_sessions.return_value = 2
         manager.session_manager.expire_orphaned_handoff_sessions.return_value = 1
         manager.session_manager.expire_stale_sessions.return_value = 3
+        manager.session_manager.expire_empty_sessions.return_value = 4
+        manager.session_manager.prune_empty_sessions.return_value = 5
 
         count = await manager._expire_stale_sessions()
 
-        assert count == 6
+        assert count == 15
         manager.session_manager.pause_inactive_active_sessions.assert_called_once_with(
             timeout_minutes=manager.config.active_session_pause_minutes
         )
@@ -86,6 +88,8 @@ class TestSessionLifecycleManager:
         manager.session_manager.expire_stale_sessions.assert_called_once_with(
             timeout_hours=manager.config.stale_session_timeout_hours
         )
+        manager.session_manager.expire_empty_sessions.assert_called_once_with(timeout_hours=2)
+        manager.session_manager.prune_empty_sessions.assert_called_once_with(min_age_hours=1)
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_none_found(self, manager):

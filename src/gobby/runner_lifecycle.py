@@ -617,15 +617,16 @@ async def run_daemon(runner: GobbyRunner) -> None:
         except OSError as e:
             logger.warning(f"Could not write PID file {pid_file}: {e}")
 
-        # Bind HTTP server immediately so health checks pass during init
-        graceful_shutdown_timeout = 15
+        # Bind HTTP server immediately so health checks pass during init.
+        # Allow in-flight HTTP requests a short drain period during shutdown.
+        uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,
             host=runner.config.bind_host,
             port=runner.http_server.port,
             log_level="warning",
             access_log=False,
-            timeout_graceful_shutdown=graceful_shutdown_timeout,
+            timeout_graceful_shutdown=uvicorn_drain_timeout,
         )
         server = uvicorn.Server(config)
         server_task = asyncio.create_task(server.serve())
@@ -676,7 +677,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
 
         try:
             logger.debug("Waiting for HTTP server lifespan shutdown")
-            await asyncio.wait_for(server_task, timeout=graceful_shutdown_timeout + 5)
+            await asyncio.wait_for(server_task, timeout=uvicorn_drain_timeout + 5)
             logger.debug("HTTP server lifespan shutdown complete")
         except TimeoutError:
             logger.warning("HTTP server shutdown timed out")

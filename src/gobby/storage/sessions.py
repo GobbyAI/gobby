@@ -1024,6 +1024,18 @@ class LocalSessionManager:
 
         return _pause(self.db, timeout_minutes)
 
+    def expire_empty_sessions(self, timeout_hours: int = 2) -> int:
+        """Fast-expire zero-message sessions. Delegates to session_lifecycle."""
+        from gobby.storage.session_lifecycle import expire_empty_sessions as _expire_empty
+
+        return _expire_empty(self.db, timeout_hours)
+
+    def prune_empty_sessions(self, min_age_hours: int = 1) -> int:
+        """Hard-delete old expired zero-message sessions. Delegates to session_lifecycle."""
+        from gobby.storage.session_lifecycle import prune_empty_sessions as _prune_empty
+
+        return _prune_empty(self.db, min_age_hours)
+
     def get_pending_transcript_sessions(self, limit: int = 10) -> builtins.list[Session]:
         """
         Get sessions that need transcript processing.

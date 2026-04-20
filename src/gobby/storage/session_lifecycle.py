@@ -97,3 +97,64 @@ def pause_inactive_active_sessions(db: DatabaseProtocol, timeout_minutes: int = 
     if count > 0:
         logger.info(f"Paused {count} inactive active sessions (>{timeout_minutes}m)")
     return count
+
+
+def expire_empty_sessions(db: DatabaseProtocol, timeout_hours: int = 2) -> int:
+    """
+    Fast-expire sessions that never received any messages.
+
+    Normal stale expiration is intentionally conservative. Zero-message
+    sessions created by spurious SESSION_START events can be expired much
+    sooner once they have been idle long enough to rule out real activity.
+
+    Args:
+        db: Database connection.
+        timeout_hours: Hours of inactivity before expiring empty sessions.
+
+    Returns:
+        Number of sessions expired.
+    """
+    cursor = db.execute(
+        """
+        UPDATE sessions
+        SET status = 'expired', updated_at = datetime('now')
+        WHERE status IN ('active', 'paused')
+        AND COALESCE(message_count, 0) = 0
+        AND datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
+        """,
+        (f"-{timeout_hours}",),
+    )
+    count = cursor.rowcount or 0
+    if count > 0:
+        logger.info(f"Fast-expired {count} empty sessions (0 messages, >{timeout_hours}h inactive)")
+    return count
+
+
+def prune_empty_sessions(db: DatabaseProtocol, min_age_hours: int = 1) -> int:
+    """
+    Hard-delete expired sessions that never received any messages.
+
+    Runs after empty sessions have been expired. The extra age buffer ensures we
+    only delete sessions that have been expired long enough to avoid racing any
+    in-flight writes.
+
+    Args:
+        db: Database connection.
+        min_age_hours: Hours an expired empty session must age before deletion.
+
+    Returns:
+        Number of sessions deleted.
+    """
+    cursor = db.execute(
+        """
+        DELETE FROM sessions
+        WHERE status = 'expired'
+        AND COALESCE(message_count, 0) = 0
+        AND datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
+        """,
+        (f"-{min_age_hours}",),
+    )
+    count = cursor.rowcount or 0
+    if count > 0:
+        logger.info(f"Pruned {count} empty ghost sessions (expired, 0 messages, >{min_age_hours}h)")
+    return count
