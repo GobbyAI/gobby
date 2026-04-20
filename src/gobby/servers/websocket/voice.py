@@ -24,6 +24,32 @@ _WARMUP_LOADING = "loading"
 _WARMUP_READY = "ready"
 _WARMUP_ERROR = "error"
 
+
+async def _broadcast_tts_status(
+    clients: dict[Any, dict[str, Any]],
+    conversation_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "type": "tts_status",
+        "conversation_id": conversation_id,
+        "status": status,
+    }
+    if error:
+        payload["error"] = error
+
+    message = json.dumps(payload)
+    for ws, meta in list(clients.items()):
+        cid = meta.get("conversation_id") if meta else None
+        if cid is not None and cid != conversation_id:
+            continue
+        try:
+            await ws.send(message)
+        except (ConnectionClosed, ConnectionClosedError):
+            pass
+
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
     from gobby.voice.tts import TTSProvider
@@ -51,6 +77,7 @@ class TTSPipeline:
         self._chunk_index = 0
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._flush_called = False
+        self._failed = False
         self._worker_task: asyncio.Task[None] = asyncio.create_task(
             self._run_worker(),
             name=f"tts-pipeline-{conversation_id[:8]}",
@@ -102,6 +129,8 @@ class TTSPipeline:
                 try:
                     if text is None:
                         return
+                    if self._failed:
+                        continue
                     await self._synthesize_and_send(text)
                 finally:
                     self._queue.task_done()
@@ -137,8 +166,16 @@ class TTSPipeline:
 
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            self._failed = True
             logger.error("TTS synthesis/send failed", exc_info=True)
+            error_message = str(exc).strip() or "TTS synthesis failed"
+            await _broadcast_tts_status(
+                self.clients,
+                self.conversation_id,
+                "error",
+                error=error_message,
+            )
 
 
 class VoiceMixin:
@@ -484,22 +521,7 @@ class VoiceMixin:
             await pipeline.cancel()
             logger.debug(f"TTS cancelled for {conversation_id[:8]}")
 
-        # Notify clients that TTS has stopped
-        status_msg = json.dumps(
-            {
-                "type": "tts_status",
-                "conversation_id": conversation_id,
-                "status": "idle",
-            }
-        )
-        for ws, meta in list(self.clients.items()):
-            cid = meta.get("conversation_id") if meta else None
-            if cid is not None and cid != conversation_id:
-                continue
-            try:
-                await ws.send(status_msg)
-            except (ConnectionClosed, ConnectionClosedError):
-                pass
+        await _broadcast_tts_status(self.clients, conversation_id, "idle")
 
     async def _handle_tts_stop(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle client-requested TTS stop (barge-in from VAD).

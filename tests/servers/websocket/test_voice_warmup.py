@@ -76,6 +76,23 @@ class TestVoiceWarmup:
         assert status["tts_warmup_error"] == "chatterbox missing"
 
     @pytest.mark.asyncio
+    async def test_start_voice_warmup_records_provider_warmup_failure(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock(side_effect=RuntimeError("reference audio invalid"))
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+
+        mixin.start_voice_warmup()
+        assert mixin._voice_warmup_task is not None
+
+        await mixin._voice_warmup_task
+
+        assert mixin._tts_warmup_status == "error"
+        assert mixin._tts_warmup_error == "reference audio invalid"
+
+    @pytest.mark.asyncio
     async def test_cleanup_voice_unloads_models_and_cancels_tasks(self) -> None:
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=True))
 

@@ -188,6 +188,27 @@ class TestVoiceRoutes:
         assert data["tts_capabilities"]["supports_reference_text"] is True
         assert data["tts_reference_text_configured"] is True
 
+    def test_status_reports_missing_chatterbox_reference_audio(
+        self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
+    ) -> None:
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=True,
+            tts_enabled=True,
+            tts_provider="chatterbox",
+            tts_reference_audio=str(tmp_path / "missing-reference.wav"),
+        )
+
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": MagicMock(), "chatterbox": MagicMock()},
+        ):
+            response = client.get("/api/voice/status")
+
+        data = response.json()
+        assert data["tts_provider"] == "chatterbox"
+        assert data["tts_available"] is False
+        assert "reference audio not found" in data["tts_reason"]
+
     # -----------------------------------------------------------------
     # POST /api/voice/transcribe
     # -----------------------------------------------------------------
