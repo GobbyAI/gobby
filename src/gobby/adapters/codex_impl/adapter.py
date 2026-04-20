@@ -429,19 +429,26 @@ class CodexAdapter(BaseAdapter):
             logger.warning("Approval request %s has no hook manager; failing closed", method)
             return self._fail_closed_approval_response(method)
 
-        if self._is_safe_auto_approved_tool(hook_event):
+        is_safe_auto_approved = self._is_safe_auto_approved_tool(hook_event)
+
+        try:
+            hook_response = self._hook_manager.handle(hook_event)
+        except Exception as e:
+            logger.error(f"Error processing approval request {method}: {e}")
+            if is_safe_auto_approved:
+                if method == "mcpServer/elicitation/request":
+                    return self._translate_mcp_elicitation_response()
+                return {"decision": "accept"}
+            return self._fail_closed_approval_response(method)
+
+        if is_safe_auto_approved:
             if method == "mcpServer/elicitation/request":
                 return self._translate_mcp_elicitation_response()
             return {"decision": "accept"}
 
-        try:
-            hook_response = self._hook_manager.handle(hook_event)
-            if method == "mcpServer/elicitation/request":
-                return self._translate_mcp_elicitation_response(hook_response)
-            return self.translate_from_hook_response(hook_response)
-        except Exception as e:
-            logger.error(f"Error processing approval request {method}: {e}")
-            return self._fail_closed_approval_response(method)
+        if method == "mcpServer/elicitation/request":
+            return self._translate_mcp_elicitation_response(hook_response)
+        return self.translate_from_hook_response(hook_response)
 
     def _is_safe_auto_approved_tool(self, hook_event: HookEvent) -> bool:
         """Return True for safe MCP discovery/UI-only tool calls."""

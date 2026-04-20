@@ -2974,8 +2974,9 @@ class TestCodexAdapterApprovalHandling:
 
     @pytest.mark.asyncio
     async def test_handle_approval_auto_accepts_safe_mcp_proxy_discovery(self) -> None:
-        """Safe MCP proxy discovery should bypass Codex approval hooks."""
+        """Safe MCP proxy discovery should still fire hooks and force accept."""
         mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="allow")
         adapter = CodexAdapter(hook_manager=mock_hm)
 
         result = await adapter.handle_approval_request(
@@ -2983,18 +2984,78 @@ class TestCodexAdapterApprovalHandling:
             {
                 "threadId": "thr-mcp-safe",
                 "itemId": "item-mcp-safe",
-                "name": "mcp__gobby__list_mcp_servers",
-                "arguments": {},
+                "name": "mcp__gobby__get_tool_schema",
+                "arguments": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "create_task",
+                },
             },
         )
 
         assert result == {"decision": "accept"}
-        mock_hm.handle.assert_not_called()
+        mock_hm.handle.assert_called_once()
+        hook_event = mock_hm.handle.call_args[0][0]
+        assert hook_event.event_type == HookEventType.BEFORE_TOOL
+        assert hook_event.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        assert hook_event.data["tool_input"] == {
+            "server_name": "gobby-tasks",
+            "tool_name": "create_task",
+        }
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_safe_mcp_proxy_forces_accept_even_when_hook_denies(self) -> None:
+        """Safe MCP proxy discovery should ignore deny/block responses from hooks."""
+        mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(
+            decision="deny",
+            reason="Should not surface for safe discovery tools",
+        )
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-mcp-safe",
+                "itemId": "item-mcp-safe",
+                "name": "mcp__gobby__get_tool_schema",
+                "arguments": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "create_task",
+                },
+            },
+        )
+
+        assert result == {"decision": "accept"}
+        mock_hm.handle.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_safe_mcp_proxy_hook_error_still_accepts(self) -> None:
+        """Safe MCP proxy discovery should fail open when hook processing crashes."""
+        mock_hm = MagicMock()
+        mock_hm.handle.side_effect = RuntimeError("Handler crashed")
+        adapter = CodexAdapter(hook_manager=mock_hm)
+
+        result = await adapter.handle_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thr-mcp-safe",
+                "itemId": "item-mcp-safe",
+                "name": "mcp__gobby__get_tool_schema",
+                "arguments": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "create_task",
+                },
+            },
+        )
+
+        assert result == {"decision": "accept"}
+        mock_hm.handle.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handle_approval_auto_accepts_safe_mcp_elicitation(self) -> None:
-        """Safe MCP elicitation prompts should bypass Codex approval hooks."""
+        """Safe MCP elicitation prompts should still fire hooks and force accept."""
         mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="deny")
         adapter = CodexAdapter(hook_manager=mock_hm)
 
         result = await adapter.handle_approval_request(
@@ -3011,12 +3072,13 @@ class TestCodexAdapterApprovalHandling:
         )
 
         assert result == {"action": "accept", "content": None, "_meta": None}
-        mock_hm.handle.assert_not_called()
+        mock_hm.handle.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handle_approval_auto_accepts_safe_canvas_calls(self) -> None:
-        """UI-only canvas tools should bypass Codex approval hooks."""
+        """UI-only canvas tools should still fire hooks and force accept."""
         mock_hm = MagicMock()
+        mock_hm.handle.return_value = HookResponse(decision="block")
         adapter = CodexAdapter(hook_manager=mock_hm)
 
         result = await adapter.handle_approval_request(
@@ -3033,7 +3095,7 @@ class TestCodexAdapterApprovalHandling:
         )
 
         assert result == {"decision": "accept"}
-        mock_hm.handle.assert_not_called()
+        mock_hm.handle.assert_called_once()
 
 
 class TestCodexAdapterApprovalAttach:
