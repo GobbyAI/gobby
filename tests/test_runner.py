@@ -14,17 +14,71 @@ from gobby.runner_init import resolve_embedding_api_key
 pytestmark = pytest.mark.unit
 
 
+def _set_mock_default(obj: MagicMock, name: str, default):
+    """Assign a default only when a MagicMock placeholder has not been made concrete."""
+    value = getattr(obj, name, None)
+    if isinstance(value, MagicMock):
+        setattr(obj, name, default)
+    elif value is None:
+        setattr(obj, name, default)
+
+
+def _apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
+    """Populate runner tests with scalar defaults so background tasks stay deterministic."""
+    config.bind_host = "localhost"
+
+    if getattr(config, "websocket", None) is None:
+        config.websocket = None
+
+    config.session_lifecycle = getattr(config, "session_lifecycle", MagicMock())
+    config.message_tracking = getattr(config, "message_tracking", None)
+    config.memory_sync = getattr(config, "memory_sync", MagicMock())
+    _set_mock_default(config.memory_sync, "enabled", False)
+
+    config.ui = getattr(config, "ui", MagicMock())
+    _set_mock_default(config.ui, "enabled", False)
+    _set_mock_default(config.ui, "mode", "prod")
+    _set_mock_default(config.ui, "host", "localhost")
+    _set_mock_default(config.ui, "port", 5173)
+
+    config.embeddings = getattr(config, "embeddings", MagicMock())
+    _set_mock_default(config.embeddings, "api_base", "")
+    _set_mock_default(config.embeddings, "model", "text-embedding-3-small")
+    _set_mock_default(config.embeddings, "api_key", None)
+    _set_mock_default(config.embeddings, "dim", 1536)
+
+    config.databases = getattr(config, "databases", MagicMock())
+    config.databases.qdrant = getattr(config.databases, "qdrant", MagicMock())
+    _set_mock_default(config.databases.qdrant, "url", "")
+    _set_mock_default(config.databases.qdrant, "collection_prefix", "test_")
+    config.databases.neo4j = getattr(config.databases, "neo4j", MagicMock())
+    _set_mock_default(config.databases.neo4j, "url", "")
+    _set_mock_default(config.databases.neo4j, "auth", None)
+    _set_mock_default(config.databases.neo4j, "database", "neo4j")
+    _set_mock_default(config.databases.neo4j, "graph_search", True)
+    _set_mock_default(config.databases.neo4j, "graph_min_score", 0.5)
+    _set_mock_default(config.databases.neo4j, "rrf_k", 60)
+
+    config.code_index = getattr(config, "code_index", MagicMock())
+    _set_mock_default(config.code_index, "enabled", False)
+    _set_mock_default(config.code_index, "embedding_enabled", False)
+    _set_mock_default(config.code_index, "graph_enabled", False)
+    _set_mock_default(config.code_index, "summary_enabled", False)
+    _set_mock_default(config.code_index, "summary_batch_size", 20)
+    _set_mock_default(config.code_index, "maintenance_interval_seconds", 300)
+    _set_mock_default(config.code_index, "sync_worker_interval_seconds", 5)
+    _set_mock_default(config.code_index, "sync_worker_batch_size", 50)
+
+    return config
+
+
 @pytest.fixture
 def mock_config():
     """Create a mock config with WebSocket disabled by default."""
     config = MagicMock()
     config.daemon_port = 60887
     config.websocket = None
-    config.session_lifecycle = MagicMock()
-    config.message_tracking = None
-    config.memory_sync = MagicMock()
-    config.memory_sync.enabled = False
-    return config
+    return _apply_safe_runner_config_defaults(config)
 
 
 @pytest.fixture
@@ -37,11 +91,7 @@ def mock_config_with_websocket():
     config.websocket.port = 60888
     config.websocket.ping_interval = 30
     config.websocket.ping_timeout = 10
-    config.session_lifecycle = MagicMock()
-    config.message_tracking = None
-    config.memory_sync = MagicMock()
-    config.memory_sync.enabled = False
-    return config
+    return _apply_safe_runner_config_defaults(config)
 
 
 def create_base_patches(
@@ -60,6 +110,9 @@ def create_base_patches(
 
     Returns a list of patch objects that should be used with ExitStack.
     """
+    if mock_config is not None:
+        _apply_safe_runner_config_defaults(mock_config)
+
     # Create default mocks if not provided
     if mock_mcp_manager is None:
         mock_mcp_manager = AsyncMock()
