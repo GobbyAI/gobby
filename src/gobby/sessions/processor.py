@@ -132,6 +132,14 @@ class SessionMessageProcessor:
         """
         Register a session for monitoring.
 
+        The transcript file may not exist yet at registration time — Codex CLI
+        writes its rollout shortly after session_start fires, so the file
+        appears a second or so later. Register the session anyway; the poll
+        loop's ``_process_session`` gate (``if not os.path.exists``) already
+        handles missing files gracefully, and once the file appears the next
+        poll picks it up from byte zero. Skipping registration here means the
+        Codex MCP-call synthesis path never sees the rollout at all.
+
         Args:
             session_id: Session ID
             transcript_path: Absolute path to the transcript JSONL file
@@ -140,21 +148,16 @@ class SessionMessageProcessor:
         if session_id in self._active_sessions:
             return
 
-        if not os.path.exists(transcript_path):
-            # File doesn't exist yet — skip monitoring but DON'T overwrite
-            # transcript_path in the DB. The file may appear moments later
-            # (race between hook registration and first CLI write).
-            # TranscriptReader will find it at read time via re-derivation.
-            logger.debug(
-                f"Transcript not yet on disk for session {session_id}, "
-                f"skipping monitoring (path preserved): {transcript_path}"
-            )
-            return
-
         self._active_sessions[session_id] = transcript_path
         self._sources[session_id] = source
         self._parsers[session_id] = get_parser(source, session_id=session_id)
-        logger.debug(f"Registered session {session_id} for processing ({source})")
+        if os.path.exists(transcript_path):
+            logger.debug(f"Registered session {session_id} for processing ({source})")
+        else:
+            logger.debug(
+                f"Registered session {session_id} for processing ({source}); "
+                f"transcript not yet on disk, poll loop will catch it: {transcript_path}"
+            )
 
     async def flush_session(self, session_id: str) -> None:
         """Force an immediate processing pass for a single session.

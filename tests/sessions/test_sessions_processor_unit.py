@@ -102,7 +102,10 @@ class TestSessionRegistration:
         assert processor._parsers["session-1"] is original_parser  # Not replaced
 
     def test_register_session_transcript_not_found(self, mock_db, tmp_path, caplog) -> None:
-        """Register should skip monitoring but NOT overwrite transcript_path."""
+        """Register when the file doesn't exist yet (Codex writes rollout
+        shortly after session_start). Must still register — the poll loop's
+        existence check handles missing files and picks the file up on its
+        next pass once Codex writes it."""
         mock_session_manager = MagicMock()
         processor = SessionMessageProcessor(
             mock_db, poll_interval=0.1, session_manager=mock_session_manager
@@ -112,11 +115,11 @@ class TestSessionRegistration:
         with caplog.at_level("DEBUG"):
             processor.register_session("session-1", str(nonexistent))
 
-        # Should NOT be registered for active monitoring
-        assert "session-1" not in processor._active_sessions
-        assert "session-1" not in processor._parsers
-        # Should NOT overwrite transcript_path or mark processed —
-        # TranscriptReader will re-derive the path at read time
+        # Registered for monitoring — poll loop handles the file appearing later.
+        assert "session-1" in processor._active_sessions
+        assert "session-1" in processor._parsers
+        # Should NOT overwrite transcript_path or mark processed — the DB's
+        # authoritative transcript_path remains untouched.
         mock_session_manager.update.assert_not_called()
         mock_session_manager.mark_transcript_processed.assert_not_called()
 
@@ -963,6 +966,45 @@ class TestCodexMcpHookSynthesis:
 
         # Should not raise.
         await processor._process_session("sid", str(transcript))
+
+    @pytest.mark.asyncio
+    async def test_registration_survives_missing_transcript_then_picks_up(
+        self, mock_db, tmp_path
+    ) -> None:
+        """Codex writes its rollout slightly after session_start fires.
+        Register must not skip on a missing file; the next poll catches up.
+        """
+        hook_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+
+        transcript = tmp_path / "future-rollout.jsonl"
+        assert not transcript.exists()
+
+        processor.register_session("sid", str(transcript), source="codex")
+        assert "sid" in processor._active_sessions
+
+        # First poll: file still absent — must be a silent no-op.
+        await processor._process_session("sid", str(transcript))
+        hook_manager.handle.assert_not_called()
+
+        # Codex finally writes the rollout.
+        transcript.write_text(
+            _codex_event_msg(
+                "mcp_tool_call_begin",
+                call_id="call_late",
+                invocation={
+                    "server": "gobby",
+                    "tool": "get_tool_schema",
+                    "arguments": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+                },
+            )
+        )
+
+        await processor._process_session("sid", str(transcript))
+        assert hook_manager.handle.call_count == 1
+        event = hook_manager.handle.call_args.args[0]
+        assert event.event_type == HookEventType.BEFORE_TOOL
+        assert event.data["tool_input"]["server_name"] == "gobby-tasks"
 
     @pytest.mark.asyncio
     async def test_after_tool_with_err_marks_error(self, mock_db, tmp_path) -> None:
