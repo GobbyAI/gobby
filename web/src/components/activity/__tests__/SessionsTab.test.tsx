@@ -171,8 +171,10 @@ describe("SessionsTab", () => {
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
       target: { value: "paused-ext-1" },
     });
-    expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
-    expect(screen.queryByText("#201: Live Terminal")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+      expect(screen.queryByText("#201: Live Terminal")).toBeNull();
+    });
 
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
       target: { value: "" },

@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage, ParsedToolEvent, TokenUsage
+from gobby.sessions.transcripts.base import (
+    BaseTranscriptParser,
+    ParsedMessage,
+    ParsedToolEvent,
+    TokenUsage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +343,9 @@ class GeminiTranscriptParser(BaseTranscriptParser):
 
         return None
 
-    def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage | ParsedToolEvent]:
+    def parse_lines(
+        self, lines: list[str], start_index: int = 0
+    ) -> list[ParsedMessage | ParsedToolEvent]:
         """
         Parse a list of transcript lines.
         """
