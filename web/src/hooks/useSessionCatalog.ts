@@ -140,7 +140,7 @@ export function useSessionCatalog(projectId: string | null) {
     void fetchSessions();
   }, [fetchSessions]);
 
-  const removeSession = useCallback((id: string) => {
+  const removeSessionById = useCallback((id: string) => {
     setSessions((prev) => prev.filter((session) => session.id !== id));
     setDeletingIds((prev) => {
       const next = new Set(prev);
@@ -149,18 +149,17 @@ export function useSessionCatalog(projectId: string | null) {
     });
   }, []);
 
+  const removeSession = useCallback((id: string) => {
+    removeSessionById(id);
+  }, [removeSessionById]);
+
   const markSessionDeleting = useCallback((id: string) => {
     setDeletingIds((prev) => new Set(prev).add(id));
   }, []);
 
   const confirmSessionDeleted = useCallback((sessionId: string) => {
-    setSessions((prev) => prev.filter((session) => session.id !== sessionId));
-    setDeletingIds((prev) => {
-      const next = new Set(prev);
-      next.delete(sessionId);
-      return next;
-    });
-  }, []);
+    removeSessionById(sessionId);
+  }, [removeSessionById]);
 
   const restoreSession = useCallback((id: string) => {
     setDeletingIds((prev) => {
@@ -172,13 +171,14 @@ export function useSessionCatalog(projectId: string | null) {
 
   const renameSession = useCallback(
     async (id: string, title: string) => {
-      const previousSession = sessions.find((session) => session.id === id);
+      let previousSession: GobbySession | undefined
       setSessions((prev) =>
         prev.map((session) => {
-          if (session.id !== id) {
-            return session;
+          if (session.id === id) {
+            previousSession = session
+            return { ...session, title }
           }
-          return { ...session, title };
+          return session
         }),
       );
 
@@ -186,9 +186,10 @@ export function useSessionCatalog(projectId: string | null) {
         if (!previousSession) {
           return;
         }
+        const previousTitle = previousSession.title;
         setSessions((prev) =>
           prev.map((session) =>
-            session.id === id ? { ...session, title: previousSession.title } : session,
+            session.id === id ? { ...session, title: previousTitle } : session,
           ),
         );
       };
@@ -211,7 +212,7 @@ export function useSessionCatalog(projectId: string | null) {
         await fetchSessions();
       }
     },
-    [fetchSessions, sessions],
+    [fetchSessions],
   );
 
   return {

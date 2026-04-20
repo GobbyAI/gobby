@@ -152,6 +152,28 @@ Search should route through logical backends for:
 - skill search
 - code index search
 
+### Search fusion and Neo4j boost continuity
+
+The PostgreSQL seam must preserve the current hybrid search behavior used by the
+Rust `gcode` search stack rather than replacing it with a keyword-only backend.
+
+- `pick_search_backend(...)` should continue to dispatch concrete keyword and
+  vector backends such as `BM25SearchBackend` and `QdrantSearchBackend`
+- an RRF orchestrator should merge those ranked lists so the existing
+  Reciprocal Rank Fusion behavior survives the storage migration
+- Neo4j graph relevance boosting should remain an explicit step in that flow,
+  either as a separate `Neo4jSearchBackend` whose scores feed the fusion layer,
+  or as a post-keyword/post-vector boost applied before final fusion
+
+Rust migration checklist for the search path:
+
+- identify the current `gcode` Rust modules that perform FTS5 symbol/content
+  search
+- identify the modules that perform Qdrant vector lookup
+- identify the graph-boost / Neo4j scoring layer
+- preserve their composition under the new PostgreSQL seam so FTS5/BM25,
+  vector search, and Neo4j boosting still combine through RRF after cutover
+
 ## Implementation Plan
 
 ### Phase 1: PostgreSQL service and bootstrap support

@@ -329,6 +329,9 @@ def register_lifecycle_routes(
                 terminal_killed = await kill_terminal_session(session.terminal_context, session_id)
 
             server.session_manager.update_status(session_id, "expired")
+            from gobby.servers.routes.sessions.core import _clear_statusline_last_seen
+
+            _clear_statusline_last_seen(session_id)
             await broadcast_session("session_expired", session_id)
 
             return {

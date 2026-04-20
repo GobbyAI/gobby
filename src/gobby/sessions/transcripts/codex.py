@@ -35,6 +35,15 @@ _ROLE_MAP = {
 }
 
 
+def _parse_int_token(value: Any, *, default: int = 0) -> int:
+    """Parse token counts defensively from transcript payload values."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        logger.warning("Invalid Codex token count value %r; using %s", value, default)
+        return default
+
+
 class CodexTranscriptParser(BaseTranscriptParser):
     """
     Parses JSONL transcript files from Codex.
@@ -236,15 +245,17 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if payload_type != "token_count":
             return None
 
-        input_tokens = int(payload.get("input_tokens") or payload.get("inputTokens") or 0)
-        cached_input_tokens = int(
+        input_tokens = _parse_int_token(payload.get("input_tokens") or payload.get("inputTokens"))
+        cached_input_tokens = _parse_int_token(
             payload.get("cached_input_tokens") or payload.get("cachedInputTokens") or 0
         )
-        output_tokens = int(payload.get("output_tokens") or payload.get("outputTokens") or 0)
-        reasoning_output_tokens = int(
+        output_tokens = _parse_int_token(
+            payload.get("output_tokens") or payload.get("outputTokens")
+        )
+        reasoning_output_tokens = _parse_int_token(
             payload.get("reasoning_output_tokens") or payload.get("reasoningOutputTokens") or 0
         )
-        cache_creation_tokens = int(
+        cache_creation_tokens = _parse_int_token(
             payload.get("cache_creation_input_tokens")
             or payload.get("cacheCreationInputTokens")
             or 0

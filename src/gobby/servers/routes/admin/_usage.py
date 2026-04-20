@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query
@@ -26,7 +25,7 @@ def register_usage_routes(router: APIRouter, server: HTTPServer) -> None:
         try:
             store = TokenEventStore(server.services.database)
             breakdown = store.get_breakdown(hours=hours, project_id=project_id)
-        except sqlite3.Error as exc:
+        except Exception as exc:
             logger.warning("Failed to load token usage breakdown: %s", exc)
             breakdown = {
                 "totals": {

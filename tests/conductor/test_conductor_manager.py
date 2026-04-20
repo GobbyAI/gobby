@@ -129,15 +129,15 @@ async def test_init_rejects_non_claude_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_tick_still_rejects_non_claude_provider_after_init() -> None:
-    """The tick path keeps the defensive provider guard in place."""
+async def test_handle_tick_does_not_repeat_provider_validation_after_init() -> None:
+    """Provider validation happens in __init__, not again inside the tick path."""
     manager, _ = _make_manager()
     manager._config.provider = "codex"
 
     job = MagicMock()
     result = await manager(job)
 
-    assert "provider 'codex' is not supported" in result
+    assert "Working directory does not exist" in result
 
 
 @pytest.mark.asyncio

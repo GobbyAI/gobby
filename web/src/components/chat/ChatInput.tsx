@@ -185,6 +185,7 @@ export function ChatInput({
     if (contextUsageUpdatedAt == null) {
       return
     }
+    setUsageClock(Date.now())
     const interval = window.setInterval(() => setUsageClock(Date.now()), 15_000)
     return () => window.clearInterval(interval)
   }, [contextUsageUpdatedAt])

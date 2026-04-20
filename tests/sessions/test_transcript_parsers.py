@@ -1273,6 +1273,25 @@ class TestCodexTranscriptParser:
         assert msg is not None
         assert msg.usage is None
 
+    def test_token_count_invalid_values_fall_back_to_zero(self, parser) -> None:
+        line = self._event_msg(
+            "token_count",
+            input_tokens="bad",
+            cached_input_tokens="oops",
+            output_tokens=None,
+            reasoning_output_tokens="nah",
+            cache_creation_input_tokens="wat",
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 0
+        assert msg.usage.output_tokens == 0
+        assert msg.usage.cache_creation_tokens == 0
+        assert msg.usage.cache_read_tokens == 0
+
 
 class TestGeminiTranscriptParser:
     """Tests for Gemini transcript parser."""

@@ -20,6 +20,10 @@ class SessionTokenTracker:
         db: DatabaseProtocol | None = None,
         session_storage: Any | None = None,
     ) -> None:
+        if db is None and session_storage is None:
+            raise ValueError(
+                "SessionTokenTracker requires db or session_storage for get_usage_summary"
+            )
         self.db = db
         self.session_storage = session_storage
 
@@ -40,11 +44,13 @@ class SessionTokenTracker:
                 "period_days": days,
             }
 
-        if self.session_storage is None:
-            raise ValueError("SessionTokenTracker requires db or session_storage")
-
+        session_storage = self.session_storage
+        if session_storage is None:
+            raise RuntimeError(
+                "SessionTokenTracker requires session_storage for get_usage_summary fallback"
+            )
         since = datetime.now(UTC) - timedelta(days=days)
-        sessions = self.session_storage.get_sessions_since(since, project_id=project_id)
+        sessions = session_storage.get_sessions_since(since, project_id=project_id)
 
         total_input_tokens = 0
         total_output_tokens = 0

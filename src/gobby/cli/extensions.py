@@ -272,7 +272,7 @@ def hooks_status(json_format: bool) -> None:
     hooks_config = get_hooks_config()
 
     # Check global install status
-    global_hooks_dir = Path.home() / ".gobby" / "hooks"
+    global_hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", Path.home() / ".gobby" / "hooks"))
     global_installed = any(
         (global_hooks_dir / filename).exists()
         for filename in ("validate_settings.py", "statusline_handler.py")

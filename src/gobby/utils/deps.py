@@ -348,7 +348,7 @@ def _detect_openai(db: LocalDatabase | None = None) -> str | None:
 
             if SecretStore(db).get("openai_api_key"):
                 return "openai"
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
             logger.debug("Failed to read openai_api_key from SecretStore", exc_info=True)
 
     return "openai" if os.environ.get("OPENAI_API_KEY") else None
@@ -356,7 +356,15 @@ def _detect_openai(db: LocalDatabase | None = None) -> str | None:
 
 def _infer_from_env_or_none(dim: Any, db: LocalDatabase | None = None) -> str | None:
     """Return the env-backed OpenAI provider, or explicit disabled state, or None."""
-    if dim == 0:
+    normalized_dim = dim
+    if isinstance(dim, str):
+        stripped = dim.strip()
+        if stripped:
+            try:
+                normalized_dim = int(stripped)
+            except ValueError:
+                normalized_dim = stripped
+    if normalized_dim == 0:
         return "none"
     return _detect_openai(db)
 

@@ -20,6 +20,7 @@ from gobby.agents.sandbox import (
     CodexSandboxResolver,
     SandboxConfig,
 )
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -433,13 +434,13 @@ class GeminiManagedChatSession(
                         )
                         if isinstance(chat_event, ToolResultEvent):
                             pending = pending_tool_calls.pop(chat_event.tool_call_id, {})
+                            tool_input = pending.get("tool_input")
+                            tool_input_payload: dict[str, Any] = (
+                                tool_input if isinstance(tool_input, dict) else {}
+                            )
                             await self._apply_post_tool_lifecycle(
                                 str(pending.get("tool_name", "")),
-                                (
-                                    pending.get("tool_input")
-                                    if isinstance(pending.get("tool_input"), dict)
-                                    else {}
-                                ),
+                                tool_input_payload,
                                 chat_event.result if chat_event.success else chat_event.error,
                             )
                         if chat_event is not None:
@@ -1130,8 +1131,6 @@ class CodexWebChatBackend:
                 raw_tool_name = self._compose_mcp_tool_name(server_name, mcp_tool)
 
         if isinstance(raw_tool_name, str) and raw_tool_name:
-            from gobby.hooks.normalization import normalize_tool_fields
-
             normalized = normalize_tool_fields({"tool_name": raw_tool_name})
             tool_name = str(normalized.get("tool_name", raw_tool_name))
         elif item_type == "commandExecution":

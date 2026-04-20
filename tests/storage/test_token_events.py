@@ -59,7 +59,15 @@ def test_row_to_event_dict_logs_metadata_context(caplog: pytest.LogCaptureFixtur
     assert record.project_id == "proj-1"
     assert record.message_id == "msg-1"
     assert record.model == "claude-sonnet-4"
-    assert record.raw_metadata == "{not-json"
+    assert record.raw_metadata_present is True
+    assert record.raw_metadata_size == len("{not-json")
+
+
+def test_list_session_events_rejects_non_positive_limit() -> None:
+    store = TokenEventStore(db={})  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="limit must be a positive integer"):
+        store.list_session_events("sess-1", limit=0)
 
 
 def test_merge_event_totals_coerces_invalid_values() -> None:

@@ -815,6 +815,8 @@ def _migrate_add_token_events(db: LocalDatabase) -> None:
     if sessions:
         rows: list[tuple[object, ...]] = []
         for session in sessions:
+            created_at = session["created_at"]
+            created_at_str = None if created_at is None else str(created_at).replace("+00:00", "Z")
             rows.append(
                 (
                     session["id"],
@@ -829,7 +831,7 @@ def _migrate_add_token_events(db: LocalDatabase) -> None:
                     session["usage_cache_creation_tokens"] or 0,
                     session["usage_cache_read_tokens"] or 0,
                     session["context_window"],
-                    str(session["created_at"]).replace("+00:00", "Z"),
+                    created_at_str,
                 )
             )
         with db.transaction():
@@ -1539,11 +1541,12 @@ def _run_migration_list(
             try:
                 if callable(action):
                     # Python data migration
-                    action(db)
-                    db.execute(
-                        "INSERT INTO schema_version (version) VALUES (?)",
-                        (version,),
-                    )
+                    with db.transaction():
+                        action(db)
+                        db.execute(
+                            "INSERT INTO schema_version (version) VALUES (?)",
+                            (version,),
+                        )
                 else:
                     # SQL migration (may contain multiple statements)
                     with db.transaction():

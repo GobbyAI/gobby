@@ -10,11 +10,16 @@ interface Props {
 
 export function GranularityToggle({ value, onChange }: Props) {
   return (
-    <div className="inline-flex rounded-md border border-border bg-background/60 p-0.5">
+    <div
+      role="group"
+      aria-label="Token chart granularity"
+      className="inline-flex rounded-md border border-border bg-background/60 p-0.5"
+    >
       {OPTIONS.map((option) => (
         <button
           key={option}
           type="button"
+          aria-pressed={option === value}
           className={cn(
             'rounded px-2 py-1 text-[11px] font-medium transition-colors',
             option === value

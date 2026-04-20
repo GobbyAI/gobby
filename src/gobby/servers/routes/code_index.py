@@ -49,7 +49,13 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to load code graph overview: {e}")
+            logger.exception(
+                "Failed to load code graph overview",
+                extra={
+                    "error": str(e),
+                    "context": {"route": "code_index", "operation": "graph_overview"},
+                },
+            )
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/file/{file_path:path}")
@@ -69,7 +75,17 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to expand code graph file {file_path}: {e}")
+            logger.exception(
+                "Failed to expand code graph file",
+                extra={
+                    "error": str(e),
+                    "context": {
+                        "route": "code_index",
+                        "operation": "graph_file",
+                        "file_path": file_path,
+                    },
+                },
+            )
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/symbol/{symbol_id}/neighbors")
@@ -91,7 +107,17 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to expand code graph symbol {symbol_id}: {e}")
+            logger.exception(
+                "Failed to expand code graph symbol",
+                extra={
+                    "error": str(e),
+                    "context": {
+                        "route": "code_index",
+                        "operation": "graph_symbol_neighbors",
+                        "symbol_id": symbol_id,
+                    },
+                },
+            )
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/blast-radius")
@@ -123,7 +149,13 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to build blast radius graph: {e}")
+            logger.exception(
+                "Failed to build blast radius graph",
+                extra={
+                    "error": str(e),
+                    "context": {"route": "code_index", "operation": "graph_blast_radius"},
+                },
+            )
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/graph/search")
@@ -172,7 +204,13 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to search code graph: {e}")
+            logger.exception(
+                "Failed to search code graph",
+                extra={
+                    "error": str(e),
+                    "context": {"route": "code_index", "operation": "graph_search"},
+                },
+            )
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/graph/clear")

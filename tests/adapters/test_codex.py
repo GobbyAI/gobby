@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1133,7 +1134,7 @@ class TestCodexAdapterTranslateToHookEvent:
             assert hook_event.event_type == HookEventType.AFTER_TOOL
             assert hook_event.data["item_type"] == item_type
 
-    def test_item_completed_file_change_uses_cached_cwd(self, tmp_path) -> None:
+    def test_item_completed_file_change_uses_cached_cwd(self, tmp_path: Path) -> None:
         """Cached thread cwd should flow into synthetic AFTER_TOOL hook events."""
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
@@ -1158,9 +1159,7 @@ class TestCodexAdapterTranslateToHookEvent:
         )
 
         adapter = CodexAdapter()
-        hook_event = adapter.translate_to_hook_event(
-            {"method": "item/completed", "params": params}
-        )
+        hook_event = adapter.translate_to_hook_event({"method": "item/completed", "params": params})
 
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.AFTER_TOOL
@@ -1202,7 +1201,7 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["tool_output"] == {"success": True}
 
     def test_item_completed_file_change_out_of_repo_does_not_mark_had_edits(
-        self, tmp_path
+        self, tmp_path: Path
     ) -> None:
         """Synthetic Codex AFTER_TOOL edits outside cwd should not mark had_edits."""
         repo_root = tmp_path / "repo"
@@ -1228,9 +1227,7 @@ class TestCodexAdapterTranslateToHookEvent:
         )
 
         adapter = CodexAdapter()
-        hook_event = adapter.translate_to_hook_event(
-            {"method": "item/completed", "params": params}
-        )
+        hook_event = adapter.translate_to_hook_event({"method": "item/completed", "params": params})
         assert hook_event is not None
         hook_event.metadata["_platform_session_id"] = "sess-123"
 
@@ -1243,7 +1240,7 @@ class TestCodexAdapterTranslateToHookEvent:
 
         session_storage.mark_had_edits.assert_not_called()
 
-    def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path) -> None:
+    def test_item_completed_file_change_in_repo_marks_had_edits(self, tmp_path: Path) -> None:
         """Synthetic Codex AFTER_TOOL edits inside cwd should still mark had_edits."""
         repo_root = tmp_path / "repo"
         repo_root.mkdir()
@@ -1268,9 +1265,7 @@ class TestCodexAdapterTranslateToHookEvent:
         )
 
         adapter = CodexAdapter()
-        hook_event = adapter.translate_to_hook_event(
-            {"method": "item/completed", "params": params}
-        )
+        hook_event = adapter.translate_to_hook_event({"method": "item/completed", "params": params})
         assert hook_event is not None
         hook_event.metadata["_platform_session_id"] = "sess-123"
 

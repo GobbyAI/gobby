@@ -20,15 +20,15 @@ The Python codebase is expected to be ported to Rust in a later effort. This pla
 
 ## Constraints
 
-- **Driver**: psycopg v3 (sync + async on one driver; pairs with `psycopg_pool`). This is the key migration choice because existing synchronous storage call sites can keep running while new async paths are added incrementally on the same driver. Not psycopg2 (sync-only, no async path). Not asyncpg (async-only would force a broad refactor of every synchronous storage call site up front instead of letting the codebase adopt async gradually).
+- **Driver**: psycopg v3 (sync + async on one driver; pairs with `psycopg_pool`). This is the key migration choice because existing synchronous storage call sites can keep running while new async paths are added incrementally on the same driver. Not psycopg2 (sync-only, no async path). Not asyncpg (async-only would force a broad refactor of every synchronous storage call site up front instead of letting the codebase adopt async gradually). This is a Python-phase optimization only: it lets the Python codebase adopt async incrementally without a big-bang refactor, but the later Rust port on `sqlx` is still async-only and still requires a full sync→async conversion. That is why the migration artifacts themselves must stay Rust-portable (`sqlx migrate run`-compatible SQL files, `$1` placeholders, env-var-driven connection tuning, bootstrap-sourced DSN).
 - **Migration tool**: raw SQL files + a handwritten migration registry. No SQLAlchemy, no Alembic.
 - **Test backend**: compose-managed PostgreSQL reached via `DATABASE_URL`. Schema-per-xdist-worker plus test-scoped schema reset for isolation. Zero language-specific test infra so the pattern survives the Rust port.
 - **Rust portability**: migrations must be pure `.sql` files (no Python callables). Parameter style standardized on `$1`. Runtime DSN lives in bootstrap for now; pool and connection tuning are still env-driven (`PGPOOL_MIN`, `PGPOOL_MAX`, `PGCONNECT_TIMEOUT`, `PGAPPNAME`) rather than embedded in Python.
 - **Search**: `pg_search` (ParadeDB) shipped via a custom `gobby/postgres:17-pgsearch` image. BM25 ranking via Tantivy. Rust-portable indexes. Semantic search (Qdrant) is an explicit non-goal of this plan but the search backend dispatcher leaves a clean seam for it.
 - **Gobby Pro compatibility**: Gobby Pro is assumed to be a sync / fleet-management hub, not a hosted-Gobby service. This plan does not need to run on managed Postgres (RDS, Cloud SQL, Aurora). Gobby always runs locally on the user's machine; Gobby Pro talks to Gobby instances via API, not by sharing a database. Gobby Pro's own datastore is out of scope for this plan.
-- **Licensing**: pg_search is AGPL-3.0. Used unmodified as a Postgres extension (separate process), it does not propagate to Gobby's application code. The software is distributed to end users for local execution, which is the standard AGPL / GPL case: source of pg_search itself must be available (it is, on GitHub), and no copyleft reaches Gobby. The rest of the runtime stack is PostgreSQL-license, Apache-2.0 (Qdrant), and LGPL-3.0 (psycopg v3) — all permissive from Gobby's perspective.
-- **Bootstrap security posture**: `bootstrap.yaml` remains the pre-DB source of truth and stores the runtime `database_url` in plaintext for now, consistent with today's local-first bootstrap model (which already stores `neo4j_password` there). This is tracked technical debt for the migration, not invisible risk. Minimum operator guidance for this phase: restrict `~/.gobby/bootstrap.yaml` to owner read/write only (`0600`). Mitigation timeline: move Postgres credentials behind OS keyring / secret-store integration in the first post-cutover `v0.4.x` hardening cycle, with a migration path from inline `database_url` to a keyring-backed reference.
-- **Rollback window**: short. Stop daemon, restore `hub_backend=sqlite`, restart. Rollback is a migration safety net, not a permanent product feature. Writes made during the post-cutover validation window are at risk on rollback; they must be captured for forensics, but they are not auto-merged back into SQLite.
+- **Licensing**: pg_search is AGPL-3.0. Used by Gobby as a separate PostgreSQL extension running inside the Postgres server process, it is not linked into Gobby's application code and does not by itself propagate copyleft to Gobby. The relevant boundary here is process/protocol isolation plus lack of modification: Gobby talks to PostgreSQL over SQL, and PostgreSQL loads pg_search as an extension. AGPL obligations do apply if we modify pg_search itself, distribute a modified pg_search binary, or incorporate pg_search code directly into Gobby instead of consuming it as an extension. If AGPL posture becomes unacceptable for a specific distribution channel, ParadeDB commercial licensing is an explicit fallback option. The rest of the runtime stack is PostgreSQL-license, Apache-2.0 (Qdrant), and LGPL-3.0 (psycopg v3) — all permissive from Gobby's perspective.
+- **Bootstrap security posture**: `bootstrap.yaml` remains the pre-DB source of truth during the overlap window, but plaintext `database_url` storage does not survive cleanup. Phase 7 makes OS keyring / secret-store integration a hard dependency before the migration is considered fully complete. Until that lands, startup must enforce `0600` permissions on `~/.gobby/bootstrap.yaml` and fail closed if the file is broader than owner read/write. Operator docs must treat `bootstrap.yaml` as a secret-bearing credential file during the cutover window.
+- **Rollback window**: short. Stop daemon, restore `hub_backend=sqlite`, restart. Rollback is a migration safety net, not a permanent product feature. Writes made during the post-cutover validation window are at risk on rollback; they must be captured for forensics, but they are not auto-merged back into SQLite. The validation-window write-capture mechanism is therefore a cutover gate, not a nice-to-have.
 
 > Warning: `bootstrap.yaml` containing `database_url` is equivalent to storing the Postgres password in plaintext, just like today's `neo4j_password`. Treat that file as a secret-bearing credential file.
 
@@ -87,7 +87,7 @@ Rules:
 - runtime startup must not infer the backend from DB-stored config (chicken-and-egg)
 - after cutover, normal startup uses `hub_backend=postgres`
 - after Phase 7 cleanup, `database_path` exists only for import tooling
-- for this phase, `database_url` is stored directly in `bootstrap.yaml`; no pre-DB secret indirection is introduced, so operators must keep `bootstrap.yaml` locked down to owner read/write (`0600`) until the planned OS keyring migration lands
+- during the overlap window, `database_url` is stored directly in `bootstrap.yaml`; startup must check that file is `0600` and fail closed otherwise, and Phase 7 replaces inline storage with an OS keyring-backed reference before cleanup is considered done
 
 There is no `database_shadow_url`. No shadow-write phase.
 
@@ -117,6 +117,34 @@ Replace FTS5 with `pg_search` (ParadeDB, BM25 via Tantivy):
 Ranking is BM25. This gives parity with the existing FTS5 `bm25()` ordering — user-visible search behavior does not regress during the migration. Phase 2.4 parity tests assert representative-query ordering matches across SQLite-FTS5 and Postgres-pg_search.
 
 Search routes through `pick_search_backend(hub, table, mode)` for task, memory, skill, and code-index search. `mode` is a forward-compatible parameter: today the only value is `"keyword"` and dispatches to `BM25SearchBackend` (on Postgres) or `FTS5SearchBackend` (on SQLite during overlap). A future workstream adds `"semantic"` mode dispatching to a `QdrantSearchBackend`; this plan deliberately does not build that — the seam is the deliverable, not the implementation.
+
+#### Hybrid / fused search seam
+
+The current fused search behavior does not live in the Python daemon today; it
+primarily lives in the Rust `gcode` search path, where keyword search, vector
+search, and Neo4j relevance boosting are combined before final ranking. This
+plan must not accidentally break that shape by introducing a keyword-only
+Python seam.
+
+Migration intent:
+
+- preserve the existing Reciprocal Rank Fusion (RRF) behavior rather than
+  deprecating it during the PostgreSQL migration
+- keep `pick_search_backend(...)` as the dispatcher for concrete backends such
+  as `BM25SearchBackend`, `FTS5SearchBackend`, `QdrantSearchBackend`, and a
+  potential `Neo4jSearchBackend`
+- compose those into a fused layer (`FusedSearchBackend` or equivalent
+  orchestrator) so keyword, vector, and graph-boost signals still merge
+  through RRF
+
+Neo4j graph relevance boosting should remain explicit, either:
+
+- as a `Neo4jSearchBackend` whose scores participate in fusion, or
+- as a pre-fusion boost applied to keyword/vector candidates before final RRF
+
+Rust search migration note: the Rust-side search modules that currently perform
+keyword search, vector search, and Neo4j graph boost need to be ported or
+wrapped against this seam, not replaced with a Postgres-only keyword path.
 
 `tsvector` + GIN was considered as a simpler, core-Postgres alternative and rejected: it loses BM25 ranking parity with FTS5 (ordering shifts become migration noise users will feel), and it does not pay off until you leave pg_search's operational envelope — which Gobby doesn't (it runs locally, not on managed Postgres).
 
@@ -258,7 +286,7 @@ Validation:
 
 - `hub_backend="postgres"` requires `database_url` non-empty
 - `hub_backend="sqlite"` tolerates `database_url=None`
-- `database_url` is stored verbatim in `bootstrap.yaml` for this phase; require `bootstrap.yaml` to be owner read/write only (`0600`) and track that plaintext credential storage as migration debt until OS keyring integration ships
+- `database_url` is stored verbatim in `bootstrap.yaml` only during the overlap window; require `bootstrap.yaml` to be owner read/write only (`0600`), fail startup if that check fails, and complete the OS keyring migration in Phase 7 before cleanup is considered done
 - parse errors raise `BootstrapConfigError` with field-level messages
 
 Update `runner_init()` to branch on `hub_backend` when constructing the hub database. Do not allow DB-stored config to override bootstrap-level backend selection.
@@ -288,14 +316,12 @@ RUN apt-get update \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Preload pg_search (required for query-time registration)
-RUN echo "shared_preload_libraries = 'pg_search'" >> /usr/share/postgresql/postgresql.conf.sample
 ```
 
 The image build must pin an exact pg_search release artifact and checksum in the repo. Updating pg_search is a deliberate version bump, not "whatever ParadeDB ships today." The image must:
 
 - Tag as `gobby/postgres:17-pgsearch` (and matching `:17-pgsearch-<semver>`)
-- Set `shared_preload_libraries = 'pg_search'` so pg_search can register its query hooks at startup
+- Start PostgreSQL with `shared_preload_libraries=pg_search` via the service command or entrypoint configuration (for example `postgres -c shared_preload_libraries=pg_search`) so the preload requirement is explicit at runtime rather than hidden in a sample-file mutation
 - Pass `pg_isready` and `CREATE EXTENSION pg_search` smoke tests in the build pipeline
 - Publish to the Gobby image registry (GHCR or equivalent) on every release tag
 - Bump `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` together, verify the checksum against the upstream release artifact before merge, and rerun the Postgres smoke/search test suite before publish
@@ -797,7 +823,20 @@ class MigrationRunner:
                 txn.execute(statement)
 ```
 
-`_split_statements_respecting_dollar_quotes` must treat semicolons outside any active quote/comment boundary as the only split points. It needs unit tests for nested or adjacent dollar-quoted tags (for example `$outer$...$inner$...$outer$`), single-quoted strings containing `;` or `$`, line comments and block comments containing `$tag$` patterns, and mixed contexts where quote-looking text appears inside a dollar-quoted body. Production use stays blocked until those tests exist, pass in CI, and the migration-runner implementation includes an explicit gate that refuses to run without that coverage signal.
+`_split_statements_respecting_dollar_quotes` must treat semicolons outside any active quote/comment boundary as the only split points. It needs unit tests for:
+
+- nested dollar-quoted tags (for example `$outer$...$inner$...$outer$`)
+- adjacent dollar-quoted tags (`$tag1$...$tag1$ $tag2$...$tag2$`)
+- semicolons inside single-quoted strings
+- semicolons inside line (`--`) and block (`/* */`) comments
+- dollar-like patterns inside comments and single-quoted strings
+- empty dollar quotes (`$$...$$`)
+- escaped single quotes such as `'can''t'`
+- mixed contexts where strings/comments appear inside dollar-quoted bodies
+- a split→join→execute smoke/fuzz test against real PostgreSQL DDL
+
+Production use stays blocked until those tests exist and pass in CI. The merge
+gate is CI coverage plus green parser tests, not a brittle runtime heuristic.
 
 Migration file layout:
 
@@ -1002,15 +1041,21 @@ else:
 
 These branches are deleted in Phase 7.2.
 
-### 4.7 Audit after-commit callback semantics under MVCC [category: research] (depends: 3.1)
+### 4.7 Audit PostgreSQL concurrency semantics under MVCC [category: research] (depends: 3.1)
 
-Target: every call site of `after_commit` callbacks (grep for `after_commit` / `_run_after_commit_callbacks`)
+Target: every call site of `after_commit` callbacks plus any write path that
+assumes SQLite serialization (`after_commit`, `_run_after_commit_callbacks`,
+`savepoint()`, `conn.in_transaction`, read-modify-write updates)
 
-For each call site, document:
+For each callback site or concurrency-sensitive write path, document:
 
 1. What the callback does.
 2. Whether it reads database state — and if so, whether the reading session is the same as the writing session, a different session, or async.
 3. Whether it mutates external state (files, network, in-memory structures).
+4. Whether it performs a read-modify-write sequence that now needs
+   `SELECT ... FOR UPDATE`, optimistic locking, or an atomic `UPDATE`.
+5. Whether it assumes SQLite-style transaction visibility or immediate
+   constraint failures.
 
 Any callback that reads database state from a session other than the writing one is flagged as "requires explicit transaction boundary." Phase 4.7 does not stop at reporting: fix each such case by moving the affected read inside the originating transaction, by forcing a fresh `BEGIN` on the reading session before the read, or by moving the logic into a post-snapshot-safe transaction. Audit every `savepoint()` / `conn.in_transaction` usage that assumes SQLite semantics and remediate the broken code paths in the same phase.
 
@@ -1022,8 +1067,9 @@ Risk classification criteria:
 
 Deliverables:
 
-- a short report committed under `docs/postgres-callback-audit.md`, referenced from the cutover runbook (6.1)
+- a short report committed under `docs/postgres-concurrency-audit.md`, referenced from the cutover runbook (6.1)
 - remediation changes for every high-risk callback / transaction-boundary bug found by the audit
+- remediation PRs for any read-modify-write, isolation, or constraint-timing assumptions found by the audit
 - integration tests that open separate sessions under PostgreSQL MVCC and verify after-commit callbacks do not observe or expose stale / partial state across sessions
 
 Required integration scenarios:
@@ -1031,6 +1077,8 @@ Required integration scenarios:
 - callback spawns async work that reads from a pooled connection after commit; verify it sees only committed state
 - callback runs while another session holds a long-running transaction; verify snapshot isolation and stale-read handling
 - callback logic remains correct when wrapped in `savepoint()` / rollback flows that previously relied on SQLite `conn.in_transaction` semantics
+- read-modify-write paths remain correct under concurrent writers
+- code assuming immediate `SQLITE_CONSTRAINT` semantics remains correct when Postgres constraints are deferrable
 
 Example test names:
 
@@ -1040,9 +1088,9 @@ Example test names:
 
 Audit report template:
 
-| Callback Site | Risk Level | Issue | Remediation | Test Coverage |
-| --- | --- | --- | --- | --- |
-| `TaskManager._notify_listeners` | Low | Same-session after-commit listener only | No change required | `test_workflow_audit_mvcc_safe` |
+| Callback Site | Risk Level | Read-Modify-Write Risk | Isolation Assumption | Constraint Handling | Remediation | Test Coverage |
+| --- | --- | --- | --- | --- | --- | --- |
+| `TaskManager._notify_listeners` | Low | None | Same-session read only | None | No change required | `test_workflow_audit_mvcc_safe` |
 
 Cutover is blocked until:
 
@@ -1074,10 +1122,11 @@ Execution order:
 
 1. Assert daemon is stopped (refuses otherwise).
 2. Open SQLite source read-only (`file:<path>?mode=ro&immutable=1`).
-3. Open Postgres target and run `apply_migrations()` to create the schema.
-4. Drop BM25 indexes created by the baseline schema so bulk load does not pay per-row index maintenance cost.
-5. Begin a single import transaction and `SET CONSTRAINTS ALL DEFERRED`. Because the Postgres baseline uses deferrable FKs, this preserves real FK validation at `COMMIT` while still allowing cyclical references to load.
-6. For each table in dependency-safe order, stream rows from SQLite and bulk-insert via psycopg v3 `copy()`:
+3. Compare the SQLite source schema fingerprint / semantic schema version to the expected baseline and fail early if they differ.
+4. Open Postgres target and run `apply_migrations()` to create the schema.
+5. Drop BM25 indexes created by the baseline schema so bulk load does not pay per-row index maintenance cost.
+6. Begin a single import transaction and `SET CONSTRAINTS ALL DEFERRED`. Because the Postgres baseline uses deferrable FKs, this preserves real FK validation at `COMMIT` while still allowing cyclical references to load.
+7. For each table in dependency-safe order, stream rows from SQLite and bulk-insert via psycopg v3 `copy()`:
 
     ```python
     with pg.cursor() as cur, cur.copy(
@@ -1091,11 +1140,11 @@ Execution order:
                 ))
     ```
 
-7. Commit the import transaction. This is the FK-validation point: any deferred-constraint violation aborts the migration.
-8. Recreate BM25 indexes. `CREATE INDEX ... USING bm25 ...` rebuilds from the just-loaded data. Validate index size and row count are non-zero.
-9. Reseed sequences (task 5.3).
-10. Run validation (task 5.2).
-11. Write a `migration_complete` marker row to `schema_migrations` so `postgres activate` knows the target is safe to flip to.
+8. Commit the import transaction. This is the FK-validation point: any deferred-constraint violation aborts the migration.
+9. Recreate BM25 indexes. `CREATE INDEX ... USING bm25 ...` rebuilds from the just-loaded data. Validate index size and row count are non-zero.
+10. Reseed sequences (task 5.3).
+11. Run validation (task 5.2).
+12. Write a `migration_complete` marker row to `schema_migrations` so `postgres activate` knows the target is safe to flip to.
 
 Resumability: record per-table progress in a `_migration_progress` table on the target. `--resume` picks up from the last completed table. If a table fails mid-copy, it is truncated and restarted — not resumed within-table. SQLite source is never modified.
 
@@ -1105,13 +1154,17 @@ Target: `src/gobby/storage/migration/validation.py` (new)
 
 Runs after bulk copy. All checks must pass for the migration command to exit 0.
 
+- **Schema parity baseline**: before comparing data, verify the SQLite source schema fingerprint / semantic schema version matches the migration baseline expected by the importer. Fail early if the source schema is older/newer/drifted.
 - **Row counts**: `SELECT COUNT(*) FROM <t>` on both sides for every table; must match exactly.
 - **FK integrity**: primarily validated by the commit of the deferred-constraint import transaction in step 5.1.7. Validation also runs explicit orphan checks generated from `pg_constraint` metadata so we do not trust transaction success alone.
 - **Content hashes**: for a representative set of tables (`sessions`, `tasks`, `memories`, `config_store`, `code_symbols`, `agents`, `metrics`, workflow audit), compute an order-independent hash of canonical JSON-encoded rows on both sides and compare. Order-independence is achieved by sorting by primary key before hashing; JSON encoding uses sorted keys.
 - **Sequence reseed**: for every identity column, `SELECT last_value FROM <sequence>` must equal `MAX(id) + 1` (or `MAX(id)` if the sequence `is_called=false`).
 - **BM25 index coverage**: for each FTS-replacement table, confirm the BM25 index exists (`pg_class` lookup), was populated (`pg_stat_user_indexes.idx_tup_read > 0` after a smoke query), and returns non-zero hits on a canned query built from a random sampled row's searchable content. This catches silent index-build failures that pg_search can in principle produce on malformed input.
+- **CHECK constraints**: enumerate CHECK constraints from `pg_constraint`, evaluate `NOT (<check_expression>)` counts per table, and require zero violations. Emit `✓` / `✗` lines and include sampled failing rows on error.
+- **UNIQUE constraints**: enumerate UNIQUE constraints, run `GROUP BY ... HAVING COUNT(*) > 1` checks for each constrained key set, and require zero duplicates. Emit `✓` / `✗` lines and include sampled failing groups on error.
+- **NOT NULL columns**: enumerate NOT NULL columns and count `NULL` rows per column. Require zero. Emit `✓` / `✗` lines and include sampled failing rows on error.
 
-Output format: one line per check with `✓` / `✗`, plus a summary JSON artifact written to `~/.gobby/migrations/validate-<timestamp>.json` for auditing.
+Output format: one line per check with `✓` / `✗`, plus a summary JSON artifact written to `~/.gobby/migrations/validate-<timestamp>.json` for auditing. The same artifact carries failing row samples for any CHECK / UNIQUE / NOT NULL failure.
 
 ### 5.3 Implement sequence / identity reseed [category: code] (depends: 5.1)
 
@@ -1133,6 +1186,38 @@ The table list is discovered dynamically from Postgres identity/sequence metadat
 
 **Goal**: flip the daemon to Postgres with a documented rollback window and zero tolerance for silent failures.
 
+### 6.0 Implement validation-window audit log [category: code] (depends: Phase 5)
+
+Target: compose baseline, Postgres config, `docs/runbooks/postgres-cutover.md`
+
+Chosen technology: `pgAudit` for the validation window. It minimizes app-side
+changes and keeps write capture inside PostgreSQL rather than building a
+parallel application middleware path.
+
+Requirements:
+
+- enable `pgaudit` in the Postgres image / compose baseline
+- start Postgres with the required preload setting and `pgaudit.log=write`
+- document the exact compose/config changes needed to keep the audit log
+  writable across restarts
+- add healthchecks proving:
+  - the audit log is writable
+  - it survives restarts
+  - a test write appears in the captured output
+- add runbook commands for:
+  - checking whether the audit log is growing
+  - querying/exporting validation-window writes
+  - confirming capture before `gobby postgres activate`
+
+Alternatives considered but not chosen for v1:
+
+- WAL logical decoding
+- trigger-backed `_audit` tables
+- application-level middleware capture
+
+Cutover remains blocked unless validation-window write capture is live and
+observable.
+
 ### 6.1 Cutover runbook [category: docs] (depends: Phase 5)
 
 Target: `docs/runbooks/postgres-cutover.md` (new)
@@ -1147,7 +1232,7 @@ Step-by-step:
 4. `gobby postgres install` if not already installed.
 5. `gobby postgres migrate-from-sqlite --source ~/.gobby/gobby-hub.db --target $DATABASE_URL`.
 6. Verify the validation output exits 0 and writes the `migration_complete` marker row.
-7. Enable validation-window write capture on the Postgres target before activation. Use an append-only audit log or change-capture stream, and record the sink / artifact location in the cutover ticket. If that capture is not live, cutover is blocked.
+7. Enable validation-window write capture on the Postgres target before activation. The selected mechanism is the `pgAudit`-backed append-only audit log from task 6.0; record the sink / artifact location in the cutover ticket. If that capture is not live, cutover is blocked.
 8. `gobby postgres activate`.
 9. `gobby start`.
 10. Run the smoke suite: `gobby status`, `gobby sessions list`, `gobby tasks list`, `gobby memory search "foo"`, `gobby code search "bar"`. Each must return expected data within expected latency.
@@ -1158,7 +1243,7 @@ Explicit watch-list for the validation window:
 - MVCC-driven callback regressions (see the Phase 4.7 audit report)
 - search result ordering drift on representative queries
 - latency regressions > 2× baseline on storage-bound endpoints
-- health of the append-only audit log / change-capture stream enabled in step 7
+- health of the `pgAudit` append-only write log enabled in step 7
 
 Do not enter the validation window until the Phase 4.7 callback remediation gate is green.
 
@@ -1183,6 +1268,21 @@ Explicit data-loss rule: writes made to Postgres during the validation window ar
 ## Phase 7: Remove SQLite runtime support
 
 **Goal**: stop carrying dual-backend complexity once Postgres has proven stable in production.
+
+### 7.0 Move bootstrap Postgres credentials into OS keyring [category: code] (depends: 6.2)
+
+Target: `src/gobby/config/bootstrap.py`, secret-store / keyring integration, startup validation
+
+- replace inline `database_url` storage in `bootstrap.yaml` with a keyring-backed
+  reference before migration cleanup is considered complete
+- migrate existing plaintext `database_url` entries into the OS keyring
+- fail startup if `bootstrap.yaml` permissions are broader than `0600`
+- document operator rollback behavior for both the overlap window and post-cutover
+  steady state
+
+Phase 7 is not complete until this keyring migration lands. Plaintext
+`database_url` storage is an allowed cutover-window compromise, not the final
+state.
 
 ### 7.1 Remove `SqliteHubDatabase` from runtime wiring [category: refactor] (depends: Phase 6)
 
@@ -1252,6 +1352,8 @@ Type changes:
 - The test suite runs against PostgreSQL via compose + `DATABASE_URL` with schema-per-xdist-worker plus test-scoped schema reset isolation; every Phase 3–5 task is covered by tests running against the real backend.
 - All migration files are pure `.sql` (no Python callables). All parameter placeholders use `$1` style. Runtime DSN bootstrap is explicit and pool/connection tuning is env-var-driven.
 - Fresh installs initialize PostgreSQL directly; `~/.gobby/gobby-hub.db` is not created.
+- Phase 7 migrates bootstrap Postgres credentials out of plaintext `bootstrap.yaml`
+  into OS keyring storage, and startup fails if `bootstrap.yaml` is not `0600`
 - Phase 7 removes `SqliteHubDatabase`, FTS5 code paths, and related shims; the codebase has one runtime backend.
 
 ## Assumptions

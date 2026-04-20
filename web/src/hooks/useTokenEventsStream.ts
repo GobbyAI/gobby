@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SetStateAction } from 'react'
 
 import { useWebSocketEvent } from './useWebSocketEvent'
@@ -74,15 +74,19 @@ function normalizeTokenEvent(data: Record<string, unknown>): TokenEvent | null {
 
 export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options = {}) {
   const [events, setEventsState] = useState<TokenEvent[]>([])
-  const [prevSessionId, setPrevSessionId] = useState(sessionId)
+  const seenKeysRef = useRef<Set<string>>(new Set())
 
-  if (prevSessionId !== sessionId) {
-    setPrevSessionId(sessionId)
+  useEffect(() => {
+    seenKeysRef.current = new Set()
     setEventsState([])
-  }
+  }, [sessionId])
 
   const setEvents = useCallback((next: SetStateAction<TokenEvent[]>) => {
-    setEventsState((prev) => (typeof next === 'function' ? next(prev) : next))
+    setEventsState((prev) => {
+      const resolved = typeof next === 'function' ? next(prev) : next
+      seenKeysRef.current = new Set(resolved.map(eventKey))
+      return resolved
+    })
   }, [])
 
   const appendEvent = useCallback(
@@ -94,19 +98,24 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
         return
       }
 
-      setEvents((prev) => {
+      const key = eventKey(nextEvent)
+      if (seenKeysRef.current.has(key)) {
+        return
+      }
+
+      setEventsState((prev) => {
         const key = eventKey(nextEvent)
-        const seen = new Set(prev.map(eventKey))
-        if (seen.has(key)) {
+        if (seenKeysRef.current.has(key)) {
           return prev
         }
         const merged = [nextEvent, ...prev]
           .sort((a, b) => new Date(b.event_at).getTime() - new Date(a.event_at).getTime())
           .slice(0, limit)
+        seenKeysRef.current = new Set(merged.map(eventKey))
         return merged
       })
     },
-    [limit, sessionId, setEvents],
+    [limit, sessionId],
   )
 
   useWebSocketEvent(

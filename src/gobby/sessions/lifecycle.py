@@ -479,6 +479,7 @@ class SessionLifecycleManager:
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.
         self.token_event_store.delete_session_events(session_id, origin="backfill")
+        self.token_event_store.delete_session_events(session_id, origin="transcript")
 
         session_project_id = session.project_id if isinstance(session.project_id, str) else None
         session_source = session.source if isinstance(session.source, str) else "unknown"
@@ -553,26 +554,33 @@ class SessionLifecycleManager:
                 running_totals["cache_read_tokens"] += usage.cache_read_tokens
 
                 if ws_server is not None:
-                    await ws_server.broadcast_token_event(
-                        build_token_event_payload(
-                            {
-                                "session_id": session_id,
-                                "project_id": session_project_id,
-                                "message_id": message_id,
-                                "source": session_source,
-                                "origin": "transcript",
-                                "event_at": canonicalize_event_timestamp(event_timestamp),
-                                "model": msg.model,
-                                "model_family": event.normalized_model_family(),
-                                "input_tokens": usage.input_tokens,
-                                "output_tokens": usage.output_tokens,
-                                "cache_creation_tokens": usage.cache_creation_tokens,
-                                "cache_read_tokens": usage.cache_read_tokens,
-                                "context_window": session_context_window,
-                            },
-                            session_totals=running_totals,
+                    try:
+                        await ws_server.broadcast_token_event(
+                            build_token_event_payload(
+                                {
+                                    "session_id": session_id,
+                                    "project_id": session_project_id,
+                                    "message_id": message_id,
+                                    "source": session_source,
+                                    "origin": "transcript",
+                                    "event_at": canonicalize_event_timestamp(event_timestamp),
+                                    "model": msg.model,
+                                    "model_family": event.normalized_model_family(),
+                                    "input_tokens": usage.input_tokens,
+                                    "output_tokens": usage.output_tokens,
+                                    "cache_creation_tokens": usage.cache_creation_tokens,
+                                    "cache_read_tokens": usage.cache_read_tokens,
+                                    "context_window": session_context_window,
+                                },
+                                session_totals=running_totals,
+                            )
                         )
-                    )
+                    except Exception:
+                        logger.error(
+                            "Failed to broadcast transcript token event for session %s",
+                            session_id,
+                            exc_info=True,
+                        )
 
         if not saw_usage and (
             _session_int(getattr(session, "usage_input_tokens", 0)) > 0

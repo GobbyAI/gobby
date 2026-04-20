@@ -144,16 +144,18 @@ class BroadcastMixin:
     async def broadcast_session_usage_updated(self, payload: dict[str, Any]) -> None:
         """Broadcast session aggregate token usage refresh."""
         message = {
-            "timestamp": datetime.now(UTC).isoformat(),
             **payload,
+            "type": "session_usage_updated",
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         await self.broadcast(message)
 
     async def broadcast_token_event(self, payload: dict[str, Any]) -> None:
         """Broadcast a transcript-derived token event."""
         message = {
-            "timestamp": datetime.now(UTC).isoformat(),
             **payload,
+            "type": "token_event",
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         await self.broadcast(message)
 

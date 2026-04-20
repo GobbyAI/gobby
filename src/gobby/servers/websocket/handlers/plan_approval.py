@@ -62,6 +62,9 @@ async def _send_mode_changed(
 
 
 def _clear_pending_plan_prompt(session: Any) -> None:
+    if hasattr(session, "_clear_pending_plan_prompt"):
+        session._clear_pending_plan_prompt()
+        return
     session._pending_plan_content = None
     session._pending_plan_allowed_prompts = None
 

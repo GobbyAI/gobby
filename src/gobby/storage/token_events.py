@@ -209,6 +209,8 @@ class TokenEventStore:
         limit: int = 500,
         since: str | None = None,
     ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            raise ValueError("limit must be a positive integer")
         params: list[Any] = [session_id]
         since_sql = ""
         if since:
@@ -428,7 +430,8 @@ class TokenEventStore:
                         "project_id": _row_value(row, "project_id"),
                         "message_id": _row_value(row, "message_id"),
                         "model": _row_value(row, "model"),
-                        "raw_metadata": metadata,
+                        "raw_metadata_present": bool(metadata),
+                        "raw_metadata_size": len(metadata),
                     },
                     exc_info=True,
                 )

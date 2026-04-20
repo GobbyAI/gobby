@@ -483,6 +483,8 @@ class CodeIndexStorage:
                     (
                         project_id,
                         c.caller_symbol_id,
+                        # SQLite stores optional callee_* fields as empty strings;
+                        # the read path normalizes those empty strings back to None.
                         c.callee_symbol_id or "",
                         c.callee_name,
                         c.callee_target_kind,

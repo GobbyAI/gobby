@@ -348,6 +348,28 @@ class TestRebuildGraph:
         assert "background=true" in call_args[0][0]
         assert "gobby memory rebuild-graph --wait -p myproj" in result.output
 
+    @patch("gobby.cli.memory.time.time", side_effect=[0, 11])
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_rebuild_graph_wait_times_out(
+        self,
+        mock_client_fn: MagicMock,
+        _mock_time: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        start_resp = MagicMock()
+        start_resp.is_success = True
+        start_resp.json.return_value = {"job_id": "job-1", "already_running": False}
+        client.call_http_api.return_value = start_resp
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["rebuild-graph", "--wait", "--timeout", "10"])
+
+        assert result.exit_code != 0
+        assert "Rebuild job job-1 timed out after 10 seconds" in result.output
+
 
 # =============================================================================
 # clear-graph

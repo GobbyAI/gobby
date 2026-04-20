@@ -16,18 +16,18 @@ export function ModelBreakdownList({ items }: Props) {
 
   return (
     <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-2.5">
-      {items.map((item) => {
+      {items.map((item, index) => {
         const isExpanded = expandedFamily === item.family
         const familyId =
           item.family
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '') || 'unknown'
-        const buttonId = `model-breakdown-toggle-${familyId}`
-        const panelId = `model-breakdown-panel-${familyId}`
+        const buttonId = `model-breakdown-toggle-${familyId}-${index}`
+        const panelId = `model-breakdown-panel-${familyId}-${index}`
         const hasDetails = item.models.length > 0
         return (
-          <div key={item.family} className="rounded-md bg-background/40 px-2 py-1.5">
+          <div key={`${item.family}-${index}`} className="rounded-md bg-background/40 px-2 py-1.5">
             <button
               type="button"
               id={buttonId}

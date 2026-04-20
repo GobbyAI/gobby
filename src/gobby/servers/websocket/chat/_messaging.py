@@ -236,7 +236,7 @@ class ChatMessagingMixin:
 
         # Extract inject_context for tool result injection into LLM conversation
         pending_inject_contexts = getattr(self, "_pending_inject_contexts", {})
-        pending_inject_context = pending_inject_contexts.pop(conversation_id, None)
+        pending_inject_context = pending_inject_contexts.get(conversation_id)
         explicit_inject_context = data.get("inject_context")
         inject_parts = [
             value
@@ -500,6 +500,10 @@ class ChatMessagingMixin:
 
             # Wire tool approval callback for this request
             session._tool_approval_callback = _emit_pending_approval
+
+            pending_inject_contexts = getattr(self, "_pending_inject_contexts", None)
+            if isinstance(pending_inject_contexts, dict):
+                pending_inject_contexts.pop(conversation_id, None)
 
             # Persist user message to database
             user_text = content if isinstance(content, str) else json.dumps(content)
@@ -893,10 +897,6 @@ class ChatMessagingMixin:
     async def _handle_heartbeat(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle heartbeat from web UI to keep session alive during idle periods."""
         conversation_id = data.get("conversation_id")
-        if conversation_id:
-            client_info = self.clients.get(websocket)
-            if client_info is not None:
-                client_info["conversation_id"] = conversation_id
         session = self._chat_sessions.get(conversation_id) if conversation_id else None
         if session:
             session.last_activity = datetime.now(UTC)

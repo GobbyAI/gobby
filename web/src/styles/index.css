@@ -7,6 +7,7 @@
   --text-secondary: #a3a3a3;
   --text-muted: #737373;
   --accent: #3b82f6;
+  --accent-soft: rgba(59, 130, 246, 0.18);
   --accent-hover: #2563eb;
   --border: #262626;
   --user-bg: #1e3a5f;
@@ -35,6 +36,7 @@
   --text-secondary: #525252;
   --text-muted: #a3a3a3;
   --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.18);
   --accent-hover: #1d4ed8;
   --border: #d4d4d4;
   --user-bg: #dbeafe;

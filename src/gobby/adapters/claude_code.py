@@ -25,6 +25,18 @@ from gobby.llm.sdk_utils import compress_and_truncate
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
+DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
+    {
+        ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
+        ClaudeDecisionStyle.PRE_TOOL_USE,
+        ClaudeDecisionStyle.PERMISSION_REQUEST,
+        ClaudeDecisionStyle.ELICITATION,
+        ClaudeDecisionStyle.ELICITATION_RESULT,
+        ClaudeDecisionStyle.HARD_STOP,
+        ClaudeDecisionStyle.NONE,
+    }
+)
+
 
 class ClaudeCodeAdapter(BaseAdapter):
     """Adapter for Claude Code CLI hook translation.
@@ -302,16 +314,7 @@ class ClaudeCodeAdapter(BaseAdapter):
 
         if (
             is_denied
-            and decision_style
-            not in {
-                ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
-                ClaudeDecisionStyle.PRE_TOOL_USE,
-                ClaudeDecisionStyle.PERMISSION_REQUEST,
-                ClaudeDecisionStyle.ELICITATION,
-                ClaudeDecisionStyle.ELICITATION_RESULT,
-                ClaudeDecisionStyle.HARD_STOP,
-                ClaudeDecisionStyle.NONE,
-            }
+            and decision_style not in DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY
             and result.get("continue", True)
         ):
             result["continue"] = False

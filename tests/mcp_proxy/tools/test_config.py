@@ -182,7 +182,9 @@ class TestListConfigKeys:
         assert "daemon_port" in result["keys"]
         assert "telemetry.log_level" in result["keys"]
 
-    def test_list_config_keys_with_prefix(self, config_registry, config_store: ConfigStore) -> None:
+    def test_list_config_keys_with_prefix(
+        self, config_registry: InternalToolRegistry, config_store: ConfigStore
+    ) -> None:
         """Test list_config_keys filters by prefix."""
         config_store.set("telemetry.log_level", "debug")
         config_store.set("telemetry.log_format", "json")
@@ -582,9 +584,7 @@ class TestDeleteConfig:
             db=temp_db,
         )
 
-    def test_delete_config_removes_db_row(
-        self, config_registry, config_store: ConfigStore
-    ) -> None:
+    def test_delete_config_removes_db_row(self, config_registry, config_store: ConfigStore) -> None:
         """Deleting a normal override removes its DB row."""
         set_tool = config_registry.get_tool("set_config")
         delete_tool = config_registry.get_tool("delete_config")
@@ -636,9 +636,7 @@ class TestDeleteConfig:
             delete_tool = config_registry_with_db.get_tool("delete_config")
 
             assert (
-                set_tool(key="embeddings.api_key", value="sk-delete-123", is_secret=True)[
-                    "success"
-                ]
+                set_tool(key="embeddings.api_key", value="sk-delete-123", is_secret=True)["success"]
                 is True
             )
 
@@ -662,9 +660,7 @@ class TestDeleteConfig:
         with patch("gobby.utils.machine_id.get_machine_id", return_value="test-machine-12345"):
             set_tool = config_registry_with_db.get_tool("set_config")
             assert (
-                set_tool(key="embeddings.api_key", value="sk-delete-456", is_secret=True)[
-                    "success"
-                ]
+                set_tool(key="embeddings.api_key", value="sk-delete-456", is_secret=True)["success"]
                 is True
             )
 

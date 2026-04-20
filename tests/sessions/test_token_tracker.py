@@ -67,6 +67,16 @@ class TestSessionTokenTrackerInit:
 
         assert tracker.session_storage is mock_session_storage
 
+    def test_init_requires_db_or_storage(self) -> None:
+        """Initialization fails fast when no dependency is provided."""
+        from gobby.sessions.token_tracker import SessionTokenTracker
+
+        with pytest.raises(
+            ValueError,
+            match="SessionTokenTracker requires db or session_storage",
+        ):
+            SessionTokenTracker()
+
 
 class TestGetUsageSummary:
     """Tests for get_usage_summary method."""

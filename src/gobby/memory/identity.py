@@ -14,6 +14,8 @@ def normalize_entity_name(name: str) -> str:
     normalized = unicodedata.normalize("NFKC", name)
     normalized = normalized.strip()
     normalized = _WHITESPACE_RE.sub(" ", normalized)
+    if not normalized:
+        raise ValueError("entity name must be non-empty")
     return normalized.casefold()
 
 

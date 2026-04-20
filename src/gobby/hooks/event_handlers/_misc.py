@@ -121,10 +121,18 @@ class MiscEventHandlerMixin(EventHandlersBase):
                                 else refreshed.model,
                                 context_window=refreshed.context_window,
                                 totals={
-                                    "input_tokens": int(input_tokens or 0),
-                                    "output_tokens": int(output_tokens or 0),
-                                    "cache_creation_tokens": 0,
-                                    "cache_read_tokens": int(cache_read_tokens or 0),
+                                    "input_tokens": int(
+                                        getattr(refreshed, "usage_input_tokens", 0) or 0
+                                    ),
+                                    "output_tokens": int(
+                                        getattr(refreshed, "usage_output_tokens", 0) or 0
+                                    ),
+                                    "cache_creation_tokens": int(
+                                        getattr(refreshed, "usage_cache_creation_tokens", 0) or 0
+                                    ),
+                                    "cache_read_tokens": int(
+                                        getattr(refreshed, "usage_cache_read_tokens", 0) or 0
+                                    ),
                                 },
                             )
                             try:

@@ -1526,7 +1526,7 @@ class MemoryManager:
         failed_memories: list[dict[str, Any]] = []
 
         kg_service = self._kg_service
-        kg_sem = asyncio.Semaphore(5)
+        kg_worker_count = 5
         kg_done = 0
         kg_done_lock = asyncio.Lock()
 
@@ -1548,38 +1548,55 @@ class MemoryManager:
 
         async def _rebuild_kg(mem: Memory) -> KnowledgeGraphResult:
             nonlocal errors, kg_done, processed
-            async with kg_sem:
-                result = await kg_service.add_to_graph(
-                    mem.content,
-                    memory_id=mem.id,
-                    project_id=mem.project_id,
-                )
-                async with kg_done_lock:
-                    status_counts[result.status.value] += 1
-                    kg_done += 1
-                    if result.status in (
-                        KnowledgeGraphStatus.SUCCESS,
-                        KnowledgeGraphStatus.NOOP_NO_ENTITIES,
-                    ):
-                        await asyncio.to_thread(self.mark_graph_processed, mem.id)
-                        processed += 1
-                    else:
-                        errors += 1
-                        failed_memories.append(
-                            {
-                                "memory_id": mem.id,
-                                "project_id": mem.project_id,
-                                "status": result.status.value,
-                                "errors": list(result.errors),
-                            }
-                        )
-                    await _emit_progress()
-                    if kg_done % 50 == 0 or kg_done == len(all_memories):
-                        logger.info(f"KG extraction progress: {kg_done}/{len(all_memories)}")
-                return result
+            result = await kg_service.add_to_graph(
+                mem.content,
+                memory_id=mem.id,
+                project_id=mem.project_id,
+            )
+            async with kg_done_lock:
+                status_counts[result.status.value] += 1
+                kg_done += 1
+                if result.status in (
+                    KnowledgeGraphStatus.SUCCESS,
+                    KnowledgeGraphStatus.NOOP_NO_ENTITIES,
+                ):
+                    await asyncio.to_thread(self.mark_graph_processed, mem.id)
+                    processed += 1
+                else:
+                    errors += 1
+                    failed_memories.append(
+                        {
+                            "memory_id": mem.id,
+                            "project_id": mem.project_id,
+                            "status": result.status.value,
+                            "errors": list(result.errors),
+                        }
+                    )
+                await _emit_progress()
+                if kg_done % 50 == 0 or kg_done == len(all_memories):
+                    logger.info(f"KG extraction progress: {kg_done}/{len(all_memories)}")
+            return result
 
         await _emit_progress()
-        kg_results = await asyncio.gather(*[_rebuild_kg(mem) for mem in all_memories])
+        queue: asyncio.Queue[Memory | None] = asyncio.Queue()
+        for mem in all_memories:
+            queue.put_nowait(mem)
+        for _ in range(kg_worker_count):
+            queue.put_nowait(None)
+
+        async def _worker() -> None:
+            while True:
+                mem = await queue.get()
+                try:
+                    if mem is None:
+                        return
+                    await _rebuild_kg(mem)
+                finally:
+                    queue.task_done()
+
+        workers = [asyncio.create_task(_worker()) for _ in range(kg_worker_count)]
+        await queue.join()
+        kg_results = await asyncio.gather(*workers)
         # ``kg_results`` is retained so callers/tests can rely on full task completion here.
         _ = kg_results
 

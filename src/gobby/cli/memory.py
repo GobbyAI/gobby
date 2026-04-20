@@ -659,9 +659,7 @@ def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
         raise SystemExit(1) from e
 
     if not response.is_success:
-        raise click.ClickException(
-            f"Clear failed (HTTP {response.status_code}): {response.text}"
-        )
+        raise click.ClickException(f"Clear failed (HTTP {response.status_code}): {response.text}")
     try:
         data = response.json()
     except ValueError as e:
@@ -687,8 +685,15 @@ def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
     default=False,
     help="Wait for completion by polling daemon status",
 )
+@click.option(
+    "--timeout",
+    type=int,
+    default=600,
+    show_default=True,
+    help="Maximum seconds to wait while polling rebuild status",
+)
 @click.pass_context
-def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool) -> None:
+def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeout: int) -> None:
     """Extract entities from memories into the knowledge graph (requires running daemon).
 
     Processes all memories through LLM entity extraction and stores
@@ -741,8 +746,12 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool) -> No
     click.echo("Polling knowledge graph rebuild progress...")
     last_snapshot: tuple[object, ...] | None = None
     status_params = urllib.parse.urlencode({"job_id": str(job_id)})
+    start_time = time.time()
 
     while True:
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            raise click.ClickException(f"Rebuild job {job_id} timed out after {timeout} seconds")
         status_response = client.call_http_api(
             f"/api/memories/graph/rebuild/status?{status_params}",
             method="GET",

@@ -250,22 +250,23 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
                 try:
                     session_row = server.session_manager.get(request.session_id)
-                    token_event_store = TokenEventStore(server.session_manager.db)
-                    token_event_store.record(
-                        TokenEvent(
-                            session_id=request.session_id,
-                            project_id=getattr(session_row, "project_id", None),
-                            message_id=None,
-                            source=getattr(session_row, "source", None) or "test",
-                            origin="test",
-                            model=None,
-                            input_tokens=request.input_tokens,
-                            output_tokens=request.output_tokens,
-                            cache_creation_tokens=request.cache_creation_tokens,
-                            cache_read_tokens=request.cache_read_tokens,
-                            event_at=canonicalize_event_timestamp(datetime.now(UTC)),
+                    if session_row is not None:
+                        token_event_store = TokenEventStore(server.session_manager.db)
+                        token_event_store.record(
+                            TokenEvent(
+                                session_id=request.session_id,
+                                project_id=getattr(session_row, "project_id", None),
+                                message_id=None,
+                                source=getattr(session_row, "source", None) or "test",
+                                origin="test",
+                                model=None,
+                                input_tokens=request.input_tokens,
+                                output_tokens=request.output_tokens,
+                                cache_creation_tokens=request.cache_creation_tokens,
+                                cache_read_tokens=request.cache_read_tokens,
+                                event_at=canonicalize_event_timestamp(datetime.now(UTC)),
+                            )
                         )
-                    )
                 except Exception as event_err:
                     logger.warning(
                         f"Failed to record token_event for test session {request.session_id}: {event_err}"

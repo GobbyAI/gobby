@@ -55,6 +55,8 @@ class CodeGraph:
         external_module = call.get("callee_external_module") or ""
         if callee_symbol_id:
             return callee_symbol_id
+        if not callee_name:
+            return ""
         if callee_kind == "external":
             return make_external_symbol_id(project_id, callee_name, external_module)
         return make_unresolved_callee_id(project_id, callee_name)
@@ -164,6 +166,9 @@ class CodeGraph:
         relationship_count = 0
 
         for imp in imports or []:
+            target_module = imp.get("target_module")
+            if not target_module:
+                continue
             await self._client.execute_write(
                 """
                 MERGE (f:CodeFile {path: $source, project: $project})
@@ -172,13 +177,17 @@ class CodeGraph:
                 """,
                 {
                     "source": imp.get("source_file", file_path),
-                    "target": imp.get("target_module", ""),
+                    "target": target_module,
                     "project": project_id,
                 },
             )
             relationship_count += 1
 
         for cont in contains:
+            symbol_id = cont.get("id")
+            symbol_name = cont.get("name")
+            if not symbol_id or not symbol_name:
+                continue
             await self._client.execute_write(
                 """
                 MERGE (f:CodeFile {path: $file, project: $project})
@@ -192,8 +201,8 @@ class CodeGraph:
                 """,
                 {
                     "file": file_path,
-                    "symbol_id": cont.get("id", ""),
-                    "name": cont.get("name", ""),
+                    "symbol_id": symbol_id,
+                    "name": symbol_name,
                     "kind": cont.get("kind", ""),
                     "line_start": cont.get("line_start", 0),
                     "project": project_id,
@@ -204,8 +213,11 @@ class CodeGraph:
         for call in calls or []:
             callee_kind = call.get("callee_target_kind") or "unresolved"
             target_id = self._target_id(project_id, call)
+            caller_id = call.get("caller_symbol_id")
+            if not target_id or not caller_id:
+                continue
             params = {
-                "caller_id": call.get("caller_symbol_id", ""),
+                "caller_id": caller_id,
                 "target_id": target_id,
                 "callee_name": call.get("callee_name", ""),
                 "callee_module": call.get("callee_external_module", ""),
@@ -345,13 +357,14 @@ class CodeGraph:
 
         assert self._client is not None  # noqa: S101
         try:
+            depth = max(1, min(int(depth), 5))
             result = await self._client.execute_read(
-                """
-                MATCH path = (f:CodeFile)-[:IMPORTS*1..$depth]->(m:CodeModule {name: $module, project: $project})
+                f"""
+                MATCH path = (f:CodeFile)-[:IMPORTS*1..{depth}]->(m:CodeModule {{name: $module, project: $project}})
                 UNWIND nodes(path) AS n
                 RETURN DISTINCT n.name AS name, n.path AS path, labels(n)[0] AS type
                 """,
-                {"module": module, "project": project_id, "depth": depth},
+                {"module": module, "project": project_id},
             )
             return [dict(record) for record in result]
         except Exception as e:

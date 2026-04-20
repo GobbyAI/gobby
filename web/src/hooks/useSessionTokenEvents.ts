@@ -10,18 +10,16 @@ function getBaseUrl(): string {
 export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
   const [isLoading, setIsLoading] = useState(Boolean(sessionId))
   const [error, setError] = useState<string | null>(null)
-  const [prevSessionId, setPrevSessionId] = useState(sessionId)
   const abortRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const latestEventAtRef = useRef<string | null>(null)
 
   const { events, setEvents } = useTokenEventsStream({ sessionId, limit })
 
-  if (prevSessionId !== sessionId) {
-    setPrevSessionId(sessionId)
+  useEffect(() => {
     setError(null)
     setIsLoading(Boolean(sessionId))
-  }
+  }, [sessionId])
 
   useEffect(() => {
     latestEventAtRef.current = events[0]?.event_at ?? null

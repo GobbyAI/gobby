@@ -37,7 +37,7 @@ git commit -m "[project-#N] type: description"
 
 Use the `project-#N` format (e.g., `[gobby-#123]`) — the hyphen before `#` is required.
 
-### Step 3: Close the Task
+### Step 3: Task Transitions (close_task, review, validation)
 
 After committing, follow the `task-transitions` skill for the correct task lifecycle
 action (`close_task`, `mark_task_needs_review`, review approval, validation gates, and

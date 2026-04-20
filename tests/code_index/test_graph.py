@@ -35,7 +35,21 @@ async def test_add_relationships_success(mock_client):
 
     cnt = await graph.add_relationships("p1", "a.py", imports, calls, contains)
     assert cnt == 3
-    assert mock_client.execute_write.call_count >= 8
+    assert mock_client.execute_write.call_count == 11
+
+
+@pytest.mark.asyncio
+async def test_add_relationships_skips_incomplete_records(mock_client):
+    graph = CodeGraph(neo4j_client=mock_client)
+
+    imports = [{"source_file": "a.py", "target_module": ""}]
+    calls = [{"caller_symbol_id": "sym1", "callee_name": "", "file_path": "a.py", "line": 1}]
+    contains = [{"id": "sym1", "name": "", "kind": "func", "line_start": 1}]
+
+    cnt = await graph.add_relationships("p1", "a.py", imports, calls, contains)
+
+    assert cnt == 0
+    assert mock_client.execute_write.call_count == 8
 
 
 @pytest.mark.asyncio
@@ -104,6 +118,9 @@ async def test_get_import_chain(mock_client):
     graph = CodeGraph(mock_client)
     mock_client.execute_read.return_value = [{"name": "n1"}]
     assert await graph.get_import_chain("m", "p1") == [{"name": "n1"}]
+    query, params = mock_client.execute_read.await_args.args
+    assert "[:IMPORTS*1..3]" in query
+    assert params == {"module": "m", "project": "p1"}
     mock_client.execute_read.side_effect = Exception("e")
     assert await graph.get_import_chain("m", "p1") == []
 
@@ -119,9 +136,7 @@ async def test_find_blast_radius(mock_client):
         await graph.find_blast_radius(None, None, "p")
 
     # Path 1: symbol_id
-    mock_client.execute_read.return_value = [
-        {"node_id": "sym1", "distance": 1, "rel_type": "call"}
-    ]
+    mock_client.execute_read.return_value = [{"node_id": "sym1", "distance": 1, "rel_type": "call"}]
     res = await graph.find_blast_radius("s", None, "p")
     assert len(res) == 1
 
@@ -252,23 +267,25 @@ async def test_get_symbol_neighbors(mock_client):
 @pytest.mark.asyncio
 async def test_get_blast_radius_graph(mock_client):
     graph = CodeGraph(mock_client)
-    graph.find_blast_radius = AsyncMock(return_value=[  # type: ignore[method-assign]
-        {
-            "node_id": "sym1",
-            "node_name": "nm",
-            "kind": "func",
-            "distance": 1,
-            "rel_type": "call",
-            "node_type": "function",
-        },
-        {
-            "node_id": "f1",
-            "node_name": "f1",
-            "distance": 2,
-            "rel_type": "import",
-            "node_type": "file",
-        },
-    ])
+    graph.find_blast_radius = AsyncMock(
+        return_value=[  # type: ignore[method-assign]
+            {
+                "node_id": "sym1",
+                "node_name": "nm",
+                "kind": "func",
+                "distance": 1,
+                "rel_type": "call",
+                "node_type": "function",
+            },
+            {
+                "node_id": "f1",
+                "node_name": "f1",
+                "distance": 2,
+                "rel_type": "import",
+                "node_type": "file",
+            },
+        ]
+    )
     mock_client.execute_read.return_value = [
         {"name": "target", "type": "function", "kind": "function", "file_path": "src/a.py"}
     ]

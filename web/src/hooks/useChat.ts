@@ -1417,6 +1417,9 @@ export function useChat() {
   } | null>(null);
   const didTrackContextUsageRef = useRef(false);
   const lastLiveUsageBySessionRef = useRef<Map<string, number>>(new Map());
+  const clearPreAttachContextUsage = useCallback(() => {
+    preAttachContextUsageRef.current = null;
+  }, []);
 
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
@@ -2058,14 +2061,7 @@ export function useChat() {
           setIsThinking(false);
           setSessionRef((result.ref as string) ?? null);
           if (hasSessionUsage(result)) {
-            setContextUsage((prev) => {
-              // First attach in a sequence captures the main-chat snapshot;
-              // chained attaches keep the original so detach returns to it.
-              if (preAttachContextUsageRef.current === null) {
-                preAttachContextUsageRef.current = prev;
-              }
-              return computeContextUsageFromSessionData(result);
-            });
+            setContextUsage(computeContextUsageFromSessionData(result));
           }
           // Do NOT set dbSessionId here. Under the unified session identity
           // model, dbSessionId mirrors the user's main chat conversation id,
@@ -2732,6 +2728,7 @@ export function useChat() {
       }
 
       if (!preserveViewing) {
+        clearPreAttachContextUsage();
         clearSessionObservationState();
         resetMainChatState();
       }
@@ -2788,6 +2785,7 @@ export function useChat() {
     [
       applyMainSessionMeta,
       bindActiveSession,
+      clearPreAttachContextUsage,
       clearSessionObservationState,
       resetMainChatState,
     ],
@@ -2798,12 +2796,18 @@ export function useChat() {
     (agentName?: string) => {
       const effectiveAgent = agentName || "default";
       setActiveAgent(effectiveAgent);
+      clearPreAttachContextUsage();
       clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
       setConversationSwitchKey((k) => k + 1);
     },
-    [bindActiveSession, clearSessionObservationState, resetMainChatState],
+    [
+      bindActiveSession,
+      clearPreAttachContextUsage,
+      clearSessionObservationState,
+      resetMainChatState,
+    ],
   );
 
   // Switch provider. Existing conversations fork to a new server-owned session;
@@ -2821,6 +2825,7 @@ export function useChat() {
           }),
         );
       }
+      clearPreAttachContextUsage();
       clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(null);
@@ -2843,6 +2848,7 @@ export function useChat() {
     },
     [
       bindActiveSession,
+      clearPreAttachContextUsage,
       clearSessionObservationState,
       ensureMainSession,
       isStreaming,
@@ -2921,6 +2927,7 @@ export function useChat() {
         proxyDeliveryNotice,
       };
 
+      clearPreAttachContextUsage();
       clearSessionObservationState();
       resetMainChatState();
       bindActiveSession(sourceDbSessionId);
@@ -3021,6 +3028,7 @@ export function useChat() {
       attachedSessionId,
       attachedSessionMeta,
       bindActiveSession,
+      clearPreAttachContextUsage,
       clearSessionObservationState,
       contextUsage,
       conversationId,
@@ -3717,6 +3725,9 @@ export function useChat() {
 
       // Don't reset messages if already viewing this session
       if (viewingSessionIdRef.current !== sessionId) {
+        if (preAttachContextUsageRef.current === null) {
+          preAttachContextUsageRef.current = contextUsage;
+        }
         activeRequestIdRef.current = null;
         setIsStreaming(false);
         setIsThinking(false);
@@ -3738,7 +3749,7 @@ export function useChat() {
         }),
       );
     },
-    [setContextUsage],
+    [contextUsage, setContextUsage],
   );
 
   useEffect(() => {

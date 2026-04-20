@@ -54,8 +54,8 @@ export function SessionTokenTimeline({ events }: Props) {
           <Area
             type="monotone"
             dataKey="input_tokens"
-            stroke="#3b82f6"
-            fill="rgba(59,130,246,0.18)"
+            stroke="var(--accent)"
+            fill="var(--accent-soft)"
             strokeWidth={2}
           />
         </AreaChart>

@@ -440,9 +440,8 @@ test.describe("Web Chat Restore And Plan Mode", () => {
               events: message.events ?? [],
             }),
           );
-        } else if (message.type === "heartbeat" && !sentPlan) {
-          sentPlan = true;
-          setTimeout(() => {
+          if (!sentPlan) {
+            sentPlan = true;
             ws.send(
               JSON.stringify({
                 type: "plan_pending_approval",
@@ -450,7 +449,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
                 plan_content: "## Plan\n\n1. Fix restore state\n2. Add tests",
               }),
             );
-          }, 250);
+          }
         } else if (message.type === "plan_approval_response") {
           ws.send(
             JSON.stringify({

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.servers.provider_models import ProviderModelCatalog
 
 AUTO_REASONING_EFFORT = "auto"
 ReasoningStatus = Literal[
@@ -22,7 +23,7 @@ _FALLBACK_REASONING_EFFORTS: dict[str, frozenset[str]] = {
     "claude": frozenset({"low", "medium", "high", "max"}),
     "codex": frozenset({"low", "medium", "high", "xhigh"}),
 }
-_fallback_catalog: Any | None = None
+_fallback_catalog: ProviderModelCatalog | None = None
 _fallback_catalog_config: DaemonConfig | None = None
 _fallback_catalog_lock = threading.Lock()
 

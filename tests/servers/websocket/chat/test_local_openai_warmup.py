@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
 import httpx
@@ -49,7 +50,12 @@ class _FakeAsyncClient:
     async def __aenter__(self) -> _FakeAsyncClient:
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         return None
 
     def _next_response(self, method: str, url: str) -> _FakeResponse:

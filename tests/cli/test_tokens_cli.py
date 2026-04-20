@@ -57,27 +57,23 @@ def _make_session(session_id: str) -> SimpleNamespace:
     )
 
 
-def test_load_session_messages_wraps_parse_errors(tmp_path: Path) -> None:
+def test_load_session_messages_wraps_parse_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     transcript = tmp_path / "bad-session.jsonl"
     transcript.write_text("{}", encoding="utf-8")
     session = SimpleNamespace(transcript_path=str(transcript), source="claude")
-    original_parse_lines = tokens_module.ClaudeTranscriptParser.parse_lines
 
     def _raise_parse_error(self, lines, start_index=0):  # type: ignore[no-untyped-def]
         raise ValueError("boom")
 
-    tokens_module.ClaudeTranscriptParser.parse_lines = _raise_parse_error
+    monkeypatch.setattr(tokens_module.ClaudeTranscriptParser, "parse_lines", _raise_parse_error)
 
-    try:
-        with pytest.raises(click.ClickException, match="Failed to parse transcript"):
-            tokens_module._load_session_messages("sess-1", session)
-    finally:
-        tokens_module.ClaudeTranscriptParser.parse_lines = original_parse_lines
+    with pytest.raises(click.ClickException, match="Failed to parse transcript"):
+        tokens_module._load_session_messages("sess-1", session)
 
 
-def test_audit_all_filters_by_project(
-    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_db = _FakeDatabase([{"id": "sess-1"}])
     fake_manager = SimpleNamespace(get=lambda session_id: _make_session(session_id))
 

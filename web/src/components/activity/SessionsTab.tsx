@@ -163,6 +163,7 @@ export const SessionsTab = memo(function SessionsTab({
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>("live");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
@@ -188,6 +189,13 @@ export const SessionsTab = memo(function SessionsTab({
     }),
     [],
   );
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setSearch(searchInput);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [searchInput]);
 
   const fetchAgents = useCallback(async () => {
     const baseUrl = getBaseUrl();
@@ -582,8 +590,8 @@ export const SessionsTab = memo(function SessionsTab({
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <input
           type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
           placeholder="Search sessions"
           className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
         />

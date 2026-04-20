@@ -6,7 +6,7 @@ Provides CRUD, list, lifecycle, and dependency endpoints for the task system.
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ from gobby.storage.tasks._models import VALID_CATEGORIES, TaskNotFoundError
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+    from gobby.storage.tasks._models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -166,12 +167,18 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             return project_id
         return server.resolve_project_id(project_id=None, cwd=None)
 
-    def _resolve_task(task_id: str, *, project_id: str | None = None) -> Any:
+    def _resolve_task(task_id: str, *, project_id: str | None = None) -> "Task":
         """Resolve flexible task refs using project context for seq-num lookups."""
+        task_id = task_id.strip()
+        if not task_id:
+            raise ValueError("task_id must be non-empty")
         resolved_project = project_id
         if task_id.startswith("#") or task_id.isdigit():
             resolved_project = _resolve_project(project_id)
-        return server.task_manager.get_task(task_id, project_id=resolved_project)
+        task = server.task_manager.get_task(task_id, project_id=resolved_project)
+        if task is None:
+            raise TaskNotFoundError(task_id)
+        return cast("Task", task)
 
     async def _broadcast_task(event: str, task_dict: dict[str, Any]) -> None:
         """Broadcast a task event via WebSocket if available."""
@@ -587,7 +594,8 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 "SELECT * FROM task_comments WHERE id = ?", (comment_id,)
             )
             result = dict(row) if row else {"id": comment_id}
-            await _broadcast_task("task_comment_added", {**result, "task_ref": task.ref})
+            task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
+            await _broadcast_task("task_comment_added", {**result, "task_ref": task_ref})
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

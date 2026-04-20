@@ -80,7 +80,7 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
   const { data: tsData, isLoading } = useTokenTimeSeries(hours, projectId, granularity)
   const { data: savingsData } = useSavings(hours, projectId)
   const { data: usageData } = useUsage(hours, projectId)
-  const { data: modelBreakdown } = useModelBreakdown(hours, projectId)
+  const { data: modelBreakdown = [] } = useModelBreakdown(hours, projectId)
 
   const chartData = useMemo<ChartPoint[]>(() => {
     if (!tsData?.buckets) return []

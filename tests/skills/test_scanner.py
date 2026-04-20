@@ -20,6 +20,13 @@ Severity = cast(Any, clawcare_models.Severity)
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture
+def clear_rule_categories_cache() -> None:
+    skill_scanner._rule_categories.cache_clear()
+    yield
+    skill_scanner._rule_categories.cache_clear()
+
+
 def _finding(
     *,
     rule_id: str = "LOW_TEST_RULE",
@@ -149,17 +156,18 @@ class TestFindingExtraction:
         result = _scan("# Test", findings=[_finding(remediation=None)])
         assert result["findings"][0]["remediation"] == ""
 
+
+class TestRuleCategories:
+    """Tests for rule-category helper behavior."""
+
     def test_rule_categories_fail_fast_when_default_ruleset_missing(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        clear_rule_categories_cache: None,
     ) -> None:
-        skill_scanner._rule_categories.cache_clear()
         monkeypatch.setattr("clawcare.scanner.rules.list_builtin_rulesets", lambda: [])
-        try:
-            with pytest.raises(RuntimeError, match="ruleset_dir="):
-                skill_scanner._rule_categories()
-        finally:
-            skill_scanner._rule_categories.cache_clear()
+        with pytest.raises(RuntimeError, match="ruleset_dir="):
+            skill_scanner._rule_categories()
 
 
 class TestMultipleFindings:

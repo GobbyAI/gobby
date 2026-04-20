@@ -196,22 +196,23 @@ def audit_tokens(
                 click.echo(f"  {_format_totals('session', cached_totals)}")
 
                 if fix:
-                    store.delete_session_events(session_id)
-                    for event in transcript_events:
-                        store.record(event)
-                    session_manager.update_usage(
-                        session_id=session_id,
-                        input_tokens=transcript_totals["input_tokens"],
-                        output_tokens=transcript_totals["output_tokens"],
-                        cache_creation_tokens=transcript_totals["cache_creation_tokens"],
-                        cache_read_tokens=transcript_totals["cache_read_tokens"],
-                        context_window=(
-                            session.context_window
-                            if isinstance(session.context_window, int)
-                            else None
-                        ),
-                        model=last_model,
-                    )
+                    with db.transaction():
+                        store.delete_session_events(session_id)
+                        for event in transcript_events:
+                            store.record(event)
+                        session_manager.update_usage(
+                            session_id=session_id,
+                            input_tokens=transcript_totals["input_tokens"],
+                            output_tokens=transcript_totals["output_tokens"],
+                            cache_creation_tokens=transcript_totals["cache_creation_tokens"],
+                            cache_read_tokens=transcript_totals["cache_read_tokens"],
+                            context_window=(
+                                session.context_window
+                                if isinstance(session.context_window, int)
+                                else None
+                            ),
+                            model=last_model,
+                        )
                     repaired += 1
                     click.echo("  repaired")
             elif not fix:

@@ -94,6 +94,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         "error": None,
     }
     rebuild_state_lock = asyncio.Lock()
+    rebuild_start_lock = asyncio.Lock()
 
     def _rebuild_snapshot() -> dict[str, Any]:
         result = rebuild_state.get("result")
@@ -114,7 +115,34 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         async with rebuild_state_lock:
             return _rebuild_snapshot()
 
-    async def _run_graph_rebuild(job_id: str, project_id: str | None) -> None:
+    async def _begin_rebuild(project_id: str | None) -> tuple[str | None, dict[str, Any]]:
+        async with rebuild_start_lock:
+            current = await _get_rebuild_state()
+            if current.get("status") == "running":
+                current["started"] = False
+                current["already_running"] = True
+                return None, current
+
+            job_id = str(uuid4())
+            started_at = datetime.now(UTC).isoformat()
+            snapshot = await _update_rebuild_state(
+                job_id=job_id,
+                status="running",
+                project_id=project_id,
+                started_at=started_at,
+                completed_at=None,
+                memories_total=0,
+                memories_completed=0,
+                memories_marked_processed=0,
+                status_counts={},
+                errors=0,
+                failed_memories=[],
+                result=None,
+                error=None,
+            )
+            return job_id, snapshot
+
+    async def _execute_graph_rebuild(job_id: str, project_id: str | None) -> dict[str, Any]:
         async def _on_progress(progress: dict[str, Any]) -> None:
             await _update_rebuild_state(
                 job_id=job_id,
@@ -149,6 +177,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 error=None,
             )
             logger.info("Background knowledge graph rebuild complete: %s", result)
+            return cast(dict[str, Any], result)
         except Exception as e:
             await _update_rebuild_state(
                 job_id=job_id,
@@ -158,6 +187,10 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 error=str(e),
             )
             logger.error("Background knowledge graph rebuild failed: %s", e, exc_info=True)
+            raise
+
+    async def _run_graph_rebuild(job_id: str, project_id: str | None) -> None:
+        await _execute_graph_rebuild(job_id, project_id)
 
     @router.get("")
     def list_memories(
@@ -353,29 +386,9 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         """Extract entities from all existing memories into the knowledge graph."""
         try:
             if background:
-                current = await _get_rebuild_state()
-                if current.get("status") == "running":
-                    current["started"] = False
-                    current["already_running"] = True
-                    return JSONResponse(status_code=202, content=current)
-
-                job_id = str(uuid4())
-                started_at = datetime.now(UTC).isoformat()
-                snapshot = await _update_rebuild_state(
-                    job_id=job_id,
-                    status="running",
-                    project_id=project_id,
-                    started_at=started_at,
-                    completed_at=None,
-                    memories_total=0,
-                    memories_completed=0,
-                    memories_marked_processed=0,
-                    status_counts={},
-                    errors=0,
-                    failed_memories=[],
-                    result=None,
-                    error=None,
-                )
+                job_id, snapshot = await _begin_rebuild(project_id)
+                if job_id is None:
+                    return JSONResponse(status_code=202, content=snapshot)
 
                 task = asyncio.create_task(
                     _run_graph_rebuild(job_id, project_id),
@@ -387,10 +400,14 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 snapshot["started"] = True
                 return JSONResponse(status_code=202, content=snapshot)
 
-            result = await server.memory_manager.rebuild_knowledge_graph(project_id=project_id)
+            job_id, snapshot = await _begin_rebuild(project_id)
+            if job_id is None:
+                return JSONResponse(status_code=202, content=snapshot)
+
+            result = await _execute_graph_rebuild(job_id, project_id)
             if not result.get("success", False):
                 raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
-            return cast(dict[str, Any], result)
+            return result
         except HTTPException:
             raise
         except Exception as e:

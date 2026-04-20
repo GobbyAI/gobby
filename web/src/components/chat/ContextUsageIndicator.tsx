@@ -9,6 +9,8 @@ interface ContextUsageIndicatorProps {
   cacheCreationTokens?: number
 }
 
+const STALE_THRESHOLD_MS = 60_000
+
 export function ContextUsageIndicator({
   totalInputTokens,
   outputTokens,
@@ -18,7 +20,7 @@ export function ContextUsageIndicator({
   cacheReadTokens = 0,
   cacheCreationTokens = 0,
 }: ContextUsageIndicatorProps) {
-  const isStale = Boolean(staleMs && staleMs >= 60_000)
+  const isStale = Boolean(staleMs && staleMs >= STALE_THRESHOLD_MS)
 
   // Context window is an INPUT limit — output tokens don't occupy it.
   // Only input tokens (uncached + cache_read + cache_creation) count toward context load.

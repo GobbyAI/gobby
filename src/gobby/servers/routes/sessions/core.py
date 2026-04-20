@@ -32,6 +32,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STATUSLINE_GAP_WARNING_THRESHOLD_MS = 30_000
+STATUSLINE_LAST_SEEN_TTL_SECONDS = 86_400
+STATUSLINE_PRUNE_INTERVAL_SECONDS = 300
+_STATUSLINE_LAST_SEEN: dict[str, datetime] = {}
+_STATUSLINE_LAST_PRUNE_AT: datetime | None = None
+
+
+def _prune_statusline_last_seen(now: datetime) -> None:
+    """Drop stale statusline tracking entries so the cache stays bounded."""
+    global _STATUSLINE_LAST_PRUNE_AT
+
+    if _STATUSLINE_LAST_PRUNE_AT is not None:
+        elapsed = (now - _STATUSLINE_LAST_PRUNE_AT).total_seconds()
+        if elapsed < STATUSLINE_PRUNE_INTERVAL_SECONDS:
+            return
+
+    cutoff = now.timestamp() - STATUSLINE_LAST_SEEN_TTL_SECONDS
+    stale_ids = [
+        session_id
+        for session_id, seen_at in _STATUSLINE_LAST_SEEN.items()
+        if seen_at.timestamp() < cutoff
+    ]
+    for session_id in stale_ids:
+        _STATUSLINE_LAST_SEEN.pop(session_id, None)
+    _STATUSLINE_LAST_PRUNE_AT = now
+
+
+def _clear_statusline_last_seen(session_id: str) -> None:
+    """Remove a session's statusline tracking entry on teardown."""
+    _STATUSLINE_LAST_SEEN.pop(session_id, None)
 
 
 def _get_commit_count(db: "DatabaseProtocol", session: Any) -> int:
@@ -192,7 +221,6 @@ def register_core_routes(
     broadcast_session: "Callable[..., Awaitable[None]]",
 ) -> None:
     """Register core session CRUD routes on the router."""
-    statusline_last_seen: dict[str, datetime] = {}
 
     @router.post("/web-chat")
     async def create_web_chat_session(body: WebChatSessionRequest) -> dict[str, Any]:
@@ -368,9 +396,10 @@ def register_core_routes(
             # Session may not be registered yet (first ~1s of updates)
             return {"status": "ok", "warning": "session_not_found"}
 
-        previous = statusline_last_seen.get(session.id)
         now = datetime.now(UTC)
-        statusline_last_seen[session.id] = now
+        _prune_statusline_last_seen(now)
+        previous = _STATUSLINE_LAST_SEEN.get(session.id)
+        _STATUSLINE_LAST_SEEN[session.id] = now
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
             if gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS:

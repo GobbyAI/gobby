@@ -202,7 +202,9 @@ class EffectsMixin:
                 )
 
         elif effect.type == "set_retry":
-            variables["_retry"] = effect.retry if effect.retry is not None else True
+            variables["_retry"] = (
+                effect.retry if effect.retry is not None else True
+            )  # None means default to True; explicit False must stay False.
 
         elif effect.type == "set_watch_paths":
             if effect.watch_paths is not None:
@@ -214,11 +216,18 @@ class EffectsMixin:
 
         elif effect.type == "set_worktree_path":
             if effect.worktree_path is not None:
-                variables["_worktree_path"] = self._render_nested_value(
-                    effect.worktree_path,
-                    ctx,
-                    allowed_funcs,
-                )
+                if (
+                    isinstance(effect.worktree_path, str)
+                    and "{{" not in effect.worktree_path
+                    and "{%" not in effect.worktree_path
+                ):
+                    variables["_worktree_path"] = effect.worktree_path
+                else:
+                    variables["_worktree_path"] = self._render_nested_value(
+                        effect.worktree_path,
+                        ctx,
+                        allowed_funcs,
+                    )
 
         elif effect.type == "set_elicitation":
             elicitation_meta = variables.setdefault("_elicitation", {})

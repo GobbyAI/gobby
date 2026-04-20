@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 
 import gobby.agents.reasoning as reasoning
@@ -5,6 +7,7 @@ from gobby.agents.reasoning import (
     normalize_reasoning_effort,
     resolve_spawn_reasoning,
 )
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -120,12 +123,12 @@ def test_get_provider_models_reuses_fallback_catalog(monkeypatch: pytest.MonkeyP
 def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_a = object()
-    config_b = object()
-    created_for: list[object | None] = []
+    config_a = MagicMock(spec=DaemonConfig)
+    config_b = MagicMock(spec=DaemonConfig)
+    created_for: list[DaemonConfig | None] = []
 
     class FakeCatalog:
-        def __init__(self, daemon_config: object | None) -> None:
+        def __init__(self, daemon_config: DaemonConfig | None) -> None:
             created_for.append(daemon_config)
 
         def get_provider_snapshot(self, provider: str) -> dict[str, object]:
@@ -136,7 +139,7 @@ def test_get_provider_models_rebuilds_fallback_catalog_on_config_change(
     monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
-    reasoning._get_provider_models("claude", config_a)  # type: ignore[arg-type]
-    reasoning._get_provider_models("claude", config_b)  # type: ignore[arg-type]
+    reasoning._get_provider_models("claude", config_a)
+    reasoning._get_provider_models("claude", config_b)
 
     assert created_for == [config_a, config_b]
