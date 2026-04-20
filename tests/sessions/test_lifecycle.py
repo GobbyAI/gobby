@@ -693,6 +693,8 @@ class TestProcessSessionTranscriptTokenPreservation:
     @pytest.mark.asyncio
     async def test_zero_tokens_updates_when_existing_also_zero(self, tmp_path, manager):
         """When both transcript and existing are 0, update_usage is still called (nothing to preserve)."""
+        from gobby.sessions.transcripts.base import ParsedMessage
+
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
 
@@ -704,7 +706,9 @@ class TestProcessSessionTranscriptTokenPreservation:
         manager.session_manager.get.return_value = session
 
         with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
-            msg = MagicMock()
+            # spec=ParsedMessage so the lifecycle path's ParsedToolEvent filter
+            # (added when Codex MCP synthesis was wired) doesn't drop the mock.
+            msg = MagicMock(spec=ParsedMessage)
             msg.model = None
             msg.usage = None
             MockParser.return_value.parse_lines.return_value = [msg]

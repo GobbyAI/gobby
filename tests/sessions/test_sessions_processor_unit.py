@@ -6,11 +6,13 @@ by integration tests.
 """
 
 import asyncio
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hooks.events import HookEventType, SessionSource
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedMessage
 
@@ -819,3 +821,175 @@ class TestProcessJsonSession:
         assert processor._stats["session-1"]["message_count"] == 1
         assert processor._message_indices["session-1"] == 0
         assert "session-1" in processor._last_mtime
+
+
+def _codex_event_msg(payload_type: str, **payload_extra) -> str:
+    """Build a Codex event_msg envelope line."""
+    payload = {"type": payload_type, **payload_extra}
+    return (
+        json.dumps(
+            {
+                "timestamp": "2026-04-20T04:05:07.572Z",
+                "type": "event_msg",
+                "payload": payload,
+            }
+        )
+        + "\n"
+    )
+
+
+class TestCodexMcpHookSynthesis:
+    """Synthesis of BEFORE/AFTER_TOOL hook events from Codex rollout tail."""
+
+    @pytest.mark.asyncio
+    async def test_dispatches_before_and_after_tool_for_mcp_call(
+        self, mock_db, tmp_path
+    ) -> None:
+        hook_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+
+        transcript = tmp_path / "rollout.jsonl"
+        invocation = {
+            "server": "gobby",
+            "tool": "get_tool_schema",
+            "arguments": {
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "session_id": "#2995",
+            },
+        }
+        transcript.write_text(
+            _codex_event_msg("mcp_tool_call_begin", call_id="call_1", invocation=invocation)
+            + _codex_event_msg(
+                "mcp_tool_call_end",
+                call_id="call_1",
+                invocation=invocation,
+                duration={"secs": 0, "nanos": 18_695_333},
+                result={"Ok": {"content": [{"type": "text", "text": "{...}"}]}},
+            )
+        )
+
+        processor.register_session("sid", str(transcript), source="codex")
+
+        await processor._process_session("sid", str(transcript))
+
+        assert hook_manager.handle.call_count == 2
+        before, after = (call.args[0] for call in hook_manager.handle.call_args_list)
+
+        assert before.event_type == HookEventType.BEFORE_TOOL
+        assert before.source == SessionSource.CODEX
+        assert before.session_id == "sid"
+        assert before.data["tool_name"] == "mcp__gobby__get_tool_schema"
+        # mcp_server/mcp_tool reflect the proxy boundary; the rule keys for
+        # inject-task-creation-on-schema actually read `tool_input.server_name`
+        # and `tool_input.tool_name` (see the bundled YAML), so those are the
+        # contract that must be preserved exactly.
+        assert before.data["mcp_server"] == "gobby"
+        assert before.data["mcp_tool"] == "get_tool_schema"
+        assert before.data["tool_input"]["server_name"] == "gobby-tasks"
+        assert before.data["tool_input"]["tool_name"] == "create_task"
+        assert before.data["call_id"] == "call_1"
+        assert before.metadata["_synthesized_from"] == "codex_rollout"
+
+        assert after.event_type == HookEventType.AFTER_TOOL
+        assert after.data["tool_response"] == {
+            "content": [{"type": "text", "text": "{...}"}]
+        }
+        assert "is_error" not in after.data
+        assert after.data["duration_ns"] == 18_695_333
+
+    @pytest.mark.asyncio
+    async def test_byte_offset_prevents_double_fire_on_retail(
+        self, mock_db, tmp_path
+    ) -> None:
+        hook_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+
+        transcript = tmp_path / "rollout.jsonl"
+        invocation = {
+            "server": "gobby",
+            "tool": "get_tool_schema",
+            "arguments": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+        }
+        transcript.write_text(
+            _codex_event_msg("mcp_tool_call_begin", call_id="call_1", invocation=invocation)
+        )
+
+        processor.register_session("sid", str(transcript), source="codex")
+
+        await processor._process_session("sid", str(transcript))
+        assert hook_manager.handle.call_count == 1
+
+        # Re-tail without appending: offset must guard against re-firing.
+        await processor._process_session("sid", str(transcript))
+        assert hook_manager.handle.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_non_codex_source_does_not_synthesize(
+        self, mock_db, tmp_path
+    ) -> None:
+        """Synthesis runs only for codex sessions; claude has its own pre/post-tool path."""
+        hook_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+
+        transcript = tmp_path / "rollout.jsonl"
+        # Empty file is fine; no codex source means no synthesis path is exercised.
+        transcript.write_text("")
+
+        processor.register_session("sid", str(transcript), source="claude")
+        await processor._process_session("sid", str(transcript))
+
+        hook_manager.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_hook_manager_is_noop(self, mock_db, tmp_path) -> None:
+        """Processor without a HookManager wired up just skips synthesis silently."""
+        processor = SessionMessageProcessor(mock_db, hook_manager=None)
+
+        transcript = tmp_path / "rollout.jsonl"
+        transcript.write_text(
+            _codex_event_msg(
+                "mcp_tool_call_begin",
+                call_id="call_1",
+                invocation={
+                    "server": "gobby",
+                    "tool": "get_tool_schema",
+                    "arguments": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+                },
+            )
+        )
+
+        processor.register_session("sid", str(transcript), source="codex")
+
+        # Should not raise.
+        await processor._process_session("sid", str(transcript))
+
+    @pytest.mark.asyncio
+    async def test_after_tool_with_err_marks_error(self, mock_db, tmp_path) -> None:
+        hook_manager = MagicMock()
+        processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
+
+        transcript = tmp_path / "rollout.jsonl"
+        invocation = {
+            "server": "gobby",
+            "tool": "list_tools",
+            "arguments": {"server_name": "context7"},
+        }
+        transcript.write_text(
+            _codex_event_msg(
+                "mcp_tool_call_end",
+                call_id="call_err",
+                invocation=invocation,
+                result={"Err": "transport closed"},
+            )
+        )
+
+        processor.register_session("sid", str(transcript), source="codex")
+        await processor._process_session("sid", str(transcript))
+
+        assert hook_manager.handle.call_count == 1
+        event = hook_manager.handle.call_args.args[0]
+        assert event.event_type == HookEventType.AFTER_TOOL
+        assert event.data["error"] == "transport closed"
+        assert event.data["is_error"] is True
+        assert "tool_response" not in event.data

@@ -20,6 +20,7 @@ from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.transcript_archive import backup_transcript
+from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
@@ -471,7 +472,13 @@ class SessionLifecycleManager:
                 return
             messages = parser.parse_session_json(data)
         else:
-            messages = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+            # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
+            # records (Codex MCP tool-call lifecycle); this token-event path
+            # only consumes ParsedMessage fields (model, usage, message_id).
+            parsed_records = parser.parse_lines(
+                raw.splitlines(keepends=True), start_index=0
+            )
+            messages = [r for r in parsed_records if isinstance(r, ParsedMessage)]
 
         if not messages:
             return

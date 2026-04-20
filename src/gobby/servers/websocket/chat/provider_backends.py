@@ -644,10 +644,14 @@ class CodexManagedChatSession(
             except OSError:
                 return ""
 
+            from gobby.sessions.transcripts.base import ParsedMessage
+
             assistant_chunks = [
                 message.content.strip()
                 for message in parsed
-                if message.role == "assistant" and message.content.strip()
+                if isinstance(message, ParsedMessage)
+                and message.role == "assistant"
+                and message.content.strip()
             ]
             return "\n\n".join(assistant_chunks)
 

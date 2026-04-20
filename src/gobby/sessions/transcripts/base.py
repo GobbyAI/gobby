@@ -80,6 +80,29 @@ class ParsedMessage:
     message_id: str | None = None
 
 
+@dataclass
+class ParsedToolEvent:
+    """A tool-call lifecycle event extracted from a transcript.
+
+    Codex CLI's experimental hook system does not fire PreToolUse / PostToolUse
+    for MCP tool calls, only for shell tools. To bring rule-engine parity to
+    Codex MCP calls, the transcript tail surfaces these records and the
+    SessionMessageProcessor synthesizes BEFORE_TOOL / AFTER_TOOL HookEvents
+    from them.
+    """
+
+    phase: str  # "begin" or "end"
+    call_id: str | None
+    server: str | None
+    tool: str | None
+    arguments: dict[str, Any]
+    timestamp: datetime
+    raw_json: dict[str, Any]
+    result: Any | None = None
+    error: Any | None = None
+    duration_ns: int | None = None
+
+
 @runtime_checkable
 class TranscriptParser(Protocol):
     """
@@ -94,7 +117,7 @@ class TranscriptParser(Protocol):
 
     def __init__(self, session_id: str | None = None) -> None: ...
 
-    def parse_line(self, line: str, index: int) -> ParsedMessage | None:
+    def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         """
         Parse a single line from the transcript JSONL.
 
@@ -103,11 +126,15 @@ class TranscriptParser(Protocol):
             index: Line index (0-based)
 
         Returns:
-            ParsedMessage object or None if line should be skipped
+            A ParsedMessage, a ParsedToolEvent, or None if the line should be
+            skipped. ParsedToolEvent is yielded for transcript event_msg lines
+            describing MCP tool-call lifecycle (begin/end); see CodexTranscriptParser.
         """
         ...
 
-    def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
+    def parse_lines(
+        self, lines: list[str], start_index: int = 0
+    ) -> list[ParsedMessage | ParsedToolEvent]:
         """
         Parse multiple lines from the transcript.
 
@@ -116,7 +143,7 @@ class TranscriptParser(Protocol):
             start_index: Starting line index for first line in list
 
         Returns:
-            List of ParsedMessage objects
+            List of ParsedMessage and/or ParsedToolEvent records, in source order.
         """
         ...
 
@@ -182,7 +209,9 @@ class BaseTranscriptParser:
         self.error_log = TranscriptParserErrorLog(cli_name)
         self.logger = logger_instance or logging.getLogger(f"gobby.sessions.transcripts.{cli_name}")
 
-    def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
+    def parse_lines(
+        self, lines: list[str], start_index: int = 0
+    ) -> list[ParsedMessage | ParsedToolEvent]:
         """
         Parse multiple lines from the transcript.
 
@@ -191,9 +220,9 @@ class BaseTranscriptParser:
             start_index: Starting line index for first line in list
 
         Returns:
-            List of ParsedMessage objects
+            List of ParsedMessage and/or ParsedToolEvent records, in source order.
         """
-        results = []
+        results: list[ParsedMessage | ParsedToolEvent] = []
         for i, line in enumerate(lines):
             if not line.strip():
                 continue
@@ -202,6 +231,6 @@ class BaseTranscriptParser:
                 results.append(parsed)
         return results
 
-    def parse_line(self, line: str, index: int) -> ParsedMessage | None:
+    def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         """To be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement parse_line")

@@ -17,10 +17,10 @@ import zlib
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.transcript_archive import get_archive_dir
+from gobby.sessions.transcripts.base import ParsedMessage
 
 if TYPE_CHECKING:
     from gobby.sessions.transcript_renderer import RenderedMessage
-    from gobby.sessions.transcripts.base import ParsedMessage
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
@@ -307,9 +307,16 @@ def _get_parser(source: str, session_id: str | None = None) -> TranscriptParser:
 def _parse_lines(
     lines: list[str], source: str, session_id: str | None = None
 ) -> list[ParsedMessage]:
-    """Parse lines into ParsedMessage objects."""
+    """Parse lines into ParsedMessage objects.
+
+    Codex's parser may also yield ParsedToolEvent records for MCP tool-call
+    lifecycle; this reader path only consumes message fields, so we filter
+    them out and let SessionMessageProcessor handle tool events on its own
+    rule-engine path.
+    """
     parser = _get_parser(source, session_id=session_id)
-    return parser.parse_lines(lines, start_index=0)
+    parsed = parser.parse_lines(lines, start_index=0)
+    return [r for r in parsed if isinstance(r, ParsedMessage)]
 
 
 def _parse_json_session(

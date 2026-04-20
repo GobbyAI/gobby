@@ -26,7 +26,12 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage, TokenUsage
+from gobby.sessions.transcripts.base import (
+    BaseTranscriptParser,
+    ParsedMessage,
+    ParsedToolEvent,
+    TokenUsage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +103,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
     def is_session_boundary(self, turn: dict[str, Any]) -> bool:
         return turn.get("type") == "session_meta"
 
-    def parse_line(self, line: str, index: int) -> ParsedMessage | None:
+    def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
         if not line.strip():
             return None
 
@@ -240,8 +245,12 @@ class CodexTranscriptParser(BaseTranscriptParser):
         payload: dict[str, Any],
         index: int,
         timestamp: datetime,
-    ) -> ParsedMessage | None:
+    ) -> ParsedMessage | ParsedToolEvent | None:
         payload_type = payload.get("type")
+
+        if payload_type in ("mcp_tool_call_begin", "mcp_tool_call_end"):
+            return self._parse_mcp_tool_call(payload, payload_type, timestamp, data)
+
         if payload_type != "token_count":
             return None
 
@@ -284,17 +293,75 @@ class CodexTranscriptParser(BaseTranscriptParser):
             message_id=self._message_id_for(index, payload.get("message_id") or payload.get("id")),
         )
 
-    def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
-        parsed_messages = []
+    def parse_lines(
+        self, lines: list[str], start_index: int = 0
+    ) -> list[ParsedMessage | ParsedToolEvent]:
+        parsed_records: list[ParsedMessage | ParsedToolEvent] = []
         current_index = start_index
 
         for line in lines:
-            message = self.parse_line(line, current_index)
-            if message:
-                parsed_messages.append(message)
+            record = self.parse_line(line, current_index)
+            if record is None:
+                continue
+            parsed_records.append(record)
+            # Only ParsedMessage records consume an index slot; tool events are
+            # identified by call_id and don't participate in message ordering.
+            if isinstance(record, ParsedMessage):
                 current_index += 1
 
-        return parsed_messages
+        return parsed_records
+
+    def _parse_mcp_tool_call(
+        self,
+        payload: dict[str, Any],
+        payload_type: str,
+        timestamp: datetime,
+        raw: dict[str, Any],
+    ) -> ParsedToolEvent | None:
+        invocation = payload.get("invocation")
+        if not isinstance(invocation, dict):
+            return None
+
+        arguments = invocation.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                arguments = {"raw": arguments}
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        duration_ns: int | None = None
+        duration = payload.get("duration")
+        if isinstance(duration, dict):
+            secs = duration.get("secs")
+            nanos = duration.get("nanos")
+            if isinstance(secs, int) and isinstance(nanos, int):
+                duration_ns = secs * 1_000_000_000 + nanos
+
+        result_payload = payload.get("result") if payload_type == "mcp_tool_call_end" else None
+        result_value: Any | None = None
+        error_value: Any | None = None
+        if isinstance(result_payload, dict):
+            if "Ok" in result_payload:
+                result_value = result_payload["Ok"]
+            elif "Err" in result_payload:
+                error_value = result_payload["Err"]
+            else:
+                result_value = result_payload
+
+        return ParsedToolEvent(
+            phase="begin" if payload_type == "mcp_tool_call_begin" else "end",
+            call_id=payload.get("call_id"),
+            server=invocation.get("server"),
+            tool=invocation.get("tool"),
+            arguments=arguments,
+            timestamp=timestamp,
+            raw_json=raw,
+            result=result_value,
+            error=error_value,
+            duration_ns=duration_ns,
+        )
 
     def _message_id_for(self, index: int, raw_id: Any = None) -> str:
         if isinstance(raw_id, str) and raw_id.strip():

@@ -50,7 +50,13 @@ def _load_session_messages(session_id: str, session: Any) -> list[Any]:
             data = json.loads(raw)
             return cast(list[Any], parser.parse_session_json(data))
 
-        return cast(list[Any], parser.parse_lines(raw.splitlines(keepends=True), start_index=0))
+        # Codex's parser may yield ParsedToolEvent alongside ParsedMessage;
+        # the token-event consumer below only reads .model/.usage from
+        # ParsedMessage, so filter the others out here.
+        from gobby.sessions.transcripts.base import ParsedMessage
+
+        parsed = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+        return [r for r in parsed if isinstance(r, ParsedMessage)]
     except Exception as exc:
         raise click.ClickException(
             f"Failed to parse transcript {transcript_path} for session {session_id}: {exc}"
