@@ -157,6 +157,45 @@ class TestCreateTaskTool:
             mock_task_manager.create_task_with_decomposition.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_task_accepts_refactor_category(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Happy-path: create_task(category='refactor') succeeds.
+
+        Expansion produces refactor tasks (expansion_service.py:566). Before this was a
+        canonical category, the MCP enum rejected those payloads. This locks in the fix.
+        """
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
+        mock_task.seq_num = 99
+        mock_task.to_dict.return_value = {
+            "id": "550e8400-e29b-41d4-a716-446655440099",
+            "title": "Refactor extraction",
+        }
+        mock_task_manager.create_task_with_decomposition.return_value = {
+            "task": {
+                "id": "550e8400-e29b-41d4-a716-446655440099",
+                "title": "Refactor extraction",
+            },
+        }
+        mock_task_manager.get_task.return_value = mock_task
+
+        with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
+            mock_ctx.return_value = {"id": "proj-1"}
+
+            result = await registry.call(
+                "create_task",
+                {"title": "Refactor extraction", "category": "refactor"},
+            )
+
+            assert result["id"] == "550e8400-e29b-41d4-a716-446655440099"
+            # Confirm the category made it through the call unchanged
+            call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
+            assert call_kwargs["category"] == "refactor"
+
+    @pytest.mark.asyncio
     async def test_create_task_with_blocks(self, mock_task_manager, mock_sync_manager):
         """Test create_task with blocks argument creates dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
@@ -2309,6 +2348,29 @@ class TestToolSchemas:
         assert props["claim"]["default"] is False
         # claim should NOT be in required
         assert "claim" not in schema["inputSchema"]["required"]
+
+    def test_create_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
+        """The create_task category enum must include refactor.
+
+        Expansion emits refactor-category tasks (see expansion_service._build_phase_refactor_description);
+        without the enum accepting it, every expansion round hits an MCP validation error.
+        """
+        schema = task_registry.get_schema("create_task")
+
+        assert schema is not None
+        category = schema["inputSchema"]["properties"]["category"]
+        assert "refactor" in category["enum"]
+        # Sanity: full canonical set must be present so docs/skills don't drift.
+        assert set(category["enum"]) == {
+            "code",
+            "config",
+            "docs",
+            "refactor",
+            "test",
+            "research",
+            "planning",
+            "manual",
+        }
 
     def test_update_task_schema_has_all_fields(self, task_registry) -> None:
         """Test update_task schema includes all updatable fields."""

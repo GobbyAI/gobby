@@ -81,6 +81,7 @@ call_tool("gobby-tasks", "create_task", {
 | `code` | Implementation — requires `validation_criteria` |
 | `config` | Configuration file changes |
 | `docs` | Documentation |
+| `refactor` | Code restructuring with no behavior change (includes updating existing tests) |
 | `test` | Test writing |
 | `research` | Investigation, no code output expected |
 | `planning` | Design, architecture |
