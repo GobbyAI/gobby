@@ -62,6 +62,11 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Manage code-index graph lifecycle through the Gobby daemon; read graph queries remain top-level [requires Gobby]
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommand,
+    },
 
     // ── Search (works in all modes) ──────────────────────────────────
     /// Hybrid search: FTS5 + optional semantic (Qdrant) + optional graph boost (Neo4j)
@@ -158,6 +163,14 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum GraphCommand {
+    /// Clear the current project's code-index graph projection via the Gobby daemon [requires Gobby]
+    Clear,
+    /// Rebuild the current project's code-index graph projection via the Gobby daemon [requires Gobby]
+    Rebuild,
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -186,6 +199,12 @@ fn main() -> anyhow::Result<()> {
         Command::Index { path, files, full } => commands::index::run(&ctx, path, files, full),
         Command::Status => commands::status::run(&ctx, cli.format),
         Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
+        Command::Graph {
+            command: GraphCommand::Clear,
+        } => commands::graph::clear(&ctx, cli.format),
+        Command::Graph {
+            command: GraphCommand::Rebuild,
+        } => commands::graph::rebuild(&ctx, cli.format),
 
         Command::Search {
             query,
@@ -248,5 +267,95 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::RepoOutline => commands::status::repo_outline(&ctx, cli.format),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_parse_graph_clear() {
+        let cli = Cli::try_parse_from(["gcode", "graph", "clear"]).expect("graph clear parses");
+
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Clear
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_graph_rebuild() {
+        let cli = Cli::try_parse_from(["gcode", "graph", "rebuild"]).expect("graph rebuild parses");
+
+        assert!(matches!(
+            cli.command,
+            Command::Graph {
+                command: GraphCommand::Rebuild
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_callers_remains_top_level() {
+        let cli = Cli::try_parse_from(["gcode", "callers", "handleAuth"]).expect("callers parses");
+
+        match cli.command {
+            Command::Callers {
+                symbol_name,
+                limit,
+                offset,
+            } => {
+                assert_eq!(symbol_name, "handleAuth");
+                assert_eq!(limit, 10);
+                assert_eq!(offset, 0);
+            }
+            _ => panic!("expected top-level callers command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_usages_remains_top_level() {
+        let cli = Cli::try_parse_from(["gcode", "usages", "DatabasePool"]).expect("usages parses");
+
+        match cli.command {
+            Command::Usages {
+                symbol_name,
+                limit,
+                offset,
+            } => {
+                assert_eq!(symbol_name, "DatabasePool");
+                assert_eq!(limit, 10);
+                assert_eq!(offset, 0);
+            }
+            _ => panic!("expected top-level usages command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_imports_remains_top_level() {
+        let cli = Cli::try_parse_from(["gcode", "imports", "src/auth.ts"]).expect("imports parses");
+
+        match cli.command {
+            Command::Imports { file } => assert_eq!(file, "src/auth.ts"),
+            _ => panic!("expected top-level imports command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_blast_radius_remains_top_level() {
+        let cli = Cli::try_parse_from(["gcode", "blast-radius", "handleAuth"])
+            .expect("blast-radius parses");
+
+        match cli.command {
+            Command::BlastRadius { target, depth } => {
+                assert_eq!(target, "handleAuth");
+                assert_eq!(depth, 3);
+            }
+            _ => panic!("expected top-level blast-radius command"),
+        }
     }
 }

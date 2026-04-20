@@ -7,6 +7,20 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — gcode
+
+### Added
+
+#### gcode
+
+- **Graph lifecycle commands** — Added `gcode graph clear` and `gcode graph rebuild` as daemon-backed code-index graph lifecycle commands. Both commands use the current resolved project context, POST to the existing `/api/code-index/graph/{clear,rebuild}` endpoints, and keep existing read-side graph commands (`callers`, `usages`, `imports`, `blast-radius`) unchanged and top-level.
+
+### Changed
+
+#### gcode
+
+- **Strict daemon response contract** — `gcode graph clear` and `gcode graph rebuild` now fail hard when project context cannot be resolved, when no daemon URL is configured or reachable, when the daemon returns a non-2xx status, or when a 2xx response body is not valid JSON. Successful `--format json` output prints the daemon payload directly; `--format text` renders a concise summary from the parsed JSON response.
+
 ## [0.6.1] — gcode
 
 ### Fixed

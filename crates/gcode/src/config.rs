@@ -514,4 +514,19 @@ mod tests {
         assert_eq!(config.url, "http://localhost:8474");
         assert_eq!(config.database, "neo4j");
     }
+
+    #[test]
+    fn test_resolve_project_id_requires_project_context() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let err = resolve_project_id(tmp.path()).expect_err("missing project context must fail");
+
+        assert!(
+            err.to_string().contains("No gcode project found"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            err.to_string().contains("gcode init"),
+            "unexpected error: {err}"
+        );
+    }
 }

@@ -115,11 +115,15 @@ gcode symbol <id>                         # Source code by symbol ID
 gcode symbols <id1> <id2> ...             # Batch retrieve
 gcode tree                                # File tree with symbol counts
 
-# Dependency graph (requires Neo4j)
+# Dependency graph reads (requires Neo4j)
 gcode callers "handleAuth"                # Who calls this?
 gcode usages "handleAuth"                 # Incoming call sites
 gcode imports src/auth.ts                 # Import graph for a file
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
+
+# Graph lifecycle (requires Gobby daemon)
+gcode graph clear                         # Clear current project's graph projection
+gcode graph rebuild                       # Rebuild current project's graph projection
 
 # Project management
 gcode status                              # Index stats
@@ -159,7 +163,7 @@ codebase → tree-sitter → SQLite        → FTS5 search
                                           config, secrets, sessions, agents
 ```
 
-Gobby adds graph queries, semantic search, and infrastructure that makes gcode better at its core job — not just more features bolted on.
+Gobby adds graph queries, graph lifecycle orchestration, semantic search, and infrastructure that makes gcode better at its core job — not just more features bolted on.
 
 **Search quality improves.** With Neo4j, `gcode search` blends FTS5 text matching with call-graph relevance. With Qdrant plus a configured embeddings API, conceptual queries like "database connection pooling" can find semantically similar code even when the exact words don't match.
 
@@ -174,6 +178,7 @@ Gobby adds graph queries, semantic search, and infrastructure that makes gcode b
 | Semantic vector search | — | Yes (Qdrant + embeddings API) |
 | Call graph / blast radius | — | Yes (Neo4j) |
 | Import graph | — | Yes (Neo4j) |
+| Graph clear / rebuild lifecycle | — | Yes (daemon-backed) |
 | Auto-indexing on file change | — | Yes (daemon file watcher) |
 | Centralized config + secrets | — | Yes (encrypted, no env vars) |
 | Shared index (daemon + CLI) | — | Yes (gobby-hub.db) |
@@ -191,6 +196,10 @@ Get started with Gobby at [github.com/GobbyAI/gobby](https://github.com/GobbyAI/
 | Qdrant down | Search loses semantic boost. FTS5 + graph still work. |
 | Embeddings API unavailable | Semantic embeddings disabled. FTS5 + graph still work. |
 | No index yet | Commands error with `Run gcode init to initialize`. |
+
+Read-side graph commands depend on Neo4j. `gcode graph clear` and `gcode graph rebuild`
+are separate lifecycle operations routed through the Gobby daemon for the
+current resolved project.
 
 ## Language Support
 
