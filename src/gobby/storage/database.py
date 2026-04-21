@@ -308,6 +308,11 @@ class LocalDatabase:
             with db.transaction() as conn:
                 conn.execute("INSERT ...")
                 conn.execute("UPDATE ...")
+
+        Tolerates inner code that implicitly commits the transaction (e.g.
+        ``Connection.executescript`` always issues an implicit COMMIT before
+        running). In that case the outer COMMIT/ROLLBACK is skipped because
+        there is nothing left to finalize — guarded by ``conn.in_transaction``.
         """
         conn = self.connection
         if conn.in_transaction:
@@ -316,11 +321,13 @@ class LocalDatabase:
             conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 yield conn
-                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if conn.in_transaction:
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 self._pop_after_commit_scope(committed=True)
             except Exception:
-                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if conn.in_transaction:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 self._pop_after_commit_scope(committed=False)
                 raise
             return
@@ -328,10 +335,12 @@ class LocalDatabase:
         conn.execute("BEGIN")
         try:
             yield conn
-            conn.execute("COMMIT")
+            if conn.in_transaction:
+                conn.execute("COMMIT")
             self._run_after_commit_callbacks()
         except Exception:
-            conn.execute("ROLLBACK")
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
             self._pop_after_commit_scope(committed=False)
             raise
 
@@ -341,6 +350,9 @@ class LocalDatabase:
 
         Acquires write lock at BEGIN, preventing concurrent read-modify-write races.
         Use for atomic read-then-update patterns where deferred locking is insufficient.
+
+        Tolerates inner code that implicitly commits the transaction (e.g.
+        ``Connection.executescript``). See ``transaction`` for details.
         """
         conn = self.connection
         if conn.in_transaction:
@@ -349,11 +361,13 @@ class LocalDatabase:
             conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 yield conn
-                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if conn.in_transaction:
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 self._pop_after_commit_scope(committed=True)
             except Exception:
-                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if conn.in_transaction:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 self._pop_after_commit_scope(committed=False)
                 raise
             return
@@ -361,10 +375,12 @@ class LocalDatabase:
         conn.execute("BEGIN IMMEDIATE")
         try:
             yield conn
-            conn.execute("COMMIT")
+            if conn.in_transaction:
+                conn.execute("COMMIT")
             self._run_after_commit_callbacks()
         except Exception:
-            conn.execute("ROLLBACK")
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
             self._pop_after_commit_scope(committed=False)
             raise
 

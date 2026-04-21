@@ -381,94 +381,101 @@ def _tasks_claimed_session_fk_is_set_null(db: LocalDatabase) -> bool:
 
 
 def _migrate_tasks_claimed_session_fk_set_null(db: LocalDatabase) -> None:
-    """Rebuild tasks so deleting a session clears canonical task ownership."""
+    """Rebuild tasks so deleting a session clears canonical task ownership.
+
+    DDL is issued via individual ``conn.execute`` calls rather than
+    ``executescript`` — the latter implicitly COMMITs any pending transaction,
+    which would break the outer ``db.transaction()`` wrapper in
+    ``_run_migration_list``. The ``_setup_tasks_fts`` call at the end still
+    uses ``executescript`` because it creates FTS triggers whose ``BEGIN...END``
+    blocks contain semicolons; it is invoked last so any implicit commit only
+    affects the schema_version INSERT that follows.
+    """
     if _tasks_claimed_session_fk_is_set_null(db):
         return
 
     conn = db.connection
-    conn.execute("PRAGMA foreign_keys=OFF")
-    try:
-        conn.executescript("""
-            DROP TABLE IF EXISTS tasks_new;
-            CREATE TABLE tasks_new (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                parent_task_id TEXT REFERENCES tasks(id),
-                created_in_session_id TEXT REFERENCES sessions(id),
-                claimed_by_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-                lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
-                closed_in_session_id TEXT REFERENCES sessions(id),
-                closed_commit_sha TEXT,
-                closed_at TEXT,
-                title TEXT NOT NULL,
-                description TEXT,
-                status TEXT DEFAULT 'open',
-                priority INTEGER DEFAULT 2,
-                task_type TEXT DEFAULT 'task',
-                assignee TEXT,
-                labels TEXT,
-                closed_reason TEXT,
-                compacted_at TEXT,
-                validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
-                validation_feedback TEXT,
-                validation_override_reason TEXT,
-                category TEXT,
-                validation_criteria TEXT,
-                validation_fail_count INTEGER DEFAULT 0,
-                dispatch_failure_count INTEGER DEFAULT 0,
-                commits TEXT,
-                escalated_at TEXT,
-                escalation_reason TEXT,
-                github_issue_number INTEGER,
-                github_pr_number INTEGER,
-                github_repo TEXT,
-                linear_issue_id TEXT,
-                linear_team_id TEXT,
-                seq_num INTEGER,
-                path_cache TEXT,
-                start_date TEXT,
-                due_date TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            INSERT INTO tasks_new (
-                id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
-                lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
-                description, status, priority, task_type, assignee, labels, closed_reason,
-                compacted_at, validation_status, validation_feedback, validation_override_reason,
-                category, validation_criteria, validation_fail_count, dispatch_failure_count,
-                commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
-                github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
-                start_date, due_date, created_at, updated_at
-            )
-            SELECT
-                id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
-                lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
-                description, status, priority, task_type, assignee, labels, closed_reason,
-                compacted_at, validation_status, validation_feedback, validation_override_reason,
-                category, validation_criteria, validation_fail_count, dispatch_failure_count,
-                commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
-                github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
-                start_date, due_date, created_at, updated_at
-            FROM tasks;
-            DROP TABLE tasks;
-            ALTER TABLE tasks_new RENAME TO tasks;
-            CREATE INDEX idx_tasks_project ON tasks(project_id);
-            CREATE INDEX idx_tasks_status ON tasks(status);
-            CREATE INDEX idx_tasks_parent ON tasks(parent_task_id);
-            CREATE INDEX idx_tasks_created_session ON tasks(created_in_session_id);
-            CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id);
-            CREATE INDEX idx_tasks_lifecycle_stage ON tasks(lifecycle_stage);
-            CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
-            CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
-            CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
-            DROP TRIGGER IF EXISTS tasks_fts_ai;
-            DROP TRIGGER IF EXISTS tasks_fts_ad;
-            DROP TRIGGER IF EXISTS tasks_fts_au;
-            DROP TABLE IF EXISTS tasks_fts;
-        """)
-    finally:
-        conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("DROP TABLE IF EXISTS tasks_new")
+    conn.execute("""
+        CREATE TABLE tasks_new (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            parent_task_id TEXT REFERENCES tasks(id),
+            created_in_session_id TEXT REFERENCES sessions(id),
+            claimed_by_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+            lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
+            closed_in_session_id TEXT REFERENCES sessions(id),
+            closed_commit_sha TEXT,
+            closed_at TEXT,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT DEFAULT 'open',
+            priority INTEGER DEFAULT 2,
+            task_type TEXT DEFAULT 'task',
+            assignee TEXT,
+            labels TEXT,
+            closed_reason TEXT,
+            compacted_at TEXT,
+            validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
+            validation_feedback TEXT,
+            validation_override_reason TEXT,
+            category TEXT,
+            validation_criteria TEXT,
+            validation_fail_count INTEGER DEFAULT 0,
+            dispatch_failure_count INTEGER DEFAULT 0,
+            commits TEXT,
+            escalated_at TEXT,
+            escalation_reason TEXT,
+            github_issue_number INTEGER,
+            github_pr_number INTEGER,
+            github_repo TEXT,
+            linear_issue_id TEXT,
+            linear_team_id TEXT,
+            seq_num INTEGER,
+            path_cache TEXT,
+            start_date TEXT,
+            due_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        INSERT INTO tasks_new (
+            id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+            lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+            description, status, priority, task_type, assignee, labels, closed_reason,
+            compacted_at, validation_status, validation_feedback, validation_override_reason,
+            category, validation_criteria, validation_fail_count, dispatch_failure_count,
+            commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+            github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+            start_date, due_date, created_at, updated_at
+        )
+        SELECT
+            id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
+            lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
+            description, status, priority, task_type, assignee, labels, closed_reason,
+            compacted_at, validation_status, validation_feedback, validation_override_reason,
+            category, validation_criteria, validation_fail_count, dispatch_failure_count,
+            commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
+            github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
+            start_date, due_date, created_at, updated_at
+        FROM tasks
+    """)
+    conn.execute("DROP TABLE tasks")
+    conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
+    conn.execute("CREATE INDEX idx_tasks_project ON tasks(project_id)")
+    conn.execute("CREATE INDEX idx_tasks_status ON tasks(status)")
+    conn.execute("CREATE INDEX idx_tasks_parent ON tasks(parent_task_id)")
+    conn.execute("CREATE INDEX idx_tasks_created_session ON tasks(created_in_session_id)")
+    conn.execute("CREATE INDEX idx_tasks_claimed_session ON tasks(claimed_by_session_id)")
+    conn.execute("CREATE INDEX idx_tasks_lifecycle_stage ON tasks(lifecycle_stage)")
+    conn.execute("CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id)")
+    conn.execute("CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num)")
+    conn.execute("CREATE INDEX idx_tasks_path_cache ON tasks(path_cache)")
+    conn.execute("DROP TRIGGER IF EXISTS tasks_fts_ai")
+    conn.execute("DROP TRIGGER IF EXISTS tasks_fts_ad")
+    conn.execute("DROP TRIGGER IF EXISTS tasks_fts_au")
+    conn.execute("DROP TABLE IF EXISTS tasks_fts")
 
     _setup_tasks_fts(db)
 
@@ -650,8 +657,48 @@ def _migrate_agent_run_reasoning_fields(db: LocalDatabase) -> None:
                 db.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
 
 
+_CODE_CALLS_CREATE = """
+    CREATE TABLE IF NOT EXISTS code_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        caller_symbol_id TEXT NOT NULL,
+        callee_symbol_id TEXT NOT NULL DEFAULT '',
+        callee_name TEXT NOT NULL,
+        callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+        callee_external_module TEXT NOT NULL DEFAULT '',
+        file_path TEXT NOT NULL,
+        line INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(
+            project_id,
+            caller_symbol_id,
+            callee_symbol_id,
+            callee_name,
+            callee_target_kind,
+            callee_external_module,
+            file_path,
+            line
+        )
+    )
+"""
+
+_CODE_CALLS_INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS idx_cc_file ON code_calls(project_id, file_path)",
+    "CREATE INDEX IF NOT EXISTS idx_cc_caller ON code_calls(project_id, caller_symbol_id)",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_cc_target "
+        "ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name)"
+    ),
+)
+
+
 def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
-    """Add code-graph attempt tracking and canonical call-target columns."""
+    """Add code-graph attempt tracking and canonical call-target columns.
+
+    DDL is issued via individual ``conn.execute`` calls rather than
+    ``executescript`` — the latter implicitly COMMITs any pending transaction,
+    which would break the outer ``db.transaction()`` wrapper in
+    ``_run_migration_list``.
+    """
     _add_column_if_missing(
         db,
         "code_indexed_files",
@@ -659,74 +706,35 @@ def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
         "graph_sync_attempted_at",
     )
 
+    conn = db.connection
     if not _table_exists(db, "code_calls"):
-        db.connection.executescript("""
-            CREATE TABLE IF NOT EXISTS code_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id TEXT NOT NULL,
-                caller_symbol_id TEXT NOT NULL,
-                callee_symbol_id TEXT NOT NULL DEFAULT '',
-                callee_name TEXT NOT NULL,
-                callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
-                callee_external_module TEXT NOT NULL DEFAULT '',
-                file_path TEXT NOT NULL,
-                line INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(
-                    project_id,
-                    caller_symbol_id,
-                    callee_symbol_id,
-                    callee_name,
-                    callee_target_kind,
-                    callee_external_module,
-                    file_path,
-                    line
-                )
-            );
-            CREATE INDEX IF NOT EXISTS idx_cc_file ON code_calls(project_id, file_path);
-            CREATE INDEX IF NOT EXISTS idx_cc_caller ON code_calls(project_id, caller_symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_cc_target
-                ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
-        """)
+        conn.execute(_CODE_CALLS_CREATE)
+        for index_sql in _CODE_CALLS_INDEX_STATEMENTS:
+            conn.execute(index_sql)
         return
 
     if _column_exists(db, "code_calls", "callee_target_kind"):
-        db.connection.executescript("""
-            CREATE INDEX IF NOT EXISTS idx_cc_file ON code_calls(project_id, file_path);
-            CREATE INDEX IF NOT EXISTS idx_cc_caller ON code_calls(project_id, caller_symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_cc_target
-                ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
-        """)
+        for index_sql in _CODE_CALLS_INDEX_STATEMENTS:
+            conn.execute(index_sql)
         return
 
-    conn = db.connection
-    conn.execute("PRAGMA foreign_keys=OFF")
-    try:
-        conn.executescript("""
-            ALTER TABLE code_calls RENAME TO code_calls_legacy;
-
-            CREATE TABLE code_calls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id TEXT NOT NULL,
-                caller_symbol_id TEXT NOT NULL,
-                callee_symbol_id TEXT NOT NULL DEFAULT '',
-                callee_name TEXT NOT NULL,
-                callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
-                callee_external_module TEXT NOT NULL DEFAULT '',
-                file_path TEXT NOT NULL,
-                line INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(
-                    project_id,
-                    caller_symbol_id,
-                    callee_symbol_id,
-                    callee_name,
-                    callee_target_kind,
-                    callee_external_module,
-                    file_path,
-                    line
-                )
-            );
-
-            INSERT INTO code_calls (
+    # Rebuild legacy code_calls table. No other tables reference code_calls,
+    # so PRAGMA foreign_keys=OFF is unnecessary here — and it was previously
+    # a no-op anyway because the outer transaction prevented the PRAGMA from
+    # taking effect.
+    conn.execute("ALTER TABLE code_calls RENAME TO code_calls_legacy")
+    conn.execute("""
+        CREATE TABLE code_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            caller_symbol_id TEXT NOT NULL,
+            callee_symbol_id TEXT NOT NULL DEFAULT '',
+            callee_name TEXT NOT NULL,
+            callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+            callee_external_module TEXT NOT NULL DEFAULT '',
+            file_path TEXT NOT NULL,
+            line INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(
                 project_id,
                 caller_symbol_id,
                 callee_symbol_id,
@@ -736,31 +744,49 @@ def _migrate_code_graph_target_schema(db: LocalDatabase) -> None:
                 file_path,
                 line
             )
-            SELECT
-                project_id,
-                caller_symbol_id,
-                '',
-                callee_name,
-                'unresolved',
-                '',
-                file_path,
-                line
-            FROM code_calls_legacy;
-
-            DROP TABLE code_calls_legacy;
-            CREATE INDEX idx_cc_file ON code_calls(project_id, file_path);
-            CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
-            CREATE INDEX idx_cc_target
-                ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
-        """)
-    finally:
-        conn.execute("PRAGMA foreign_keys=ON")
+        )
+    """)
+    conn.execute("""
+        INSERT INTO code_calls (
+            project_id,
+            caller_symbol_id,
+            callee_symbol_id,
+            callee_name,
+            callee_target_kind,
+            callee_external_module,
+            file_path,
+            line
+        )
+        SELECT
+            project_id,
+            caller_symbol_id,
+            '',
+            callee_name,
+            'unresolved',
+            '',
+            file_path,
+            line
+        FROM code_calls_legacy
+    """)
+    conn.execute("DROP TABLE code_calls_legacy")
+    conn.execute("CREATE INDEX idx_cc_file ON code_calls(project_id, file_path)")
+    conn.execute("CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id)")
+    conn.execute(
+        "CREATE INDEX idx_cc_target "
+        "ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name)"
+    )
 
 
 def _migrate_add_token_events(db: LocalDatabase) -> None:
-    """Add token_events ledger and synthetic backfill rows for existing session usage."""
+    """Add token_events ledger and synthetic backfill rows for existing session usage.
+
+    DDL is issued via individual ``conn.execute`` calls rather than
+    ``executescript`` — the latter implicitly COMMITs any pending transaction,
+    which would break the outer ``db.transaction()`` wrapper in
+    ``_run_migration_list``.
+    """
     conn = db.connection
-    conn.executescript("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS token_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -778,14 +804,24 @@ def _migrate_add_token_events(db: LocalDatabase) -> None:
             event_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             metadata TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_token_events_event_at ON token_events(event_at);
-        CREATE INDEX IF NOT EXISTS idx_token_events_session ON token_events(session_id, event_at);
-        CREATE INDEX IF NOT EXISTS idx_token_events_project_event ON token_events(project_id, event_at);
-        CREATE INDEX IF NOT EXISTS idx_token_events_model_family ON token_events(model_family, event_at);
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_events_event_at ON token_events(event_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_events_session ON token_events(session_id, event_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_events_project_event "
+        "ON token_events(project_id, event_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_events_model_family "
+        "ON token_events(model_family, event_at)"
+    )
+    conn.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_token_events_dedup
             ON token_events(session_id, message_id)
-            WHERE message_id IS NOT NULL;
+            WHERE message_id IS NOT NULL
     """)
 
     existing_rows = db.fetchone("SELECT COUNT(*) AS count FROM token_events")
