@@ -1,7 +1,8 @@
 """Tests for SkillsMPProvider."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from gobby.skills.hubs.base import HubSkillInfo
@@ -199,6 +200,92 @@ class TestSkillsMPListSkills:
             assert len(results) == 1
             assert results[0].slug == "skill-1"
             assert results[0].hub_name == "skillsmp"
+
+
+class TestSkillsMPSearchEndToEnd:
+    """End-to-end regression tests for SkillsMPProvider.search() with HTTP mocked.
+
+    These cover the full path from search() through _make_request() to httpx —
+    specifically to lock in the fix for #12053, where skillsmp was silently
+    returning zero results due to an upstream auth-resolution bug. These tests
+    assert non-empty results for common queries (react, typescript, javascript)
+    with the HTTP layer mocked via httpx.AsyncClient.request.
+    """
+
+    @staticmethod
+    def _mock_request_returning(skills: list[dict]) -> AsyncMock:
+        """Build an AsyncMock for httpx.AsyncClient.request returning the given skills."""
+        response = httpx.Response(
+            status_code=200,
+            json={"skills": skills},
+            request=httpx.Request("GET", "https://skillsmp.com/api/v1/skills/search"),
+        )
+        return AsyncMock(return_value=response)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "query",
+        ["react", "typescript", "javascript"],
+    )
+    async def test_search_returns_non_empty_for_common_query(self, query: str) -> None:
+        """Common queries must return populated HubSkillInfo lists end-to-end.
+
+        Regression guard for #12053: skillsmp previously returned zero results
+        silently for these exact queries when the API key was unresolved.
+        """
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+
+        payload = [
+            {
+                "id": f"{query}-helper",
+                "name": f"{query.title()} Helper",
+                "description": f"Utilities for {query}",
+                "version": "1.2.3",
+                "score": 4.8,
+            },
+            {
+                "id": f"{query}-patterns",
+                "name": f"{query.title()} Patterns",
+                "description": f"Common {query} patterns",
+                "version": "0.9.0",
+            },
+        ]
+        mocked_request = self._mock_request_returning(payload)
+
+        with patch("httpx.AsyncClient.request", mocked_request):
+            results = await provider.search(query, limit=20)
+
+        assert len(results) == 2, f"expected non-empty results for query={query!r}"
+        assert all(isinstance(r, HubSkillInfo) for r in results)
+        assert {r.slug for r in results} == {f"{query}-helper", f"{query}-patterns"}
+        assert all(r.hub_name == "skillsmp" for r in results)
+
+        # Verify the HTTP call was shaped correctly (auth header, query param, endpoint).
+        mocked_request.assert_awaited_once()
+        call_kwargs = mocked_request.await_args.kwargs
+        assert call_kwargs["method"] == "GET"
+        assert call_kwargs["url"].endswith("/skills/search")
+        assert call_kwargs["params"] == {"q": query, "limit": 20}
+        assert call_kwargs["headers"]["Authorization"] == "Bearer sk_test_key"
+
+    @pytest.mark.asyncio
+    async def test_search_empty_payload_returns_empty_list(self) -> None:
+        """End-to-end: a genuinely empty API response returns an empty list
+        (distinct from the auth-fails-silently scenario we're guarding against)."""
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+
+        with patch("httpx.AsyncClient.request", self._mock_request_returning([])):
+            results = await provider.search("nonexistent-zzz", limit=20)
+
+        assert results == []
 
 
 class TestSkillsMPDownload:
