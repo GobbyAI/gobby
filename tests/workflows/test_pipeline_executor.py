@@ -2059,8 +2059,10 @@ class TestPipelineChildSession:
         child_session = MagicMock()
         child_session.id = "child-session-mcp"
         mock_session_manager.register.return_value = child_session
+        mock_session_manager.resolve_session_reference.return_value = "child-session-mcp"
 
         tool_proxy = AsyncMock()
+        tool_proxy.session_manager = mock_session_manager
         tool_proxy.get_tool_schema.return_value = {
             "success": True,
             "tool": {"inputSchema": {}},
