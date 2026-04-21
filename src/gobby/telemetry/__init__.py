@@ -133,7 +133,9 @@ def shutdown_telemetry() -> None:
     Shutdown telemetry and clear cache.
     """
     # Uninstrument logging bridge
-    LoggingInstrumentor().uninstrument()
+    instrumentor = LoggingInstrumentor()
+    if instrumentor.is_instrumented_by_opentelemetry:
+        instrumentor.uninstrument()
 
     # Shutdown OTel providers
     shutdown_providers()

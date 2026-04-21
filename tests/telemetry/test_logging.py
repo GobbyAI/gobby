@@ -1,9 +1,11 @@
 import logging
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
+from gobby.telemetry import shutdown_telemetry
 from gobby.telemetry.config import TelemetrySettings
 from gobby.telemetry.logging import (
     JsonOTelFormatter,
@@ -177,6 +179,34 @@ def test_init_telemetry_sets_providers(telemetry_config):
 
     assert trace.get_tracer_provider() is not None
     assert metrics.get_meter_provider() is not None
+
+
+def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented():
+    instrumentor = MagicMock()
+    instrumentor.is_instrumented_by_opentelemetry = False
+
+    with (
+        patch("gobby.telemetry.LoggingInstrumentor", return_value=instrumentor),
+        patch("gobby.telemetry.shutdown_providers") as mock_shutdown_providers,
+    ):
+        shutdown_telemetry()
+
+    instrumentor.uninstrument.assert_not_called()
+    mock_shutdown_providers.assert_called_once()
+
+
+def test_shutdown_telemetry_uninstruments_when_active():
+    instrumentor = MagicMock()
+    instrumentor.is_instrumented_by_opentelemetry = True
+
+    with (
+        patch("gobby.telemetry.LoggingInstrumentor", return_value=instrumentor),
+        patch("gobby.telemetry.shutdown_providers") as mock_shutdown_providers,
+    ):
+        shutdown_telemetry()
+
+    instrumentor.uninstrument.assert_called_once()
+    mock_shutdown_providers.assert_called_once()
 
 
 def test_setup_otel_logging_clears_old_handlers(telemetry_config):

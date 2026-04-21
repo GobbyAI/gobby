@@ -353,6 +353,38 @@ class HTTPServer:
             return self._tools_handler.tool_proxy
         return None
 
+    async def _terminate_streamable_http_sessions(self) -> None:
+        """Best-effort termination of active FastMCP Streamable HTTP sessions."""
+        if self._mcp_server is None:
+            return
+
+        try:
+            session_manager = self._mcp_server.session_manager
+        except (AttributeError, RuntimeError):
+            return
+
+        server_instances = getattr(session_manager, "_server_instances", None)
+        if not isinstance(server_instances, dict) or not server_instances:
+            return
+
+        transports = list(server_instances.values())
+        logger.debug(
+            "Terminating %d active Streamable HTTP session(s)",
+            len(transports),
+        )
+        for transport in transports:
+            terminate = getattr(transport, "terminate", None)
+            if not callable(terminate):
+                continue
+            try:
+                await terminate()
+            except Exception as e:
+                logger.warning(
+                    "Failed to terminate Streamable HTTP session %s: %s",
+                    getattr(transport, "mcp_session_id", "<unknown>"),
+                    e,
+                )
+
     def resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """
         Resolve project_id from cwd if not provided.
@@ -436,6 +468,9 @@ class HTTPServer:
                             "All background tasks cancelled",
                             extra={"completed": completed_count},
                         )
+
+            # Disconnect all MCP servers
+            await self._terminate_streamable_http_sessions()
 
             # Disconnect all MCP servers
             if self.services.mcp_manager:

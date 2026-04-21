@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
+
 # ---------------------------------------------------------------------------
 # Startup progress tracking (module-level so the admin API can read it)
 # ---------------------------------------------------------------------------
@@ -66,6 +68,15 @@ class StartupTracker:
 def get_startup_tracker() -> StartupTracker | None:
     """Return the current startup tracker (used by admin API)."""
     return _startup_tracker
+
+
+async def _await_critical_stop_hook_grace_window() -> None:
+    """Keep HTTP available briefly so critical Stop hooks can still connect."""
+    logger.debug(
+        "Waiting %.1fs for critical Stop hooks before HTTP shutdown",
+        _CRITICAL_STOP_HOOK_GRACE_SECONDS,
+    )
+    await asyncio.sleep(_CRITICAL_STOP_HOOK_GRACE_SECONDS)
 
 
 async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) -> None:
@@ -660,8 +671,13 @@ async def run_daemon(runner: GobbyRunner) -> None:
 
         # Cleanup with timeouts to prevent hanging
         # Use timeout slightly longer than uvicorn's graceful shutdown to let it finish
+        await _await_critical_stop_hook_grace_window()
         logger.debug("Shutdown requested; beginning graceful shutdown")
         server.should_exit = True
+        try:
+            await runner.http_server._terminate_streamable_http_sessions()
+        except Exception as e:
+            logger.warning(f"Failed to terminate Streamable HTTP sessions: {e}")
 
         if (
             hasattr(runner, "_subsystem_init_task")

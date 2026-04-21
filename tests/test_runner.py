@@ -14,6 +14,16 @@ from gobby.runner_init import resolve_embedding_api_key
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def fast_stop_hook_grace_window():
+    """Avoid real 5s shutdown delays in runner tests."""
+    with patch(
+        "gobby.runner_lifecycle._await_critical_stop_hook_grace_window",
+        new=AsyncMock(),
+    ) as mock_wait:
+        yield mock_wait
+
+
 def _set_mock_default(obj: MagicMock, name: str, default):
     """Assign a default only when a MagicMock placeholder has not been made concrete."""
     value = getattr(obj, name, None)
@@ -123,6 +133,7 @@ def create_base_patches(
         mock_http = MagicMock()
         mock_http.app = MagicMock()
         mock_http.port = 60887
+    _set_mock_default(mock_http, "_terminate_streamable_http_sessions", AsyncMock())
 
     mock_agent_monitor = AsyncMock()
     mock_agent_monitor.recover_or_cleanup_agents.return_value = (0, 0)
@@ -1086,6 +1097,63 @@ class TestGobbyRunnerShutdown:
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     asyncio.create_task(trigger_shutdown())
                     await asyncio.wait_for(runner.run(), timeout=10.0)
+
+    @pytest.mark.asyncio
+    async def test_run_waits_for_stop_hook_grace_before_http_shutdown(
+        self, mock_config, fast_stop_hook_grace_window
+    ):
+        """Shutdown should keep HTTP up for the Stop-hook grace window before exit."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.connect_all = AsyncMock()
+        mock_mcp_manager.disconnect_all = AsyncMock()
+
+        patches = create_base_patches(
+            mock_config=mock_config,
+            mock_mcp_manager=mock_mcp_manager,
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            events: list[str] = []
+
+            async def trigger_shutdown() -> None:
+                await asyncio.sleep(0)
+                runner._shutdown_requested = True
+
+            async def note_grace_wait() -> None:
+                events.append("grace")
+                assert mock_server.should_exit is False
+
+            async def terminate_sessions() -> None:
+                events.append("terminate")
+                assert mock_server.should_exit is True
+
+            fast_stop_hook_grace_window.side_effect = note_grace_wait
+            runner.http_server._terminate_streamable_http_sessions.side_effect = (
+                terminate_sessions
+            )
+
+            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
+                mock_server = MagicMock()
+                mock_server.should_exit = False
+
+                async def serve() -> None:
+                    while not mock_server.should_exit:
+                        await asyncio.sleep(0)
+                    events.append("serve-exit")
+
+                mock_server.serve = AsyncMock(side_effect=serve)
+                mock_server_cls.return_value = mock_server
+
+                with patch("gobby.runner_maintenance.setup_signal_handlers"):
+                    asyncio.create_task(trigger_shutdown())
+                    await asyncio.wait_for(runner.run(), timeout=10.0)
+
+            fast_stop_hook_grace_window.assert_awaited_once()
+            runner.http_server._terminate_streamable_http_sessions.assert_awaited_once()
+            assert events[:2] == ["grace", "terminate"]
 
     @pytest.mark.asyncio
     async def test_run_handles_message_processor_shutdown_timeout(self, mock_config):
