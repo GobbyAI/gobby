@@ -366,9 +366,7 @@ class PipelineExecutor:
                                 SessionVariableManager,
                             )
 
-                            SessionVariableManager(
-                                self.session_manager.db
-                            ).merge_variables(
+                            SessionVariableManager(self.session_manager.db).merge_variables(
                                 child_session.id,
                                 {"enforce_tool_schema_check": False},
                             )
