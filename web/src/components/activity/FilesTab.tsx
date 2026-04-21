@@ -456,7 +456,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
       {/* Resize handle */}
       {selectedFile && (
         useHorizontal
-          ? <ResizeHandle direction="horizontal" onResize={setLeftWidth} panelWidth={leftWidth} minWidth={FILES_TAB_LEFT_WIDTH_MIN} maxWidth={FILES_TAB_LEFT_WIDTH_MAX} />
+          ? <ResizeHandle direction="horizontal" horizontalAnchor="left" onResize={setLeftWidth} panelWidth={leftWidth} minWidth={FILES_TAB_LEFT_WIDTH_MIN} maxWidth={FILES_TAB_LEFT_WIDTH_MAX} />
           : <ResizeHandle direction="vertical" onResize={setTopHeight} panelHeight={topHeight} minHeight={15} maxHeight={80} />
       )}
 

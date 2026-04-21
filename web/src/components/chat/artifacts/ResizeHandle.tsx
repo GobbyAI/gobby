@@ -10,6 +10,7 @@ interface ResizeHandleProps {
   minHeight?: number
   maxHeight?: number
   direction?: 'horizontal' | 'vertical'
+  horizontalAnchor?: 'left' | 'right'
 }
 
 export function ResizeHandle({
@@ -21,11 +22,13 @@ export function ResizeHandle({
   minHeight = 20,
   maxHeight = 80,
   direction = 'horizontal',
+  horizontalAnchor = 'right',
 }: ResizeHandleProps) {
   const isVertical = direction === 'vertical'
   const currentValue = isVertical ? (panelHeight ?? 40) : (panelWidth ?? 600)
   const minVal = isVertical ? minHeight : minWidth
   const maxVal = isVertical ? maxHeight : maxWidth
+  const horizontalDeltaMultiplier = horizontalAnchor === 'left' ? 1 : -1
 
   const isDragging = useRef(false)
   const startPos = useRef(0)
@@ -50,7 +53,7 @@ export function ResizeHandle({
         const newHeight = Math.max(minVal, Math.min(maxVal, startValue.current + deltaPercent))
         onResize(newHeight)
       } else {
-        const delta = startPos.current - pos
+        const delta = (pos - startPos.current) * horizontalDeltaMultiplier
         const newWidth = Math.max(minVal, Math.min(maxVal, startValue.current + delta))
         onResize(newWidth)
       }
@@ -74,7 +77,7 @@ export function ResizeHandle({
     document.addEventListener('mouseup', handleEnd)
     document.addEventListener('touchmove', handleTouchMove, { passive: false })
     document.addEventListener('touchend', handleEnd)
-  }, [onResize, currentValue, minVal, maxVal, isVertical])
+  }, [onResize, currentValue, minVal, maxVal, isVertical, horizontalDeltaMultiplier])
 
   // Cleanup drag listeners if component unmounts mid-drag
   useEffect(() => {
@@ -97,10 +100,12 @@ export function ResizeHandle({
       if (e.key === 'ArrowDown') { e.preventDefault(); onResize(Math.min(maxVal, currentValue + step)) }
       if (e.key === 'ArrowUp') { e.preventDefault(); onResize(Math.max(minVal, currentValue - step)) }
     } else {
-      if (e.key === 'ArrowLeft') { e.preventDefault(); onResize(Math.min(maxVal, currentValue + step)) }
-      if (e.key === 'ArrowRight') { e.preventDefault(); onResize(Math.max(minVal, currentValue - step)) }
+      const increaseKey = horizontalAnchor === 'left' ? 'ArrowRight' : 'ArrowLeft'
+      const decreaseKey = horizontalAnchor === 'left' ? 'ArrowLeft' : 'ArrowRight'
+      if (e.key === increaseKey) { e.preventDefault(); onResize(Math.min(maxVal, currentValue + step)) }
+      if (e.key === decreaseKey) { e.preventDefault(); onResize(Math.max(minVal, currentValue - step)) }
     }
-  }, [onResize, currentValue, minVal, maxVal, isVertical])
+  }, [onResize, currentValue, minVal, maxVal, isVertical, horizontalAnchor])
 
   return (
     <div
