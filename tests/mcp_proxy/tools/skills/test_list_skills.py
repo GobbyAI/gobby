@@ -216,9 +216,7 @@ class TestListSkillsTool:
 
 
 @pytest.fixture
-def db_with_internal(
-    db: LocalDatabase, storage: LocalSkillManager
-) -> LocalDatabase:
+def db_with_internal(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
     """Database with a mix of user-facing and internal-flagged skills."""
     storage.create_skill(
         name="public-skill",
