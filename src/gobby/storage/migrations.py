@@ -1505,12 +1505,28 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     ),
     (
         219,
-        "Coerce legacy voice.tts_provider values (voxcpm, kokoro) to chatterbox",
+        "Remove VoxCPM/Kokoro voice config leftovers",
         """
         UPDATE config_store
            SET value = '"chatterbox"'
          WHERE key = 'voice.tts_provider'
            AND value IN ('"voxcpm"', '"kokoro"');
+
+        DELETE FROM config_store
+         WHERE key IN (
+            'voice.tts_voice',
+            'voice.tts_speed',
+            'voice.tts_language',
+            'voice.tts_model_path',
+            'voice.tts_voices_path',
+            'voice.tts_voxcpm_model',
+            'voice.tts_voxcpm_cfg_value',
+            'voice.tts_voxcpm_inference_timesteps',
+            'voice.tts_voxcpm_load_denoiser',
+            'voice.tts_voxcpm_denoise',
+            'voice.tts_voxcpm_local_files_only',
+            'voice.tts_voxcpm_optimize'
+         );
         """,
     ),
 ]

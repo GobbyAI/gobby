@@ -514,3 +514,96 @@ def test_get_current_version_error(tmp_path) -> None:
     # Mock execute to raise exception even if table exists logic was reached
     with patch.object(db, "fetchone", side_effect=sqlite3.OperationalError("Boom")):
         assert get_current_version(db) == 0
+
+
+def test_migration_219_clears_legacy_voice_config(tmp_path) -> None:
+    """Migration 219 coerces legacy tts_provider and drops orphaned voice.tts_* keys."""
+    db_path = tmp_path / "voice_legacy.db"
+    db = LocalDatabase(db_path)
+    run_migrations(db)
+
+    legacy_rows = [
+        ("voice.tts_provider", '"voxcpm"'),
+        ("voice.tts_voice", '"af_heart"'),
+        ("voice.tts_speed", "1.0"),
+        ("voice.tts_language", '"en-us"'),
+        ("voice.tts_model_path", '"~/.gobby/models/kokoro-v1.0.onnx"'),
+        ("voice.tts_voices_path", '"~/.gobby/models/voices-v1.0.bin"'),
+        ("voice.tts_voxcpm_model", '"openbmb/VoxCPM2"'),
+        ("voice.tts_voxcpm_cfg_value", "2.0"),
+        ("voice.tts_voxcpm_inference_timesteps", "10"),
+        ("voice.tts_voxcpm_load_denoiser", "false"),
+        ("voice.tts_voxcpm_denoise", "false"),
+        ("voice.tts_voxcpm_local_files_only", "false"),
+        ("voice.tts_voxcpm_optimize", "true"),
+        # Unrelated rows must survive
+        ("voice.enabled", "true"),
+        ("voice.whisper_model_size", '"base"'),
+    ]
+    with db.transaction() as conn:
+        for key, value in legacy_rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO config_store (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM schema_version WHERE version = 219")
+    run_migrations(db)
+
+    row = db.fetchone("SELECT value FROM config_store WHERE key = ?", ("voice.tts_provider",))
+    assert row is not None
+    assert row["value"] == '"chatterbox"'
+
+    orphan_keys = [
+        "voice.tts_voice",
+        "voice.tts_speed",
+        "voice.tts_language",
+        "voice.tts_model_path",
+        "voice.tts_voices_path",
+        "voice.tts_voxcpm_model",
+        "voice.tts_voxcpm_cfg_value",
+        "voice.tts_voxcpm_inference_timesteps",
+        "voice.tts_voxcpm_load_denoiser",
+        "voice.tts_voxcpm_denoise",
+        "voice.tts_voxcpm_local_files_only",
+        "voice.tts_voxcpm_optimize",
+    ]
+    placeholders = ",".join("?" * len(orphan_keys))
+    remaining = db.fetchall(
+        f"SELECT key FROM config_store WHERE key IN ({placeholders})",
+        tuple(orphan_keys),
+    )
+    assert remaining == []
+
+    # Unrelated rows untouched
+    enabled = db.fetchone("SELECT value FROM config_store WHERE key = ?", ("voice.enabled",))
+    assert enabled is not None
+    assert enabled["value"] == "true"
+
+    # Idempotent re-run
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM schema_version WHERE version = 219")
+    run_migrations(db)
+    row = db.fetchone("SELECT value FROM config_store WHERE key = ?", ("voice.tts_provider",))
+    assert row is not None
+    assert row["value"] == '"chatterbox"'
+
+
+def test_migration_219_leaves_non_voxcpm_kokoro_values_alone(tmp_path) -> None:
+    """Only voice.tts_provider values IN (voxcpm, kokoro) are rewritten."""
+    db_path = tmp_path / "voice_provider_passthrough.db"
+    db = LocalDatabase(db_path)
+    run_migrations(db)
+
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO config_store (key, value) VALUES (?, ?)",
+            ("voice.tts_provider", '"chatterbox"'),
+        )
+        conn.execute("DELETE FROM schema_version WHERE version = 219")
+    run_migrations(db)
+
+    row = db.fetchone("SELECT value FROM config_store WHERE key = ?", ("voice.tts_provider",))
+    assert row is not None
+    assert row["value"] == '"chatterbox"'
