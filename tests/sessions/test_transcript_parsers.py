@@ -969,6 +969,25 @@ class TestCodexTranscriptParser:
         )
 
     @staticmethod
+    def _reasoning(
+        ts: str = "2024-06-15T10:30:00Z",
+        **extra: Any,
+    ) -> str:
+        """Build a Codex response_item/reasoning envelope line."""
+        return json.dumps(
+            {
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": None,
+                    **extra,
+                },
+            }
+        )
+
+    @staticmethod
     def _event_msg(event_type: str, ts: str = "2024-06-15T10:30:00Z", **extra) -> str:
         """Build a Codex event_msg envelope line."""
         return json.dumps(
@@ -1103,6 +1122,19 @@ class TestCodexTranscriptParser:
 
     # -- parse_line: error handling --
 
+    def test_parse_line_reasoning_is_ignored_without_unknown_warning(
+        self, parser, monkeypatch
+    ) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def _log_unknown_block(**kwargs: Any) -> None:
+            calls.append(kwargs)
+
+        monkeypatch.setattr(parser.error_log, "log_unknown_block", _log_unknown_block)
+
+        assert parser.parse_line(self._reasoning(), 0) is None
+        assert calls == []
+
     def test_parse_line_invalid_json(self, parser) -> None:
         assert parser.parse_line("not valid json", 0) is None
 
@@ -1147,6 +1179,21 @@ class TestCodexTranscriptParser:
         assert msgs[3].content_type == "tool_result"
         assert msgs[4].index == 9
         assert msgs[4].content == "Third"
+
+    def test_parse_lines_skips_reasoning_without_consuming_index(self, parser) -> None:
+        lines = [
+            self._msg("user", "First"),
+            self._reasoning(),
+            self._msg("assistant", "Second"),
+        ]
+
+        records = parser.parse_lines(lines, start_index=10)
+
+        assert len(records) == 2
+        messages = [r for r in records if isinstance(r, ParsedMessage)]
+
+        assert [m.index for m in messages] == [10, 11]
+        assert [m.content for m in messages] == ["First", "Second"]
 
     # -- mcp_tool_call_* event_msg parsing --
 

@@ -147,6 +147,8 @@ class CodexTranscriptParser(BaseTranscriptParser):
             return self._parse_function_call(data, payload, index, timestamp)
         if payload_type == "function_call_output":
             return self._parse_function_call_output(data, payload, index, timestamp)
+        if payload_type == "reasoning":
+            return None
 
         self.error_log.log_unknown_block(
             line_num=index,
