@@ -274,9 +274,7 @@ class TestSearchHubTool:
         assert result["hub_errors"] == {}
 
     @pytest.mark.asyncio
-    async def test_search_hub_includes_hub_errors_from_failed_hub(
-        self, db, mock_hub_manager
-    ):
+    async def test_search_hub_includes_hub_errors_from_failed_hub(self, db, mock_hub_manager):
         """Errored hubs surface their error message in hub_errors."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 

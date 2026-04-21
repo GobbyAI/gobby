@@ -108,9 +108,7 @@ class TestPromptHubApiKeys:
         assert result["stored"] == 0
         assert result["unresolved"] == [("skillsmp", "SKILLSMP_API_KEY")]
 
-    def test_no_interactive_reports_unresolved_without_prompting(
-        self, patched_deps
-    ) -> None:
+    def test_no_interactive_reports_unresolved_without_prompting(self, patched_deps) -> None:
         patched_deps["load"].return_value = _config_with_hubs(
             {
                 "skillsmp": HubConfig(

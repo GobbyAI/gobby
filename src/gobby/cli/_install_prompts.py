@@ -143,9 +143,7 @@ def _prompt_hub_api_keys(no_interactive: bool = False) -> dict[str, Any]:
 
     # Flatten to (hub_name, auth_key_name) so mypy sees auth_key_name as str.
     auth_hubs: list[tuple[str, str]] = [
-        (name, cfg.auth_key_name)
-        for name, cfg in skills_cfg.hubs.items()
-        if cfg.auth_key_name
+        (name, cfg.auth_key_name) for name, cfg in skills_cfg.hubs.items() if cfg.auth_key_name
     ]
     pending: list[tuple[str, str]] = [
         (name, key) for name, key in auth_hubs if not store.exists(key)

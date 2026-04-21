@@ -319,9 +319,7 @@ class TestHubs:
         response = client.get("/api/skills/hubs/search?q=test")
         assert response.status_code == 500
 
-    def test_search_hubs_none_includes_empty_hub_errors(
-        self, client: TestClient, server
-    ) -> None:
+    def test_search_hubs_none_includes_empty_hub_errors(self, client: TestClient, server) -> None:
         """No-manager branch now returns a stable shape with an empty hub_errors dict."""
         server.hub_manager = None
         response = client.get("/api/skills/hubs/search?q=test")
@@ -339,9 +337,7 @@ class TestHubs:
         body = response.json()
         assert body["hub_errors"] == {}
 
-    def test_search_hubs_surfaces_per_hub_errors(
-        self, client: TestClient, hub_manager
-    ) -> None:
+    def test_search_hubs_surfaces_per_hub_errors(self, client: TestClient, hub_manager) -> None:
         """Per-hub errors from search_all are surfaced in hub_errors."""
         hub_manager.search_all = AsyncMock(
             return_value=([{"name": "h1"}], {"skillsmp": "auth failed"})
@@ -352,9 +348,7 @@ class TestHubs:
         assert body["hub_errors"] == {"skillsmp": "auth failed"}
         assert body["count"] == 1
 
-    def test_list_hubs_includes_auth_status(
-        self, client: TestClient, hub_manager
-    ) -> None:
+    def test_list_hubs_includes_auth_status(self, client: TestClient, hub_manager) -> None:
         """Each /hubs entry carries auth_required / auth_configured / auth_key_name."""
         hub_manager.list_hubs.return_value = ["open-hub", "authed-hub"]
 

@@ -522,9 +522,7 @@ class TestHubApiKeyResolution:
 
         return captured
 
-    def test_hub_api_key_resolution_ignores_environment(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_hub_api_key_resolution_ignores_environment(self, tmp_path, monkeypatch) -> None:
         """Env vars are never consulted for hub auth — only SecretStore."""
         from gobby.storage.database import LocalDatabase
         from gobby.storage.migrations import run_migrations
@@ -536,9 +534,7 @@ class TestHubApiKeyResolution:
             # Env has a value but SecretStore does NOT.
             monkeypatch.setenv("SKILLSMP_API_KEY", "env-bogus-should-be-ignored")
 
-            captured = self._run_setup_with_captured_hub_manager(
-                db, self._build_skills_config()
-            )
+            captured = self._run_setup_with_captured_hub_manager(db, self._build_skills_config())
 
             api_keys = captured["kwargs"]["api_keys"]
             assert "SKILLSMP_API_KEY" not in api_keys
@@ -562,9 +558,7 @@ class TestHubApiKeyResolution:
                 description="test",
             )
 
-            captured = self._run_setup_with_captured_hub_manager(
-                db, self._build_skills_config()
-            )
+            captured = self._run_setup_with_captured_hub_manager(db, self._build_skills_config())
 
             api_keys = captured["kwargs"]["api_keys"]
             assert api_keys["SKILLSMP_API_KEY"] == "stored-secret-value"

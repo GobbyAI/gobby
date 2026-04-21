@@ -508,9 +508,7 @@ class TestWarnMissingAuth:
         import logging
 
         configs = {
-            "hub": HubConfig(
-                type="skillsmp", base_url="https://h.com", auth_key_name="KEY"
-            ),
+            "hub": HubConfig(type="skillsmp", base_url="https://h.com", auth_key_name="KEY"),
         }
         manager = HubManager(configs=configs, api_keys={})
         manager.register_provider_factory("skillsmp", MockProvider)
