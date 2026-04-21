@@ -218,6 +218,12 @@ export function SourceControlView({
 
       <div className="sc-branches__main">
         <table className="sc-table">
+          <colgroup>
+            <col className="sc-col--branch" />
+            <col className="sc-col--ahead-behind" />
+            <col className="sc-col--resources" />
+            <col className="sc-col--last-commit" />
+          </colgroup>
           <thead>
             <tr>
               <th>Branch</th>
@@ -241,6 +247,12 @@ export function SourceControlView({
             </button>
             {showRemote && (
               <table className="sc-table sc-table--remote">
+                <colgroup>
+                  <col className="sc-col--branch" />
+                  <col className="sc-col--ahead-behind" />
+                  <col className="sc-col--resources" />
+                  <col className="sc-col--last-commit" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Branch</th>

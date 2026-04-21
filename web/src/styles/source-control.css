@@ -239,8 +239,32 @@
 
 .sc-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: calc(var(--font-size-base) * 0.85);
+}
+
+.sc-table col.sc-col--branch {
+  width: auto;
+}
+
+.sc-table col.sc-col--ahead-behind {
+  width: 14ch;
+}
+
+.sc-table col.sc-col--resources {
+  width: 22ch;
+}
+
+.sc-table col.sc-col--last-commit {
+  width: 14ch;
+}
+
+.sc-table th,
+.sc-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sc-table th {
@@ -644,12 +668,13 @@
 
 .sc-branches {
   display: flex;
-  gap: 0;
+  flex-direction: column;
+  gap: 0.75rem;
   position: relative;
 }
 
 .sc-branches__main {
-  flex: 1;
+  width: 100%;
   min-width: 0;
 }
 

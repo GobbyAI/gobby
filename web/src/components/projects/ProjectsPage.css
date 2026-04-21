@@ -26,20 +26,6 @@
   border-bottom: 1px solid var(--border);
 }
 
-.projects-page-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding-top: 0.75rem;
-}
-
-.projects-page-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
 .projects-page-content {
   flex: 1;
   overflow-y: auto;
