@@ -435,6 +435,26 @@ function isWebChatSessionRecord(
   return normalizeSessionType(session?.session_type) === "web_chat";
 }
 
+const RESTORABLE_SESSION_STATUSES = new Set([
+  "active",
+  "paused",
+  "handoff_ready",
+]);
+
+function isRestorableSessionRecord(
+  session: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!isWebChatSessionRecord(session)) {
+    return false;
+  }
+  const status = typeof session?.status === "string" ? session.status : null;
+  // Treat unknown/missing status as restorable so transient backend hiccups
+  // don't drop a working session; only refuse to restore explicit terminal
+  // states (expired / closed / ended / etc).
+  if (!status) return true;
+  return RESTORABLE_SESSION_STATUSES.has(status);
+}
+
 function buildContextUsageFromTotals(params: {
   totalInputTokens?: number | null;
   outputTokens?: number | null;
@@ -3831,7 +3851,7 @@ export function useChat() {
             }
 
             const session = data?.session as Record<string, unknown> | undefined;
-            if (session && isWebChatSessionRecord(session)) {
+            if (session && isRestorableSessionRecord(session)) {
               if (dbSessionIdRef.current === persistedMainSessionId) {
                 applyMainSessionMeta(session);
               }
