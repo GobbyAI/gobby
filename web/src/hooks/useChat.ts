@@ -2789,6 +2789,7 @@ export function useChat() {
           if (s.chat_mode) {
             const restored = normalizeChatMode(s.chat_mode);
             if (
+              restored !== currentModeRef.current &&
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
             ) {
@@ -2800,6 +2801,7 @@ export function useChat() {
                 }),
               );
             }
+            currentModeRef.current = restored;
           }
         })
         .catch(() => {});
@@ -3133,7 +3135,8 @@ export function useChat() {
   // Send mode change to backend
   const sendMode = useCallback((mode: ChatMode) => {
     const normalizedMode = normalizeChatMode(mode);
-    currentModeRef.current = normalizedMode; // Always track latest intended mode
+    if (currentModeRef.current === normalizedMode) return;
+    currentModeRef.current = normalizedMode;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
     setPlanPendingApproval(false);

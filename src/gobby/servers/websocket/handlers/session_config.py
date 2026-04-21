@@ -45,6 +45,11 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
 
     session = mixin._chat_sessions.get(conversation_id) if conversation_id else None
     if session is not None and conversation_id:
+        if getattr(session, "chat_mode", None) == mode:
+            logger.debug(
+                "Chat mode unchanged ('%s') for conversation %s", mode, conversation_id[:8]
+            )
+            return
         session.set_chat_mode(mode)
         # Sync SDK permission mode so the agent gets a structured mode signal
         await session.sync_sdk_permission_mode()
