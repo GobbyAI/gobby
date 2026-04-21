@@ -106,7 +106,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
             </div>
           ))}
 
-        {activeTab === "files" && <FilesTab projectId={projectId ?? null} />}
+        {activeTab === "files" && <FilesTab projectId={projectId ?? null} layout="responsive-split" />}
 
         {activeTab === "graph" && (
           <CodeGraphExplorer projectId={projectId ?? null} />
