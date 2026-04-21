@@ -2164,6 +2164,94 @@ class TestPipelineChildSession:
         )
 
     @pytest.mark.asyncio
+    async def test_mcp_steps_use_storage_backed_child_session_id(
+        self, temp_db, mock_llm_service
+    ) -> None:
+        """Pipeline MCP steps resolve and dispatch against the real stored child session.
+
+        This closes the remaining mock-only gap from #12138 by exercising the
+        full PipelineExecutor -> LocalSessionManager -> execute_mcp_step path
+        with real DB-backed session rows. The tool proxy still matches
+        production shape: tool_proxy.session_manager stays None.
+        """
+        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import LocalSessionManager
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        project = LocalProjectManager(temp_db).create("pipeline-storage-backed")
+        project_id = project.id
+        execution_manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
+        session_manager = LocalSessionManager(temp_db)
+        caller_session = session_manager.register(
+            external_id="caller-ext-storage",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+            title="caller",
+        )
+
+        tool_proxy = AsyncMock()
+        tool_proxy.session_manager = None
+        tool_proxy.get_tool_schema.return_value = {
+            "success": True,
+            "tool": {"inputSchema": {}},
+        }
+        tool_proxy.call_tool.return_value = {"success": True, "executions": []}
+
+        pipeline = PipelineDefinition(
+            name="mcp-storage-backed-test",
+            steps=[
+                PipelineStep(
+                    id="reentry_check",
+                    mcp=MCPStepConfig(
+                        server="gobby-workflows",
+                        tool="list_pipeline_executions",
+                    ),
+                ),
+            ],
+        )
+
+        executor = PipelineExecutor(
+            db=temp_db,
+            execution_manager=execution_manager,
+            llm_service=mock_llm_service,
+            session_manager=session_manager,
+            tool_proxy_getter=lambda: tool_proxy,
+        )
+
+        execution = await executor.execute(
+            pipeline=pipeline,
+            inputs={},
+            project_id=project_id,
+            session_id=caller_session.id,
+        )
+
+        child_session = session_manager.find_by_external_id(
+            f"pipeline-{execution.id}",
+            "pipeline",
+            project_id,
+            "pipeline",
+        )
+        assert child_session is not None
+        assert child_session.source == "pipeline"
+
+        tool_proxy.get_tool_schema.assert_called_once_with(
+            "gobby-workflows",
+            "list_pipeline_executions",
+            session_id=child_session.id,
+        )
+        tool_proxy.call_tool.assert_called_once_with(
+            "gobby-workflows",
+            "list_pipeline_executions",
+            {},
+            session_id=child_session.id,
+        )
+        stored_child = session_manager.get(child_session.id)
+        assert stored_child is not None
+        assert stored_child.source == "pipeline"
+
+    @pytest.mark.asyncio
     async def test_session_id_injected_into_inputs(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
