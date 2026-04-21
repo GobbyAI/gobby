@@ -9,10 +9,22 @@ OpenAI-compatible endpoint: OpenAI cloud, Ollama, LM Studio, etc.
 | LM Studio  | nomic-embed-text              | api_base=http://localhost:1234/v1         |
 | OpenAI     | text-embedding-3-small        | OPENAI_API_KEY                            |
 
-Example usage:
-    from gobby.search.embeddings import generate_embeddings, is_embedding_available
+Availability helpers come in two flavors:
 
-    if is_embedding_available("nomic-embed-text", api_base="http://localhost:1234/v1"):
+- ``is_embedding_configured`` — cheap, synchronous; answers "do we have
+  enough config to *try*?". Does **not** probe the endpoint.
+- ``is_embedding_reachable`` — async; actually hits the endpoint's
+  ``/models`` route with a short timeout and a cached result. Use this
+  before code paths that hard-fail on unavailability.
+
+Example usage:
+    from gobby.search.embeddings import (
+        generate_embeddings,
+        is_embedding_configured,
+        is_embedding_reachable,
+    )
+
+    if await is_embedding_reachable("nomic-embed-text", api_base="http://localhost:1234/v1"):
         embeddings = await generate_embeddings(
             texts=["hello world", "foo bar"],
             model="nomic-embed-text",
@@ -31,6 +43,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -474,28 +488,133 @@ async def generate_embedding(
     return embeddings[0]
 
 
-def is_embedding_available(
+def is_embedding_configured(
     model: str = "nomic-embed-text",
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> bool:
-    """Check if embedding is available for the given model.
+    """Check whether embedding *configuration* is present.
 
-    If api_base is set (LM Studio, Ollama, custom endpoints), assumes available.
-    Otherwise, requires an API key.
+    This is a pure configuration check — it does **not** probe the endpoint.
+    Returns True if a local ``api_base`` is set (Ollama, LM Studio, custom)
+    or an OpenAI-style API key is resolvable from args or the environment.
+
+    A True return only means "we have something to try"; it does not mean
+    the endpoint is reachable or the model is loaded. Callers that need a
+    real health signal should use :func:`is_embedding_reachable` instead.
 
     Args:
-        model: Model name
+        model: Model name (unused for the config check today, kept for
+            symmetry with ``is_embedding_reachable``)
         api_key: Optional explicit API key
         api_base: Optional API base URL
 
     Returns:
-        True if embeddings can be generated, False otherwise
+        True if embedding config is present, False otherwise.
     """
-    # Local endpoints (Ollama, LM Studio) are assumed available
+    del model  # reserved for future per-model gating
     if api_base:
         return True
 
-    # Cloud models need an API key
     effective_key = api_key or os.environ.get("OPENAI_API_KEY")
     return effective_key is not None and len(effective_key) > 0
+
+
+# ---------------------------------------------------------------------------
+# Reachability probe
+# ---------------------------------------------------------------------------
+
+# Short TTL so stale failures don't keep callers wedged in fallback mode,
+# but long enough that a batch of searches probes once, not N times.
+_REACHABILITY_TTL = 30.0  # seconds
+_PROBE_TIMEOUT = 3.0  # seconds
+
+
+@dataclass(slots=True)
+class _ReachabilityEntry:
+    reachable: bool
+    checked_at: float
+
+
+_reachability_cache: dict[tuple[str, bool], _ReachabilityEntry] = {}
+
+
+def _clear_reachability_cache() -> None:
+    """Clear the reachability probe cache. Exposed for tests."""
+    _reachability_cache.clear()
+
+
+def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, bool]:
+    """Key reachability results by endpoint + whether an auth key was used."""
+    return (api_base or "openai-default", has_key)
+
+
+async def is_embedding_reachable(
+    model: str = "nomic-embed-text",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    timeout: float = _PROBE_TIMEOUT,
+    cache_ttl: float = _REACHABILITY_TTL,
+) -> bool:
+    """Probe the embedding endpoint for actual reachability.
+
+    Short-circuits to False if :func:`is_embedding_configured` is False
+    (no config, no probe). Otherwise performs a ``GET {base}/models``
+    request with a short timeout. Results are cached per ``(api_base,
+    has_key)`` for ``cache_ttl`` seconds to avoid hammering local
+    inference servers across a batch of searches.
+
+    The ``/models`` route is part of the OpenAI-compatible surface that
+    Ollama, LM Studio, and OpenAI cloud all implement, making it the
+    cheapest universal reachability check.
+
+    Args:
+        model: Model name (reserved; the probe does not currently filter
+            by model since ``/models`` returns the full list)
+        api_key: Optional explicit API key
+        api_base: Optional API base URL. When omitted, probes OpenAI
+            cloud at ``https://api.openai.com/v1``.
+        timeout: Per-request timeout in seconds
+        cache_ttl: How long to trust a cached probe result
+
+    Returns:
+        True if the endpoint answered with a 2xx within the timeout,
+        False otherwise (including all exceptions).
+    """
+    del model  # reserved for future per-model probing
+
+    if not is_embedding_configured(api_key=api_key, api_base=api_base):
+        return False
+
+    effective_key = api_key or os.environ.get("OPENAI_API_KEY")
+    has_key = bool(effective_key)
+    cache_key = _reachability_cache_key(api_base, has_key)
+
+    now = time.monotonic()
+    cached = _reachability_cache.get(cache_key)
+    if cached is not None and (now - cached.checked_at) < cache_ttl:
+        return cached.reachable
+
+    base = (api_base or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base}/models"
+    headers: dict[str, str] = {}
+    if effective_key:
+        headers["Authorization"] = f"Bearer {effective_key}"
+
+    reachable = False
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers=headers)
+            reachable = 200 <= resp.status_code < 300
+            if not reachable:
+                logger.debug(
+                    "Embedding probe non-2xx: url=%s status=%s",
+                    url,
+                    resp.status_code,
+                )
+    except Exception as exc:
+        logger.debug("Embedding probe failed: url=%s err=%r", url, exc)
+        reachable = False
+
+    _reachability_cache[cache_key] = _ReachabilityEntry(reachable=reachable, checked_at=now)
+    return reachable

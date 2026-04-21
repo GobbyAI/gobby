@@ -212,7 +212,8 @@ class TestUnifiedSearcher:
         )
 
         with patch(
-            "gobby.search.unified.is_embedding_available",
+            "gobby.search.unified.is_embedding_reachable",
+            new_callable=AsyncMock,
             return_value=False,
         ):
             fallback_events: list[FallbackEvent] = []
@@ -236,7 +237,11 @@ class TestUnifiedSearcher:
         mock_embeddings = [[0.1, 0.2, 0.3]] * 2
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch(
+                "gobby.search.unified.is_embedding_reachable",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -257,7 +262,11 @@ class TestUnifiedSearcher:
         config = SearchConfig(mode="auto")
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch(
+                "gobby.search.unified.is_embedding_reachable",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -277,13 +286,35 @@ class TestUnifiedSearcher:
 
     @pytest.mark.asyncio
     async def test_embedding_mode_fails_without_key(self, db) -> None:
-        """Test embedding mode raises when unavailable."""
+        """Test embedding mode raises 'not configured' when no key/base."""
         config = SearchConfig(mode="embedding")
 
-        with patch("gobby.search.unified.is_embedding_available", return_value=False):
+        with patch("gobby.search.unified.is_embedding_configured", return_value=False):
             searcher = _make_searcher(db, config)
 
-            with pytest.raises(RuntimeError, match="Embedding unavailable"):
+            with pytest.raises(RuntimeError, match="not configured"):
+                await searcher.fit_async([("id1", "test")])
+
+    @pytest.mark.asyncio
+    async def test_embedding_mode_fails_when_unreachable(self, db) -> None:
+        """Test embedding mode raises 'unreachable' when configured but down."""
+        config = SearchConfig(
+            mode="embedding",
+            embedding_model="nomic-embed-text",
+            embedding_api_base="http://127.0.0.1:1",
+        )
+
+        with (
+            patch("gobby.search.unified.is_embedding_configured", return_value=True),
+            patch(
+                "gobby.search.unified.is_embedding_reachable",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            searcher = _make_searcher(db, config)
+
+            with pytest.raises(RuntimeError, match="unreachable"):
                 await searcher.fit_async([("id1", "test")])
 
     @pytest.mark.asyncio
@@ -299,7 +330,7 @@ class TestUnifiedSearcher:
         mock_query_embedding = [0.1, 0.2, 0.3]
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch("gobby.search.unified.is_embedding_configured", return_value=True),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -380,7 +411,11 @@ class TestUnifiedSearcher:
         def callback(event: FallbackEvent) -> None:
             events.append(event)
 
-        with patch("gobby.search.unified.is_embedding_available", return_value=False):
+        with patch(
+            "gobby.search.unified.is_embedding_reachable",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
             searcher = _make_searcher(db, config, event_callback=callback)
             await searcher.fit_async([("id1", "test")])
 
@@ -393,7 +428,7 @@ class TestUnifiedSearcher:
         config = SearchConfig(mode="hybrid")
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch("gobby.search.unified.is_embedding_configured", return_value=True),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
