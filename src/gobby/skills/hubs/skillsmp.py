@@ -24,7 +24,7 @@ class SkillsMPProvider(HubProvider):
     """Provider for SkillsMP skill marketplace using REST API.
 
     This provider connects to the SkillsMP API (skillsmp.com) to provide
-    access to 350K+ skills in the marketplace.
+    access to nearly 1M skills in the marketplace.
 
     Authentication is via Bearer token in the Authorization header.
     Rate limit: 500 requests/day.
