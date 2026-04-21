@@ -199,7 +199,9 @@ class TestChatterboxTurboProvider:
                 "_prepare_reference_conditioning",
                 side_effect=ValueError("Audio prompt must be longer than 5 seconds!"),
             ):
-                with pytest.raises(RuntimeError, match="Audio prompt must be longer than 5 seconds"):
+                with pytest.raises(
+                    RuntimeError, match="Audio prompt must be longer than 5 seconds"
+                ):
                     await provider.warmup()
 
         assert provider._conditioning_ready is False
@@ -271,9 +273,7 @@ class TestChatterboxTurboProvider:
                     is_floating_point=np.issubdtype(self.array.dtype, np.floating)
                 )
 
-            def to(
-                self, device: str | None = None, dtype: Any | None = None
-            ) -> FakeTensor:
+            def to(self, device: str | None = None, dtype: Any | None = None) -> FakeTensor:
                 array = self.array
                 if dtype is not None:
                     array = array.astype(dtype, copy=False)
@@ -421,7 +421,7 @@ class TestDepCheck:
                     new_callable=AsyncMock,
                     return_value=proc,
                 ) as create_mock:
-                    assert await _install_packages(["kokoro-onnx"]) is True
+                    assert await _install_packages(["chatterbox-tts"]) is True
 
         create_mock.assert_awaited_once_with(
             sys.executable,
@@ -431,7 +431,7 @@ class TestDepCheck:
             "install",
             "--python",
             sys.executable,
-            "kokoro-onnx",
+            "chatterbox-tts",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -483,7 +483,7 @@ class TestDepCheck:
         """When deps are importable, returns True without installing."""
         from gobby.voice.dep_check import ensure_tts_deps
 
-        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="kokoro")
+        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="chatterbox")
 
         with patch("gobby.voice.dep_check._check_imports", return_value=[]):
             assert await ensure_tts_deps(config) is True
@@ -493,7 +493,7 @@ class TestDepCheck:
         """When deps are missing, calls _install_packages."""
         from gobby.voice.dep_check import ensure_tts_deps
 
-        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="kokoro")
+        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="chatterbox")
 
         call_count = 0
 
@@ -501,7 +501,7 @@ class TestDepCheck:
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                return ["kokoro-onnx"]
+                return ["chatterbox-tts"]
             return []
 
         with patch("gobby.voice.dep_check._check_imports", side_effect=check_side_effect):
@@ -509,20 +509,6 @@ class TestDepCheck:
                 "gobby.voice.dep_check._install_packages", new_callable=AsyncMock, return_value=True
             ):
                 assert await ensure_tts_deps(config) is True
-
-    @pytest.mark.asyncio
-    async def test_ensure_tts_deps_skips_voxcpm_auto_install(self) -> None:
-        """VoxCPM must not be auto-installed into the daemon runtime."""
-        from gobby.voice.dep_check import ensure_tts_deps
-
-        config = VoiceConfig(enabled=True, tts_enabled=True, tts_provider="voxcpm")
-
-        with patch("gobby.voice.dep_check._check_imports", return_value=["voxcpm"]):
-            with patch(
-                "gobby.voice.dep_check._install_packages", new_callable=AsyncMock
-            ) as install_mock:
-                assert await ensure_tts_deps(config) is False
-        install_mock.assert_not_called()
 
 
 class TestVoiceConfigTTSDefaults:

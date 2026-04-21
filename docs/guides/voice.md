@@ -25,34 +25,13 @@ The installer asks whether you want voice chat. Say yes, or pass `--voice`:
 gobby install --voice
 ```
 
-### Baseline voice dependencies
+### Voice dependencies
 
 ```bash
-# Installs Whisper STT plus the legacy built-in Chatterbox/Kokoro TTS providers.
 uv sync --extra voice
 ```
 
-`uv sync --extra voice` does **not** install VoxCPM, even though VoxCPM is the
-default provider in config. Install it separately or use the interactive installer.
-
-### VoxCPM provider
-
-Install `voxcpm` manually if you plan to use `tts_provider: voxcpm`.
-
-```bash
-uv pip install voxcpm
-```
-
-Notes:
-
-- The current Gobby integration treats VoxCPM as an optional provider, not a baseline dependency.
-- Gobby targets Python `3.13+`, but upstream VoxCPM still documents embedded usage around
-  Python `<3.13`.
-- If `tts_provider: voxcpm` does not install cleanly into the daemon runtime on your machine,
-  install `voxcpm` separately with `uv pip install voxcpm`, or use an external runtime /
-  interactive installer path instead of expecting it to be bundled into `uv sync --extra voice`.
-- Plan on an external runtime or another provider until upstream VoxCPM's `3.13+` embedded
-  support is stable enough for Gobby to treat it as a clean in-daemon install.
+Installs `faster-whisper` (STT) and `chatterbox-tts` (TTS).
 
 ## Configuration
 
@@ -61,14 +40,14 @@ Enable voice in your daemon config:
 ```yaml
 voice:
   enabled: true
-  tts_provider: voxcpm
+  tts_provider: chatterbox
 ```
 
 Restart the daemon after config changes: `gobby restart`
 
 ## Reference Audio
 
-The simple cloning workflow stays the same across providers that support it:
+Chatterbox performs zero-shot voice cloning from a short reference clip:
 
 ```yaml
 voice:
@@ -84,7 +63,9 @@ Guidelines:
 
 ### Optional `tts_reference_text`
 
-Some providers can also use the transcript of the reference clip:
+Providers that support higher-fidelity cloning can use the transcript of the
+reference clip. Chatterbox ignores it, but the field is preserved for
+forward-compatible provider additions:
 
 ```yaml
 voice:
@@ -97,46 +78,8 @@ Behavior:
 - Optional for all providers
 - Ignored if missing
 - Ignored by providers that do not support it
-- Used by VoxCPM to switch from simple reference-audio cloning to a higher-fidelity prompt-audio mode
-
-If you do not want to transcribe the clip, leave it unset. Basic cloning still works.
-For VoxCPM, you can also place the transcript in a sidecar text file next to the audio:
-
-- `~/.gobby/voice/reference.txt`
-- or `~/.gobby/voice/reference.wav.txt`
 
 ## TTS Providers
-
-### VoxCPM (default)
-
-Reference-audio cloning with optional `reference_text` for higher-fidelity continuation-style cloning.
-
-```yaml
-voice:
-  enabled: true
-  tts_provider: voxcpm
-  tts_reference_audio: ~/.gobby/voice/reference.wav
-  tts_reference_text: "Optional transcript of the reference clip."
-  tts_voxcpm_model: openbmb/VoxCPM2
-  tts_voxcpm_cfg_value: 2.0
-  tts_voxcpm_inference_timesteps: 10
-  tts_voxcpm_load_denoiser: false
-  tts_voxcpm_denoise: false
-  tts_voxcpm_local_files_only: false
-  tts_voxcpm_optimize: true
-```
-
-Notes:
-
-- Default provider for new voice configs
-- `tts_reference_audio` alone enables normal cloning
-- Adding `tts_reference_text` lets the provider reuse the same clip as prompt audio for better similarity
-- If `tts_reference_text` is unset, Gobby will also look for `reference.txt` or `reference.wav.txt` next to the clip
-- Output is typically 48kHz
-- On Apple Silicon, prefer `tts_device: auto` so VoxCPM can select `mps`
-- Embedded VoxCPM currently auto-selects its runtime device; `tts_device` is best treated as a preference, not a guarantee
-- VoxCPM is not installed by `uv sync --extra voice`
-- VoxCPM usually clones better from an `8-15s` clean mono clip than a long `30s` reference
 
 ### Chatterbox
 
@@ -153,30 +96,10 @@ voice:
 
 Notes:
 
-- Good fallback if you want the older "drop in a WAV and go" workflow
 - Uses `tts_reference_audio`
 - Ignores `tts_reference_text`
-
-### Kokoro
-
-Fixed voices through Kokoro ONNX. Lighter weight, but not a voice-cloning provider.
-
-```yaml
-voice:
-  enabled: true
-  tts_provider: kokoro
-  tts_voice: af_heart
-  tts_speed: 1.0
-  tts_language: en-us
-  tts_model_path: ~/.gobby/models/kokoro-v1.0.onnx
-  tts_voices_path: ~/.gobby/models/voices-v1.0.bin
-```
-
-Notes:
-
-- Does not use `tts_reference_audio`
-- Does not use `tts_reference_text`
-- Requires local model files
+- Output is 24kHz
+- `tts_device` accepts `auto`, `cuda`, `mps`, `cpu`
 
 ## Usage
 
@@ -193,11 +116,8 @@ Notes:
 | "Voice not enabled" | Set `voice.enabled: true` and restart the daemon |
 | No microphone icon | Check `/api/voice/status`; STT must be available |
 | STT works but TTS does not | Check `tts_provider`, provider install status, and provider-specific readiness in `/api/voice/status` |
-| Cloning sounds wrong | Use a cleaner 8-15s clip, prefer mono, and add `tts_reference_text` or a sidecar transcript |
-| `tts_reference_text` has no effect | The active provider may ignore it, or the field may be unset/blank |
-| VoxCPM unavailable | Confirm `voxcpm` is installed in the daemon runtime and supported on your platform/Python |
-| Kokoro unavailable | Check `tts_model_path` and `tts_voices_path` |
-| Chatterbox unstable on your machine | Try `tts_device: cpu` or switch providers |
+| Cloning sounds wrong | Use a cleaner 8-15s clip, prefer mono |
+| Chatterbox unstable on your machine | Try `tts_device: cpu` |
 
 Provider status is reported through `/api/voice/status`, including:
 

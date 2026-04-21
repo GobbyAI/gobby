@@ -533,8 +533,8 @@ def _run_voice_install(
 ) -> None:
     """Interactive voice chat setup.
 
-    Installs voice dependencies (faster-whisper, voxcpm, kokoro-onnx)
-    and enables voice in daemon config. Skipped by default in non-interactive mode.
+    Installs voice dependencies (faster-whisper, chatterbox-tts) and enables
+    voice in daemon config. Skipped by default in non-interactive mode.
 
     Args:
         results: Results dict to accumulate install outcomes
@@ -548,7 +548,7 @@ def _run_voice_install(
         click.echo("Voice Chat (Optional)")
         click.echo("-" * 40)
         click.echo("Voice adds speech-to-text and text-to-speech with voice cloning.")
-        click.echo("Requires a large local TTS stack (Whisper plus VoxCPM or other providers).")
+        click.echo("Requires a local Whisper + Chatterbox TTS stack.")
         click.echo("")
 
         try:
@@ -578,8 +578,7 @@ def _run_voice_install(
                 "pip",
                 "install",
                 "faster-whisper>=1.0.0",
-                "voxcpm>=0.1.0,<1.0.0",
-                "kokoro-onnx>=0.5.0",
+                "chatterbox-tts",
             ],
             capture_output=True,
             text=True,
@@ -592,18 +591,10 @@ def _run_voice_install(
 
             # Enable voice in daemon config
             try:
+                from gobby.storage.config_store import ConfigStore
                 from gobby.storage.database import LocalDatabase
 
-                db = LocalDatabase()
-                with db.transaction() as conn:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO daemon_config (key, value) VALUES (?, ?)",
-                        ("voice.enabled", "true"),
-                    )
-                    conn.execute(
-                        "INSERT OR REPLACE INTO daemon_config (key, value) VALUES (?, ?)",
-                        ("voice.tts_provider", "voxcpm"),
-                    )
+                ConfigStore(LocalDatabase()).set("voice.enabled", True)
                 click.echo("Voice enabled in daemon config")
             except Exception as e:
                 logger.warning(f"Failed to update daemon config: {e}")

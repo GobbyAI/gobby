@@ -1503,6 +1503,16 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Add prune_empty_sessions candidate and reference indexes",
         _add_prune_empty_session_indexes,
     ),
+    (
+        219,
+        "Coerce legacy voice.tts_provider values (voxcpm, kokoro) to chatterbox",
+        """
+        UPDATE config_store
+           SET value = '"chatterbox"'
+         WHERE key = 'voice.tts_provider'
+           AND value IN ('"voxcpm"', '"kokoro"');
+        """,
+    ),
 ]
 
 

@@ -166,28 +166,6 @@ class TestVoiceRoutes:
         data = response.json()
         assert data["whisper_model"] == "small"
 
-    def test_status_reports_voxcpm_capabilities(
-        self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
-    ) -> None:
-        ref = tmp_path / "reference.wav"
-        ref.write_bytes(b"RIFF" + b"\x00" * 100)
-        server_with_voice.config.voice = VoiceConfig(
-            enabled=True,
-            tts_enabled=True,
-            tts_provider="voxcpm",
-            tts_reference_audio=str(ref),
-            tts_reference_text="Reference transcript",
-        )
-
-        with patch.dict("sys.modules", {"faster_whisper": MagicMock(), "voxcpm": MagicMock()}):
-            response = client.get("/api/voice/status")
-
-        data = response.json()
-        assert data["tts_provider"] == "voxcpm"
-        assert data["tts_available"] is True
-        assert data["tts_capabilities"]["supports_reference_text"] is True
-        assert data["tts_reference_text_configured"] is True
-
     def test_status_reports_missing_chatterbox_reference_audio(
         self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
     ) -> None:
