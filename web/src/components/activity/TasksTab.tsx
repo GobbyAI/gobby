@@ -12,11 +12,10 @@ import { Markdown } from "../chat/Markdown";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import "../tasks/task-execution.css";
 import type { GobbyTask } from "../../hooks/useTasks";
-import { PriorityBadge, TaskStateBadges } from "../tasks/TaskBadges";
+import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskBucket,
-  getTaskStateSummary,
   TASK_BUCKET_COLORS,
   TASK_BUCKET_LABELS,
   type TaskBucket,
@@ -79,14 +78,6 @@ const RECENT_CLOSED_TASK_LIMIT = 20;
 
 const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
 
-const PRIORITY_LABELS: Record<number, string> = {
-  0: "Critical",
-  1: "High",
-  2: "Medium",
-  3: "Low",
-  4: "Backlog",
-};
-
 const PRIORITY_TEXT_COLORS: Record<number, string> = {
   0: "var(--status-escalated, #ef4444)",
   1: "var(--status-escalated, #ef4444)",
@@ -97,6 +88,46 @@ const PRIORITY_TEXT_COLORS: Record<number, string> = {
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
+}
+
+function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {
+  const priorityDiff = (a.priority ?? 4) - (b.priority ?? 4);
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+
+  const createdAtDiff = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
+  }
+
+  const seqA = a.seq_num ?? Number.MAX_SAFE_INTEGER;
+  const seqB = b.seq_num ?? Number.MAX_SAFE_INTEGER;
+  if (seqA !== seqB) {
+    return seqA - seqB;
+  }
+
+  return (a.updated_at ?? "").localeCompare(b.updated_at ?? "");
+}
+
+function formatTaskDetailDate(iso: string | null | undefined): string {
+  if (!iso) {
+    return "—";
+  }
+
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
+
+  return `${parsed.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })} ${parsed.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
 }
 
 // =============================================================================
@@ -119,6 +150,13 @@ function buildTree(tasks: GobbyTask[]): TreeNode[] {
       roots.push(node);
     }
   }
+
+  for (const node of nodeMap.values()) {
+    node.children.sort((left, right) =>
+      compareTasksForDisplay(left.task, right.task),
+    );
+  }
+  roots.sort((left, right) => compareTasksForDisplay(left.task, right.task));
 
   return roots;
 }
@@ -458,10 +496,8 @@ export const TasksTab = memo(function TasksTab({
     });
   }, []);
 
-  // Client-side filter + stable re-sort by updated_at desc to match the
-  // server's sort_by=updated_at request. WebSocket task_created events
-  // append to `tasks` without preserving ordering, so we re-sort here to
-  // keep the list consistent with the server ordering.
+  // Client-side filter + display ordering. The activity Tasks tree should read
+  // like a prioritized work queue: highest priority first, then oldest first.
   const filtered = useMemo(() => {
     const matchingTasks = tasks.filter((task) =>
       matchesTaskFilter(task, statusFilters),
@@ -485,7 +521,7 @@ export const TasksTab = memo(function TasksTab({
         }
         return recentClosedIds.has(task.id);
       })
-      .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
+      .sort(compareTasksForDisplay);
   }, [tasks, statusFilters]);
 
   const treeData = useMemo(() => {
@@ -539,6 +575,14 @@ export const TasksTab = memo(function TasksTab({
         search.trim().length > 0,
       ),
     [search, searchableTreeData, collapsedTaskIds],
+  );
+
+  const selectedTaskSummary = useMemo(
+    () =>
+      selectedTaskId
+        ? tasks.find((task) => task.id === selectedTaskId) ?? null
+        : null,
+    [selectedTaskId, tasks],
   );
 
   useEffect(() => {
@@ -660,8 +704,8 @@ export const TasksTab = memo(function TasksTab({
       return (
         <div
           key={task.id}
-          style={{ paddingLeft: `${row.depth * 16 + 10}px` }}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${isSelected ? " bg-accent/[0.06]" : ""}${getTaskBucket(task) === "closed" ? " opacity-50" : ""}`}
+          style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
+          className={`activity-task-row${isSelected ? " activity-task-row--selected" : ""}${getTaskBucket(task) === "closed" ? " activity-task-row--closed" : ""}`}
           role="treeitem"
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}
@@ -673,26 +717,45 @@ export const TasksTab = memo(function TasksTab({
         >
           {row.isInternal ? (
             <button
-              className="bg-transparent border-none text-muted-foreground text-xs cursor-pointer p-0 w-4 shrink-0 text-center leading-none"
+              className="activity-task-row-toggle"
               onClick={(e) => {
                 e.stopPropagation();
                 toggleTaskOpen(task.id);
               }}
+              aria-label={`${
+                row.isOpen ? "Collapse" : "Expand"
+              } subtasks for ${task.title}`}
+              title={row.isOpen ? "Collapse subtasks" : "Expand subtasks"}
             >
-              {row.isOpen ? "▾" : "▸"}
+              <span
+                className={`activity-task-row-toggle-icon${
+                  row.isOpen ? " activity-task-row-toggle-icon--open" : ""
+                }`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="M4 2.5L8 6L4 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
             </button>
           ) : (
-            <span className="invisible w-4 shrink-0" />
+            <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
           )}
           <span
-            className="w-1.5 h-1.5 rounded-full shrink-0"
+            className="activity-task-row-dot"
             style={{ backgroundColor: dotColor }}
           />
           {ref && (
-            <span className="text-sm text-muted-foreground shrink-0">{ref}</span>
+            <span className="activity-task-row-ref">{ref}</span>
           )}
           <span
-            className="truncate min-w-0 flex-1 text-sm text-foreground"
+            className="activity-task-row-title"
             style={{ color: textColor }}
           >
             {task.title}
@@ -738,17 +801,17 @@ export const TasksTab = memo(function TasksTab({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 bg-secondary relative">
+      <div className="activity-task-pane-bar activity-task-pane-bar--toolbar relative">
         <input
           type="text"
-          className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
+          className="activity-task-search"
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button
           type="button"
-          className="flex items-center justify-center rounded-md border border-border bg-background px-2.5 py-1.5 text-muted-foreground cursor-pointer shrink-0 hover:text-foreground hover:border-accent transition-colors"
+          className="activity-task-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
         >
@@ -820,25 +883,20 @@ export const TasksTab = memo(function TasksTab({
 
       {/* Detail pane */}
       {selectedTaskId && (
-        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-          <div
-            className="flex items-center gap-3 px-3 border-b border-border"
-            style={{ height: 40, background: "var(--bg-secondary)" }}
-          >
-            <span className="block min-w-0 flex-1 truncate text-sm text-foreground">
-              {taskDetail
-                ? [taskDetail.ref, taskDetail.title].filter(Boolean).join(" ")
-                : "Loading..."}
+        <div className="activity-task-detail-shell">
+          <div className="activity-task-pane-bar activity-task-pane-bar--detail">
+            <span className="activity-task-detail-bar-label">
+              {taskDetail?.ref ?? selectedTaskSummary?.ref ?? "Task"}
             </span>
           </div>
           {detailLoading ? (
-            <p className="text-xs text-muted-foreground px-3 py-2">
+            <p className="activity-task-detail-loading">
               Loading...
             </p>
           ) : taskDetail ? (
             <TaskDetail task={taskDetail} />
           ) : (
-            <p className="text-xs text-muted-foreground px-3 py-2">
+            <p className="activity-task-detail-empty">
               Task not found
             </p>
           )}
@@ -873,47 +931,55 @@ export const TasksTab = memo(function TasksTab({
 // =============================================================================
 
 function TaskDetail({ task }: { task: GobbyTaskDetail }) {
-  const priorityLabel = PRIORITY_LABELS[task.priority ?? 4] ?? "Backlog";
   const taskState = getCanonicalTaskState(task);
-  const summaryTokens = [
-    getTaskStateSummary(task),
-    taskState.owner_session_id ? "Claimed" : null,
-    priorityLabel,
-    task.category || (task.task_type !== "task" ? task.task_type : null),
-    taskState.owner_session_id,
-  ].filter((value): value is string => Boolean(value));
+  const ownerLabel = task.agent_name ?? taskState.owner_session_id ?? "Unassigned";
+  const ownerMono = !task.agent_name && Boolean(taskState.owner_session_id);
+  const stateLabel = TASK_BUCKET_LABELS[getTaskBucket(task)];
+  const categoryLabel = task.category ?? task.task_type;
 
   return (
-    <div className="px-3 py-3 flex flex-col gap-3">
-      <div className="flex flex-wrap gap-1.5">
-        <TaskStateBadges task={task} />
-        <PriorityBadge priority={task.priority ?? 4} />
+    <div className="activity-task-detail-card">
+      <div className="activity-task-detail-section activity-task-detail-section--header">
+        <h3 className="activity-task-detail-title">{task.title}</h3>
+        <div className="activity-task-detail-badges">
+          <TaskStateBadges task={task} />
+          <PriorityBadge priority={task.priority ?? 4} />
+          <TypeBadge type={task.task_type} />
+        </div>
       </div>
 
-      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
-        {summaryTokens.map((token, index) => (
-          <span
-            key={`${token}-${index}`}
-            className={index === summaryTokens.length - 1 && token === taskState.owner_session_id ? "font-mono" : undefined}
-          >
-            {index > 0 && <span className="opacity-40 mr-1">{"\u00B7"}</span>}
-            {token}
-          </span>
-        ))}
+      <div className="activity-task-detail-meta">
+        <TaskDetailMetaRow
+          label="Owner"
+          value={ownerLabel}
+          mono={ownerMono}
+        />
+        <TaskDetailMetaRow label="State" value={stateLabel} />
+        <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
+        <TaskDetailMetaRow label="Updated" value={formatTaskDetailDate(task.updated_at)} />
+        <TaskDetailMetaRow label="Category" value={categoryLabel} />
+        {task.path_cache && <TaskDetailMetaRow label="Path" value={task.path_cache} mono />}
+        {task.closed_at && (
+          <TaskDetailMetaRow
+            label="Closed"
+            value={formatTaskDetailDate(task.closed_at)}
+          />
+        )}
       </div>
 
       {task.description && (
-        <div className="message-content text-sm">
+        <div className="activity-task-detail-section">
+          <div className="activity-task-detail-section-title">Description</div>
+          <div className="activity-task-detail-markdown message-content">
             <Markdown content={task.description} id={`task-desc-${task.id}`} />
+          </div>
         </div>
       )}
 
       {task.validation_criteria && (
-        <div className="border-t border-border pt-3">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
-            Validation
-          </div>
-          <div className="message-content text-sm">
+        <div className="activity-task-detail-section">
+          <div className="activity-task-detail-section-title">Validation</div>
+          <div className="activity-task-detail-markdown message-content">
             <Markdown
               content={task.validation_criteria}
               id={`task-vc-${task.id}`}
@@ -921,16 +987,29 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
 
-      <div className="text-[10px] text-muted-foreground border-t border-border pt-2">
-        <span>Created {new Date(task.created_at).toLocaleDateString()}</span>
-        {task.closed_at && (
-          <span>
-            {" "}
-            {"\u00B7"} Closed {new Date(task.closed_at).toLocaleDateString()}
-          </span>
-        )}
-      </div>
+function TaskDetailMetaRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="activity-task-detail-meta-row">
+      <span className="activity-task-detail-meta-label">{label}</span>
+      <span
+        className={`activity-task-detail-meta-value${
+          mono ? " activity-task-detail-meta-value--mono" : ""
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }

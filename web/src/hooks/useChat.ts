@@ -3508,6 +3508,7 @@ export function useChat() {
       setMessages([]);
       setIsLoadingMessages(true);
       setProxyDeliveryNotice(null);
+      setContextUsage(buildContextUsageFromTotals({}));
 
       // Set viewing state
       viewingSessionIdRef.current = sessionId;
@@ -3565,27 +3566,10 @@ export function useChat() {
               );
             });
           }
-          // Populate context usage from session metadata
-          if (
-            s.usage_input_tokens > 0 ||
-            s.usage_output_tokens > 0 ||
-            s.context_window
-          ) {
-            if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
-              return;
-            }
-            const totalIn = s.usage_input_tokens ?? 0;
-            const cacheRead = s.usage_cache_read_tokens ?? 0;
-            const cacheCreation = s.usage_cache_creation_tokens ?? 0;
-            setContextUsage({
-              totalInputTokens: totalIn,
-              outputTokens: s.usage_output_tokens ?? 0,
-              contextWindow: s.context_window ?? null,
-              uncachedInputTokens: totalIn - cacheRead - cacheCreation,
-              cacheReadTokens: cacheRead,
-              cacheCreationTokens: cacheCreation,
-            });
+          if (!shouldApplyHydratedUsage(sessionId, metadataFetchStartedAt)) {
+            return;
           }
+          setContextUsage(computeContextUsageFromSessionData(s));
         })
         .catch((err) =>
           console.error("Failed to fetch session metadata:", err),
@@ -3642,27 +3626,13 @@ export function useChat() {
           contextWindow: mainSessionMeta.contextWindow ?? null,
         }));
       } else {
-        setContextUsage({
-          totalInputTokens: 0,
-          outputTokens: 0,
-          contextWindow: null,
-          uncachedInputTokens: 0,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0,
-        });
+        setContextUsage(buildContextUsageFromTotals({}));
       }
     } else {
       setSessionRef(null);
       setSessionTitle(null);
       setCurrentBranch(null);
-      setContextUsage({
-        totalInputTokens: 0,
-        outputTokens: 0,
-        contextWindow: null,
-        uncachedInputTokens: 0,
-        cacheReadTokens: 0,
-        cacheCreationTokens: 0,
-      });
+      setContextUsage(buildContextUsageFromTotals({}));
     }
 
     // Restore previous conversation messages and chat mode from DB
@@ -3732,14 +3702,7 @@ export function useChat() {
         setIsStreaming(false);
         setIsThinking(false);
         setMessages([]);
-        setContextUsage({
-          totalInputTokens: 0,
-          outputTokens: 0,
-          contextWindow: null,
-          uncachedInputTokens: 0,
-          cacheReadTokens: 0,
-          cacheCreationTokens: 0,
-        });
+        setContextUsage(buildContextUsageFromTotals({}));
       }
 
       wsRef.current.send(

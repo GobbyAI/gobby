@@ -1446,6 +1446,92 @@ describe("useChat", () => {
     expect(result.current.attachedSessionId).toBeNull();
   });
 
+  it("resets viewed context usage when switching to a zero-usage session", async () => {
+    await loadModule();
+    mockFetch.mockJsonResponse("/api/sessions/sess-old/messages?limit=100&offset=0", {
+      messages: [],
+    });
+    mockFetch.mockJsonResponse("/api/sessions/sess-old", {
+      session: {
+        id: "sess-old",
+        seq_num: 2410,
+        source: "codex",
+        title: "Old Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-old",
+        chat_mode: "bypass",
+        git_branch: "main",
+        context_window: 200000,
+        usage_input_tokens: 320,
+        usage_output_tokens: 40,
+        usage_cache_read_tokens: 120,
+        usage_cache_creation_tokens: 50,
+        session_type: "terminal",
+      },
+    });
+    mockFetch.mockJsonResponse("/api/sessions/sess-new/messages?limit=100&offset=0", {
+      messages: [],
+    });
+    mockFetch.mockJsonResponse("/api/sessions/sess-new", {
+      session: {
+        id: "sess-new",
+        seq_num: 2411,
+        source: "codex",
+        title: "New Terminal",
+        status: "active",
+        model: "gpt-5.4",
+        external_id: "codex-ext-new",
+        chat_mode: "bypass",
+        git_branch: "feature/swap",
+        context_window: 200000,
+        usage_input_tokens: 0,
+        usage_output_tokens: 0,
+        usage_cache_read_tokens: 0,
+        usage_cache_creation_tokens: 0,
+        session_type: "terminal",
+      },
+    });
+
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    await act(async () => {
+      result.current.viewSession("sess-old");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.contextUsage).toMatchObject({
+        totalInputTokens: 320,
+        outputTokens: 40,
+        cacheReadTokens: 120,
+        cacheCreationTokens: 50,
+        uncachedInputTokens: 150,
+        contextWindow: 200000,
+      });
+    });
+
+    await act(async () => {
+      result.current.viewSession("sess-new");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.contextUsage).toMatchObject({
+        totalInputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        uncachedInputTokens: 0,
+        contextWindow: 200000,
+      });
+    });
+  });
+
   it.each([
     ["codex", "gpt-5.4"],
     ["gemini", "gemini-2.5-pro"],
