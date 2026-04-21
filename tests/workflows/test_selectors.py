@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.selectors import (
     _match_rule,
     _match_skill,
@@ -265,6 +268,28 @@ def test_resolve_skills_explicit_only() -> None:
     agent.workflows.skill_selectors = None
     result = resolve_skills_for_agent(agent, [])
     assert result is None
+
+
+def test_bundled_default_agent_auto_selects_brevity() -> None:
+    agent_path = (
+        Path(__file__).resolve().parents[2]
+        / "src/gobby/install/shared/workflows/agents/default.yaml"
+    )
+    agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
+
+    brevity = MagicMock()
+    brevity.name = "brevity"
+    brevity.metadata = {"gobby": {"category": "optimization"}}
+    brevity.source_type = "installed"
+
+    code_index = MagicMock()
+    code_index.name = "code-index"
+    code_index.metadata = {"gobby": {"category": "core"}}
+    code_index.source_type = "installed"
+
+    result = resolve_skills_for_agent(agent, [brevity, code_index])
+
+    assert result == {"brevity"}
 
 
 # --- resolve_variables_for_agent ---

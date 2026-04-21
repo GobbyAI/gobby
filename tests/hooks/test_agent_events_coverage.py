@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.hooks.event_handlers._agent import (
     _GOBBY_CMD_PATTERN,
     AgentEventHandlerMixin,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
@@ -128,6 +131,52 @@ class TestHandleBeforeAgent:
 
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
+
+    def test_default_agent_auto_injects_brevity_on_first_prompt(self) -> None:
+        handler = _TestHandler()
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        agent_path = (
+            Path(__file__).resolve().parents[2]
+            / "src/gobby/install/shared/workflows/agents/default.yaml"
+        )
+        default_agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                return_value={
+                    "_agent_type": "default",
+                    "_active_skill_names": ["brevity"],
+                    "_agent_context_injected": False,
+                },
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=default_agent),
+            patch("gobby.skills.manager.SkillManager.list_skills", return_value=[]),
+            patch(
+                "gobby.hooks.event_handlers._session_start.select_and_format_agent_skills",
+                return_value=("### brevity\nTerse output mode.", 1, ["brevity"]),
+            ),
+        ):
+            result = handler.handle_before_agent(event)
+
+        assert result.decision == "allow"
+        assert result.context is not None
+        assert "## Instructions" in result.context
+        assert "### brevity" in result.context
+        mock_merge.assert_called_once_with(
+            "sess-1",
+            {
+                "_agent_context_injected": True,
+                "_agent_identity_reinject": False,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

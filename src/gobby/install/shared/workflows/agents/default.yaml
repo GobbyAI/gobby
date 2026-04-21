@@ -1,5 +1,5 @@
 name: default
-description: Baseline agent — loads all default-tagged rules, all skills available, inherits provider from CLI
+description: Baseline agent — loads default-tagged rules, auto-injects brevity, other skills stay on-demand
 sources: [claude, gemini, qwen, codex]
 surfaces: [spawn, persona]
 provider: inherit
@@ -67,6 +67,9 @@ workflows:
     include:
       - "tag:default"
   skill_selectors:
-    include: []  # No skills auto-injected; on-demand via get_skill() MCP
+    include:
+      - "brevity"
+    # Keep the default agent otherwise lean: brevity is always useful, other
+    # skills stay on-demand via get_skill() MCP.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   variables: {}
