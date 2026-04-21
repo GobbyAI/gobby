@@ -144,14 +144,8 @@ filterwarnings = [
     "ignore:unclosed database:ResourceWarning",
     # Ignore fork() deprecation warning from embedded spawner tests (expected on macOS)
     "ignore:This process.*is multi-threaded.*use of fork:DeprecationWarning",
-    # Ignore third-party deprecation warnings (oletools)
-    "ignore::DeprecationWarning:oletools",
-    "ignore::DeprecationWarning:oletools.*",
-    # Ignore upstream warnings from optional voice dependencies on Python 3.14
+    # Ignore pkg_resources deprecation from optional voice dependencies (perth via chatterbox-tts)
     "ignore:pkg_resources is deprecated as an API\\.:UserWarning",
-    "ignore:Deprecated call to `pkg_resources\\.declare_namespace\\('google'\\)`:DeprecationWarning",
-    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
     # Ignore MCP SDK streamable_http_client deprecation (upstream)
     "ignore:Use `streamable_http_client` instead:DeprecationWarning",
 ]
