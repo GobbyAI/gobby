@@ -5,6 +5,7 @@ Broadcasting of hook events to WebSocket clients with filtering and sanitization
 """
 
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -83,6 +84,40 @@ class HookEventBroadcaster:
             return HookType.POST_TOOL_USE_FAILURE
         return EVENT_TYPE_TO_HOOK_TYPE.get(event.event_type.value)
 
+    @staticmethod
+    def _is_non_empty_string(value: Any) -> bool:
+        """Return True when a value is a non-empty string after trimming whitespace."""
+        return isinstance(value, str) and bool(value.strip())
+
+    @classmethod
+    def _normalize_post_tool_use_failure_input(cls, raw_input: dict[str, Any]) -> None:
+        """Backfill the required top-level error field for failure broadcasts."""
+        existing_error = raw_input.get("error")
+        if cls._is_non_empty_string(existing_error):
+            return
+        if existing_error and not isinstance(existing_error, str):
+            return
+
+        failure_fields = ("tool_output", "tool_response", "tool_result", "output", "result")
+
+        for field_name in failure_fields:
+            candidate = raw_input.get(field_name)
+            if not isinstance(candidate, Mapping):
+                continue
+
+            nested_error = candidate.get("error")
+            if cls._is_non_empty_string(nested_error):
+                raw_input["error"] = nested_error
+                return
+
+        for field_name in failure_fields:
+            candidate = raw_input.get(field_name)
+            if cls._is_non_empty_string(candidate):
+                raw_input["error"] = candidate
+                return
+
+        raw_input["error"] = "Tool execution failed."
+
     async def broadcast_event(self, event: HookEvent, response: HookResponse | None = None) -> None:
         """
         Broadcast a unified HookEvent to all connected clients.
@@ -149,6 +184,9 @@ class HookEventBroadcaster:
             ):
                 if "tool_name" not in raw_input:
                     raw_input["tool_name"] = "(tool_selection)"
+
+            if enum_hook_type == HookType.POST_TOOL_USE_FAILURE:
+                self._normalize_post_tool_use_failure_input(raw_input)
 
             # Validate input data structure matches Pydantic model
             # Use construct/model_validate to avoid strict validation errors if possible,
