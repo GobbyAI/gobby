@@ -290,7 +290,7 @@ fn emit_action(action: HookAction) -> ExitCode {
 }
 
 fn action_from_success_response(
-    canonical_source: &str,
+    _canonical_source: &str,
     hook_type: &str,
     response_body: &str,
 ) -> Result<HookAction, String> {
@@ -307,7 +307,7 @@ fn action_from_success_response(
     let serialized = serde_json::to_string(&result).map_err(|e| e.to_string())?;
 
     if is_blocked(&result) {
-        if matches!(canonical_source, "gemini" | "qwen" | "codex") && hook_type != "Stop" {
+        if hook_type != "Stop" {
             return Ok(HookAction {
                 exit_code: 0,
                 stdout_json: Some(serialized),
@@ -522,12 +522,55 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(action.exit_code, 2);
-        assert!(action.stdout_json.is_none());
+        assert_eq!(action.exit_code, 0);
+        let stdout_json = action.stdout_json.unwrap();
+        let parsed: Value = serde_json::from_str(&stdout_json).unwrap();
         assert_eq!(
-            action.stderr_message.as_deref(),
-            Some("Task #50 requires TDD expansion before edits")
+            parsed["hookSpecificOutput"]["permissionDecisionReason"],
+            "Task #50 requires TDD expansion before edits"
         );
+        assert_eq!(action.stderr_message, None);
+    }
+
+    #[test]
+    fn action_from_success_preserves_additional_context_on_claude_block() {
+        let action = action_from_success_response(
+            "claude",
+            "PreToolUse",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Use the python skill","additionalContext":"<skill name=\"python\">body</skill>"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 0);
+        let stdout_json = action.stdout_json.unwrap();
+        let parsed: Value = serde_json::from_str(&stdout_json).unwrap();
+        assert_eq!(parsed["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "<skill name=\"python\">body</skill>"
+        );
+        assert_eq!(action.stderr_message, None);
+    }
+
+    #[test]
+    fn action_from_success_preserves_user_prompt_submit_block_json() {
+        let action = action_from_success_response(
+            "claude",
+            "UserPromptSubmit",
+            r#"{"decision":"block","reason":"Create a task first","hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"Task schema instructions"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 0);
+        let stdout_json = action.stdout_json.unwrap();
+        let parsed: Value = serde_json::from_str(&stdout_json).unwrap();
+        assert_eq!(parsed["decision"], "block");
+        assert_eq!(parsed["reason"], "Create a task first");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "Task schema instructions"
+        );
+        assert_eq!(action.stderr_message, None);
     }
 
     #[test]
