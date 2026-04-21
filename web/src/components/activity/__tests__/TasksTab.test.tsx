@@ -192,7 +192,7 @@ describe("TasksTab", () => {
     });
   });
 
-  it("orders task roots and siblings by priority and creation time", async () => {
+  it("orders task roots and siblings by priority then seq_num", async () => {
     mockFetch.resetRoutes();
     const orderedTasks = [
       {
@@ -358,13 +358,13 @@ describe("TasksTab", () => {
     ).map((node) => node.textContent);
 
     expect(titles).toEqual([
-      "Root high early",
       "Root high late",
+      "Root high early",
+      "Root medium",
       "Parent root",
       "Child critical",
-      "Child medium old",
       "Child medium new",
-      "Root medium",
+      "Child medium old",
     ]);
   });
 
@@ -583,7 +583,7 @@ describe("TasksTab", () => {
       expect(screen.getByText("Detail task description")).toBeTruthy();
     });
 
-    expect(screen.getByText("Owner")).toBeTruthy();
+    expect(screen.getByText("Claimed by")).toBeTruthy();
     expect(screen.getByText("State")).toBeTruthy();
     expect(screen.getByText("Created")).toBeTruthy();
     expect(screen.getByText("Updated")).toBeTruthy();

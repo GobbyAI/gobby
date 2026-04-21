@@ -96,15 +96,15 @@ function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {
     return priorityDiff;
   }
 
-  const createdAtDiff = (a.created_at ?? "").localeCompare(b.created_at ?? "");
-  if (createdAtDiff !== 0) {
-    return createdAtDiff;
-  }
-
   const seqA = a.seq_num ?? Number.MAX_SAFE_INTEGER;
   const seqB = b.seq_num ?? Number.MAX_SAFE_INTEGER;
   if (seqA !== seqB) {
     return seqA - seqB;
+  }
+
+  const createdAtDiff = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
   }
 
   return (a.updated_at ?? "").localeCompare(b.updated_at ?? "");
@@ -882,26 +882,38 @@ export const TasksTab = memo(function TasksTab({
       )}
 
       {/* Detail pane */}
-      {selectedTaskId && (
-        <div className="activity-task-detail-shell">
-          <div className="activity-task-pane-bar activity-task-pane-bar--detail">
-            <span className="activity-task-detail-bar-label">
-              {taskDetail?.ref ?? selectedTaskSummary?.ref ?? "Task"}
-            </span>
+      {selectedTaskId && (() => {
+        const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
+        const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
+        return (
+          <div className="activity-task-detail-shell">
+            <div className="activity-task-pane-bar activity-task-pane-bar--detail">
+              <span className="activity-task-pane-bar__title">
+                Task {headerRef ?? "—"}
+                {headerTitle ? <> – {headerTitle}</> : null}
+              </span>
+              {taskDetail && (
+                <div className="activity-task-pane-bar__chips">
+                  <TaskStateBadges task={taskDetail} />
+                  <PriorityBadge priority={taskDetail.priority ?? 4} />
+                  <TypeBadge type={taskDetail.task_type} />
+                </div>
+              )}
+            </div>
+            {detailLoading ? (
+              <p className="activity-task-detail-loading">
+                Loading...
+              </p>
+            ) : taskDetail ? (
+              <TaskDetail task={taskDetail} />
+            ) : (
+              <p className="activity-task-detail-empty">
+                Task not found
+              </p>
+            )}
           </div>
-          {detailLoading ? (
-            <p className="activity-task-detail-loading">
-              Loading...
-            </p>
-          ) : taskDetail ? (
-            <TaskDetail task={taskDetail} />
-          ) : (
-            <p className="activity-task-detail-empty">
-              Task not found
-            </p>
-          )}
-        </div>
-      )}
+        );
+      })()}
 
       {taskMenu && (
         <>
@@ -939,20 +951,12 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
 
   return (
     <div className="activity-task-detail-card">
-      <div className="activity-task-detail-section activity-task-detail-section--header">
-        <h3 className="activity-task-detail-title">{task.title}</h3>
-        <div className="activity-task-detail-badges">
-          <TaskStateBadges task={task} />
-          <PriorityBadge priority={task.priority ?? 4} />
-          <TypeBadge type={task.task_type} />
-        </div>
-      </div>
-
       <div className="activity-task-detail-meta">
         <TaskDetailMetaRow
-          label="Owner"
+          label="Claimed by"
           value={ownerLabel}
           mono={ownerMono}
+          title="Agent or session currently holding this task's claim"
         />
         <TaskDetailMetaRow label="State" value={stateLabel} />
         <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
@@ -995,13 +999,15 @@ function TaskDetailMetaRow({
   label,
   value,
   mono = false,
+  title,
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  title?: string;
 }) {
   return (
-    <div className="activity-task-detail-meta-row">
+    <div className="activity-task-detail-meta-row" title={title}>
       <span className="activity-task-detail-meta-label">{label}</span>
       <span
         className={`activity-task-detail-meta-value${
