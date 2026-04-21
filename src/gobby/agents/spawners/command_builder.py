@@ -106,5 +106,3 @@ def build_cli_command(
         command.append(prompt)
 
     return command, env
-
-

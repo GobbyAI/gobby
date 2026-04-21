@@ -56,7 +56,9 @@ class SpawnRequest:
     agent_name: str | None = None  # Agent definition name for UI/status surfaces
     agent_depth: int = 0
     max_agent_depth: int = 5
-    session_manager: Any | None = None  # Required for child-session creation in prepare_terminal_spawn
+    session_manager: Any | None = (
+        None  # Required for child-session creation in prepare_terminal_spawn
+    )
     machine_id: str | None = None
     model: str | None = None  # Model override (e.g., gemini-3-pro-preview)
     api_base: str | None = None  # API base URL for local model endpoints
@@ -522,8 +524,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     # with the right session_id.
     prefixed_prompt = (
         f"Your Gobby session_id is: {gobby_session_id}\n"
-        f"Use this when calling Gobby MCP tools.\n\n"
-        + (request.prompt or "")
+        f"Use this when calling Gobby MCP tools.\n\n" + (request.prompt or "")
     )
 
     sandbox_args: list[str] = []

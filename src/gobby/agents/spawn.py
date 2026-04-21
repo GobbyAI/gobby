@@ -235,5 +235,3 @@ def prepare_terminal_spawn(
         env_vars=env_vars,
         seq_num=getattr(child_session, "seq_num", None),
     )
-
-

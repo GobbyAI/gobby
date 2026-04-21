@@ -286,7 +286,16 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "category": {
                     "type": "string",
                     "description": "Task domain: 'code' (implementation — requires validation_criteria), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification).",
-                    "enum": ["code", "config", "docs", "refactor", "test", "research", "planning", "manual"],
+                    "enum": [
+                        "code",
+                        "config",
+                        "docs",
+                        "refactor",
+                        "test",
+                        "research",
+                        "planning",
+                        "manual",
+                    ],
                 },
                 "validation_criteria": {
                     "type": "string",

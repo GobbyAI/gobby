@@ -553,9 +553,7 @@ def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, b
 def _prune_reachability_cache(now: float, cache_ttl: float) -> None:
     """Drop stale entries and bound the cache size."""
     stale_keys = [
-        key
-        for key, entry in _reachability_cache.items()
-        if (now - entry.checked_at) >= cache_ttl
+        key for key, entry in _reachability_cache.items() if (now - entry.checked_at) >= cache_ttl
     ]
     for key in stale_keys:
         del _reachability_cache[key]

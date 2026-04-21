@@ -8,7 +8,7 @@ triggers:
   - less tokens
   - be brief
   - stop slop
-  - stop caveman
+  - stop brevity
 metadata:
   gobby:
     audience: all
@@ -70,4 +70,4 @@ Switch to normal prose for:
 - Plan contents
 - Security warnings or destructive-operation confirmations
 - Multi-step confirmation sequences
-- When the user says "normal mode" or "stop caveman"
+- When the user says "normal mode" or "stop brevity"

@@ -85,9 +85,7 @@ def task_tree_complete(task_manager: Any, task_id: str | int | list[str | int] |
     return True
 
 
-def task_has_label_prefix(
-    task_manager: Any, task_id: str | int | None, prefix: str
-) -> bool:
+def task_has_label_prefix(task_manager: Any, task_id: str | int | None, prefix: str) -> bool:
     """Check if a task has any label starting with the given prefix.
 
     Used by the block-front-half-on-interactive-lock rule to detect whether
