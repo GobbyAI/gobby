@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities
+from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is_available
 
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
@@ -116,9 +116,7 @@ class VoxCPMProvider(BaseTTSProvider):
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
 
     def _availability(self) -> tuple[bool, str]:
-        try:
-            import voxcpm  # noqa: F401
-        except ImportError:
+        if not _module_is_available("voxcpm"):
             return (
                 False,
                 "voxcpm not installed in this Python runtime "

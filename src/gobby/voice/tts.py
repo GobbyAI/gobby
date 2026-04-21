@@ -8,7 +8,9 @@ stack does not need provider-specific branching.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
@@ -21,6 +23,17 @@ if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _module_is_available(module_name: str) -> bool:
+    """Check module availability without importing heavyweight runtimes."""
+    if module_name in sys.modules:
+        return sys.modules[module_name] is not None
+
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (AttributeError, ImportError, ValueError):
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,9 +195,7 @@ class KokoroTTS(BaseTTSProvider):
 
     def _availability(self) -> tuple[bool, str]:
         """Check if kokoro-onnx is installed and model files exist."""
-        try:
-            import kokoro_onnx  # noqa: F401
-        except ImportError:
+        if not _module_is_available("kokoro_onnx"):
             return False, "kokoro-onnx not installed (uv sync --extra voice)"
 
         model_path = Path(self._config.tts_model_path).expanduser()

@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 from gobby.config.voice import VoiceConfig
-from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities
+from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is_available
 
 logger = logging.getLogger(__name__)
 
@@ -149,15 +149,13 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         self._conditioning_ready = False
 
     def _availability(self) -> tuple[bool, str]:
-        try:
-            import chatterbox  # noqa: F401
-
-            reference_error = _reference_availability_error(self._reference_audio)
-            if reference_error is not None:
-                return False, reference_error
-            return True, ""
-        except ImportError:
+        if not _module_is_available("chatterbox"):
             return False, "chatterbox not installed (uv sync --extra voice)"
+
+        reference_error = _reference_availability_error(self._reference_audio)
+        if reference_error is not None:
+            return False, reference_error
+        return True, ""
 
     def _status_details(self) -> dict[str, Any]:
         return {

@@ -37,6 +37,39 @@ logger = logging.getLogger(__name__)
 _ContextTokens = SeededContextTokens
 
 
+def _get_requested_session_id(arguments: Any, request: Request | None = None) -> str | None:
+    """Return the raw session reference from tool arguments or HTTP headers.
+
+    Discovery routes need the caller-supplied value for audit/proxy events even
+    when context seeding cannot resolve it to a platform UUID.
+    """
+    if isinstance(arguments, dict):
+        session_id = arguments.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+
+    if request is None:
+        return None
+
+    header_session_id = request.headers.get("x-gobby-session-id")
+    return header_session_id or None
+
+
+def _get_discovery_session_id(arguments: Any, request: Request | None = None) -> str | None:
+    """Return the session ref that should own HTTP discovery side effects.
+
+    For HTTP callers, the session header identifies the requesting CLI session.
+    Body/session arguments may target some other session for tool semantics, so
+    discovery tracking prefers the header and only falls back to arguments.
+    """
+    if request is not None:
+        header_session_id = request.headers.get("x-gobby-session-id")
+        if header_session_id:
+            return header_session_id
+
+    return _get_requested_session_id(arguments, request)
+
+
 def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
@@ -57,9 +90,7 @@ def _set_context_for_request(
     project_id_header = request.headers.get("x-gobby-project-id") if request else None
 
     # 1. Harvest the session ref from arguments, then header.
-    session_id = arguments.get("session_id") if isinstance(arguments, dict) else None
-    if not session_id and request:
-        session_id = header_session_id
+    session_id = _get_requested_session_id(arguments, request)
 
     # HTTP-specific bootstrap: when the incoming session_id is #N/numeric and
     # the X-Gobby-Project-Id header is missing, derive a project scope from the
@@ -101,6 +132,7 @@ def _reset_context(tokens: SeededContextTokens) -> None:
 async def _emit_proxy_after_tool(
     server: "HTTPServer",
     *,
+    session_id: str | None = None,
     tool_name: str,
     tool_input: dict[str, Any],
     result: dict[str, Any],
@@ -111,7 +143,7 @@ async def _emit_proxy_after_tool(
         return
 
     await server.tool_proxy.emit_synthetic_proxy_after_tool(
-        session_id=get_current_session_id(),
+        session_id=session_id or get_current_session_id(),
         tool_name=tool_name,
         tool_input=tool_input,
         result=result,
@@ -252,6 +284,7 @@ async def list_mcp_tools(
         List of available tools with their descriptions
     """
     start_time = time.perf_counter()
+    requested_session_id = _get_discovery_session_id({}, request)
     ctx_token = _set_context_for_request(server, {}, request)
 
     try:
@@ -265,7 +298,7 @@ async def list_mcp_tools(
                 if server.tool_proxy:
                     server.tool_proxy.record_listed_server(
                         server_name,
-                        session_id=get_current_session_id(),
+                        session_id=requested_session_id,
                     )
                 result = {
                     "success": True,
@@ -275,6 +308,7 @@ async def list_mcp_tools(
                 }
                 await _emit_proxy_after_tool(
                     server,
+                    session_id=requested_session_id,
                     tool_name="list_tools",
                     tool_input={"server_name": server_name},
                     result=result,
@@ -288,6 +322,7 @@ async def list_mcp_tools(
             }
             await _emit_proxy_after_tool(
                 server,
+                session_id=requested_session_id,
                 tool_name="list_tools",
                 tool_input={"server_name": server_name},
                 result=result,
@@ -304,6 +339,7 @@ async def list_mcp_tools(
             }
             await _emit_proxy_after_tool(
                 server,
+                session_id=requested_session_id,
                 tool_name="list_tools",
                 tool_input={"server_name": server_name},
                 result=result,
@@ -326,6 +362,7 @@ async def list_mcp_tools(
             result = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
             await _emit_proxy_after_tool(
                 server,
+                session_id=requested_session_id,
                 tool_name="list_tools",
                 tool_input={"server_name": server_name},
                 result=result,
@@ -341,6 +378,7 @@ async def list_mcp_tools(
             }
             await _emit_proxy_after_tool(
                 server,
+                session_id=requested_session_id,
                 tool_name="list_tools",
                 tool_input={"server_name": server_name},
                 result=result,
@@ -462,6 +500,7 @@ async def get_tool_schema(
                 detail={"success": False, "error": "Required fields: server_name, tool_name"},
             )
 
+        requested_session_id = _get_discovery_session_id(body, request)
         ctx_token = _set_context_for_request(server, body, request)
 
         try:
@@ -486,6 +525,7 @@ async def get_tool_schema(
                             result["description"] = schema["description"]
                         await _emit_proxy_after_tool(
                             server,
+                            session_id=requested_session_id,
                             tool_name="get_tool_schema",
                             tool_input={"server_name": server_name, "tool_name": tool_name},
                             result=result,
@@ -524,6 +564,7 @@ async def get_tool_schema(
                     response["description"] = tool_info["description"]
                 await _emit_proxy_after_tool(
                     server,
+                    session_id=requested_session_id,
                     tool_name="get_tool_schema",
                     tool_input={"server_name": server_name, "tool_name": tool_name},
                     result=response,
@@ -536,6 +577,7 @@ async def get_tool_schema(
                 response = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
                 await _emit_proxy_after_tool(
                     server,
+                    session_id=requested_session_id,
                     tool_name="get_tool_schema",
                     tool_input={"server_name": server_name, "tool_name": tool_name},
                     result=response,
@@ -556,6 +598,7 @@ async def get_tool_schema(
                 }
                 await _emit_proxy_after_tool(
                     server,
+                    session_id=requested_session_id,
                     tool_name="get_tool_schema",
                     tool_input={"server_name": server_name, "tool_name": tool_name},
                     result=response,
