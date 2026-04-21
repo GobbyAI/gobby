@@ -368,6 +368,59 @@ class TestAgentRunCompletion:
         assert call_kwargs["tool_calls_count"] == 5
         assert call_kwargs["turns_used"] == 3
 
+
+class TestStartAgentRunIdempotency:
+    """Pin SessionCoordinator.start_agent_run's pending-gate behavior.
+
+    spawn_agent_impl flips status to 'running' at spawn time. The child
+    session's SessionStart hook later calls start_agent_run too — it must
+    be a safe no-op in that case. If this guard regressed to unconditionally
+    calling manager.start(), we'd double-bump started_at and risk clobbering
+    a run that's already progressed (e.g. completed).
+    """
+
+    def test_start_agent_run_transitions_pending_to_running(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="pending")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-abc") is True
+        mock_agent_run_manager.start.assert_called_once_with("run-abc")
+
+    def test_start_agent_run_is_noop_when_already_running(self) -> None:
+        """Second call (e.g. from SessionStart hook after spawn_agent_impl
+        already flipped status) must not re-invoke manager.start()."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="running")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-abc") is False
+        mock_agent_run_manager.start.assert_not_called()
+
+    def test_start_agent_run_is_noop_for_terminal_states(self) -> None:
+        """Runs that already completed/failed/cancelled must not be restarted
+        by a late hook fire."""
+        for terminal in ("success", "failed", "cancelled", "timeout", "error"):
+            mock_agent_run_manager = MagicMock()
+            mock_agent_run_manager.get.return_value = MagicMock(status=terminal)
+            coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+            assert coordinator.start_agent_run("run-abc") is False, terminal
+            mock_agent_run_manager.start.assert_not_called()
+
+    def test_start_agent_run_returns_false_for_unknown_run(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run_manager.get.return_value = None
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-missing") is False
+        mock_agent_run_manager.start.assert_not_called()
+
     def test_complete_agent_run_zero_activity_marks_failed(self) -> None:
         """Agent with 0 tool calls and 0 turns is marked error, not success."""
         mock_agent_run_manager = MagicMock()
