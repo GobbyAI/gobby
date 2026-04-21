@@ -11,8 +11,8 @@ const CODE_GRAPH_LIMIT_MIN = 10
 const CODE_GRAPH_LIMIT_MAX = IS_IOS ? 100 : IS_MOBILE ? 200 : 1000
 const CODE_GRAPH_LIMIT_STEP = 10
 
-const DEFAULT_CHARGE = -200
-const DEFAULT_LINK_DIST = 80
+const DEFAULT_CHARGE = -120
+const DEFAULT_LINK_DIST = 60
 const DEFAULT_CENTER = 0.05
 
 interface CodeGraphExplorerProps {
@@ -218,7 +218,9 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // Build force data
   const forceData = useMemo(() => buildForceData(graphData), [graphData])
 
-  // Apply force parameters whenever data or physics values change
+  // Apply force parameters whenever data or physics values change, and reheat
+  // the simulation so a fresh batch of nodes actually spreads instead of
+  // collapsing into one super-cluster at the origin.
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
@@ -228,18 +230,8 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     if (IS_MOBILE) {
       try { fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2)) } catch (e) { console.warn('CodeGraphExplorer: setPixelRatio failed', e) }
     }
+    try { fg.d3ReheatSimulation() } catch { /* simulation may not be ready */ }
   }, [forceData, charge, linkDist, centerStrength])
-
-  // Reheat simulation only when physics sliders change (not on data load)
-  const physicsInitialized = useRef(false)
-  useEffect(() => {
-    if (!physicsInitialized.current) {
-      physicsInitialized.current = true
-      return
-    }
-    const fg = fgRef.current
-    if (fg) fg.d3ReheatSimulation()
-  }, [charge, linkDist, centerStrength])
 
   // Search
   const searchLower = searchQuery.toLowerCase()
