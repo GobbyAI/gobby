@@ -1,0 +1,19 @@
+tags: [brevity, gobby, default]
+
+rules:
+  inject-brevity-on-first-turn:
+    description: "Inject brevity skill on the first user turn of each session"
+    event: turn_start
+    enabled: true
+    priority: 20
+    when: "'brevity' not in variables.get('injected_skills', [])"
+    effects:
+      - type: mcp_call
+        server: gobby-skills
+        tool: get_skill
+        arguments:
+          name: brevity
+        inject_result: true
+      - type: set_variable
+        variable: injected_skills
+        value: "variables.get('injected_skills', []) + ['brevity']"

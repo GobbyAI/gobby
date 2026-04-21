@@ -270,7 +270,11 @@ def test_resolve_skills_explicit_only() -> None:
     assert result is None
 
 
-def test_bundled_default_agent_auto_selects_brevity() -> None:
+def test_bundled_default_agent_auto_selects_no_skills() -> None:
+    """Default agent has an empty skill_selectors.include — skills inject
+    on-demand via rules (brevity on first turn, code-index on first code read)
+    rather than being auto-attached to the agent.
+    """
     agent_path = (
         Path(__file__).resolve().parents[2]
         / "src/gobby/install/shared/workflows/agents/default.yaml"
@@ -289,7 +293,7 @@ def test_bundled_default_agent_auto_selects_brevity() -> None:
 
     result = resolve_skills_for_agent(agent, [brevity, code_index])
 
-    assert result == {"brevity"}
+    assert result == set()
 
 
 # --- resolve_variables_for_agent ---
