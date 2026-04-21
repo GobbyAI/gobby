@@ -431,10 +431,9 @@ async def spawn_agent_impl(
         timeout_seconds=effective_timeout,
     )
 
-    # NOTE: agent_runs DB record is created inside prepare_terminal_spawn()
-    # (called by execute_spawn).  Do NOT pre-create here — it causes a
-    # UNIQUE constraint violation since prepare_terminal_spawn also inserts
-    # with the same run_id.  See: agents/spawn.py:162
+    # run_id is minted above and threaded through SpawnRequest.agent_run_id.
+    # prepare_terminal_spawn (called inside execute_spawn) inserts the
+    # agent_runs row using that exact id. It is the single source of truth.
 
     spawn_result = await execute_spawn(spawn_request)
 

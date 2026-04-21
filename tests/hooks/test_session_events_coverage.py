@@ -617,6 +617,37 @@ class TestSessionMoreCoverage:
             handler._session_storage.update.assert_called_once()
             mock_pre.assert_called_once()
 
+    def test_handle_session_start_codex_terminal(self) -> None:
+        """Codex now joins the late-link path: SessionStart fires with the native
+        Codex session_id; the handler resolves the pre-created child via
+        terminal_context.gobby_session_id and rewrites external_id.
+
+        This locks in the contract Codex depends on after the preflight removal
+        (otherwise Codex sessions would never be linked back to their Gobby
+        parent and MCP tool calls scoped by external_id would silently miss).
+        """
+        handler = _TestHandler()
+        codex_native_id = "019dadc3-07e9-7740-97f2-400c3906247e"
+        event = _make_event(
+            event_type=HookEventType.SESSION_START,
+            session_id=codex_native_id,
+            source=SessionSource.CODEX,
+            data={"terminal_context": {"gobby_session_id": "gobby-codex-1"}},
+        )
+
+        # External-id lookup misses, gobby_session_id lookup hits the pre-created child.
+        handler._session_storage.get.side_effect = [None, MagicMock()]
+
+        with patch.object(
+            handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")
+        ) as mock_pre:
+            handler.handle_session_start(event)
+            # external_id is rewritten to the Codex-native session_id from the hook.
+            handler._session_storage.update.assert_called_once()
+            update_kwargs = handler._session_storage.update.call_args.kwargs
+            assert update_kwargs.get("external_id") == codex_native_id
+            mock_pre.assert_called_once()
+
     def test_handle_session_start_parent_handoff(self) -> None:
         handler = _TestHandler()
         event = _make_event(

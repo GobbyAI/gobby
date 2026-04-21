@@ -20,7 +20,6 @@ from gobby.agents.spawners.base import (
 )
 from gobby.agents.spawners.command_builder import (
     build_cli_command,
-    build_codex_command_with_resume,
 )
 from gobby.agents.spawners.prompt_manager import (
     MAX_ENV_PROMPT_LENGTH,
@@ -36,7 +35,6 @@ __all__ = [
     "TmuxSpawner",
     # Command building
     "build_cli_command",
-    "build_codex_command_with_resume",
     # Prompt management
     "MAX_ENV_PROMPT_LENGTH",
     "create_prompt_file",

@@ -1,8 +1,8 @@
 """Terminal spawning for agent execution.
 
-This module provides PreparedSpawn helpers and preflight functions for
-spawning CLI agents.  The actual terminal spawning is handled by
-:class:`TmuxSpawner` (re-exported here for backward compatibility).
+This module provides PreparedSpawn helpers for spawning CLI agents.
+The actual terminal spawning is handled by :class:`TmuxSpawner`
+(re-exported here for backward compatibility).
 
 Implementation is split across submodules:
 - spawners/prompt_manager.py: Prompt file creation and cleanup
@@ -23,7 +23,6 @@ from gobby.agents.spawners import (
     SpawnResult,
     TerminalSpawnerBase,
     build_cli_command,
-    build_codex_command_with_resume,
     create_prompt_file,
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
@@ -43,9 +42,7 @@ __all__ = [
     # Helpers
     "PreparedSpawn",
     "prepare_terminal_spawn",
-    "prepare_codex_spawn_with_preflight",
     "build_cli_command",
-    "build_codex_command_with_resume",
     "create_prompt_file",
     "MAX_ENV_PROMPT_LENGTH",
 ]
@@ -240,155 +237,3 @@ def prepare_terminal_spawn(
     )
 
 
-async def prepare_codex_spawn_with_preflight(
-    session_manager: ChildSessionManager,
-    parent_session_id: str,
-    project_id: str,
-    machine_id: str,
-    agent_id: str | None = None,
-    workflow_name: str | None = None,
-    agent_name: str | None = None,
-    initial_variables: dict[str, Any] | None = None,
-    title: str | None = None,
-    git_branch: str | None = None,
-    prompt: str | None = None,
-    max_agent_depth: int = 5,
-    preflight_timeout: float = 30.0,
-    sandbox_enabled: bool = False,
-    requested_reasoning_effort: str | None = None,
-    effective_reasoning_effort: str | None = None,
-    reasoning_required: bool = False,
-    reasoning_status: str = "not_requested",
-    reasoning_message: str | None = None,
-) -> PreparedSpawn:
-    """
-    Prepare a Codex terminal spawn with preflight session ID capture.
-
-    This is necessary because we need Codex's session_id before launching
-    interactive mode to properly link sessions. We use preflight capture to:
-    1. Launch Codex with `exec "exit"` to capture its session_id
-    2. Create the Gobby session with that external_id
-    3. Resume the Codex session with `codex resume {session_id}`
-
-    Args:
-        session_manager: ChildSessionManager for session creation
-        parent_session_id: Parent session ID
-        project_id: Project ID
-        machine_id: Machine ID
-        agent_id: Optional agent ID
-        workflow_name: Optional workflow to activate
-        agent_name: Agent definition name used for the spawned session/run
-        title: Optional session title
-        git_branch: Optional git branch
-        prompt: Optional initial prompt
-        max_agent_depth: Maximum agent depth
-        preflight_timeout: Timeout for preflight capture (default 30s)
-        sandbox_enabled: Whether the spawned runtime should be recorded as sandboxed.
-
-    Returns:
-        PreparedSpawn with codex_external_id set in env_vars
-
-    Raises:
-        ValueError: If max agent depth exceeded
-        asyncio.TimeoutError: If preflight capture times out
-    """
-    import uuid
-
-    from gobby.agents.codex_session import capture_codex_session_id
-
-    # 1. Preflight: capture Codex's session_id
-    logger.info("Starting Codex preflight capture...")
-    codex_info = await capture_codex_session_id(timeout=preflight_timeout)
-    logger.info(f"Captured Codex session_id: {codex_info.session_id}")
-
-    # 2. Create child session config with Codex's session_id as external_id
-    config = ChildSessionConfig(
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        machine_id=machine_id,
-        source="codex",
-        agent_id=agent_id,
-        workflow_name=workflow_name,
-        title=title,
-        git_branch=git_branch,
-        external_id=codex_info.session_id,  # Link to Codex's session
-        sandbox_enabled=sandbox_enabled,
-    )
-
-    # Create the child session
-    child_session = session_manager.create_child_session(config)
-
-    # Write initial variables to session_variables table (canonical store)
-    if initial_variables:
-        from gobby.workflows.state_manager import SessionVariableManager
-
-        SessionVariableManager(session_manager._storage.db).merge_variables(
-            child_session.id, initial_variables
-        )
-
-    # Generate agent run ID
-    agent_run_id = f"run-{uuid.uuid4().hex[:12]}"
-
-    from gobby.storage.agents import LocalAgentRunManager
-
-    agent_run_mgr = LocalAgentRunManager(session_manager._storage.db)
-    agent_run_mgr.create(
-        parent_session_id=parent_session_id,
-        provider="codex",
-        prompt=prompt or "",
-        workflow_name=workflow_name,
-        agent_name=agent_name,
-        child_session_id=child_session.id,
-        run_id=agent_run_id,
-        requested_reasoning_effort=requested_reasoning_effort,
-        effective_reasoning_effort=effective_reasoning_effort,
-        reasoning_required=reasoning_required,
-        reasoning_status=reasoning_status,
-        reasoning_message=reasoning_message,
-    )
-
-    # Persist agent_run_id to session record for hook-based lifecycle tracking
-    session_manager.update_terminal_pickup_metadata(
-        session_id=child_session.id,
-        agent_run_id=agent_run_id,
-        workflow_name=workflow_name,
-    )
-
-    # Handle prompt - decide env var vs file
-    prompt_env: str | None = None
-    prompt_file: str | None = None
-
-    if prompt:
-        if len(prompt) <= MAX_ENV_PROMPT_LENGTH:
-            prompt_env = prompt
-        else:
-            prompt_file = create_prompt_file(prompt, child_session.id)
-
-    # Build environment variables
-    env_vars = get_terminal_env_vars(
-        session_id=child_session.id,
-        parent_session_id=parent_session_id,
-        agent_run_id=agent_run_id,
-        project_id=project_id,
-        workflow_name=workflow_name,
-        agent_depth=child_session.agent_depth,
-        max_agent_depth=max_agent_depth,
-        prompt=prompt_env,
-        prompt_file=prompt_file,
-    )
-
-    # Add Codex-specific env vars for session linking
-    env_vars["GOBBY_CODEX_EXTERNAL_ID"] = codex_info.session_id
-    if codex_info.model:
-        env_vars["GOBBY_CODEX_MODEL"] = codex_info.model
-
-    return PreparedSpawn(
-        session_id=child_session.id,
-        agent_run_id=agent_run_id,
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        workflow_name=workflow_name,
-        agent_depth=child_session.agent_depth,
-        env_vars=env_vars,
-        seq_num=getattr(child_session, "seq_num", None),
-    )

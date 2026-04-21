@@ -1,18 +1,17 @@
 """
 Tests for terminal spawn prepare functions.
 
-Verifies that prepare_terminal_spawn and prepare_codex_spawn_with_preflight
-persist agent_run_id via update_terminal_pickup_metadata.
+Verifies that prepare_terminal_spawn persists agent_run_id via
+update_terminal_pickup_metadata.
 """
 
 import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.agents.spawn import (
     PreparedSpawn,
-    prepare_codex_spawn_with_preflight,
     prepare_terminal_spawn,
 )
 
@@ -87,61 +86,3 @@ class TestPrepareTerminalSpawnMetadata:
         assert re.match(r"^run-[0-9a-f]{12}$", result.agent_run_id)
 
 
-class TestPrepareCodexSpawnMetadata:
-    """Tests for agent_run_id persistence in prepare_codex_spawn_with_preflight."""
-
-    @pytest.mark.asyncio
-    async def test_calls_update_terminal_pickup_metadata(self) -> None:
-        """prepare_codex_spawn_with_preflight persists agent_run_id."""
-        sm = _make_session_manager()
-
-        codex_info = MagicMock()
-        codex_info.session_id = "codex-ext-1"
-        codex_info.model = "o3"
-
-        with patch(
-            "gobby.agents.codex_session.capture_codex_session_id",
-            new_callable=AsyncMock,
-            return_value=codex_info,
-        ):
-            result = await prepare_codex_spawn_with_preflight(
-                session_manager=sm,
-                parent_session_id="parent-1",
-                project_id="proj-1",
-                machine_id="machine-1",
-                workflow_name="test-driven",
-            )
-
-        assert isinstance(result, PreparedSpawn)
-        sm.update_terminal_pickup_metadata.assert_called_once_with(
-            session_id="child-sess-1",
-            agent_run_id=result.agent_run_id,
-            workflow_name="test-driven",
-        )
-
-    @pytest.mark.asyncio
-    async def test_persists_none_workflow(self) -> None:
-        """prepare_codex_spawn_with_preflight passes workflow_name=None when not provided."""
-        sm = _make_session_manager()
-
-        codex_info = MagicMock()
-        codex_info.session_id = "codex-ext-2"
-        codex_info.model = None
-
-        with patch(
-            "gobby.agents.codex_session.capture_codex_session_id",
-            new_callable=AsyncMock,
-            return_value=codex_info,
-        ):
-            result = await prepare_codex_spawn_with_preflight(
-                session_manager=sm,
-                parent_session_id="parent-1",
-                project_id="proj-1",
-                machine_id="machine-1",
-            )
-
-        sm.update_terminal_pickup_metadata.assert_called_once_with(
-            session_id="child-sess-1",
-            agent_run_id=result.agent_run_id,
-            workflow_name=None,
-        )
