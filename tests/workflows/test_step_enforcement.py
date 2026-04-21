@@ -573,6 +573,72 @@ class TestStepTransitions:
         assert "finished" in response.context
         assert "Call kill_agent to terminate." in response.context
 
+    @pytest.mark.asyncio
+    async def test_on_mcp_success_handler_when_gates_variable_update(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Handler-level when clauses should gate on_mcp_success variable updates."""
+        workflow = {
+            "name": "skill-gate-workflow",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {"skill_loaded": False},
+            "steps": [
+                {
+                    "name": "load",
+                    "allowed_tools": "all",
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-skills",
+                            "tool": "get_skill",
+                            "when": "tool_input.name == 'plan-draft'",
+                            "action": "set_variable",
+                            "variable": "skill_loaded",
+                            "value": True,
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(db, manager, instance_mgr, current_step="load", workflow_data=workflow)
+
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-skills",
+                    "tool_name": "get_skill",
+                    "arguments": {"name": "plan-review"},
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "skill-gate-workflow")
+        assert instance is not None
+        assert instance.variables.get("skill_loaded") is False
+
+        matching_event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-skills",
+                    "tool_name": "get_skill",
+                    "arguments": {"name": "plan-draft"},
+                },
+            },
+        )
+
+        await engine.evaluate(matching_event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "skill-gate-workflow")
+        assert instance is not None
+        assert instance.variables.get("skill_loaded") is True
+
 
 # Workflow with on_mcp_error handlers for testing app-level failure routing
 _MERGE_WORKFLOW = {
@@ -785,6 +851,78 @@ class TestToolOutputRouting:
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         assert instance.current_step == "resolve_conflicts"
+
+    @pytest.mark.asyncio
+    async def test_on_mcp_error_handler_when_gates_variable_update(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Handler-level when clauses should gate on_mcp_error variable updates."""
+        workflow = {
+            "name": "merge-when-workflow",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {"has_conflicts": False},
+            "steps": [
+                {
+                    "name": "merge",
+                    "allowed_tools": "all",
+                    "on_mcp_error": [
+                        {
+                            "server": "gobby-worktrees",
+                            "tool": "merge_worktree",
+                            "when": "tool_output.result.has_conflicts",
+                            "action": "set_variable",
+                            "variable": "has_conflicts",
+                            "value": True,
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(db, manager, instance_mgr, current_step="merge", workflow_data=workflow)
+
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-worktrees",
+                    "tool_name": "merge_worktree",
+                },
+                "tool_output": {
+                    "success": True,
+                    "result": {"success": False, "has_conflicts": False},
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "merge-when-workflow")
+        assert instance is not None
+        assert instance.variables.get("has_conflicts") is False
+
+        matching_event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-worktrees",
+                    "tool_name": "merge_worktree",
+                },
+                "tool_output": {
+                    "success": True,
+                    "result": {"success": False, "has_conflicts": True},
+                },
+            },
+        )
+
+        await engine.evaluate(matching_event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "merge-when-workflow")
+        assert instance is not None
+        assert instance.variables.get("has_conflicts") is True
 
 
 @pytest.mark.unit

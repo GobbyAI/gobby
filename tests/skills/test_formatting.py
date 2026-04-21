@@ -3,13 +3,52 @@
 Relocated from tests/workflows/test_context_actions.py as part of dead-code cleanup.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.skills.formatting import recommend_skills_for_task
+from gobby.skills.formatting import recommend_skills_for_task, render_skills_for_context
 
 pytestmark = pytest.mark.unit
+
+
+class TestRenderSkillsForContext:
+    """Tests for render_skills_for_context injection formats."""
+
+    def test_summary_skills_render_as_compact_list(self) -> None:
+        skill = SimpleNamespace(
+            name="plan-review",
+            description="Review a gobby plan document.",
+            content="# Full content",
+        )
+
+        rendered = render_skills_for_context([(skill, "summary")])
+
+        assert "### Skill Summaries" in rendered
+        assert "- `plan-review`: Review a gobby plan document." in rendered
+        assert "# Full content" not in rendered
+
+    def test_full_and_summary_skills_render_together(self) -> None:
+        full_skill = SimpleNamespace(
+            name="bridge",
+            description="UI annotation workflow.",
+            content="# Bridge content",
+        )
+        summary_skill = SimpleNamespace(
+            name="brevity",
+            description="Terse output mode.",
+            content="# Brevity content",
+        )
+
+        rendered = render_skills_for_context(
+            [(full_skill, "full"), (summary_skill, "summary")]
+        )
+
+        assert "### bridge" in rendered
+        assert "# Bridge content" in rendered
+        assert "### Skill Summaries" in rendered
+        assert "- `brevity`: Terse output mode." in rendered
 
 
 class TestRecommendSkillsForTask:

@@ -246,7 +246,11 @@ def resolve_and_seed_contexts(
             if session is not None:
                 conversation_id = session.external_id
         except Exception as exc:
-            logger.debug(f"Failed to load session {resolved_session_id} for SessionContext: {exc}")
+            logger.debug(
+                "Failed to load session %s for SessionContext: %s",
+                resolved_session_id,
+                exc,
+            )
         tokens.session_token = set_session_context(
             SessionContext(session_id=resolved_session_id, conversation_id=conversation_id)
         )
@@ -269,7 +273,9 @@ def resolve_and_seed_contexts(
                     )
                 except Exception as exc:
                     logger.debug(
-                        f"set_project_context_from_session failed for {resolved_session_id}: {exc}"
+                        "set_project_context_from_session failed for %s: %s",
+                        resolved_session_id,
+                        exc,
                     )
             if project_token is None and canonical_project_id:
                 if db is not None:
@@ -277,7 +283,9 @@ def resolve_and_seed_contexts(
                         project_token = set_project_context_from_ref(canonical_project_id, db)
                     except Exception as exc:
                         logger.debug(
-                            f"set_project_context_from_ref failed for {canonical_project_id}: {exc}"
+                            "set_project_context_from_ref failed for %s: %s",
+                            canonical_project_id,
+                            exc,
                         )
                 if project_token is None:
                     project_token = _minimal_project_token()
@@ -289,7 +297,9 @@ def resolve_and_seed_contexts(
                         project_token = set_project_context_from_ref(canonical_project_id, db)
                     except Exception as exc:
                         logger.debug(
-                            f"set_project_context_from_ref failed for {canonical_project_id}: {exc}"
+                            "set_project_context_from_ref failed for %s: %s",
+                            canonical_project_id,
+                            exc,
                         )
                 if project_token is None:
                     # Honor the override intent even without db enrichment.
@@ -301,7 +311,9 @@ def resolve_and_seed_contexts(
                     )
                 except Exception as exc:
                     logger.debug(
-                        f"set_project_context_from_session failed for {resolved_session_id}: {exc}"
+                        "set_project_context_from_session failed for %s: %s",
+                        resolved_session_id,
+                        exc,
                     )
     elif canonical_project_id:
         if db is not None:
@@ -309,7 +321,9 @@ def resolve_and_seed_contexts(
                 project_token = set_project_context_from_ref(canonical_project_id, db)
             except Exception as exc:
                 logger.debug(
-                    f"set_project_context_from_ref failed for {canonical_project_id}: {exc}"
+                    "set_project_context_from_ref failed for %s: %s",
+                    canonical_project_id,
+                    exc,
                 )
         if project_token is None:
             project_token = _minimal_project_token()
@@ -326,9 +340,9 @@ def reset_seeded_contexts(tokens: SeededContextTokens) -> None:
         try:
             reset_session_context(tokens.session_token)
         except Exception as exc:
-            logger.debug(f"reset_session_context failed: {exc}")
+            logger.debug("reset_session_context failed: %s", exc)
     if tokens.project_token is not None:
         try:
             reset_project_context(tokens.project_token)
         except Exception as exc:
-            logger.debug(f"reset_project_context failed: {exc}")
+            logger.debug("reset_project_context failed: %s", exc)

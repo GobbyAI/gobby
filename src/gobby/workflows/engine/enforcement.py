@@ -263,6 +263,15 @@ class EnforcementMixin:
                     is_app_failure = True
 
         handlers = step.on_mcp_error if is_app_failure else step.on_mcp_success
+        handler_tool_input = dict(tool_input)
+        raw_handler_args = tool_input.get("arguments", tool_input.get("args"))
+        if isinstance(raw_handler_args, str):
+            try:
+                raw_handler_args = json.loads(raw_handler_args)
+            except (json.JSONDecodeError, TypeError):
+                raw_handler_args = None
+        if isinstance(raw_handler_args, dict):
+            handler_tool_input = {**raw_handler_args, **handler_tool_input}
 
         instance_mgr = self.instance_manager
         vars_changed = False
@@ -270,6 +279,17 @@ class EnforcementMixin:
         # Execute handlers (on_mcp_success or on_mcp_error based on tool output)
         for handler in handlers:
             if handler.get("server") == mcp_server and handler.get("tool") == mcp_tool_name:
+                handler_when = handler.get("when")
+                if handler_when and not self._evaluate_condition(
+                    handler_when,
+                    {
+                        "vars": {**instance.variables, **variables},
+                        "tool_input": handler_tool_input,
+                        "tool_output": tool_output,
+                    },
+                    str(handler.get("action") or "set_variable"),
+                ):
+                    continue
                 if handler.get("action") == "set_variable":
                     var_name = handler.get("variable")
                     var_value = handler.get("value")

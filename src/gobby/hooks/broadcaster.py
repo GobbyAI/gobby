@@ -95,8 +95,7 @@ class HookEventBroadcaster:
         existing_error = raw_input.get("error")
         if cls._is_non_empty_string(existing_error):
             return
-        if existing_error and not isinstance(existing_error, str):
-            return
+        fallback_error = str(existing_error) if existing_error and not isinstance(existing_error, str) else None
 
         failure_fields = ("tool_output", "tool_response", "tool_result", "output", "result")
 
@@ -115,6 +114,10 @@ class HookEventBroadcaster:
             if cls._is_non_empty_string(candidate):
                 raw_input["error"] = candidate
                 return
+
+        if fallback_error is not None:
+            raw_input["error"] = fallback_error
+            return
 
         raw_input["error"] = "Tool execution failed."
 

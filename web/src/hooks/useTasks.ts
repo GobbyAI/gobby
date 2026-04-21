@@ -218,7 +218,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
             return merged
           })
         }
-        setServerTotal(data.total ?? serverTotal)
+        setServerTotal((prev) => data.total ?? prev)
         setError(null)
       } else {
         setError(`Failed to load more tasks (${response.status})`)
@@ -229,7 +229,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     } finally {
       setIsLoadingMore(false)
     }
-  }, [allTasks.length, buildParams, isLoadingMore, pageSize, serverTotal])
+  }, [allTasks.length, buildParams, isLoadingMore, pageSize])
 
   const tasks = useMemo(
     () => allTasks.filter(task => matchesTaskBucketFilter(task, filters.status)),

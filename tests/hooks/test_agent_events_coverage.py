@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
+from importlib.resources import files
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -139,11 +139,10 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        agent_path = (
-            Path(__file__).resolve().parents[2]
-            / "src/gobby/install/shared/workflows/agents/default.yaml"
+        agent_path = files("gobby.install.shared").joinpath("workflows/agents/default.yaml")
+        default_agent = AgentDefinitionBody.model_validate(
+            yaml.safe_load(agent_path.read_text(encoding="utf-8"))
         )
-        default_agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
 
         with (
             patch(

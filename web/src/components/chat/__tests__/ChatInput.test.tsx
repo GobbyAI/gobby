@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { ChatInput } from '../ChatInput'
@@ -77,6 +77,30 @@ function PTTHarness({
         onCancelRecording()
         setIsRecording(false)
       }}
+    />
+  )
+}
+
+function SttToggleHarness({
+  callOrder,
+}: {
+  callOrder: string[]
+}) {
+  const [sttEnabled, setSttEnabled] = useState(false)
+
+  return (
+    <ChatInput
+      onSend={vi.fn()}
+      sttEnabled={sttEnabled}
+      onSttEnabledChange={(enabled) => {
+        callOrder.push(`toggle:${String(enabled)}`)
+        setSttEnabled(enabled)
+      }}
+      startRecording={async () => {
+        callOrder.push(`start:${String(sttEnabled)}`)
+      }}
+      stopRecording={vi.fn(async () => {})}
+      cancelRecording={vi.fn()}
     />
   )
 }
@@ -381,6 +405,17 @@ describe('ChatInput', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
 
     expect(onCancelRecording).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for sttEnabled state to flip before starting recording from the toolbar toggle', async () => {
+    const callOrder: string[] = []
+    render(<SttToggleHarness callOrder={callOrder} />)
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+
+    await waitFor(() => {
+      expect(callOrder).toEqual(['toggle:true', 'start:true'])
+    })
   })
 
   it('clears input after sending', async () => {

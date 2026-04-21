@@ -130,7 +130,7 @@ class TestPlanReviewContent:
         display round. The heading must be `## Adversary Findings — Round N`
         (with em-dash)."""
         assert "## Adversary Findings" in body
-        assert "Round N" in body or "Round {N}" in body.replace(" ", "") or "Round" in body
+        assert "Round N" in body
         assert "em-dash" in body.lower() or "—" in body
 
     def test_preserves_prior_rounds(self, body: str) -> None:

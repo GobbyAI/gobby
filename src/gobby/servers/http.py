@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS = 2.0
+
 
 class HTTPServer:
     """
@@ -377,7 +379,16 @@ class HTTPServer:
             if not callable(terminate):
                 continue
             try:
-                await terminate()
+                await asyncio.wait_for(
+                    terminate(),
+                    timeout=_STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Timed out terminating Streamable HTTP session %s after %.1fs",
+                    getattr(transport, "mcp_session_id", "<unknown>"),
+                    _STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
+                )
             except Exception as e:
                 logger.warning(
                     "Failed to terminate Streamable HTTP session %s: %s",

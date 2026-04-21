@@ -228,6 +228,18 @@ describe('useTasks', () => {
     expect(task?.status).toBe('closed')
   })
 
+  it('releaseTaskClaim posts to the release-claim route', async () => {
+    const released = { ...SAMPLE_TASKS[0], status: 'open' }
+    mockFetch.mockJsonResponse(/\/api\/tasks\/task-1\/release-claim/, released)
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    const task = await act(() => result.current.releaseTaskClaim('task-1'))
+
+    expect(task?.status).toBe('open')
+  })
+
   it('reopenTask posts and re-fetches', async () => {
     const reopened = { ...SAMPLE_TASKS[0], status: 'open' }
     mockFetch.mockJsonResponse(/\/api\/tasks\/task-1\/reopen/, reopened)

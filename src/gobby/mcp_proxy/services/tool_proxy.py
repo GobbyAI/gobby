@@ -259,16 +259,16 @@ class ToolProxyService:
                 session_manager.resolve_session_reference(requested_session_id, project_id),
             )
         except ValueError as exc:
-            # Visibility over silence: resolver failures should be actionable,
-            # not hidden. The fallback to the unresolved ref is preserved so
-            # best-effort call sites keep working.
+            # Resolver ambiguity / not-found should not masquerade as a
+            # platform UUID. Callers can still use the requested ref directly
+            # if they intentionally want best-effort behavior.
             logger.warning(
                 "Could not resolve session reference %r (project_id=%s): %s",
                 requested_session_id,
                 project_id,
                 exc,
             )
-            return requested_session_id
+            return None
         return resolved_session_id or requested_session_id
 
     def _resolve_tool_event_context(

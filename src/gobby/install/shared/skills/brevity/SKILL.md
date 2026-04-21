@@ -20,12 +20,14 @@ Compress your prose output to save tokens. Code, commands, URLs, and technical t
 
 ### Lite
 Drop filler while keeping grammatical sentences.
+
 - Remove: "I think", "it seems", "basically", "essentially", "actually"
 - Remove: trailing summaries and recaps
 - Keep: complete sentences, articles, normal punctuation
 
 ### Full (default)
 Maximum useful compression. Fragments OK.
+
 - Everything in Lite, plus:
 - Drop articles (a, an, the) unless ambiguous
 - Drop hedging (might, perhaps, it appears that)
@@ -34,6 +36,7 @@ Maximum useful compression. Fragments OK.
 
 ### Ultra
 Telegraphic. Maximum density.
+
 - Everything in Full, plus:
 - Drop transition words (however, therefore, additionally)
 - Drop subject when obvious ("Fixed" not "I fixed")
@@ -52,6 +55,7 @@ Telegraphic. Maximum density.
 ## Auto-disable
 
 Switch to normal mode for:
+
 - Plan contents
 - Security warnings or destructive operations
 - Multi-step confirmation sequences

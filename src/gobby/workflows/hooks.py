@@ -228,11 +228,15 @@ class WorkflowHookHandler:
 
     def _resolve_project_path(self, event: HookEvent) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        if metadata is not event.metadata:
+            event.metadata = metadata
+
         project_path = event.cwd if event.cwd and event.cwd.strip() else None
         if project_path:
             return project_path
 
-        metadata_path = event.metadata.get("project_path") if event.metadata else None
+        metadata_path = metadata.get("project_path")
         if isinstance(metadata_path, str) and metadata_path.strip():
             return metadata_path
 
@@ -255,7 +259,7 @@ class WorkflowHookHandler:
         if not isinstance(repo_path, str) or not repo_path.strip():
             return None
 
-        event.metadata.setdefault("project_path", repo_path)
+        metadata.setdefault("project_path", repo_path)
         return repo_path
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:

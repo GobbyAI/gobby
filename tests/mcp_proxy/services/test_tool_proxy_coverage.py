@@ -1131,8 +1131,8 @@ class TestResolvePlatformSessionId:
             hook_manager_resolver=lambda: hook_manager,
         )
 
-    def test_resolve_platform_session_id_logs_warning_on_valueerror(self, caplog) -> None:
-        """ValueError from resolver → warning logged, raw ref returned as fallback."""
+    def test_resolve_platform_session_id_returns_none_on_valueerror(self, caplog) -> None:
+        """ValueError from resolver → warning logged and unresolved ref is rejected."""
         import logging as _logging
 
         session_manager = MagicMock()
@@ -1142,7 +1142,7 @@ class TestResolvePlatformSessionId:
         caplog.set_level(_logging.WARNING, logger="gobby.mcp.server")
         result = proxy._resolve_platform_session_id("bogus-session-ref")
 
-        assert result == "bogus-session-ref"
+        assert result is None
         assert any("Could not resolve session reference" in rec.message for rec in caplog.records)
 
     def test_resolve_platform_session_id_propagates_non_valueerror(self) -> None:

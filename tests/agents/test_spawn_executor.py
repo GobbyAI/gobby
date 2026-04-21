@@ -497,8 +497,11 @@ class TestExecuteSpawn:
             command = mock_spawner.spawn.call_args.kwargs["command"]
             assert "--sandbox" in command
             assert "workspace-write" in command
-            # Sandbox args come before the prompt (which is the last positional).
-            assert command.index("--sandbox") < len(command) - 1
+            prompt_arg = command[-1]
+            # Sandbox args must appear before the final prompt argv entry, which
+            # is the prefixed Codex prompt carrying the session_id and user text.
+            assert request.prompt in prompt_arg
+            assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True
 
     @pytest.mark.asyncio

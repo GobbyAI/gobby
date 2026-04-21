@@ -27,6 +27,8 @@ def fast_stop_hook_grace_window():
 def _set_mock_default(obj: MagicMock, name: str, default):
     """Assign a default only when a MagicMock placeholder has not been made concrete."""
     value = getattr(obj, name, None)
+    if isinstance(value, AsyncMock):
+        return
     if isinstance(value, MagicMock):
         setattr(obj, name, default)
     elif value is None:
@@ -199,6 +201,17 @@ class TestGobbyRunnerInit:
             assert runner._shutdown_requested is False
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
+
+
+class TestSetMockDefault:
+    def test_preserves_asyncmock_overrides(self) -> None:
+        obj = MagicMock()
+        existing = AsyncMock()
+        obj.child = existing
+
+        _set_mock_default(obj, "child", False)
+
+        assert obj.child is existing
 
     def test_init_without_websocket(self, mock_config) -> None:
         """Test init when WebSocket is disabled."""

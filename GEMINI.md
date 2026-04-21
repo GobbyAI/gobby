@@ -1,3 +1,5 @@
+# Gobby — Project Context
+
 This file provides guidance for developing the Gobby codebase.
 
 ## Guiding Principles
@@ -28,7 +30,7 @@ Do NOT try to call one step through another (e.g., don't use call_tool to invoke
 
 ## DO NOT RUN THE FULL PYTEST SUITE
 
-The repo has over 11,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
+The repo has over 15,000 tests. Running the full suite takes over 30 minutes. Do not run the full suite unless explicitly asked to do so.
 
 ## Plan Mode
 

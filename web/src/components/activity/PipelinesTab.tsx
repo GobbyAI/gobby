@@ -180,6 +180,15 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
   }
 
+  const detailSteps = detailExec?.steps ?? []
+  const detailStepCount = detailSteps.length
+  const passedStepCount = detailSteps.filter(
+    (step) => step.status === 'completed' || step.status === 'success',
+  ).length
+  const failedStepCount = detailSteps.filter(
+    (step) => step.status === 'failed' || step.status === 'error',
+  ).length
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
@@ -275,27 +284,27 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                 </span>
               )}
             </div>
-            {detailExec.steps && detailExec.steps.length > 0 && (
+            {detailStepCount > 0 && (
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
-                <span>{detailExec.steps.length} step{detailExec.steps.length !== 1 ? 's' : ''}</span>
-                {detailExec.steps.filter((step) => step.status === 'completed' || step.status === 'success').length > 0 && (
+                <span>{detailStepCount} step{detailStepCount !== 1 ? 's' : ''}</span>
+                {passedStepCount > 0 && (
                   <span className="text-green-400">
-                    {detailExec.steps.filter((step) => step.status === 'completed' || step.status === 'success').length} passed
+                    {passedStepCount} passed
                   </span>
                 )}
-                {detailExec.steps.filter((step) => step.status === 'failed' || step.status === 'error').length > 0 && (
+                {failedStepCount > 0 && (
                   <span className="text-red-400">
-                    {detailExec.steps.filter((step) => step.status === 'failed' || step.status === 'error').length} failed
+                    {failedStepCount} failed
                   </span>
                 )}
               </div>
             )}
           </div>
           <div className="flex-1 overflow-y-auto">
-            {detailExec.steps && detailExec.steps.length > 0 ? (
+            {detailStepCount > 0 ? (
               <>
                 <div className="pipeline-steps-timeline">
-                  {detailExec.steps.map((step, i) => (
+                  {detailSteps.map((step, i) => (
                     <StepDisplay key={step.step_id ?? i} step={step} index={i} />
                   ))}
                 </div>

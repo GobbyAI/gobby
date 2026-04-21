@@ -435,10 +435,11 @@ function isWebChatSessionRecord(
   return normalizeSessionType(session?.session_type) === "web_chat";
 }
 
-const RESTORABLE_SESSION_STATUSES = new Set([
-  "active",
-  "paused",
-  "handoff_ready",
+const NON_RESTORABLE_SESSION_STATUSES = new Set([
+  "expired",
+  "archived",
+  "closed",
+  "ended",
 ]);
 
 function isRestorableSessionRecord(
@@ -447,12 +448,13 @@ function isRestorableSessionRecord(
   if (!isWebChatSessionRecord(session)) {
     return false;
   }
-  const status = typeof session?.status === "string" ? session.status : null;
+  const status =
+    typeof session?.status === "string" ? session.status.toLowerCase() : null;
   // Treat unknown/missing status as restorable so transient backend hiccups
   // don't drop a working session; only refuse to restore explicit terminal
   // states (expired / closed / ended / etc).
   if (!status) return true;
-  return RESTORABLE_SESSION_STATUSES.has(status);
+  return !NON_RESTORABLE_SESSION_STATUSES.has(status);
 }
 
 function buildContextUsageFromTotals(params: {

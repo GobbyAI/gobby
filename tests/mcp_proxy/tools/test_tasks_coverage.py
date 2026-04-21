@@ -2372,6 +2372,24 @@ class TestToolSchemas:
             "manual",
         }
 
+    def test_update_task_schema_category_enum_includes_refactor(self, task_registry) -> None:
+        """The update_task category enum must match create_task and accept refactor."""
+        schema = task_registry.get_schema("update_task")
+
+        assert schema is not None
+        category = schema["inputSchema"]["properties"]["category"]
+        assert "refactor" in category["enum"]
+        assert set(category["enum"]) == {
+            "code",
+            "config",
+            "docs",
+            "refactor",
+            "test",
+            "research",
+            "planning",
+            "manual",
+        }
+
     def test_update_task_schema_has_all_fields(self, task_registry) -> None:
         """Test update_task schema includes all updatable fields."""
         schema = task_registry.get_schema("update_task")

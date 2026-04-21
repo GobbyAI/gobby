@@ -222,4 +222,33 @@ describe('TaskDetail', () => {
     })
     expect(defaultProps.actions.deEscalateTask).not.toHaveBeenCalled()
   })
+
+  it('offers Release Claim for claimed non-escalated tasks', async () => {
+    const claimedTask: GobbyTaskDetail = {
+      ...SAMPLE_TASK,
+      status: 'in_progress',
+      claimed_by_session_id: 'sess-1',
+    }
+
+    render(
+      <TaskDetail
+        {...defaultProps}
+        getTask={vi.fn().mockResolvedValue(claimedTask)}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Fix the bug')).toBeTruthy()
+    })
+
+    await userEvent.selectOptions(
+      screen.getByLabelText('Change status'),
+      'release_claim',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Update' }))
+
+    await waitFor(() => {
+      expect(defaultProps.actions.releaseTaskClaim).toHaveBeenCalledWith('task-1')
+    })
+  })
 })

@@ -180,6 +180,65 @@ describe("useChat", () => {
     });
   });
 
+  it("restores persisted web-chat sessions with unknown non-terminal statuses", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        source: "claude",
+        session_type: "web_chat",
+        status: "resuming",
+      },
+    });
+    mockFetch.mockJsonResponse("/api/chat/test-conversation-id/messages", {
+      messages: [
+        {
+          id: "restored-unknown-status",
+          role: "assistant",
+          content: "Recovered after resume",
+          tool_calls: [],
+          seq: 1,
+          created_at: "2026-04-14T00:00:00Z",
+        },
+      ],
+      max_seq: 1,
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(1);
+      expect(result.current.messages[0].content).toBe("Recovered after resume");
+    });
+  });
+
+  it("does not restore persisted web-chat sessions in terminal statuses", async () => {
+    mockFetch.mockJsonResponse("/api/sessions/test-conversation-id", {
+      session: {
+        id: "test-conversation-id",
+        source: "claude",
+        session_type: "web_chat",
+        status: "expired",
+      },
+    });
+
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.dbSessionId).toBeNull();
+      expect(result.current.conversationId).toBe("");
+    });
+
+    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-db-session-id");
+    expect(localStorage.removeItem).toHaveBeenCalledWith("gobby-conversation-id");
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes("/api/chat/test-conversation-id/messages"),
+      ),
+    ).toBe(false);
+  });
+
   it("rejects persisted terminal session ids for main-chat restore", async () => {
     localStorage.setItem("gobby-conversation-id", "terminal-session");
     localStorage.setItem("gobby-db-session-id", "terminal-session");

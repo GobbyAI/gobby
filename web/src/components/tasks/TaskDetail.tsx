@@ -452,6 +452,14 @@ function getStatusOptions(task: GobbyTaskDetail, actions: TaskActions): StatusOp
         ),
     })
   } else {
+    if (state.is_claimed) {
+      options.push({
+        value: 'release_claim',
+        label: 'Release Claim',
+        reasonRequired: false,
+        call: () => actions.releaseTaskClaim(id),
+      })
+    }
     if (state.lifecycle_stage !== 'needs_review' && !state.is_merge_ready) {
       options.push({
         value: 'needs_review',

@@ -32,7 +32,7 @@ def project_storage(temp_db: LocalDatabase) -> LocalProjectManager:
 
 
 @pytest.fixture
-def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict:
+def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[str, Any]:
     """Create a test project with project.json file."""
     project = project_storage.create(name="test-project", repo_path=str(temp_dir))
 
@@ -177,6 +177,56 @@ class TestAdminEndpoints:
         response = client.get("/api/admin/metrics")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
+
+
+class TestStreamableHttpShutdown:
+    """Tests for best-effort FastMCP streamable HTTP transport shutdown."""
+
+    @pytest.mark.asyncio
+    async def test_terminate_streamable_http_sessions_times_out_with_warning(
+        self, http_server: HTTPServer, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        transport = MagicMock()
+        transport.mcp_session_id = "sess-timeout"
+        transport.terminate = AsyncMock()
+        http_server._mcp_server = MagicMock()
+        http_server._mcp_server.session_manager = MagicMock(
+            _server_instances={"one": transport}
+        )
+
+        with patch("gobby.servers.http.asyncio.wait_for", side_effect=TimeoutError):
+            await http_server._terminate_streamable_http_sessions()
+
+        assert any(
+            "Timed out terminating Streamable HTTP session sess-timeout" in record.message
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_terminate_streamable_http_sessions_uses_wait_for(
+        self, http_server: HTTPServer
+    ) -> None:
+        transport = MagicMock()
+        transport.mcp_session_id = "sess-ok"
+        transport.terminate = AsyncMock()
+        http_server._mcp_server = MagicMock()
+        http_server._mcp_server.session_manager = MagicMock(
+            _server_instances={"one": transport}
+        )
+
+        async def _wait_for(awaitable, timeout):
+            await awaitable
+            return None
+
+        with patch(
+            "gobby.servers.http.asyncio.wait_for",
+            new=AsyncMock(side_effect=_wait_for),
+        ) as mock_wait_for:
+            await http_server._terminate_streamable_http_sessions()
+
+        mock_wait_for.assert_awaited_once()
+        assert mock_wait_for.await_args.kwargs["timeout"] == 2.0
+        assert transport.terminate.await_count == 1
 
 
 class TestSessionEndpoints:

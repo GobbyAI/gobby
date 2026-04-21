@@ -528,6 +528,7 @@ def is_embedding_configured(
 # but long enough that a batch of searches probes once, not N times.
 _REACHABILITY_TTL = 30.0  # seconds
 _PROBE_TIMEOUT = 3.0  # seconds
+_REACHABILITY_CACHE_MAX_SIZE = 64
 
 
 @dataclass(slots=True)
@@ -547,6 +548,25 @@ def _clear_reachability_cache() -> None:
 def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, bool]:
     """Key reachability results by endpoint + whether an auth key was used."""
     return (api_base or "openai-default", has_key)
+
+
+def _prune_reachability_cache(now: float, cache_ttl: float) -> None:
+    """Drop stale entries and bound the cache size."""
+    stale_keys = [
+        key
+        for key, entry in _reachability_cache.items()
+        if (now - entry.checked_at) >= cache_ttl
+    ]
+    for key in stale_keys:
+        del _reachability_cache[key]
+
+    overflow = len(_reachability_cache) - _REACHABILITY_CACHE_MAX_SIZE
+    if overflow <= 0:
+        return
+
+    oldest_first = sorted(_reachability_cache.items(), key=lambda item: item[1].checked_at)
+    for key, _entry in oldest_first[:overflow]:
+        del _reachability_cache[key]
 
 
 async def is_embedding_reachable(
@@ -591,6 +611,7 @@ async def is_embedding_reachable(
     cache_key = _reachability_cache_key(api_base, has_key)
 
     now = time.monotonic()
+    _prune_reachability_cache(now, cache_ttl)
     cached = _reachability_cache.get(cache_key)
     if cached is not None and (now - cached.checked_at) < cache_ttl:
         return cached.reachable
@@ -617,4 +638,5 @@ async def is_embedding_reachable(
         reachable = False
 
     _reachability_cache[cache_key] = _ReachabilityEntry(reachable=reachable, checked_at=now)
+    _prune_reachability_cache(now, cache_ttl)
     return reachable

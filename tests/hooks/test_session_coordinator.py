@@ -368,6 +368,51 @@ class TestAgentRunCompletion:
         assert call_kwargs["tool_calls_count"] == 5
         assert call_kwargs["turns_used"] == 3
 
+    def test_complete_agent_run_zero_activity_marks_failed(self) -> None:
+        """Agent with 0 tool calls and 0 turns is marked error, not success."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="running")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        mock_session = MagicMock()
+        mock_session.agent_run_id = "run-ghost"
+        mock_session.id = "sess-ghost"
+        mock_session.summary_markdown = ""
+        mock_session.tool_call_count = 0
+        mock_session.turn_count = 0
+
+        coordinator.complete_agent_run(mock_session)
+
+        mock_agent_run_manager.fail.assert_called_once()
+        fail_kwargs = mock_agent_run_manager.fail.call_args[1]
+        assert fail_kwargs["run_id"] == "run-ghost"
+        assert "no activity" in fail_kwargs["error"].lower()
+        mock_agent_run_manager.complete.assert_not_called()
+
+    def test_complete_agent_run_defaults_counts_when_missing(self) -> None:
+        """Stats attributes from session are passed through to complete()."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="running")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        mock_session = MagicMock()
+        mock_session.agent_run_id = "run-456"
+        mock_session.id = "sess-789"
+        mock_session.summary_markdown = "Done"
+        mock_session.tool_call_count = 10
+        mock_session.turn_count = 5
+
+        coordinator.complete_agent_run(mock_session)
+
+        mock_agent_run_manager.complete.assert_called_once()
+        call_kwargs = mock_agent_run_manager.complete.call_args[1]
+        assert call_kwargs["tool_calls_count"] == 10
+        assert call_kwargs["turns_used"] == 5
+
 
 class TestStartAgentRunIdempotency:
     """Pin SessionCoordinator.start_agent_run's pending-gate behavior.
@@ -401,16 +446,16 @@ class TestStartAgentRunIdempotency:
         assert coordinator.start_agent_run("run-abc") is False
         mock_agent_run_manager.start.assert_not_called()
 
-    def test_start_agent_run_is_noop_for_terminal_states(self) -> None:
+    @pytest.mark.parametrize("terminal", ("success", "failed", "cancelled", "timeout", "error"))
+    def test_start_agent_run_is_noop_for_terminal_states(self, terminal: str) -> None:
         """Runs that already completed/failed/cancelled must not be restarted
         by a late hook fire."""
-        for terminal in ("success", "failed", "cancelled", "timeout", "error"):
-            mock_agent_run_manager = MagicMock()
-            mock_agent_run_manager.get.return_value = MagicMock(status=terminal)
-            coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run_manager.get.return_value = MagicMock(status=terminal)
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
 
-            assert coordinator.start_agent_run("run-abc") is False, terminal
-            mock_agent_run_manager.start.assert_not_called()
+        assert coordinator.start_agent_run("run-abc") is False, terminal
+        mock_agent_run_manager.start.assert_not_called()
 
     def test_start_agent_run_returns_false_for_unknown_run(self) -> None:
         mock_agent_run_manager = MagicMock()
@@ -420,53 +465,6 @@ class TestStartAgentRunIdempotency:
 
         assert coordinator.start_agent_run("run-missing") is False
         mock_agent_run_manager.start.assert_not_called()
-
-    def test_complete_agent_run_zero_activity_marks_failed(self) -> None:
-        """Agent with 0 tool calls and 0 turns is marked error, not success."""
-        mock_agent_run_manager = MagicMock()
-        mock_agent_run = MagicMock(status="running")
-        mock_agent_run_manager.get.return_value = mock_agent_run
-
-        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
-
-        mock_session = MagicMock()
-        mock_session.agent_run_id = "run-ghost"
-        mock_session.id = "sess-ghost"
-        mock_session.summary_markdown = ""
-        mock_session.tool_call_count = 0
-        mock_session.turn_count = 0
-
-        coordinator.complete_agent_run(mock_session)
-
-        # Should call fail, not complete
-        mock_agent_run_manager.fail.assert_called_once()
-        fail_kwargs = mock_agent_run_manager.fail.call_args[1]
-        assert fail_kwargs["run_id"] == "run-ghost"
-        assert "no activity" in fail_kwargs["error"].lower()
-        mock_agent_run_manager.complete.assert_not_called()
-
-    def test_complete_agent_run_defaults_counts_when_missing(self) -> None:
-        """Stats attributes from session are passed through to complete()."""
-        mock_agent_run_manager = MagicMock()
-        mock_agent_run = MagicMock(status="running")
-        mock_agent_run_manager.get.return_value = mock_agent_run
-
-        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
-
-        mock_session = MagicMock()
-        mock_session.agent_run_id = "run-456"
-        mock_session.id = "sess-789"
-        mock_session.summary_markdown = "Done"
-        mock_session.tool_call_count = 10
-        mock_session.turn_count = 5
-
-        coordinator.complete_agent_run(mock_session)
-
-        mock_agent_run_manager.complete.assert_called_once()
-        call_kwargs = mock_agent_run_manager.complete.call_args[1]
-        assert call_kwargs["tool_calls_count"] == 10
-        assert call_kwargs["turns_used"] == 5
-
 
 class TestWorktreeRelease:
     """Test worktree release on session end."""

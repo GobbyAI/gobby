@@ -161,8 +161,10 @@ class ChildSessionManager:
         # Calculate child's agent depth (parent depth + 1)
         child_depth = parent_depth + 1
 
-        # Use provided external_id or generate a placeholder (later overwritten
-        # by the SessionStart hook with the CLI-native session id).
+        # Use the provided external_id when the caller already knows the child
+        # session's native ID. Otherwise generate a placeholder that lives only
+        # until register() returns, then fall back to child_id; SESSION_START
+        # later replaces that fallback with the CLI-native external_id.
         if config.external_id:
             external_id = config.external_id
             use_provided_external_id = True
@@ -195,10 +197,10 @@ class ChildSessionManager:
 
         child_id = child.id
 
-        # If external_id was provided, keep it. Otherwise update external_id to
-        # match the internal id so the SessionStart hook can find this pre-created
-        # session via the GOBBY_SESSION_ID env var → terminal_context path
-        # (terminal-spawn pattern used by Claude/Gemini/Qwen/Codex).
+        # If external_id was provided, keep it. Otherwise persist child_id as
+        # the fallback external_id so SESSION_START can find this pre-created
+        # row through the terminal_context/GOBBY_SESSION_ID handoff path before
+        # the real CLI-native external_id arrives.
         if not use_provided_external_id:
             self._storage.update(session_id=child_id, external_id=child_id)
         # Re-fetch to get updated external_id

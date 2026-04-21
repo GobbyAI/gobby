@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,6 +24,7 @@ from gobby.servers.websocket.chat.provider_backends import (
     QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+from gobby.sessions.transcripts.base import ParsedMessage
 
 pytestmark = pytest.mark.unit
 
@@ -422,10 +424,6 @@ class TestCodexBackend:
             _transcript_retry_attempts=2,
             _transcript_retry_delay_seconds=0.25,
         )
-
-        from datetime import UTC, datetime
-
-        from gobby.sessions.transcripts.base import ParsedMessage
 
         recovered = ParsedMessage(
             index=0,

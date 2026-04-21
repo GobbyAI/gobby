@@ -69,20 +69,18 @@ def format_skills_markdown_table(skills_list: list[Any]) -> str:
 def render_skills_for_context(skills_with_formats: list[tuple[Any, str]]) -> str:
     """Format skills with pre-resolved injection formats.
 
-    Only emits skills resolved to ``full`` or ``content`` format — skills at
-    ``summary`` are dropped. Summary-tier injection is redundant with MCP
-    progressive discovery (``list_skills`` / ``search_skills`` on
-    ``gobby-skills``) and should be handled by targeted rules, not eager
-    context dumps.
+    Emits expanded sections for ``full``/``content`` skills and a compact
+    summary list for ``summary`` skills.
 
     Args:
         skills_with_formats: List of (ParsedSkill, resolved_format) tuples
 
     Returns:
-        Formatted markdown string with skill content, or empty string if no
-        skill was resolved to an expanded format.
+        Formatted markdown string with skill content and compact summaries, or
+        empty string if nothing was rendered.
     """
     expanded_sections: list[str] = []
+    summaries: list[str] = []
 
     for skill, fmt in skills_with_formats:
         name = getattr(skill, "name", "unknown")
@@ -99,6 +97,15 @@ def render_skills_for_context(skills_with_formats: list[tuple[Any, str]]) -> str
             expanded_sections.append("\n".join(section_lines))
         elif fmt == "content" and content:
             expanded_sections.append(content)
+        elif fmt == "summary":
+            summary = description.strip() if isinstance(description, str) else ""
+            if summary:
+                summaries.append(f"- `{name}`: {summary}")
+            else:
+                summaries.append(f"- `{name}`")
+
+    if summaries:
+        expanded_sections.append("### Skill Summaries\n" + "\n".join(summaries))
 
     return "\n\n".join(expanded_sections)
 

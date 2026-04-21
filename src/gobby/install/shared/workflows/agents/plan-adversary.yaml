@@ -105,6 +105,7 @@ steps:
     on_mcp_success:
       - server: gobby-skills
         tool: get_skill
+        when: "tool_input.name == 'plan-review'"
         action: set_variable
         variable: skill_loaded
         value: true

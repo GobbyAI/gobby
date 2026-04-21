@@ -289,6 +289,53 @@ async def test_broadcast_event_after_tool_failure_backfills_error_from_string_re
 
 
 @pytest.mark.asyncio
+async def test_broadcast_event_after_tool_failure_stringifies_truthy_non_string_error(
+    mock_websocket_server, default_config
+):
+    """Truthy non-string top-level errors should be coerced to strings."""
+    default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_after_tool_event(
+        {
+            "tool_name": "shell",
+            "tool_input": {"cmd": "ls"},
+            "error": {"code": "EFAIL"},
+            "is_error": True,
+        }
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["data"]["error"] == "{'code': 'EFAIL'}"
+
+
+@pytest.mark.asyncio
+async def test_broadcast_event_after_tool_failure_prefers_nested_string_error_over_coerced_top_level(
+    mock_websocket_server, default_config
+):
+    """Nested failure strings should override stringified non-string top-level errors."""
+    default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_after_tool_event(
+        {
+            "tool_name": "shell",
+            "tool_input": {"cmd": "ls"},
+            "error": {"code": "EFAIL"},
+            "tool_response": {"error": "boom"},
+            "is_error": True,
+        }
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["data"]["error"] == "boom"
+
+
+@pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_uses_default_error_message(
     mock_websocket_server, default_config
 ):

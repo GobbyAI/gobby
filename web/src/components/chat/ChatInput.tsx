@@ -170,6 +170,7 @@ export function ChatInput({
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
+  const [pendingSttStart, setPendingSttStart] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
@@ -469,6 +470,14 @@ export function ChatInput({
       resetPTTGesture()
     }
   }, [pttEnabled, resetPTTGesture])
+
+  useEffect(() => {
+    if (!pendingSttStart) return
+    if (!sttEnabled || isRecording || !startRecording) return
+
+    setPendingSttStart(false)
+    void startRecording()
+  }, [isRecording, pendingSttStart, startRecording, sttEnabled])
 
   useEffect(() => {
     if (!isRecording || !cancelRecording) return
@@ -784,11 +793,14 @@ export function ChatInput({
                   variant="ghost"
                   onClick={() => {
                     if (isRecording) {
+                      setPendingSttStart(false)
                       void stopRecording()
                       return
                     }
                     if (!sttEnabled) {
+                      setPendingSttStart(true)
                       onSttEnabledChange(true)
+                      return
                     }
                     void startRecording()
                   }}

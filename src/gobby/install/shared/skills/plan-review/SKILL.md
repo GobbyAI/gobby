@@ -155,7 +155,7 @@ Non-blocking nits never trigger escalation on their own.
 Write findings to the planning task's description under a **round-scoped**
 heading:
 
-```
+```text
 ## Adversary Findings — Round N
 ```
 

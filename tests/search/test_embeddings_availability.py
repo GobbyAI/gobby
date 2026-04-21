@@ -13,7 +13,9 @@ import httpx
 import pytest
 
 from gobby.search.embeddings import (
+    _REACHABILITY_CACHE_MAX_SIZE,
     _clear_reachability_cache,
+    _reachability_cache,
     is_embedding_configured,
     is_embedding_reachable,
 )
@@ -197,3 +199,21 @@ class TestIsEmbeddingReachable:
             b = await is_embedding_reachable(api_base="http://127.0.0.1:1")
         assert a is False and b is False
         assert client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_reachability_cache_prunes_oldest_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        factory, _client = _mock_httpx_client(status=200)
+
+        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+            for index in range(_REACHABILITY_CACHE_MAX_SIZE + 5):
+                await is_embedding_reachable(api_base=f"http://host-{index}:11434/v1")
+
+        assert len(_reachability_cache) == _REACHABILITY_CACHE_MAX_SIZE
+        assert ("http://host-0:11434/v1", False) not in _reachability_cache
+        assert (
+            f"http://host-{_REACHABILITY_CACHE_MAX_SIZE + 4}:11434/v1",
+            False,
+        ) in _reachability_cache
