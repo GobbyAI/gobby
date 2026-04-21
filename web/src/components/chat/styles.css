@@ -1846,7 +1846,6 @@
 }
 
 .command-bar-caret {
-  font-size: 0.6em;
   color: var(--text-muted);
   flex-shrink: 0;
 }
