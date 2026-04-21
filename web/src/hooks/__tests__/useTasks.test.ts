@@ -98,7 +98,10 @@ describe('useTasks', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(mockFetch.fn).toHaveBeenCalledWith(
-      expect.stringContaining('limit=500'),
+      expect.stringContaining('limit=15'),
+    )
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      expect.stringContaining('offset=0'),
     )
     expect(mockFetch.fn).toHaveBeenCalledWith(
       expect.stringContaining('sort_by=updated_at'),
@@ -106,6 +109,42 @@ describe('useTasks', () => {
     expect(mockFetch.fn).toHaveBeenCalledWith(
       expect.stringContaining('sort_order=desc'),
     )
+  })
+
+  it('loadMore fetches the next page with the correct offset and appends results', async () => {
+    const FIRST_PAGE = {
+      ...TASK_LIST_RESPONSE,
+      tasks: SAMPLE_TASKS,
+      total: 4,
+    }
+    const SECOND_PAGE = {
+      ...TASK_LIST_RESPONSE,
+      tasks: [
+        { ...SAMPLE_TASKS[0], id: 'task-3', ref: '#102', seq_num: 102 },
+        { ...SAMPLE_TASKS[1], id: 'task-4', ref: '#103', seq_num: 103 },
+      ],
+      total: 4,
+    }
+    mockFetch.resetRoutes()
+    mockFetch.mockJsonResponse(/\/api\/tasks\?[^]*offset=0/, FIRST_PAGE)
+    mockFetch.mockJsonResponse(/\/api\/tasks\?[^]*offset=2/, SECOND_PAGE)
+
+    const { result } = renderHook(() => useTasks(undefined, 2))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.allTasks).toHaveLength(2)
+    expect(result.current.hasMore).toBe(true)
+    expect(result.current.total).toBe(4)
+
+    await act(async () => {
+      await result.current.loadMore()
+    })
+
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      expect.stringContaining('offset=2'),
+    )
+    expect(result.current.allTasks).toHaveLength(4)
+    expect(result.current.hasMore).toBe(false)
   })
 
   it('re-fetches when filters change', async () => {
