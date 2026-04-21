@@ -475,3 +475,100 @@ def test_setup_pipelines_tools_accessible_without_executor() -> None:
     tool_names = [t["name"] for t in pipelines_registry.list_tools()]
     assert "list_pipelines" in tool_names
     assert "run_pipeline" in tool_names
+
+
+class TestHubApiKeyResolution:
+    """Hub auth at the registries layer resolves from SecretStore, never env."""
+
+    def _build_skills_config(self):
+        from gobby.config.skills import HubConfig, SkillsConfig
+
+        return SkillsConfig(
+            hubs={
+                "skillsmp": HubConfig(
+                    type="skillsmp",
+                    base_url="https://skillsmp.com/api/v1",
+                    auth_key_name="SKILLSMP_API_KEY",
+                ),
+                "clawdhub": HubConfig(type="clawdhub"),  # no auth
+            }
+        )
+
+    def _run_setup_with_captured_hub_manager(self, db, skills_config):
+        """Invoke setup_internal_registries with a sentinel HubManager to capture kwargs."""
+        from unittest.mock import patch as patch_fn
+
+        from gobby.skills.hubs.manager import HubManager
+
+        captured: dict = {}
+
+        class RecordingHubManager(HubManager):
+            def __init__(self, *args, **kwargs):
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+                super().__init__(*args, **kwargs)
+
+        mock_config = MagicMock()
+        mock_config.skills = skills_config
+        mock_config.embeddings = None
+        mock_config.skill_description = None
+        mock_config.get_gobby_tasks_config.return_value.enabled = False
+        mock_config.get_search_config.return_value = None
+
+        # Patch at the source module — registries.py imports HubManager inside
+        # the function body, so it resolves via gobby.skills.hubs at call time.
+        with patch_fn("gobby.skills.hubs.HubManager", RecordingHubManager):
+            setup_internal_registries(_config=mock_config, db=db)
+
+        return captured
+
+    def test_hub_api_key_resolution_ignores_environment(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Env vars are never consulted for hub auth — only SecretStore."""
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.migrations import run_migrations
+
+        db_path = tmp_path / "test.db"
+        db = LocalDatabase(db_path)
+        run_migrations(db)
+        try:
+            # Env has a value but SecretStore does NOT.
+            monkeypatch.setenv("SKILLSMP_API_KEY", "env-bogus-should-be-ignored")
+
+            captured = self._run_setup_with_captured_hub_manager(
+                db, self._build_skills_config()
+            )
+
+            api_keys = captured["kwargs"]["api_keys"]
+            assert "SKILLSMP_API_KEY" not in api_keys
+        finally:
+            db.close()
+
+    def test_hub_api_key_resolution_reads_secret_store(self, tmp_path) -> None:
+        """When a secret is stored in SecretStore, the HubManager receives it."""
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.migrations import run_migrations
+        from gobby.storage.secrets import SecretStore
+
+        db_path = tmp_path / "test.db"
+        db = LocalDatabase(db_path)
+        run_migrations(db)
+        try:
+            SecretStore(db).set(
+                name="SKILLSMP_API_KEY",
+                plaintext_value="stored-secret-value",
+                category="integration",
+                description="test",
+            )
+
+            captured = self._run_setup_with_captured_hub_manager(
+                db, self._build_skills_config()
+            )
+
+            api_keys = captured["kwargs"]["api_keys"]
+            assert api_keys["SKILLSMP_API_KEY"] == "stored-secret-value"
+            # clawdhub has no auth_key_name so it must not leak a key in api_keys.
+            assert len(api_keys) == 1
+        finally:
+            db.close()

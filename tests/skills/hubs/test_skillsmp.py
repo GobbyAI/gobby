@@ -70,8 +70,11 @@ class TestSkillsMPSearch:
             base_url="https://skillsmp.com/api/v1",
         )
 
-        with pytest.raises(RuntimeError, match="API key not configured"):
+        with pytest.raises(RuntimeError, match="API key not configured") as excinfo:
             await provider.search("test")
+        # Error message directs users to gobby install, not env vars.
+        assert "gobby install" in str(excinfo.value)
+        assert "environment" not in str(excinfo.value).lower()
 
     @pytest.mark.asyncio
     async def test_search_returns_hub_skill_info_list(self) -> None:
@@ -150,6 +153,9 @@ class TestSkillsMPDiscover:
         result = await provider.discover()
         assert result["authenticated"] is False
         assert "SKILLSMP_API_KEY" in result["error"]
+        # Error message directs users to gobby install (SecretStore), not env vars.
+        assert "gobby install" in result["error"] or "gobby secrets set" in result["error"]
+        assert "environment" not in result["error"].lower()
 
 
 class TestSkillsMPListSkills:
@@ -163,8 +169,10 @@ class TestSkillsMPListSkills:
             base_url="https://skillsmp.com/api/v1",
         )
 
-        with pytest.raises(RuntimeError, match="API key not configured"):
+        with pytest.raises(RuntimeError, match="API key not configured") as excinfo:
             await provider.list_skills()
+        assert "gobby install" in str(excinfo.value)
+        assert "environment" not in str(excinfo.value).lower()
 
     @pytest.mark.asyncio
     async def test_list_skills_returns_hub_skill_info_list(self) -> None:

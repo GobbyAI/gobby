@@ -421,3 +421,145 @@ class TestSearchAll:
         assert results[0]["slug"] == "skill-a"
         # Unknown hub should be reported in errors
         assert "unknown-hub" in errors
+
+
+class TestAuthStatus:
+    """Tests for HubManager.auth_status."""
+
+    def test_auth_status_no_auth_required(self) -> None:
+        """Hubs without auth_key_name report auth_required=False, auth_configured=True."""
+        configs = {"open-hub": HubConfig(type="clawdhub", base_url="https://x.com")}
+        manager = HubManager(configs=configs)
+
+        status = manager.auth_status("open-hub")
+
+        assert status == {"auth_required": False, "auth_configured": True}
+
+    def test_auth_status_configured(self) -> None:
+        """Hub with auth_key_name present in api_keys reports auth_configured=True."""
+        configs = {
+            "hub": HubConfig(type="skillsmp", base_url="https://h.com", auth_key_name="KEY"),
+        }
+        manager = HubManager(configs=configs, api_keys={"KEY": "val"})
+
+        status = manager.auth_status("hub")
+
+        assert status["auth_required"] is True
+        assert status["auth_key_name"] == "KEY"
+        assert status["auth_configured"] is True
+
+    def test_auth_status_missing(self) -> None:
+        """Hub with auth_key_name NOT in api_keys reports auth_configured=False."""
+        configs = {
+            "hub": HubConfig(type="skillsmp", base_url="https://h.com", auth_key_name="KEY"),
+        }
+        manager = HubManager(configs=configs, api_keys={})
+
+        status = manager.auth_status("hub")
+
+        assert status["auth_required"] is True
+        assert status["auth_key_name"] == "KEY"
+        assert status["auth_configured"] is False
+
+
+class TestWarnMissingAuth:
+    """Tests for HubManager.warn_missing_auth."""
+
+    def test_warn_missing_auth_logs_for_misconfigured_hubs(self, caplog) -> None:
+        """Emits one WARNING per hub with missing required auth; none for others."""
+        import logging
+
+        configs = {
+            "open": HubConfig(type="clawdhub", base_url="https://o.com"),
+            "configured": HubConfig(
+                type="skillsmp", base_url="https://c.com", auth_key_name="HAS_KEY"
+            ),
+            "missing-a": HubConfig(
+                type="skillsmp", base_url="https://a.com", auth_key_name="KEY_A"
+            ),
+            "missing-b": HubConfig(
+                type="skillsmp", base_url="https://b.com", auth_key_name="KEY_B"
+            ),
+        }
+        manager = HubManager(configs=configs, api_keys={"HAS_KEY": "v"})
+
+        with caplog.at_level(logging.WARNING, logger="gobby.skills.hubs.manager"):
+            manager.warn_missing_auth()
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        # One warning per misconfigured hub: missing-a, missing-b
+        assert len(warning_records) == 2
+        hubs_warned = {r.getMessage() for r in warning_records}
+        assert any("missing-a" in msg for msg in hubs_warned)
+        assert any("missing-b" in msg for msg in hubs_warned)
+        # No WARNING for the open or configured hubs
+        assert not any("'open'" in msg for msg in hubs_warned)
+        assert not any("'configured'" in msg for msg in hubs_warned)
+        # Message directs at gobby install, not env
+        for msg in hubs_warned:
+            assert "gobby install" in msg
+            assert "environment" not in msg.lower()
+
+    def test_lazy_create_provider_does_not_emit_warning(self, caplog) -> None:
+        """The lazy warning at provider-creation time is now DEBUG, not WARNING.
+
+        Prevents duplication with the one-shot warn_missing_auth at startup.
+        """
+        import logging
+
+        configs = {
+            "hub": HubConfig(
+                type="skillsmp", base_url="https://h.com", auth_key_name="KEY"
+            ),
+        }
+        manager = HubManager(configs=configs, api_keys={})
+        manager.register_provider_factory("skillsmp", MockProvider)
+
+        with caplog.at_level(logging.WARNING, logger="gobby.skills.hubs.manager"):
+            manager.get_provider("hub")
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records == []
+
+
+class TestResolveHubApiKeys:
+    """Tests for the module-level resolve_hub_api_keys helper."""
+
+    def test_resolve_hub_api_keys_reads_from_secret_store(self) -> None:
+        """Keys are read from SecretStore.get by auth_key_name."""
+        from unittest.mock import MagicMock
+
+        from gobby.skills.hubs.manager import resolve_hub_api_keys
+
+        configs = {
+            "hub-a": HubConfig(type="skillsmp", base_url="https://a.com", auth_key_name="KEY_A"),
+            "hub-b": HubConfig(type="skillsmp", base_url="https://b.com", auth_key_name="KEY_B"),
+            "hub-c": HubConfig(type="clawdhub", base_url="https://c.com"),  # no auth
+        }
+
+        store = MagicMock()
+        store.get.side_effect = lambda name: {"KEY_A": "val-a", "KEY_B": "val-b"}.get(name)
+
+        api_keys = resolve_hub_api_keys(configs, store)
+
+        assert api_keys == {"KEY_A": "val-a", "KEY_B": "val-b"}
+        # hub-c (no auth_key_name) is skipped entirely
+        # SecretStore is queried only for keys with auth_key_name set
+        called_names = {call.args[0] for call in store.get.call_args_list}
+        assert called_names == {"KEY_A", "KEY_B"}
+
+    def test_resolve_hub_api_keys_skips_missing_secrets(self) -> None:
+        """Missing secrets are omitted from the result (not stored as empty)."""
+        from unittest.mock import MagicMock
+
+        from gobby.skills.hubs.manager import resolve_hub_api_keys
+
+        configs = {
+            "hub": HubConfig(type="skillsmp", base_url="https://h.com", auth_key_name="KEY"),
+        }
+        store = MagicMock()
+        store.get.return_value = None
+
+        api_keys = resolve_hub_api_keys(configs, store)
+
+        assert api_keys == {}

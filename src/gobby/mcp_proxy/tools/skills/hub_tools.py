@@ -37,13 +37,13 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             for name in hub_names:
                 config = ctx.hub_manager.get_config(name)
-                hubs_list.append(
-                    {
-                        "name": name,
-                        "type": config.type,
-                        "base_url": config.base_url,
-                    }
-                )
+                entry = {
+                    "name": name,
+                    "type": config.type,
+                    "base_url": config.base_url,
+                }
+                entry.update(ctx.hub_manager.auth_status(name))
+                hubs_list.append(entry)
 
             return {
                 "success": True,
@@ -98,9 +98,8 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 "success": True,
                 "count": len(results),
                 "results": results,
+                "hub_errors": errors,
             }
-            if errors:
-                response["hub_errors"] = errors
             return response
         except Exception as e:
             return {"success": False, "error": str(e)}

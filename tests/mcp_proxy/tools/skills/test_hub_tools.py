@@ -39,7 +39,11 @@ def mock_hub_manager():
     # Configure get_config to return test configs
     configs = {
         "clawdhub": HubConfig(type="clawdhub"),
-        "skillsmp": HubConfig(type="skillsmp", base_url="https://skillsmp.com/api/v1"),
+        "skillsmp": HubConfig(
+            type="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_key_name="SKILLSMP_API_KEY",
+        ),
         "my-collection": HubConfig(type="github-collection"),
     }
 
@@ -47,6 +51,19 @@ def mock_hub_manager():
         return configs[name]
 
     manager.get_config.side_effect = get_config
+
+    # Default auth_status: claude-plugins/clawdhub are no-auth, skillsmp requires KEY.
+    def auth_status(name: str) -> dict:
+        cfg = configs[name]
+        if cfg.auth_key_name is None:
+            return {"auth_required": False, "auth_configured": True}
+        return {
+            "auth_required": True,
+            "auth_key_name": cfg.auth_key_name,
+            "auth_configured": False,
+        }
+
+    manager.auth_status.side_effect = auth_status
 
     return manager
 
@@ -237,3 +254,66 @@ class TestSearchHubTool:
 
         assert result["success"] is False
         assert "hub" in result["error"].lower() or "configured" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_search_hub_always_includes_hub_errors_even_on_success(
+        self, db, mock_hub_manager
+    ):
+        """Response always includes hub_errors (empty dict) — not gated on truthy errors."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        mock_hub_manager.search_all = AsyncMock(return_value=([], {}))
+
+        registry = create_skills_registry(db, hub_manager=mock_hub_manager)
+        tool = registry.get_tool("search_hub")
+
+        result = await tool(query="anything")
+
+        assert result["success"] is True
+        assert "hub_errors" in result
+        assert result["hub_errors"] == {}
+
+    @pytest.mark.asyncio
+    async def test_search_hub_includes_hub_errors_from_failed_hub(
+        self, db, mock_hub_manager
+    ):
+        """Errored hubs surface their error message in hub_errors."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        mock_hub_manager.search_all = AsyncMock(
+            return_value=([{"slug": "x", "hub_name": "clawdhub"}], {"skillsmp": "auth failed"})
+        )
+
+        registry = create_skills_registry(db, hub_manager=mock_hub_manager)
+        tool = registry.get_tool("search_hub")
+
+        result = await tool(query="anything")
+
+        assert result["success"] is True
+        assert result["hub_errors"] == {"skillsmp": "auth failed"}
+        assert result["count"] == 1
+
+
+class TestListHubsAuthStatus:
+    """list_hubs merges per-hub auth_status into each entry."""
+
+    @pytest.mark.asyncio
+    async def test_list_hubs_includes_auth_status(self, db, mock_hub_manager):
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(db, hub_manager=mock_hub_manager)
+        tool = registry.get_tool("list_hubs")
+
+        result = tool()
+
+        assert result["success"] is True
+        hubs_by_name = {h["name"]: h for h in result["hubs"]}
+
+        # clawdhub: no auth required
+        assert hubs_by_name["clawdhub"]["auth_required"] is False
+        assert hubs_by_name["clawdhub"]["auth_configured"] is True
+
+        # skillsmp: auth required, not configured (per mock fixture)
+        assert hubs_by_name["skillsmp"]["auth_required"] is True
+        assert hubs_by_name["skillsmp"]["auth_key_name"] == "SKILLSMP_API_KEY"
+        assert hubs_by_name["skillsmp"]["auth_configured"] is False

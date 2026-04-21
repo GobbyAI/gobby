@@ -43,7 +43,7 @@ class HubConfig(BaseModel):
 
     auth_key_name: str | None = Field(
         default=None,
-        description="Environment variable name for auth key",
+        description="Secret name in SecretStore for the hub's auth key",
     )
 
 

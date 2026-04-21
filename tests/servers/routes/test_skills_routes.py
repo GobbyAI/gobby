@@ -319,6 +319,80 @@ class TestHubs:
         response = client.get("/api/skills/hubs/search?q=test")
         assert response.status_code == 500
 
+    def test_search_hubs_none_includes_empty_hub_errors(
+        self, client: TestClient, server
+    ) -> None:
+        """No-manager branch now returns a stable shape with an empty hub_errors dict."""
+        server.hub_manager = None
+        response = client.get("/api/skills/hubs/search?q=test")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["hub_errors"] == {}
+
+    def test_search_hubs_always_includes_hub_errors_on_success(
+        self, client: TestClient, hub_manager
+    ) -> None:
+        """200 responses always carry a hub_errors key even when no hub failed."""
+        hub_manager.search_all = AsyncMock(return_value=([{"name": "h1"}], {}))
+        response = client.get("/api/skills/hubs/search?q=test")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["hub_errors"] == {}
+
+    def test_search_hubs_surfaces_per_hub_errors(
+        self, client: TestClient, hub_manager
+    ) -> None:
+        """Per-hub errors from search_all are surfaced in hub_errors."""
+        hub_manager.search_all = AsyncMock(
+            return_value=([{"name": "h1"}], {"skillsmp": "auth failed"})
+        )
+        response = client.get("/api/skills/hubs/search?q=test")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["hub_errors"] == {"skillsmp": "auth failed"}
+        assert body["count"] == 1
+
+    def test_list_hubs_includes_auth_status(
+        self, client: TestClient, hub_manager
+    ) -> None:
+        """Each /hubs entry carries auth_required / auth_configured / auth_key_name."""
+        hub_manager.list_hubs.return_value = ["open-hub", "authed-hub"]
+
+        open_cfg = MagicMock()
+        open_cfg.type = "clawdhub"
+        open_cfg.base_url = None
+        open_cfg.repo = None
+
+        authed_cfg = MagicMock()
+        authed_cfg.type = "skillsmp"
+        authed_cfg.base_url = "https://skillsmp.com/api/v1"
+        authed_cfg.repo = None
+
+        def get_config(name):
+            return {"open-hub": open_cfg, "authed-hub": authed_cfg}[name]
+
+        hub_manager.get_config.side_effect = get_config
+
+        def auth_status(name):
+            if name == "open-hub":
+                return {"auth_required": False, "auth_configured": True}
+            return {
+                "auth_required": True,
+                "auth_key_name": "SKILLSMP_API_KEY",
+                "auth_configured": False,
+            }
+
+        hub_manager.auth_status.side_effect = auth_status
+
+        response = client.get("/api/skills/hubs")
+        assert response.status_code == 200
+        hubs = {h["name"]: h for h in response.json()["hubs"]}
+        assert hubs["open-hub"]["auth_required"] is False
+        assert hubs["open-hub"]["auth_configured"] is True
+        assert hubs["authed-hub"]["auth_required"] is True
+        assert hubs["authed-hub"]["auth_key_name"] == "SKILLSMP_API_KEY"
+        assert hubs["authed-hub"]["auth_configured"] is False
+
     @patch("gobby.skills.loader.SkillLoader")
     def test_install_from_hub(
         self, MockLoader, client: TestClient, hub_manager, skill_manager, websocket_server

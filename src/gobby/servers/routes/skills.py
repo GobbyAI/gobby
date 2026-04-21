@@ -317,14 +317,14 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             for name in hub_names:
                 try:
                     config = server.hub_manager.get_config(name)
-                    hubs.append(
-                        {
-                            "name": name,
-                            "type": config.type,
-                            "base_url": config.base_url,
-                            "repo": config.repo,
-                        }
-                    )
+                    entry: dict[str, Any] = {
+                        "name": name,
+                        "type": config.type,
+                        "base_url": config.base_url,
+                        "repo": config.repo,
+                    }
+                    entry.update(server.hub_manager.auth_status(name))
+                    hubs.append(entry)
                 except KeyError:
                     pass
             return {"hubs": hubs}
@@ -340,7 +340,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Search for skills across configured hubs."""
         if server.hub_manager is None:
-            return {"query": q, "results": [], "count": 0}
+            return {"query": q, "results": [], "count": 0, "hub_errors": {}}
         try:
             hub_names = [hub_name] if hub_name else None
             results, errors = await server.hub_manager.search_all(
@@ -352,9 +352,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 "query": q,
                 "results": results,
                 "count": len(results),
+                "hub_errors": errors,
             }
-            if errors:
-                response["hub_errors"] = errors
             return response
         except Exception as e:
             logger.error(f"Failed to search hubs: {e}")

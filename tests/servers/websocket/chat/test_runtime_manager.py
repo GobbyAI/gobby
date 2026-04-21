@@ -423,9 +423,24 @@ class TestCodexBackend:
             _transcript_retry_delay_seconds=0.25,
         )
 
+        from datetime import UTC, datetime
+
+        from gobby.sessions.transcripts.base import ParsedMessage
+
+        recovered = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="Recovered from transcript",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(UTC),
+            raw_json={},
+        )
         parsed_batches = [
             [],
-            [SimpleNamespace(role="assistant", content="Recovered from transcript")],
+            [recovered],
         ]
 
         sleep = AsyncMock()

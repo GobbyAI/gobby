@@ -105,6 +105,103 @@ _API_KEY_PROMPTS = [
 ]
 
 
+def _prompt_hub_api_keys(no_interactive: bool = False) -> dict[str, Any]:
+    """Prompt for skill-hub API keys driven by resolved SkillsConfig.hubs.
+
+    Iterates hubs whose ``auth_key_name`` is set and whose secret isn't already
+    stored in SecretStore. Prompts with hidden input, persists with category
+    ``integration``. Env vars are never consulted (hub auth resolves from
+    SecretStore only).
+
+    Returns:
+        Dict with ``stored`` / ``skipped`` / ``already_configured`` counts and
+        ``unresolved``: list of ``(hub_name, auth_key_name)`` tuples for hubs
+        whose secret is still not stored after this call. Callers can use
+        ``unresolved`` to drive follow-up help text.
+    """
+    result: dict[str, Any] = {
+        "stored": 0,
+        "skipped": 0,
+        "already_configured": 0,
+        "unresolved": [],  # list[tuple[str, str]] of (hub_name, auth_key_name)
+    }
+
+    try:
+        from gobby.cli.utils import load_full_config_from_db
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.secrets import SecretStore
+
+        config = load_full_config_from_db()
+        skills_cfg = config.skills
+        # Must match the resolved config's DB path — LocalDatabase() defaults
+        # to ~/.gobby/gobby-hub.db and would silently bypass a custom path.
+        db = LocalDatabase(Path(config.database_path).expanduser())
+        store = SecretStore(db)
+    except Exception as e:
+        click.echo(f"  Warning: Could not initialize hub key prompt: {e}")
+        return result
+
+    # Flatten to (hub_name, auth_key_name) so mypy sees auth_key_name as str.
+    auth_hubs: list[tuple[str, str]] = [
+        (name, cfg.auth_key_name)
+        for name, cfg in skills_cfg.hubs.items()
+        if cfg.auth_key_name
+    ]
+    pending: list[tuple[str, str]] = [
+        (name, key) for name, key in auth_hubs if not store.exists(key)
+    ]
+    result["already_configured"] = len(auth_hubs) - len(pending)
+
+    if no_interactive:
+        result["unresolved"] = list(pending)
+        return result
+
+    if not pending:
+        return result
+
+    click.echo("")
+    click.echo("-" * 40)
+    click.echo("Skill Hub API Keys (optional)")
+    click.echo("-" * 40)
+    click.echo("These enable authenticated skill hubs. Press Enter to skip.")
+    click.echo("")
+
+    for idx, (hub_name, auth_key_name) in enumerate(pending):
+        try:
+            value = click.prompt(
+                f"  {hub_name} ({auth_key_name})",
+                default="",
+                hide_input=True,
+                show_default=False,
+            )
+        except (click.Abort, EOFError):
+            click.echo("")
+            # Remaining pending hubs become unresolved.
+            for rh_name, rh_key in pending[idx:]:
+                result["unresolved"].append((rh_name, rh_key))
+            break
+
+        if value.strip():
+            try:
+                store.set(
+                    name=auth_key_name,
+                    plaintext_value=value.strip(),
+                    category="integration",
+                    description=f"API key for {hub_name} skill hub",
+                )
+                click.echo(f"    Stored {auth_key_name}")
+                result["stored"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to store {auth_key_name}: {e}")
+                click.echo(f"    Warning: Failed to store {auth_key_name}: {e}")
+                result["unresolved"].append((hub_name, auth_key_name))
+        else:
+            result["skipped"] += 1
+            result["unresolved"].append((hub_name, auth_key_name))
+
+    return result
+
+
 def _prompt_api_keys(no_interactive: bool = False) -> dict[str, Any]:
     """Prompt for API keys and store them in the secret store.
 
@@ -604,11 +701,14 @@ def _echo_install_summary(
     click.echo("  3. Your sessions will now be tracked locally")
 
     api_key_result = _prompt_api_keys(no_interactive=no_interactive_flag)
-    if no_interactive_flag or (
+    hub_key_result = _prompt_hub_api_keys(no_interactive=no_interactive_flag)
+
+    mcp_nothing_configured = (
         api_key_result["stored"] == 0
         and api_key_result["already_configured"] == 0
         and api_key_result["env_found"] == 0
-    ):
+    )
+    if no_interactive_flag or mcp_nothing_configured:
         click.echo("\nMCP Servers (via Gobby proxy):")
         click.echo("  Configure API keys to enable external integrations:")
         click.echo("    gobby secrets set github_personal_access_token")
@@ -616,6 +716,12 @@ def _echo_install_summary(
         click.echo("    gobby secrets set openai_api_key")
         click.echo("    gobby secrets set context7_api_key")
         click.echo("  Or set environment variables (GITHUB_PERSONAL_ACCESS_TOKEN, etc.)")
+        click.echo("  Restart the daemon after setting: gobby restart")
+
+    if hub_key_result["unresolved"]:
+        click.echo("\nSkill hubs with missing API keys:")
+        for hub_name, auth_key_name in hub_key_result["unresolved"]:
+            click.echo(f"    gobby secrets set {auth_key_name}    # for {hub_name} hub")
         click.echo("  Restart the daemon after setting: gobby restart")
 
     return all_success

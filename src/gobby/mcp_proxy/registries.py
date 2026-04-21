@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -359,17 +358,14 @@ def setup_internal_registries(
             HubManager,
             SkillsMPProvider,
         )
+        from gobby.skills.hubs.manager import resolve_hub_api_keys
+        from gobby.storage.secrets import SecretStore
 
         # Get skills config (or use defaults)
         skills_config = _config.skills if _config and hasattr(_config, "skills") else SkillsConfig()
 
-        # Resolve hub API keys from env vars
-        api_keys: dict[str, str] = {}
-        for _hub_name, hub_config in skills_config.hubs.items():
-            if hub_config.auth_key_name:
-                value = os.environ.get(hub_config.auth_key_name)
-                if value:
-                    api_keys[hub_config.auth_key_name] = value
+        # Resolve hub API keys from SecretStore — never from env.
+        api_keys = resolve_hub_api_keys(skills_config.hubs, SecretStore(db))
 
         # Create hub manager with configured hubs
         hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
@@ -382,6 +378,9 @@ def setup_internal_registries(
         hub_manager._skill_description_config = (
             getattr(_config, "skill_description", None) if _config else None
         )
+
+        # Single-shot startup warning for hubs with missing required auth.
+        hub_manager.warn_missing_auth()
 
         _emb_cfg = _config.embeddings if _config else None
         skills_registry = create_skills_registry(
