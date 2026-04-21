@@ -505,6 +505,53 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_call_tool_allowed_when_enforce_flag_false(self, engine) -> None:
+        """call_tool should be allowed when enforce_tool_schema_check=False.
+
+        Guards #12135: pipeline sessions seed this flag to False to bypass the
+        rule independent of event-time source resolution, which races against
+        the just-written pipeline session row.  Uses source=CODEX here to
+        simulate the exact failure mode (source resolution defaulted to CODEX
+        because the session row was not yet visible).
+        """
+        variables = {
+            "enforce_tool_schema_check": False,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks-ops",
+                "tool_name": "start_expansion_run",
+                "arguments": {"task_id": "#123"},
+            },
+            source=SessionSource.CODEX,
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_get_tool_schema_allowed_when_enforce_flag_false(self, engine) -> None:
+        """get_tool_schema should also be allowed when enforce_tool_schema_check=False.
+
+        Sibling of the call_tool case above — same session-variable short-circuit
+        covers require-server-listed-for-schema too.
+        """
+        variables = {
+            "enforce_tool_schema_check": False,
+            "listed_servers": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__get_tool_schema",
+            tool_input={"server_name": "gobby-tasks-ops", "tool_name": "get_expansion_run"},
+            source=SessionSource.CODEX,
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_call_tool_allowed_for_discovery_tools(self, engine) -> None:
         """call_tool should allow discovery tools (list_tools, etc.) without schema."""
         variables = {
