@@ -450,10 +450,8 @@ function parseGeminiModelInfo(model: ProviderModelOption): ParsedModelInfo {
 
 function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
   const rawValue = model.value || model.label;
-  const authMatch = rawValue.match(/\(([^)]+)\)$/);
-  const authSuffix = authMatch?.[1] ? ` (${titleCase(authMatch[1].replace(/-/g, " "))})` : "";
-  const modelId = authMatch ? rawValue.slice(0, authMatch.index).trim() : rawValue;
-  const displayLabel = humanizeFallbackModelLabel(model.label || modelId) + authSuffix;
+  const modelId = rawValue.replace(/(?:\s*\([^)]*\))+$/, "").trim();
+  const displayLabel = humanizeFallbackModelLabel(modelId);
   const normalized = normalizeModelIdentifier(modelId) ?? "";
 
   let strengthRank = 0;

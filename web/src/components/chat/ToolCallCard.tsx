@@ -325,7 +325,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
         {exitCode !== 0 && (
           <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
         )}
-        <pre className="bg-muted rounded p-2 overflow-x-auto text-foreground max-h-96 overflow-y-auto font-mono text-xs">
+        <pre className="bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs">
           {resultStr}
         </pre>
       </div>
@@ -350,12 +350,21 @@ function ToolResultContent({ call }: { call: ToolCall }) {
       style={highlighterTheme}
       language="json"
       PreTag="div"
-      customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+      wrapLongLines
+      customStyle={{
+        margin: 0,
+        borderRadius: '0.25rem',
+        maxHeight: '24rem',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+      }}
     >
       {resultStr}
     </SyntaxHighlighter>
   ) : (
-    <pre className="bg-muted rounded p-2 overflow-x-auto text-foreground max-h-96 overflow-y-auto font-mono text-xs">
+    <pre className="bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs">
       {resultStr}
     </pre>
   )

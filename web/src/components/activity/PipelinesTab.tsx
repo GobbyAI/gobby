@@ -262,7 +262,10 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {/* Detail pane */}
       {selectedId && detailExec && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/30">
+          <div
+            className="flex items-center justify-between gap-3 px-3 border-b border-border"
+            style={{ height: 40, background: "var(--bg-secondary)" }}
+          >
             <div className="flex items-center gap-2 min-w-0">
               <PipelineStatusDot status={detailExec.status} />
               <span className="text-xs font-medium text-foreground truncate">{detailExec.pipeline_name}</span>
@@ -272,11 +275,25 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                 </span>
               )}
             </div>
+            {detailExec.steps && detailExec.steps.length > 0 && (
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
+                <span>{detailExec.steps.length} step{detailExec.steps.length !== 1 ? 's' : ''}</span>
+                {detailExec.steps.filter((step) => step.status === 'completed' || step.status === 'success').length > 0 && (
+                  <span className="text-green-400">
+                    {detailExec.steps.filter((step) => step.status === 'completed' || step.status === 'success').length} passed
+                  </span>
+                )}
+                {detailExec.steps.filter((step) => step.status === 'failed' || step.status === 'error').length > 0 && (
+                  <span className="text-red-400">
+                    {detailExec.steps.filter((step) => step.status === 'failed' || step.status === 'error').length} failed
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto">
             {detailExec.steps && detailExec.steps.length > 0 ? (
               <>
-                <StepSummaryBar steps={detailExec.steps} />
                 <div className="pipeline-steps-timeline">
                   {detailExec.steps.map((step, i) => (
                     <StepDisplay key={step.step_id ?? i} step={step} index={i} />
@@ -292,18 +309,6 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     </div>
   )
 })
-
-function StepSummaryBar({ steps }: { steps: StepData[] }) {
-  const completed = steps.filter((s) => s.status === 'completed' || s.status === 'success').length
-  const failed = steps.filter((s) => s.status === 'failed' || s.status === 'error').length
-  return (
-    <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border">
-      <span>{steps.length} step{steps.length !== 1 ? 's' : ''}</span>
-      {completed > 0 && <span className="text-green-400">{completed} passed</span>}
-      {failed > 0 && <span className="text-red-400">{failed} failed</span>}
-    </div>
-  )
-}
 
 function ExecutionStatusIcon({ status }: { status: string }) {
   if (status === 'completed' || status === 'success') {

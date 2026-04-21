@@ -161,6 +161,12 @@ export function ChatPage({
     setFocusSessionId(null);
   }, []);
 
+  useEffect(() => {
+    if (isMobile) {
+      setIsPinned(false);
+    }
+  }, [isMobile, setIsPinned]);
+
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
       const currentSessionId = chat.dbSessionId;

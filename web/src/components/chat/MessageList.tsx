@@ -84,14 +84,16 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   if (messages.length === 0 && !isThinking) {
     return (
       <div className="chat-scaled flex-1 min-h-0 flex items-center justify-center">
-        <div className="flex flex-col items-center text-center text-muted-foreground gap-3">
+        <div className="chat-empty-state">
           {isLoadingMessages ? (
             <p className="text-sm animate-pulse">Loading messages...</p>
           ) : (
             <>
-              <ChatEmptyIcon />
-              <div className="text-lg">Chat</div>
-              <p className="text-sm">Start a conversation with Gobby</p>
+              <div className="chat-empty-state__icon" aria-hidden="true">
+                <ChatEmptyIcon />
+              </div>
+              <div className="chat-empty-state__title">Chat</div>
+              <p className="chat-empty-state__copy">Start a conversation with Gobby.</p>
             </>
           )}
         </div>

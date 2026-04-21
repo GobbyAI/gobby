@@ -1741,6 +1741,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
   padding: 0 0.75rem;
   height: 40px;
   background: var(--bg-secondary);
@@ -1774,6 +1775,7 @@
   cursor: pointer;
   border-radius: 0.25rem;
   font-size: calc(var(--font-size-base) * 0.8);
+  flex-shrink: 0;
   transition:
     background 0.1s,
     color 0.1s;
@@ -1796,12 +1798,14 @@
   border-radius: 0.25rem;
   font-size: calc(var(--font-size-base) * 0.8);
   min-width: 0;
+  flex: 1 1 auto;
+  max-width: 100%;
   transition: background 0.1s;
 }
 
 @media (max-width: 768px) {
   .command-bar-session .command-bar-title {
-    max-width: 40vw;
+    max-width: none;
   }
 }
 
@@ -1823,6 +1827,8 @@
 }
 
 .command-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2104,6 +2110,33 @@
   font-size: calc(var(--font-size-base) * 0.85);
   padding: 2rem;
   text-align: center;
+}
+
+.chat-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.chat-empty-state__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+}
+
+.chat-empty-state__title {
+  font-size: 1.125rem;
+  color: var(--text-secondary);
+}
+
+.chat-empty-state__copy {
+  max-width: 26rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
 }
 
 /* ============================================
@@ -2992,6 +3025,13 @@
 
 .chat-input-controls {
   justify-content: flex-start;
+}
+
+.chat-input-controls__meta {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .chat-input-model-controls {

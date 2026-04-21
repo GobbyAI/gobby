@@ -99,24 +99,30 @@ function getSandboxBadge(sandboxEnabled: boolean): {
 }
 
 function renderBadges(entry: WatchingSessionEntry) {
-  const typeBadge = getSessionTypeBadge(entry.sessionType);
-  const agentBadge = getAgentBadge(entry.agentRunId);
-  const sandboxBadge = getSandboxBadge(entry.sandboxEnabled);
+  const badges = [
+    getSessionTypeBadge(entry.sessionType),
+    getSandboxBadge(entry.sandboxEnabled),
+    getAgentBadge(entry.agentRunId),
+  ]
+    .filter(
+      (
+        badge,
+      ): badge is {
+        label: string;
+        className: string;
+      } => Boolean(badge),
+    )
+    .sort((left, right) =>
+      left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
+    );
+
   return (
     <>
-      <span className={`session-kind-badge ${typeBadge.className}`}>
-        {typeBadge.label}
-      </span>
-      {sandboxBadge && (
-        <span className={`session-kind-badge ${sandboxBadge.className}`}>
-          {sandboxBadge.label}
+      {badges.map((badge) => (
+        <span key={`${badge.className}:${badge.label}`} className={`session-kind-badge ${badge.className}`}>
+          {badge.label}
         </span>
-      )}
-      {agentBadge && (
-        <span className={`session-kind-badge ${agentBadge.className}`}>
-          {agentBadge.label}
-        </span>
-      )}
+      ))}
     </>
   );
 }

@@ -11,10 +11,15 @@ export const CanvasTab = memo(function CanvasTab({ state, onClose, onClearAll }:
   if (!state) {
     return (
       <div className="activity-tab-empty">
-        <p>No canvas active</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          Interactive surfaces appear here when generated
-        </p>
+        <div className="chat-empty-state">
+          <div className="chat-empty-state__icon" aria-hidden="true">
+            <CanvasEmptyIcon />
+          </div>
+          <div className="chat-empty-state__title">A2UI Canvas</div>
+          <p className="chat-empty-state__copy">
+            Interactive surfaces appear here when generated.
+          </p>
+        </div>
       </div>
     )
   }
@@ -53,3 +58,14 @@ export const CanvasTab = memo(function CanvasTab({ state, onClose, onClearAll }:
     </div>
   )
 })
+
+function CanvasEmptyIcon() {
+  return (
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19l7-7 3 3-7 7-3-3z" />
+      <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+      <path d="M2 2l7.586 7.586" />
+      <circle cx="11" cy="11" r="2" />
+    </svg>
+  )
+}

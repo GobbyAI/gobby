@@ -369,6 +369,11 @@ export function ChatInput({
       ? visibleModels
       : [{ value: currentModel || 'default', label: getModelLabel(providerModelCatalog, effectiveProvider, currentModel) }]
   const resolvedModelValue = currentModel || modelOptions[0]?.value || 'default'
+  const resolvedModelLabel = getModelLabel(
+    providerModelCatalog,
+    effectiveProvider,
+    resolvedModelValue,
+  )
   const reasoningOptions = getReasoningOptionsForModel(
     providerModelCatalog,
     effectiveProvider,
@@ -668,6 +673,29 @@ export function ChatInput({
           </div>
         )}
 
+        {queuedFiles.length > 0 && (
+          <div className="flex gap-2 mb-2 flex-wrap">
+            {queuedFiles.map((qf) => (
+              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
+                {qf.previewUrl ? (
+                  <img src={qf.previewUrl} alt={qf.file.name} className="w-16 h-16 object-cover" />
+                ) : (
+                  <div className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
+                    <PaperclipIcon />
+                    <span className="max-w-[100px] truncate">{qf.file.name}</span>
+                  </div>
+                )}
+                <button
+                  className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
+                  onClick={() => removeFile(qf.id)}
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="chat-input-meta">
           <div
             className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
@@ -729,61 +757,40 @@ export function ChatInput({
                   <PanelIcon pinned={isActivityPanelPinned} />
                 </Button>
               )}
-            </div>
-            <div className="chat-input-toolbar__right">
-              {!canSelectModel && onWorktreeChange && (
+              {onWorktreeChange && (
                 <BranchIndicator
                   currentBranch={currentBranch ?? null}
                   worktreePath={worktreePath ?? null}
                   projectId={projectId ?? null}
                   onWorktreeChange={onWorktreeChange}
                   disabled={disabled || worktreePickerDisabled}
+                  variant={canSelectModel ? 'select' : 'toolbar'}
                 />
               )}
-              <ContextUsageIndicator
-                totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-                outputTokens={contextUsage?.outputTokens ?? 0}
-                contextWindow={contextUsage?.contextWindow ?? null}
-                staleMs={contextUsageStaleMs}
-                uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-                cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-                cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-              />
+            </div>
+            <div className="chat-input-toolbar__right">
+              {!canSelectModel && (
+                <ContextUsageIndicator
+                  totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+                  outputTokens={contextUsage?.outputTokens ?? 0}
+                  contextWindow={contextUsage?.contextWindow ?? null}
+                  staleMs={contextUsageStaleMs}
+                  uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+                  cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+                  cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+                />
+              )}
             </div>
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
           </div>
         </div>
-
-        {/* File previews */}
-        {queuedFiles.length > 0 && (
-          <div className="flex gap-2 mb-2 flex-wrap">
-            {queuedFiles.map((qf) => (
-              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
-                {qf.previewUrl ? (
-                  <img src={qf.previewUrl} alt={qf.file.name} className="w-16 h-16 object-cover" />
-                ) : (
-                  <div className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
-                    <PaperclipIcon />
-                    <span className="max-w-[100px] truncate">{qf.file.name}</span>
-                  </div>
-                )}
-                <button
-                  className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
-                  onClick={() => removeFile(qf.id)}
-                >
-                  &times;
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
 
         {/* Input row */}
         <div className="chat-input-shell">
           <div className="flex items-end gap-2">
             <textarea
               ref={textareaRef}
-              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
+              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[52px]"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -802,7 +809,7 @@ export function ChatInput({
                     : 'Message input'
               }
               disabled={disabled}
-              rows={1}
+              rows={2}
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
@@ -880,7 +887,7 @@ export function ChatInput({
                   >
                     <div className="chat-input-select__value">
                       <span className="chat-input-select__text">
-                        {getModelLabel(providerModelCatalog, effectiveProvider, resolvedModelValue)}
+                        {resolvedModelLabel}
                       </span>
                     </div>
                   </SelectTrigger>
@@ -928,16 +935,17 @@ export function ChatInput({
                   </SelectContent>
                 </Select>
 
-                      {onWorktreeChange && (
-                        <BranchIndicator
-                          currentBranch={currentBranch ?? null}
-                          worktreePath={worktreePath ?? null}
-                          projectId={projectId ?? null}
-                          onWorktreeChange={onWorktreeChange}
-                          disabled={disabled || worktreePickerDisabled}
-                          variant="select"
-                        />
-                      )}
+              </div>
+              <div className="chat-input-controls__meta">
+                <ContextUsageIndicator
+                  totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+                  outputTokens={contextUsage?.outputTokens ?? 0}
+                  contextWindow={contextUsage?.contextWindow ?? null}
+                  staleMs={contextUsageStaleMs}
+                  uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+                  cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+                  cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+                />
               </div>
             </div>
           )}

@@ -12,6 +12,7 @@ import { Markdown } from "../chat/Markdown";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import "../tasks/task-execution.css";
 import type { GobbyTask } from "../../hooks/useTasks";
+import { PriorityBadge, TaskStateBadges } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskBucket,
@@ -737,17 +738,17 @@ export const TasksTab = memo(function TasksTab({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-secondary relative">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 bg-secondary relative">
         <input
           type="text"
-          className="flex-1 min-w-0 px-2 py-0.5 border border-border rounded bg-background text-foreground text-xs outline-none focus:border-accent transition-colors placeholder:text-muted-foreground"
+          className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button
           type="button"
-          className="flex items-center justify-center bg-transparent border border-border rounded text-muted-foreground cursor-pointer px-1.5 py-0.5 shrink-0 hover:text-foreground hover:border-accent transition-colors"
+          className="flex items-center justify-center rounded-md border border-border bg-background px-2.5 py-1.5 text-muted-foreground cursor-pointer shrink-0 hover:text-foreground hover:border-accent transition-colors"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
         >
@@ -820,9 +821,14 @@ export const TasksTab = memo(function TasksTab({
       {/* Detail pane */}
       {selectedTaskId && (
         <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-          <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border bg-secondary">
-            <span className="flex-1 min-w-0 truncate text-sm font-medium">
-              {taskDetail ? taskDetail.title : "Loading..."}
+          <div
+            className="flex items-center gap-3 px-3 border-b border-border"
+            style={{ height: 40, background: "var(--bg-secondary)" }}
+          >
+            <span className="block min-w-0 flex-1 truncate text-sm text-foreground">
+              {taskDetail
+                ? [taskDetail.ref, taskDetail.title].filter(Boolean).join(" ")
+                : "Loading..."}
             </span>
           </div>
           {detailLoading ? (
@@ -868,41 +874,46 @@ export const TasksTab = memo(function TasksTab({
 
 function TaskDetail({ task }: { task: GobbyTaskDetail }) {
   const priorityLabel = PRIORITY_LABELS[task.priority ?? 4] ?? "Backlog";
+  const taskState = getCanonicalTaskState(task);
+  const summaryTokens = [
+    getTaskStateSummary(task),
+    taskState.owner_session_id ? "Claimed" : null,
+    priorityLabel,
+    task.category || (task.task_type !== "task" ? task.task_type : null),
+    taskState.owner_session_id,
+  ].filter((value): value is string => Boolean(value));
 
   return (
-    <div className="px-3 py-2 flex flex-col gap-2">
+    <div className="px-3 py-3 flex flex-col gap-3">
+      <div className="flex flex-wrap gap-1.5">
+        <TaskStateBadges task={task} />
+        <PriorityBadge priority={task.priority ?? 4} />
+      </div>
+
       <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
-        <span className="capitalize">{getTaskStateSummary(task)}</span>
-        <span className="opacity-40">{"\u00B7"}</span>
-        <span>{priorityLabel}</span>
-        {task.task_type !== "task" && (
-          <>
-            <span className="opacity-40">{"\u00B7"}</span>
-            <span>{task.task_type}</span>
-          </>
-        )}
-        {getCanonicalTaskState(task).owner_session_id && (
-          <>
-            <span className="opacity-40">{"\u00B7"}</span>
-            <span>{getCanonicalTaskState(task).owner_session_id}</span>
-          </>
-        )}
+        {summaryTokens.map((token, index) => (
+          <span
+            key={`${token}-${index}`}
+            className={index === summaryTokens.length - 1 && token === taskState.owner_session_id ? "font-mono" : undefined}
+          >
+            {index > 0 && <span className="opacity-40 mr-1">{"\u00B7"}</span>}
+            {token}
+          </span>
+        ))}
       </div>
 
       {task.description && (
-        <div className="border-t border-border pt-1.5">
-          <div className="message-content text-xs">
+        <div className="message-content text-sm">
             <Markdown content={task.description} id={`task-desc-${task.id}`} />
-          </div>
         </div>
       )}
 
       {task.validation_criteria && (
-        <div className="border-t border-border pt-1.5">
+        <div className="border-t border-border pt-3">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
             Validation
           </div>
-          <div className="message-content text-xs">
+          <div className="message-content text-sm">
             <Markdown
               content={task.validation_criteria}
               id={`task-vc-${task.id}`}
@@ -911,7 +922,7 @@ function TaskDetail({ task }: { task: GobbyTaskDetail }) {
         </div>
       )}
 
-      <div className="text-[10px] text-muted-foreground border-t border-border pt-1.5">
+      <div className="text-[10px] text-muted-foreground border-t border-border pt-2">
         <span>Created {new Date(task.created_at).toLocaleDateString()}</span>
         {task.closed_at && (
           <span>
