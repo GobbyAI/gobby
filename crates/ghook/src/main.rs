@@ -125,6 +125,15 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         return ExitCode::from(2);
     };
 
+    // Daemon-spawned ACP subprocesses (gemini --acp, qwen --acp) set
+    // GOBBY_HOOKS_DISABLED=1 to stop their inherited SessionStart hook from
+    // registering phantom sessions. Short-circuit before any side effects: no
+    // enqueue, no POST, no terminal-context enrichment.
+    if hooks_disabled_by_env() {
+        println!("{}", serde_json::json!({}));
+        return ExitCode::SUCCESS;
+    }
+
     let cfg = CliConfig::for_dispatch(cli);
     let is_critical = cfg.is_critical_hook(hook_type);
 
@@ -248,6 +257,10 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     };
 
     emit_action(action)
+}
+
+fn hooks_disabled_by_env() -> bool {
+    std::env::var_os("GOBBY_HOOKS_DISABLED").is_some_and(|v| v == "1")
 }
 
 fn detect_source(cfg: &CliConfig) -> String {
@@ -391,6 +404,7 @@ fn extract_reason(result: &Value) -> String {
     let Some(map) = result.as_object() else {
         return "Blocked by hook".to_string();
     };
+
     for key in ["stopReason", "user_message", "reason"] {
         if let Some(reason) = map.get(key).and_then(Value::as_str)
             && !reason.is_empty()
@@ -398,6 +412,21 @@ fn extract_reason(result: &Value) -> String {
             return reason.to_string();
         }
     }
+
+    // Modern Claude Code PreToolUse denies put the reason inside
+    // hookSpecificOutput.permissionDecisionReason — mirror the nested lookup
+    // already done by is_blocked so users see the daemon's actual message
+    // instead of the bare "Blocked by hook" fallback.
+    if let Some(hook_specific) = map.get("hookSpecificOutput").and_then(Value::as_object) {
+        for key in ["permissionDecisionReason", "reason"] {
+            if let Some(reason) = hook_specific.get(key).and_then(Value::as_str)
+                && !reason.is_empty()
+            {
+                return reason.to_string();
+            }
+        }
+    }
+
     "Blocked by hook".to_string()
 }
 
@@ -485,6 +514,23 @@ mod tests {
     }
 
     #[test]
+    fn action_from_success_surfaces_nested_permission_decision_reason() {
+        let action = action_from_success_response(
+            "claude",
+            "PreToolUse",
+            r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Task #50 requires TDD expansion before edits"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 2);
+        assert!(action.stdout_json.is_none());
+        assert_eq!(
+            action.stderr_message.as_deref(),
+            Some("Task #50 requires TDD expansion before edits")
+        );
+    }
+
+    #[test]
     fn action_from_success_treats_stop_block_as_exit_two() {
         let action = action_from_success_response(
             "codex",
@@ -564,6 +610,41 @@ mod tests {
             action.stderr_message.as_deref(),
             Some("Daemon connection failed on critical hook 'Stop' — blocking to fail safe.")
         );
+    }
+
+    #[test]
+    fn hooks_disabled_by_env_reads_env_var() {
+        // Avoid racing other tests that read GOBBY_* env vars — touching the
+        // process env from tests is inherently global, but the key we use is
+        // unique to this check.
+        // SAFETY: single-threaded Rust tests within this module; no other test
+        // reads or writes GOBBY_HOOKS_DISABLED.
+        unsafe {
+            std::env::remove_var("GOBBY_HOOKS_DISABLED");
+        }
+        assert!(!hooks_disabled_by_env());
+
+        unsafe {
+            std::env::set_var("GOBBY_HOOKS_DISABLED", "1");
+        }
+        assert!(hooks_disabled_by_env());
+
+        unsafe {
+            std::env::set_var("GOBBY_HOOKS_DISABLED", "0");
+        }
+        assert!(!hooks_disabled_by_env(), "only '1' should short-circuit");
+
+        unsafe {
+            std::env::set_var("GOBBY_HOOKS_DISABLED", "");
+        }
+        assert!(
+            !hooks_disabled_by_env(),
+            "empty string should not short-circuit"
+        );
+
+        unsafe {
+            std::env::remove_var("GOBBY_HOOKS_DISABLED");
+        }
     }
 
     #[test]

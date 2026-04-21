@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-squeeze"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "clap",
  "dirs",

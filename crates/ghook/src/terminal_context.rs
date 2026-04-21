@@ -32,6 +32,9 @@ pub fn capture() -> Value {
         "gobby_agent_run_id": env_or_null("GOBBY_AGENT_RUN_ID"),
         "gobby_project_id": env_or_null("GOBBY_PROJECT_ID"),
         "gobby_workflow_name": env_or_null("GOBBY_WORKFLOW_NAME"),
+        // Carried so the daemon's SESSION_START handler can recognize and
+        // drop registrations from daemon-spawned ACP subprocesses.
+        "gobby_acp_child": env_or_null("GOBBY_ACP_CHILD"),
     })
 }
 
@@ -181,6 +184,7 @@ mod tests {
             "gobby_agent_run_id",
             "gobby_project_id",
             "gobby_workflow_name",
+            "gobby_acp_child",
         ] {
             assert!(obj.contains_key(key), "missing key: {key}");
         }

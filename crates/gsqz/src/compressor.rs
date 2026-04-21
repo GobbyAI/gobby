@@ -16,7 +16,7 @@ impl CompressionResult {
         if self.original_chars == 0 {
             return 0.0;
         }
-        (1.0 - self.compressed_chars as f64 / self.original_chars as f64) * 100.0
+        ((1.0 - self.compressed_chars as f64 / self.original_chars as f64) * 100.0).max(0.0)
     }
 
     /// True when no useful compression occurred — original output should be

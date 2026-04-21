@@ -7,6 +7,24 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — gobby-hooks
+
+### Fixed
+
+#### gobby-hooks
+
+- **Drop phantom ACP session registrations** — `ghook` now short-circuits when `GOBBY_HOOKS_DISABLED=1` is set in the process environment, returning `{}` with exit 0 before any side effect (no enqueue, no POST, no terminal-context capture). Daemon-spawned `gemini --acp` / `qwen --acp` subprocesses inherit the host CLI's SessionStart hook; this env flag lets the daemon mark them so they don't register phantom sessions.
+- **`gobby_acp_child` in terminal_context** — `terminal_context.capture()` now includes `gobby_acp_child` (read from `GOBBY_ACP_CHILD`). The daemon's SESSION_START handler uses it as a second line of defense to recognize and drop registrations from ACP subprocesses even if the env short-circuit didn't fire.
+- **Surface nested `permissionDecisionReason` in block messages** — `extract_reason` now also checks `hookSpecificOutput.permissionDecisionReason` (and `.reason` inside that object) after the top-level fallback keys. Modern Claude Code PreToolUse deny responses carry the reason inside `hookSpecificOutput`; `is_blocked` already recognized the nested shape, but `extract_reason` didn't — so denies surfaced as the bare "Blocked by hook" fallback instead of the daemon's actual message.
+
+## [0.4.2] — gsqz
+
+### Fixed
+
+#### gsqz
+
+- **Floor `savings_pct` at 0%** — when compressed output ends up larger than the original, `CompressionResult::savings_pct()` now returns `0.0` instead of a negative percentage. Prevents negative savings values from being reported to the daemon.
+
 ## [0.6.2] — gcode
 
 ### Added
