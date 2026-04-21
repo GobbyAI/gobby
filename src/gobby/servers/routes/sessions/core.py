@@ -20,6 +20,12 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_policy_hash,
 )
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
+from gobby.servers.routes.sessions.statusline_activity import (
+    STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+    last_session_activity,
+    prune_trackers,
+    record_statusline_seen,
+)
 from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
 from gobby.telemetry.instruments import inc_counter
 
@@ -30,37 +36,6 @@ if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
-
-STATUSLINE_GAP_WARNING_THRESHOLD_MS = 30_000
-STATUSLINE_LAST_SEEN_TTL_SECONDS = 86_400
-STATUSLINE_PRUNE_INTERVAL_SECONDS = 300
-_STATUSLINE_LAST_SEEN: dict[str, datetime] = {}
-_STATUSLINE_LAST_PRUNE_AT: datetime | None = None
-
-
-def _prune_statusline_last_seen(now: datetime) -> None:
-    """Drop stale statusline tracking entries so the cache stays bounded."""
-    global _STATUSLINE_LAST_PRUNE_AT
-
-    if _STATUSLINE_LAST_PRUNE_AT is not None:
-        elapsed = (now - _STATUSLINE_LAST_PRUNE_AT).total_seconds()
-        if elapsed < STATUSLINE_PRUNE_INTERVAL_SECONDS:
-            return
-
-    cutoff = now.timestamp() - STATUSLINE_LAST_SEEN_TTL_SECONDS
-    stale_ids = [
-        session_id
-        for session_id, seen_at in _STATUSLINE_LAST_SEEN.items()
-        if seen_at.timestamp() < cutoff
-    ]
-    for session_id in stale_ids:
-        _STATUSLINE_LAST_SEEN.pop(session_id, None)
-    _STATUSLINE_LAST_PRUNE_AT = now
-
-
-def _clear_statusline_last_seen(session_id: str) -> None:
-    """Remove a session's statusline tracking entry on teardown."""
-    _STATUSLINE_LAST_SEEN.pop(session_id, None)
 
 
 def _get_commit_count(db: "DatabaseProtocol", session: Any) -> int:
@@ -397,18 +372,28 @@ def register_core_routes(
             return {"status": "ok", "warning": "session_not_found"}
 
         now = datetime.now(UTC)
-        _prune_statusline_last_seen(now)
-        previous = _STATUSLINE_LAST_SEEN.get(session.id)
-        _STATUSLINE_LAST_SEEN[session.id] = now
+        prune_trackers(now)
+        previous = record_statusline_seen(session.id, now)
         if previous is not None:
             gap_ms = int((now - previous).total_seconds() * 1000)
             if gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS:
-                logger.warning(
-                    "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s",
-                    session.id,
-                    gap_ms,
-                    STATUSLINE_GAP_WARNING_THRESHOLD_MS,
-                )
+                activity_ts = last_session_activity(session.id)
+                if activity_ts is not None and activity_ts > previous:
+                    logger.warning(
+                        "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
+                        "last_activity_ms_ago=%s",
+                        session.id,
+                        gap_ms,
+                        STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                        int((now - activity_ts).total_seconds() * 1000),
+                    )
+                else:
+                    logger.debug(
+                        "statusline_usage_gap_quiet session_id=%s gap_ms=%s threshold_ms=%s",
+                        session.id,
+                        gap_ms,
+                        STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                    )
 
         sm.update_usage(
             session_id=session.id,

@@ -36,6 +36,7 @@ from gobby.hooks.dispatchers.webhook import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
+from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
 
 if TYPE_CHECKING:
@@ -330,6 +331,7 @@ class HookManager:
         else:
             # Resolve platform session_id from CLI external_id
             self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
+            self._record_session_activity_pulse(event)
 
         # Translate #N session references to UUIDs for MCP tool calls.
         # #N is human-friendly but ambiguous across projects (seq_num is per-project).
@@ -359,6 +361,8 @@ class HookManager:
                         f"Event handler {event.event_type} failed: {e}", exc_info=True
                     )
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
+
+            self._record_session_activity_pulse(event)
 
             with create_span("hook.session_start.rules"):
                 workflow_context, blocking_response = self._evaluate_workflow_rules(event)
@@ -450,6 +454,13 @@ class HookManager:
             Handler method or None if not found.
         """
         return self._event_handlers.get_handler(event_type)
+
+    @staticmethod
+    def _record_session_activity_pulse(event: HookEvent) -> None:
+        """Record a non-statusline activity pulse for the event's platform session."""
+        platform_id = event.metadata.get("_platform_session_id")
+        if isinstance(platform_id, str) and platform_id:
+            record_session_activity(platform_id)
 
     def _resolve_session_refs_in_tool_input(self, event: HookEvent) -> None:
         """Resolve #N session references to UUIDs in MCP tool arguments.

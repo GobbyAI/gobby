@@ -11,11 +11,19 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
-from gobby.servers.routes.sessions import create_sessions_router
+from gobby.servers.routes.sessions import create_sessions_router, statusline_activity
 
 pytestmark = pytest.mark.unit
 
 NOW_ISO = "2026-03-17T12:00:00+00:00"
+
+
+@pytest.fixture(autouse=True)
+def _reset_statusline_trackers():
+    """Keep module-level trackers isolated per test."""
+    statusline_activity.reset_for_tests()
+    yield
+    statusline_activity.reset_for_tests()
 
 
 def _make_session(**overrides) -> MagicMock:
@@ -145,7 +153,7 @@ class TestStatuslineEndpoint:
         ):
             response = client.post(
                 "/api/sessions/statusline",
-                content=b"{\"session_id\":\"ext-123\"}",
+                content=b'{"session_id":"ext-123"}',
                 headers={"Content-Type": "application/json"},
             )
 
@@ -201,7 +209,7 @@ class TestStatuslineEndpoint:
         assert response_two.status_code == 200
         assert "statusline_usage_gap" not in caplog.text
 
-    def test_warns_for_large_statusline_update_gap(
+    def test_warns_for_gap_with_concurrent_session_activity(
         self, client, mock_server, caplog, enable_log_propagation
     ) -> None:
         session = _make_session()
@@ -216,13 +224,92 @@ class TestStatuslineEndpoint:
             ) as mock_datetime,
             caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
         ):
-            mock_datetime.now.side_effect = [start, start + timedelta(seconds=31)]
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=125)]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            # A hook event landed after the first statusline POST: session is alive
+            # while the statusline feed is silent — this is the actionable case.
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=60))
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert "statusline_usage_gap" in caplog.text
+        assert "gap_ms=125000" in caplog.text
+        assert "threshold_ms=120000" in caplog.text
+
+    def test_suppresses_gap_when_session_is_otherwise_quiet(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=200)]
 
             response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
             response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
 
         assert response_one.status_code == 200
         assert response_two.status_code == 200
-        assert "statusline_usage_gap" in caplog.text
-        assert "gap_ms=31000" in caplog.text
-        assert "threshold_ms=30000" in caplog.text
+        assert "statusline_usage_gap" not in caplog.text
+
+    def test_suppresses_gap_when_activity_predates_previous_statusline(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        # Record activity before the first statusline POST so it's older than `previous`.
+        statusline_activity.record_session_activity(session.id, start - timedelta(seconds=30))
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=130)]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert "statusline_usage_gap" not in caplog.text
+
+    def test_no_warning_when_gap_under_threshold_even_with_activity(
+        self, client, mock_server, caplog, enable_log_propagation
+    ) -> None:
+        session = _make_session()
+        mock_server.session_manager.find_active_by_external_id.return_value = session
+        mock_server.session_manager.update_usage.return_value = True
+        start = datetime(2026, 3, 17, 12, 0, 0, tzinfo=UTC)
+
+        with (
+            patch(
+                "gobby.servers.routes.sessions.core.datetime",
+                autospec=True,
+            ) as mock_datetime,
+            caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
+        ):
+            mock_datetime.now.side_effect = [start, start + timedelta(seconds=60)]
+
+            response_one = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+            statusline_activity.record_session_activity(session.id, start + timedelta(seconds=30))
+            response_two = client.post("/api/sessions/statusline", json={"session_id": "ext-123"})
+
+        assert response_one.status_code == 200
+        assert response_two.status_code == 200
+        assert "statusline_usage_gap" not in caplog.text

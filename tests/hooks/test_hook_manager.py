@@ -880,3 +880,78 @@ class TestResolveSessionRefsInToolInput:
 
         assert event.data["tool_input"]["session_id"] == "uuid-789"
         assert event.metadata.get("_session_refs_resolved") is True
+
+
+class TestRecordSessionActivityPulse:
+    """Activity pulses from hook events feed the statusline gap detector."""
+
+    def test_non_session_start_records_activity_after_session_lookup(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        from gobby.servers.routes.sessions import statusline_activity
+
+        manager = manager_with_mocks
+        statusline_activity.reset_for_tests()
+
+        def resolve(event: HookEvent) -> None:
+            event.metadata["_platform_session_id"] = "platform-abc"
+
+        manager._session_lookup.resolve.side_effect = resolve
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT)
+        manager._handle_internal(event)
+
+        assert statusline_activity.last_session_activity("platform-abc") is not None
+
+    def test_session_start_records_activity_after_handler(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        from gobby.servers.routes.sessions import statusline_activity
+
+        manager = manager_with_mocks
+        statusline_activity.reset_for_tests()
+
+        def handler(event: HookEvent) -> HookResponse:
+            event.metadata["_platform_session_id"] = "platform-xyz"
+            return HookResponse(decision="allow")
+
+        manager._event_handlers.get_handler.return_value = handler
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        manager._resolve_project_id = MagicMock(return_value=PERSONAL_PROJECT_ID)
+
+        event = make_event(event_type=HookEventType.SESSION_START, data={"cwd": "/tmp/p"})
+        manager._handle_internal(event)
+
+        assert statusline_activity.last_session_activity("platform-xyz") is not None
+
+    def test_no_activity_recorded_when_platform_id_missing(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        from gobby.servers.routes.sessions import statusline_activity
+
+        manager = manager_with_mocks
+        statusline_activity.reset_for_tests()
+
+        manager._session_lookup.resolve.return_value = None
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT)
+        manager._handle_internal(event)
+
+        assert statusline_activity.last_session_activity("platform-abc") is None
