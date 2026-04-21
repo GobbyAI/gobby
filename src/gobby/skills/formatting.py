@@ -69,16 +69,19 @@ def format_skills_markdown_table(skills_list: list[Any]) -> str:
 def render_skills_for_context(skills_with_formats: list[tuple[Any, str]]) -> str:
     """Format skills with pre-resolved injection formats.
 
-    Like render_skills() but uses the format resolved by SkillInjector
-    instead of reading from the skill's injection_format field.
+    Only emits skills resolved to ``full`` or ``content`` format — skills at
+    ``summary`` are dropped. Summary-tier injection is redundant with MCP
+    progressive discovery (``list_skills`` / ``search_skills`` on
+    ``gobby-skills``) and should be handled by targeted rules, not eager
+    context dumps.
 
     Args:
         skills_with_formats: List of (ParsedSkill, resolved_format) tuples
 
     Returns:
-        Formatted markdown string with skill content
+        Formatted markdown string with skill content, or empty string if no
+        skill was resolved to an expanded format.
     """
-    summary_lines: list[str] = []
     expanded_sections: list[str] = []
 
     for skill, fmt in skills_with_formats:
@@ -94,36 +97,10 @@ def render_skills_for_context(skills_with_formats: list[tuple[Any, str]]) -> str
                 section_lines.append("")
                 section_lines.append(content)
             expanded_sections.append("\n".join(section_lines))
-        elif fmt == "content":
-            if content:
-                expanded_sections.append(content)
-        else:
-            # summary (default)
-            if description:
-                summary_lines.append(f"- **{name}**: {description}")
-            else:
-                summary_lines.append(f"- **{name}**")
+        elif fmt == "content" and content:
+            expanded_sections.append(content)
 
-    parts: list[str] = []
-    if summary_lines:
-        # Wrap in <gobby-skills> tags to distinguish from native Claude Code
-        # skills. Without this, agents see these in "Available Skills" and
-        # try Skill() instead of gobby-skills MCP.
-        summary_block = "\n".join(
-            [
-                "<gobby-skills>",
-                *summary_lines,
-                "",
-                'Load a skill: get_skill(name="skill-name") on gobby-skills',
-                "Do NOT use the Skill tool for these — they are not native Claude Code skills.",
-                "</gobby-skills>",
-            ]
-        )
-        parts.append(summary_block)
-    if expanded_sections:
-        parts.extend(expanded_sections)
-
-    return "\n\n".join(parts)
+    return "\n\n".join(expanded_sections)
 
 
 # Backwards-compatible aliases
