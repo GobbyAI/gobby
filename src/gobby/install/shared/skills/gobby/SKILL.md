@@ -4,10 +4,6 @@ description: "Gobby help and skill discovery. Lists available skills and MCP ser
 version: "2.0.0"
 category: core
 triggers: help
-metadata:
-  gobby:
-    audience: interactive
-    depth: 0
 ---
 
 # /gobby — Help & Skill Discovery
