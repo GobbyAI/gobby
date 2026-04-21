@@ -736,7 +736,12 @@ class PipelineExecutor:
                     )
                 elif step.mcp:
                     # Execute MCP tool call
-                    return await execute_mcp_step(rendered_step, context, self.tool_proxy_getter)
+                    return await execute_mcp_step(
+                        rendered_step,
+                        context,
+                        self.tool_proxy_getter,
+                        self.session_manager,
+                    )
                 elif step.activate_workflow:
                     # activate_workflow steps are not supported in pipeline execution
                     return {

@@ -3,13 +3,19 @@
 import asyncio
 import logging
 import shlex
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.storage.sessions import LocalSessionManager
 
 logger = logging.getLogger(__name__)
 
 
 async def execute_mcp_step(
-    rendered_step: Any, context: dict[str, Any], tool_proxy_getter: Any | None
+    rendered_step: Any,
+    context: dict[str, Any],
+    tool_proxy_getter: Any | None,
+    session_manager: "LocalSessionManager | None" = None,
 ) -> Any:
     """Execute an MCP tool call step."""
     mcp_config = rendered_step.mcp
@@ -35,7 +41,6 @@ async def execute_mcp_step(
     )
 
     pipeline_session_id = context.get("session_id")
-    session_manager = tool_proxy.session_manager
     tokens = resolve_and_seed_contexts(
         session_ref=pipeline_session_id,
         session_manager=session_manager,

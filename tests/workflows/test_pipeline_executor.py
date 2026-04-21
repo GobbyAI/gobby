@@ -2097,7 +2097,13 @@ class TestPipelineChildSession:
     async def test_mcp_steps_use_child_session_id(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
-        """Pipeline MCP steps should execute under the child pipeline session."""
+        """Pipeline MCP steps resolve the child session via the executor-owned session_manager.
+
+        Regression test for #12138: the handler must not rely on
+        tool_proxy.session_manager — that attribute is always None in production
+        (MCPClientManager never sets it). Both get_tool_schema and call_tool
+        must receive the child UUID resolved through PipelineExecutor.session_manager.
+        """
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         mock_session_manager = MagicMock()
@@ -2107,7 +2113,10 @@ class TestPipelineChildSession:
         mock_session_manager.resolve_session_reference.return_value = "child-session-mcp"
 
         tool_proxy = AsyncMock()
-        tool_proxy.session_manager = mock_session_manager
+        # Match production shape: MCPClientManager never sets this attribute, so
+        # ToolProxyService.session_manager returns None. Keeping this None here
+        # locks in that the handler must get its resolver from the executor.
+        tool_proxy.session_manager = None
         tool_proxy.get_tool_schema.return_value = {
             "success": True,
             "tool": {"inputSchema": {}},
