@@ -92,6 +92,36 @@ class SkillsMPProvider(HubProvider):
             )
         return info
 
+    @staticmethod
+    def _unwrap_skills(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract the skills array from SkillsMP's response envelope.
+
+        The API wraps responses as ``{"success": bool, "data": {"skills": [...]}}``.
+        Falls back to a top-level ``skills`` key for defensive forward compat.
+        """
+        data = result.get("data")
+        if isinstance(data, dict) and "skills" in data:
+            return list(data["skills"])
+        # Defensive fallback for response shapes without the envelope.
+        return list(result.get("skills", []))
+
+    def _skill_to_info(self, skill: dict[str, Any]) -> HubSkillInfo:
+        """Map a SkillsMP skill record to HubSkillInfo.
+
+        SkillsMP uses ``stars`` as the popularity signal — surfaced as ``score``
+        so the MCP layer can rank consistently with other hubs. ``version`` is
+        not provided by the list/search endpoints.
+        """
+        stars = skill.get("stars")
+        return HubSkillInfo(
+            slug=skill.get("id", skill.get("name", "")),
+            display_name=skill.get("name", skill.get("id", "")),
+            description=skill.get("description", ""),
+            hub_name=self.hub_name,
+            version=skill.get("version"),
+            score=float(stars) if isinstance(stars, int | float) else skill.get("score"),
+        )
+
     async def search(
         self,
         query: str,
@@ -109,24 +139,19 @@ class SkillsMPProvider(HubProvider):
             params={"q": query, "limit": limit},
         )
 
-        skills = result.get("skills", [])
-        return [
-            HubSkillInfo(
-                slug=skill.get("id", skill.get("name", "")),
-                display_name=skill.get("name", skill.get("id", "")),
-                description=skill.get("description", ""),
-                hub_name=self.hub_name,
-                version=skill.get("version"),
-                score=skill.get("score"),
-            )
-            for skill in skills
-        ]
+        return [self._skill_to_info(skill) for skill in self._unwrap_skills(result)]
 
     async def list_skills(
         self,
         limit: int = 50,
         offset: int = 0,
     ) -> list[HubSkillInfo]:
+        """List skills via /skills/search with a broad match.
+
+        SkillsMP has no dedicated unfiltered-list endpoint — /skills returns
+        404. Route through /skills/search with an empty query so pagination
+        (via limit/offset) still works for callers that want a browse view.
+        """
         if not self.auth_token:
             raise RuntimeError(
                 "SkillsMP API key not configured. "
@@ -135,21 +160,11 @@ class SkillsMPProvider(HubProvider):
 
         result = await self._make_request(
             method="GET",
-            endpoint="/skills",
-            params={"limit": limit, "offset": offset},
+            endpoint="/skills/search",
+            params={"q": "", "limit": limit, "offset": offset},
         )
 
-        skills = result.get("skills", [])
-        return [
-            HubSkillInfo(
-                slug=skill.get("id", skill.get("name", "")),
-                display_name=skill.get("name", skill.get("id", "")),
-                description=skill.get("description", ""),
-                hub_name=self.hub_name,
-                version=skill.get("version"),
-            )
-            for skill in skills
-        ]
+        return [self._skill_to_info(skill) for skill in self._unwrap_skills(result)]
 
     async def get_skill_details(
         self,

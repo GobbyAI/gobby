@@ -213,12 +213,27 @@ class TestSkillsMPSearchEndToEnd:
     """
 
     @staticmethod
-    def _mock_request_returning(skills: list[dict]) -> AsyncMock:
-        """Build an AsyncMock for httpx.AsyncClient.request returning the given skills."""
+    def _mock_request_returning(
+        skills: list[dict],
+        *,
+        envelope: bool = True,
+        url: str = "https://skillsmp.com/api/v1/skills/search",
+    ) -> AsyncMock:
+        """Build an AsyncMock for httpx.AsyncClient.request returning the given skills.
+
+        By default uses the real SkillsMP envelope shape (``{"success": true,
+        "data": {"skills": [...]}}``). Pass envelope=False to mock the legacy
+        top-level shape (for the defensive-fallback test).
+        """
+        body: dict
+        if envelope:
+            body = {"success": True, "data": {"skills": skills}, "meta": {}}
+        else:
+            body = {"skills": skills}
         response = httpx.Response(
             status_code=200,
-            json={"skills": skills},
-            request=httpx.Request("GET", "https://skillsmp.com/api/v1/skills/search"),
+            json=body,
+            request=httpx.Request("GET", url),
         )
         return AsyncMock(return_value=response)
 
@@ -230,8 +245,9 @@ class TestSkillsMPSearchEndToEnd:
     async def test_search_returns_non_empty_for_common_query(self, query: str) -> None:
         """Common queries must return populated HubSkillInfo lists end-to-end.
 
-        Regression guard for #12053: skillsmp previously returned zero results
-        silently for these exact queries when the API key was unresolved.
+        Regression guard for #12053 (auth resolution) and #12062 (envelope parsing):
+        skillsmp previously returned zero results silently for these exact queries
+        because the API response envelope was not unwrapped.
         """
         provider = SkillsMPProvider(
             hub_name="skillsmp",
@@ -243,15 +259,16 @@ class TestSkillsMPSearchEndToEnd:
             {
                 "id": f"{query}-helper",
                 "name": f"{query.title()} Helper",
+                "author": "some-author",
                 "description": f"Utilities for {query}",
-                "version": "1.2.3",
-                "score": 4.8,
+                "stars": 250,
             },
             {
                 "id": f"{query}-patterns",
                 "name": f"{query.title()} Patterns",
+                "author": "other-author",
                 "description": f"Common {query} patterns",
-                "version": "0.9.0",
+                "stars": 42,
             },
         ]
         mocked_request = self._mock_request_returning(payload)
@@ -263,6 +280,10 @@ class TestSkillsMPSearchEndToEnd:
         assert all(isinstance(r, HubSkillInfo) for r in results)
         assert {r.slug for r in results} == {f"{query}-helper", f"{query}-patterns"}
         assert all(r.hub_name == "skillsmp" for r in results)
+        # `stars` is surfaced as the score ranking signal.
+        scores = {r.slug: r.score for r in results}
+        assert scores[f"{query}-helper"] == 250.0
+        assert scores[f"{query}-patterns"] == 42.0
 
         # Verify the HTTP call was shaped correctly (auth header, query param, endpoint).
         mocked_request.assert_awaited_once()
@@ -286,6 +307,43 @@ class TestSkillsMPSearchEndToEnd:
             results = await provider.search("nonexistent-zzz", limit=20)
 
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_falls_back_to_top_level_skills_key(self) -> None:
+        """If the API ever drops the `data` envelope, parsing still works."""
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+        payload = [{"id": "react-hooks", "name": "react-hooks", "description": "x"}]
+        mocked = self._mock_request_returning(payload, envelope=False)
+
+        with patch("httpx.AsyncClient.request", mocked):
+            results = await provider.search("react", limit=5)
+
+        assert [r.slug for r in results] == ["react-hooks"]
+
+    @pytest.mark.asyncio
+    async def test_list_skills_uses_search_endpoint_not_404_path(self) -> None:
+        """list_skills must hit /skills/search — /skills is a 404 on the real API."""
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+        mocked = self._mock_request_returning(
+            [{"id": "s1", "name": "S1", "description": ""}],
+            url="https://skillsmp.com/api/v1/skills/search",
+        )
+
+        with patch("httpx.AsyncClient.request", mocked):
+            results = await provider.list_skills(limit=10, offset=0)
+
+        assert [r.slug for r in results] == ["s1"]
+        call_kwargs = mocked.await_args.kwargs
+        assert call_kwargs["url"].endswith("/skills/search")
+        assert call_kwargs["params"] == {"q": "", "limit": 10, "offset": 0}
 
 
 class TestSkillsMPDownload:
