@@ -221,6 +221,24 @@ class Skill:
         skillport = self.metadata.get("skillport", {})
         return bool(skillport.get("alwaysApply", False))
 
+    def is_internal(self) -> bool:
+        """Check if this is an internal methodology skill (internal=true).
+
+        Internal skills are loaded by other skills via get_skill(name=...) rather
+        than surfaced to users; listing surfaces (e.g. list_skills / search_skills)
+        hide them by default. The flag rides the metadata JSON blob — top-level
+        `internal` takes precedence, falling back to `metadata.gobby.internal`.
+        """
+        if not self.metadata:
+            return False
+        top_level = self.metadata.get("internal")
+        if top_level is not None:
+            return bool(top_level)
+        gobby_meta = self.metadata.get("gobby", {})
+        if isinstance(gobby_meta, dict):
+            return bool(gobby_meta.get("internal", False))
+        return False
+
 
 @dataclass
 class SkillFile:

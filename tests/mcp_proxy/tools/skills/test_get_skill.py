@@ -305,3 +305,27 @@ class TestGetSkillTool:
         # Skill lookup should still succeed
         assert result["success"] is True
         assert result["skill"]["name"] == "git-commit"
+
+    @pytest.mark.asyncio
+    async def test_get_skill_resolves_internal_skill_by_name(
+        self, db: LocalDatabase, storage: LocalSkillManager
+    ):
+        """get_skill must still resolve internal skills — they're loaded by other skills."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        storage.create_skill(
+            name="plan-methodology",
+            description="Internal drafting methodology",
+            content="# Methodology\n\nInternal content.",
+            metadata={"internal": True},
+            enabled=True,
+        )
+
+        registry = create_skills_registry(db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="plan-methodology")
+
+        assert result["success"] is True
+        assert result["skill"]["name"] == "plan-methodology"
+        assert "Internal content." in result["skill"]["content"]

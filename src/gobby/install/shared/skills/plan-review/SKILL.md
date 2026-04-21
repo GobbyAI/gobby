@@ -3,6 +3,7 @@ name: plan-review
 description: Review a gobby plan document for missing requirements, bad sequencing, unhandled edge cases, weak testability, and traceability gaps. Use when asked to review or critique a plan.
 version: "1.0.0"
 category: core
+internal: true
 triggers: plan review, plan critique, adversarial review, plan audit
 metadata:
   gobby:
@@ -11,6 +12,8 @@ metadata:
 ---
 
 # plan-review — Gobby Plan Adversarial Review Methodology
+
+> Internal methodology skill; invoked via `get_skill` from `/gobby plan` and autonomous agents. Not a user-facing command.
 
 This skill is the single source of truth for **how to review a gobby plan**.
 

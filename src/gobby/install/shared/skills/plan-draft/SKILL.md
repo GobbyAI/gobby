@@ -3,6 +3,7 @@ name: plan-draft
 description: Methodology for drafting a gobby plan document — phases, task format, TDD compatibility, categories, hierarchy, and dependency notation. Use when drafting or revising a plan artifact.
 version: "1.0.0"
 category: core
+internal: true
 triggers: plan drafting, plan format, plan specification
 metadata:
   gobby:
@@ -11,6 +12,8 @@ metadata:
 ---
 
 # plan-draft — Gobby Plan Drafting Methodology
+
+> Internal methodology skill; invoked via `get_skill` from `/gobby plan` and autonomous agents. Not a user-facing command.
 
 This skill is the single source of truth for **how to write a gobby plan document**.
 

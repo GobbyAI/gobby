@@ -62,6 +62,7 @@ Use conventional commits format:
 | `license` | string | License identifier (MIT, Apache-2.0, etc.) |
 | `compatibility` | string | Notes on requirements or limitations |
 | `allowed-tools` | string/list | Tool patterns the skill may use |
+| `internal` | boolean | Methodology skill loaded by other skills via `get_skill` rather than invoked by users. Hidden from `list_skills` and `search_skills` by default; set `include_internal: true` on either tool to surface them. `get_skill(name=...)` always resolves regardless. Orthogonal to `metadata.gobby.audience` — use this when the skill is a shared drafting/review/setup methodology, not a user-facing command. |
 | `metadata` | object | Nested metadata namespaces |
 
 ### Metadata Namespaces

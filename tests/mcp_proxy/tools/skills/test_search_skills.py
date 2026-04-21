@@ -230,3 +230,66 @@ class TestSearchSkillsTool:
         for res in result["results"]:
             assert res["category"] == "python"
             assert "typing" in res["tags"]
+
+
+@pytest.fixture
+async def registry_with_internal(db, storage):
+    """Registry with a mix of public and internal-flagged methodology skills."""
+    storage.create_skill(
+        name="plan-user",
+        description="User-facing planning skill for workflow orchestration",
+        content="# Plan user-facing\n\nDrives /plan command.",
+        metadata={"skillport": {"category": "core", "tags": ["plan"]}},
+        enabled=True,
+    )
+    storage.create_skill(
+        name="plan-methodology-alpha",
+        description="Internal plan drafting methodology shared across agents",
+        content="# Methodology Alpha\n\nInternal drafting rules.",
+        metadata={"internal": True, "skillport": {"category": "core", "tags": ["plan"]}},
+        enabled=True,
+    )
+    storage.create_skill(
+        name="plan-methodology-beta",
+        description="Another internal plan methodology, tagged via gobby namespace",
+        content="# Methodology Beta\n\nInternal review rules.",
+        metadata={
+            "gobby": {"internal": True},
+            "skillport": {"category": "core", "tags": ["plan"]},
+        },
+        enabled=True,
+    )
+
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+    registry = create_skills_registry(db)
+    skills = storage.list_skills(limit=1000, include_global=True)
+    if hasattr(registry, "search"):
+        await registry.search.index_skills_async(skills)
+    return registry
+
+
+class TestSearchSkillsInternalFilter:
+    """Filter behavior for `internal: true` skills in search."""
+
+    @pytest.mark.asyncio
+    async def test_search_hides_internal_by_default(self, registry_with_internal):
+        tool = registry_with_internal.get_tool("search_skills")
+
+        result = await tool(query="plan")
+
+        assert result["success"] is True
+        names = {r["skill_name"] for r in result["results"]}
+        assert "plan-user" in names
+        assert "plan-methodology-alpha" not in names
+        assert "plan-methodology-beta" not in names
+
+    @pytest.mark.asyncio
+    async def test_search_include_internal_surfaces_them(self, registry_with_internal):
+        tool = registry_with_internal.get_tool("search_skills")
+
+        result = await tool(query="plan", include_internal=True)
+
+        assert result["success"] is True
+        names = {r["skill_name"] for r in result["results"]}
+        assert {"plan-user", "plan-methodology-alpha", "plan-methodology-beta"}.issubset(names)

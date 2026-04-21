@@ -372,6 +372,11 @@ class TestHookManagerSessionEnd:
 
         with (
             patch.object(
+                hook_manager_with_mocks._session_manager,
+                "get_session_id",
+                return_value="test-session-id",
+            ),
+            patch.object(
                 hook_manager_with_mocks._session_storage, "get", return_value=mock_session
             ),
             patch(

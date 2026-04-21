@@ -16,13 +16,14 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="list_skills",
-        description="List all skills with lightweight metadata. Supports filtering by category and enabled status.",
+        description="List all skills with lightweight metadata. Supports filtering by category and enabled status. Internal methodology skills (frontmatter `internal: true`) are hidden by default; pass include_internal=true to surface them.",
     )
     async def list_skills(
         category: str | None = None,
         enabled: bool | None = None,
         limit: int = 50,
         session_id: str | None = None,
+        include_internal: bool = False,
     ) -> dict[str, Any]:
         """
         List skills with lightweight metadata.
@@ -35,6 +36,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             enabled: Optional enabled status filter (True/False/None for all)
             limit: Maximum skills to return (default 50)
             session_id: Optional session ID for filtering by active skills in the session
+            include_internal: If True, include skills flagged `internal: true` in
+                frontmatter. Default False hides them — they are shared-methodology
+                skills invoked by other skills via get_skill(name=...), not user-facing.
 
         Returns:
             Dict with success status and list of skill metadata
@@ -54,20 +58,25 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 except Exception:
                     logger.debug(f"Failed to resolve active skill names for session {session_id}")
 
+            # Over-fetch when a post-query filter (active_names or include_internal=False)
+            # will trim results, so we can still fill `limit` after filtering.
+            needs_overfetch = active_names is not None or not include_internal
             skills = ctx.storage.list_skills(
                 project_id=ctx.project_id,
                 category=category,
                 enabled=enabled,
-                # Over-fetch by 5x when filtering by active_names, since the DB
-                # query doesn't know about the session-scoped allowlist and we
-                # need enough candidates to fill `limit` after filtering.
-                limit=limit * 5 if active_names is not None else limit,
+                limit=limit * 5 if needs_overfetch else limit,
                 include_global=True,
             )
 
+            if not include_internal:
+                skills = [s for s in skills if not s.is_internal()]
+
             if active_names is not None:
                 active_set = set(active_names)
-                skills = [s for s in skills if s.name in active_set][:limit]
+                skills = [s for s in skills if s.name in active_set]
+
+            skills = skills[:limit]
 
             # Extract lightweight metadata only
             skill_list = []

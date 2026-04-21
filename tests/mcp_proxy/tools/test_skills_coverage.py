@@ -33,6 +33,7 @@ def _make_skill(
     source_ref: str | None = None,
     project_id: str | None = None,
     deleted_at: str | None = None,
+    internal: bool = False,
 ) -> MagicMock:
     skill = MagicMock()
     skill.id = id
@@ -51,6 +52,7 @@ def _make_skill(
     skill.source_ref = source_ref
     skill.project_id = project_id
     skill.deleted_at = deleted_at
+    skill.is_internal.return_value = internal
     return skill
 
 
