@@ -226,6 +226,38 @@ class WorkflowHookHandler:
 
         self._forget_codex_tool_context(session_id, snapshot)
 
+    def _resolve_project_path(self, event: HookEvent) -> str | None:
+        """Resolve the best available filesystem path for workflow git checks."""
+        project_path = event.cwd if event.cwd and event.cwd.strip() else None
+        if project_path:
+            return project_path
+
+        metadata_path = event.metadata.get("project_path") if event.metadata else None
+        if isinstance(metadata_path, str) and metadata_path.strip():
+            return metadata_path
+
+        if not event.project_id or self.rule_engine is None:
+            return None
+
+        try:
+            from gobby.storage.projects import LocalProjectManager
+
+            project = LocalProjectManager(self.rule_engine.db).get(event.project_id)
+        except Exception as exc:
+            logger.debug(
+                "Failed to resolve project_path from project_id=%s: %s",
+                event.project_id,
+                exc,
+            )
+            return None
+
+        repo_path = project.repo_path if project is not None else None
+        if not isinstance(repo_path, str) or not repo_path.strip():
+            return None
+
+        event.metadata.setdefault("project_path", repo_path)
+        return repo_path
+
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""
         logger.warning(f"Workflow evaluation cancelled for {event.event_type}")
@@ -358,20 +390,14 @@ class WorkflowHookHandler:
             from gobby.workflows.git_utils import get_dirty_files_categorized
             from gobby.workflows.safe_evaluator import LazyBool
 
-            # Normalize empty/whitespace cwd to None — event.cwd can be ""
-            # when the CLI adapter doesn't resolve a working directory.
-            project_path = event.cwd if event.cwd and event.cwd.strip() else None
+            project_path = self._resolve_project_path(event)
             if not project_path:
-                raw_meta = (
-                    event.metadata.get("project_path") if hasattr(event, "metadata") else None
+                logger.warning(
+                    f"_evaluate_rules: no project_path resolved for session={session_id} "
+                    f"event={event.event_type} source={event.source} "
+                    f"cwd={event.cwd!r} project_id={event.project_id!r} "
+                    f"metadata_path={event.metadata.get('project_path')!r}"
                 )
-                project_path = raw_meta if raw_meta and raw_meta.strip() else None
-                if not project_path:
-                    logger.warning(
-                        f"_evaluate_rules: no project_path resolved for session={session_id} "
-                        f"event={event.event_type} source={event.source} "
-                        f"cwd={event.cwd!r} metadata_path={event.metadata.get('project_path')!r}"
-                    )
 
             # Lazy-init baseline on first evaluation (rule template may not have fired)
             if "baseline_dirty_files" not in variables:

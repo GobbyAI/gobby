@@ -1512,3 +1512,58 @@ class TestCodexToolContextRehydration:
         assert "tool_input" not in after_event.data
         evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
         assert "tool_input" not in evaluated_event.data
+
+
+class TestProjectPathResolution:
+    """Workflow hook evaluation should recover project_path when only project_id is known."""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.migrations import run_migrations
+
+        db_path = tmp_path / "test_project_path.db"
+        database = LocalDatabase(db_path)
+        run_migrations(database)
+        return database
+
+    @pytest.mark.asyncio
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    async def test_codex_after_tool_uses_project_repo_path_when_cwd_missing(
+        self, mock_get_dirty, db, caplog
+    ) -> None:
+        """Codex synthesized AFTER_TOOL events should derive project_path from project_id."""
+        from gobby.storage.projects import LocalProjectManager
+
+        project = LocalProjectManager(db).create(
+            name="repo-path-resolution",
+            repo_path="/tmp/codex-project",
+        )
+
+        rule_engine = MagicMock()
+        rule_engine.db = db
+        rule_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+
+        handler = WorkflowHookHandler(loop=None)
+        handler.rule_engine = rule_engine
+        handler._session_var_manager = MagicMock()
+        handler._session_var_manager.get_variables.return_value = {}
+
+        mock_get_dirty.return_value = DirtyFiles(set(), set())
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="external-codex-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "mcp__gobby__call_tool"},
+            project_id=project.id,
+            metadata={"_platform_session_id": "platform-codex-session"},
+        )
+
+        with caplog.at_level("WARNING"):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "allow"
+        mock_get_dirty.assert_called_once_with("/tmp/codex-project")
+        assert event.metadata["project_path"] == "/tmp/codex-project"
+        assert "no project_path resolved" not in caplog.text
