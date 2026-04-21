@@ -766,6 +766,101 @@ class TestSpawnAgentPreRegistration:
             # DB should mark the run as failed
             mock_runner.run_storage.fail.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_status_transitions_to_running_on_success(self, mock_runner, agent_body):
+        """On successful spawn, run_storage.start(run_id) is called immediately.
+
+        Spawn-time transition is the authoritative pending->running flip, so
+        wait_for_completion works even if the child session's SessionStart
+        hook races or misfires. The hook's start_agent_run remains idempotent
+        (returns False when status is no longer 'pending').
+        """
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        mock_runner.run_storage = MagicMock()
+        mock_runner.run_storage.has_active_run_for_task.return_value = False
+        mock_runner.run_storage.update_child_session = MagicMock()
+        mock_runner.run_storage.update_runtime = MagicMock()
+        mock_runner.run_storage.start = MagicMock()
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+            ) as mock_execute,
+        ):
+            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_execute.return_value = MagicMock(
+                success=True,
+                run_id="run-canonical",
+                child_session_id="child-456",
+                status="pending",
+                pid=12345,
+                terminal_type="ghostty",
+                tmux_session_name="agent-run-canonical",
+                message="Spawned",
+            )
+
+            result = await registry.call(
+                "spawn_agent",
+                {"prompt": "Test", "parent_session_id": "parent-789"},
+            )
+
+            assert result["success"] is True
+            mock_runner.run_storage.start.assert_called_once()
+            # start() receives the same run_id used for update_runtime — the
+            # canonical one minted in _implementation.py, not a stale id.
+            start_run_id = mock_runner.run_storage.start.call_args.args[0]
+            update_run_id = mock_runner.run_storage.update_runtime.call_args.args[0]
+            assert start_run_id == update_run_id
+
+    @pytest.mark.asyncio
+    async def test_status_not_transitioned_on_spawn_failure(self, mock_runner, agent_body):
+        """On spawn failure, run_storage.start is NOT called — fail() handles it."""
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        mock_runner.run_storage = MagicMock()
+        mock_runner.run_storage.has_active_run_for_task.return_value = False
+        mock_runner.run_storage.fail = MagicMock()
+        mock_runner.run_storage.start = MagicMock()
+
+        registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            mock_ctx.return_value = {"id": "proj-123", "project_path": "/path"}
+            mock_execute.return_value = MagicMock(
+                success=False,
+                error="Terminal not found",
+                child_session_id=None,
+            )
+
+            result = await registry.call(
+                "spawn_agent",
+                {"prompt": "Test", "parent_session_id": "parent-789"},
+            )
+
+            assert result["success"] is False
+            mock_runner.run_storage.start.assert_not_called()
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # spawn_agent agent not found

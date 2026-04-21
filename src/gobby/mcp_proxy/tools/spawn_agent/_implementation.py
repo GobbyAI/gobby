@@ -456,6 +456,16 @@ async def spawn_agent_impl(
         except Exception as e:
             logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
 
+        # Flip agent_runs.status from 'pending' to 'running' now that we have a
+        # live PID. Don't wait for the child session's SessionStart hook —
+        # SessionCoordinator.start_agent_run stays idempotent (returns False
+        # when status is no longer 'pending') so a later hook-driven call is a
+        # safe no-op. See hooks/session_coordinator.py:313.
+        try:
+            runner.run_storage.start(run_id)
+        except Exception as e:
+            logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
+
         # Fire agent_started event for WebSocket broadcasting
         try:
             from gobby.runner_broadcasting import fire_agent_event
