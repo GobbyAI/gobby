@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { SetStateAction } from 'react'
 
 import { useWebSocketEvent } from './useWebSocketEvent'
@@ -73,21 +73,30 @@ function normalizeTokenEvent(data: Record<string, unknown>): TokenEvent | null {
 }
 
 export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options = {}) {
-  const [events, setEventsState] = useState<TokenEvent[]>([])
+  const [eventsState, setEventsState] = useState<{
+    sessionId: string | null
+    events: TokenEvent[]
+  }>({
+    sessionId,
+    events: [],
+  })
   const seenKeysRef = useRef<Set<string>>(new Set())
-
-  useEffect(() => {
-    seenKeysRef.current = new Set()
-    setEventsState([])
-  }, [sessionId])
+  const events = useMemo(
+    () => (eventsState.sessionId === sessionId ? eventsState.events : []),
+    [eventsState.events, eventsState.sessionId, sessionId],
+  )
 
   const setEvents = useCallback((next: SetStateAction<TokenEvent[]>) => {
     setEventsState((prev) => {
-      const resolved = typeof next === 'function' ? next(prev) : next
+      const baseEvents = prev.sessionId === sessionId ? prev.events : []
+      const resolved = typeof next === 'function' ? next(baseEvents) : next
       seenKeysRef.current = new Set(resolved.map(eventKey))
-      return resolved
+      return {
+        sessionId,
+        events: resolved,
+      }
     })
-  }, [])
+  }, [sessionId])
 
   const appendEvent = useCallback(
     (nextEvent: TokenEvent | null) => {
@@ -104,15 +113,19 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
       }
 
       setEventsState((prev) => {
+        const baseEvents = prev.sessionId === sessionId ? prev.events : []
         const key = eventKey(nextEvent)
         if (seenKeysRef.current.has(key)) {
           return prev
         }
-        const merged = [nextEvent, ...prev]
+        const merged = [nextEvent, ...baseEvents]
           .sort((a, b) => new Date(b.event_at).getTime() - new Date(a.event_at).getTime())
           .slice(0, limit)
         seenKeysRef.current = new Set(merged.map(eventKey))
-        return merged
+        return {
+          sessionId,
+          events: merged,
+        }
       })
     },
     [limit, sessionId],

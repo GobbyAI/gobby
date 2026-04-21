@@ -1,11 +1,10 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ChatModeInfo, ContextUsage, ChatSendOptions } from '../../types/chat'
+import type { QueuedFile, ChatMode, ChatModeInfo, ChatSendOptions } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
 import { ModeSelector } from './ModeSelector'
-import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
@@ -48,8 +47,6 @@ interface ChatInputProps {
   startRecording?: () => Promise<void>
   stopRecording?: () => Promise<void>
   cancelRecording?: () => void
-  contextUsage?: ContextUsage
-  contextUsageUpdatedAt?: number | null
   currentBranch?: string | null
   worktreePath?: string | null
   projectId?: string | null
@@ -124,8 +121,6 @@ export function ChatInput({
   startRecording,
   stopRecording,
   cancelRecording,
-  contextUsage,
-  contextUsageUpdatedAt = null,
   currentBranch,
   worktreePath,
   projectId,
@@ -175,20 +170,8 @@ export function ChatInput({
   const activePointerIdRef = useRef<number | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
   const attachmentsDisabledRef = useRef(attachmentsDisabled)
-  const [usageClock, setUsageClock] = useState(() => Date.now())
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
-  const contextUsageStaleMs =
-    contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
-
-  useEffect(() => {
-    if (contextUsageUpdatedAt == null) {
-      return
-    }
-    setUsageClock(Date.now())
-    const interval = window.setInterval(() => setUsageClock(Date.now()), 15_000)
-    return () => window.clearInterval(interval)
-  }, [contextUsageUpdatedAt])
 
   // Revoke blob URLs on unmount to prevent memory leaks
   const queuedFilesRef = useRef(queuedFiles)
@@ -605,7 +588,7 @@ export function ChatInput({
       : 'Message input — unavailable')
 
   const primaryButtonClassName = cn(
-    'inline-flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    'inline-flex h-[52px] w-[52px] self-start items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
     primaryButtonKind === 'stop'
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',
@@ -757,37 +740,25 @@ export function ChatInput({
                   <PanelIcon pinned={isActivityPanelPinned} />
                 </Button>
               )}
-              {onWorktreeChange && (
+            </div>
+            {!canSelectModel && onWorktreeChange ? (
+              <div className="chat-input-toolbar__right">
                 <BranchIndicator
                   currentBranch={currentBranch ?? null}
                   worktreePath={worktreePath ?? null}
                   projectId={projectId ?? null}
                   onWorktreeChange={onWorktreeChange}
                   disabled={disabled || worktreePickerDisabled}
-                  variant={canSelectModel ? 'select' : 'toolbar'}
                 />
-              )}
-            </div>
-            <div className="chat-input-toolbar__right">
-              {!canSelectModel && (
-                <ContextUsageIndicator
-                  totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-                  outputTokens={contextUsage?.outputTokens ?? 0}
-                  contextWindow={contextUsage?.contextWindow ?? null}
-                  staleMs={contextUsageStaleMs}
-                  uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-                  cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-                  cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-                />
-              )}
-            </div>
+              </div>
+            ) : null}
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
           </div>
         </div>
 
         {/* Input row */}
         <div className="chat-input-shell">
-          <div className="flex items-end gap-2">
+          <div className="flex items-start gap-2">
             <textarea
               ref={textareaRef}
               className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[52px]"
@@ -820,7 +791,7 @@ export function ChatInput({
               data-1p-ignore
             />
 
-            <div className="flex gap-1 shrink-0">
+            <div className="shrink-0 self-start">
               <button
                 ref={primaryButtonRef}
                 type="button"
@@ -849,15 +820,12 @@ export function ChatInput({
                   disabled={selectionDisabled}
                 >
                   <SelectTrigger
-                    className="chat-input-select chat-input-select--provider !w-auto"
-                    aria-label="Select provider and model"
-                    title={providerPickerDisabledReason ?? 'Select provider'}
+                    className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto"
+                    aria-label="Select provider"
+                    title={providerPickerDisabledReason ?? getProviderDisplayName(effectiveProvider)}
                   >
                     <div className="chat-input-select__value">
                       <SourceIcon source={effectiveProvider} size={14} />
-                      <span className="chat-input-select__text">
-                        {getProviderDisplayName(effectiveProvider)}
-                      </span>
                     </div>
                   </SelectTrigger>
                   <SelectContent side="top" className="chat-input-select__content">
@@ -935,17 +903,17 @@ export function ChatInput({
                   </SelectContent>
                 </Select>
 
-              </div>
-              <div className="chat-input-controls__meta">
-                <ContextUsageIndicator
-                  totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-                  outputTokens={contextUsage?.outputTokens ?? 0}
-                  contextWindow={contextUsage?.contextWindow ?? null}
-                  staleMs={contextUsageStaleMs}
-                  uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-                  cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-                  cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-                />
+                {onWorktreeChange && (
+                  <BranchIndicator
+                    currentBranch={currentBranch ?? null}
+                    worktreePath={worktreePath ?? null}
+                    projectId={projectId ?? null}
+                    onWorktreeChange={onWorktreeChange}
+                    disabled={disabled || worktreePickerDisabled}
+                    variant="select"
+                  />
+                )}
+
               </div>
             </div>
           )}

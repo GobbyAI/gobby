@@ -729,23 +729,23 @@ export function ChatPage({
             />
           </div>
 
-          {viewingMeta && (
-            <AgentStatusBar
-              viewingMeta={viewingMeta}
-              interactionMode={chat.sessionInteractionMode ?? "none"}
-              isAttached={!!chat.attachedSessionId}
-              isAutonomousSession={isAutonomousSession}
-              onAttach={
-                canAttachViewedSession ? chat.onAttachToViewed : undefined
-              }
-              onResume={
-                canControlViewedSession ? handleResumeViewedSession : undefined
-              }
-              onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
-              onTogglePanel={!showChatInput ? togglePanel : undefined}
-              isPanelPinned={isPinned}
-            />
-          )}
+          <AgentStatusBar
+            viewingMeta={viewingMeta}
+            interactionMode={chat.sessionInteractionMode ?? "none"}
+            contextUsage={chat.contextUsage}
+            contextUsageUpdatedAt={chat.contextUsageUpdatedAt}
+            isAttached={!!chat.attachedSessionId}
+            isAutonomousSession={isAutonomousSession}
+            onAttach={
+              canAttachViewedSession ? chat.onAttachToViewed : undefined
+            }
+            onResume={
+              canControlViewedSession ? handleResumeViewedSession : undefined
+            }
+            onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+            onTogglePanel={!showChatInput ? togglePanel : undefined}
+            isPanelPinned={isPinned}
+          />
 
           {/* Chat input */}
           {showChatInput && (
@@ -763,8 +763,6 @@ export function ChatPage({
               onModeChange={chat.onModeChange}
               modeDisabled={isProxyAttached}
               modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
-              contextUsage={chat.contextUsage}
-              contextUsageUpdatedAt={chat.contextUsageUpdatedAt}
               currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}

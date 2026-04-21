@@ -3977,7 +3977,7 @@ export function useChat() {
       }
       wsRef.current?.close();
     };
-  }, [applyMainSessionMeta, connect]);
+  }, [applyMainSessionMeta, bindActiveSession, connect]);
 
   return {
     messages,

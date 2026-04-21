@@ -475,6 +475,22 @@ describe("ChatPage", () => {
     ).toBeTruthy();
   });
 
+  it("keeps the lower status bar visible for regular web chat sessions", async () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      expect(screen.queryByTestId("agent-status-panel-toggle")).toBeNull();
+    });
+  });
+
   it("locks CLI-owned footer controls while proxy-attached and shows attached session settings", async () => {
     render(
       <ChatPage

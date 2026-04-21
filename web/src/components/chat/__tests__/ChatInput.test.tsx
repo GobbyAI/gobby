@@ -437,7 +437,7 @@ describe('ChatInput', () => {
     expect(screen.getByLabelText('Select model')).toBeTruthy()
   })
 
-  it('formats known provider labels with canonical casing', () => {
+  it('keeps the collapsed provider trigger icon-only', () => {
     render(
       <ChatInput
         {...defaultProps}
@@ -449,7 +449,8 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByText('OpenAI')).toBeTruthy()
+    expect(screen.queryByText('OpenAI')).toBeNull()
+    expect(screen.getByLabelText('Select provider')).toHaveAttribute('title', 'OpenAI')
     expect(screen.getByText('Local')).toBeTruthy()
     expect(screen.getByLabelText('Select reasoning effort')).toBeTruthy()
   })

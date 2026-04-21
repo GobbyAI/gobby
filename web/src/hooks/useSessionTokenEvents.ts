@@ -17,11 +17,6 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
   const { events, setEvents } = useTokenEventsStream({ sessionId, limit })
 
   useEffect(() => {
-    setError(null)
-    setIsLoading(Boolean(sessionId))
-  }, [sessionId])
-
-  useEffect(() => {
     latestEventAtRef.current = events[0]?.event_at ?? null
   }, [events])
 
@@ -34,6 +29,8 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
+      setError(null)
+      setIsLoading(true)
 
       try {
         let url = `${getBaseUrl()}/api/sessions/${encodeURIComponent(sessionId)}/token-events?limit=${limit}`
@@ -157,8 +154,8 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
   return {
     events,
     breakdown,
-    isLoading,
-    error,
+    isLoading: sessionId ? isLoading : false,
+    error: sessionId ? error : null,
     refresh: fetchEvents,
   }
 }
