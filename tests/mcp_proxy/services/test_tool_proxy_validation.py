@@ -829,6 +829,7 @@ class TestWorkflowBeforeToolEnforcement:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
+        hook_manager._session_storage = session_manager
         hook_manager._database = MagicMock()
         hook_manager.handle = MagicMock(return_value=HookResponse(decision="allow"))
         return hook_manager
@@ -905,6 +906,80 @@ class TestWorkflowBeforeToolEnforcement:
 
         event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
         assert event.metadata["_platform_session_id"] == "session-from-context"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_emits_pipeline_source_when_session_is_pipeline(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ):
+        """HookEvent emitted by call_tool must carry source='pipeline' for pipeline sessions.
+
+        Regression for #12082: tool_proxy previously read the session off
+        hook_manager._session_manager (service wrapper without .get), so the
+        AttributeError was silently swallowed and source fell back to CODEX,
+        causing require-schema-before-call to fire on pipeline MCP calls.
+        """
+        pipeline_session = SimpleNamespace(
+            source="pipeline",
+            session_type="terminal",
+            project_id="project-123",
+            external_id="pipeline-exec-123",
+        )
+        mock_hook_manager._session_storage.get.return_value = pipeline_session
+
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks-ops",
+            tool_name="start_expansion_run",
+            arguments={"task_id": "#123"},
+            session_id="pipeline-session-abc",
+        )
+
+        event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
+        assert event.source == SessionSource.PIPELINE
+
+    @pytest.mark.asyncio
+    async def test_call_tool_logs_warning_and_defaults_source_when_storage_raises(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager, caplog
+    ):
+        """Storage failures during source resolution must log WARNING and fall back to codex.
+
+        Regression for #12082: the previous DEBUG-only log silently hid the
+        AttributeError that caused source to default to CODEX; a WARNING ensures
+        the regression surfaces on the first run.
+        """
+        import logging
+
+        mock_hook_manager._session_storage.get.side_effect = RuntimeError(
+            "simulated storage failure"
+        )
+
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.services.tool_proxy"):
+            await tool_proxy_with_hooks.call_tool(
+                server_name="gobby-tasks-ops",
+                tool_name="start_expansion_run",
+                arguments={"task_id": "#123"},
+                session_id="pipeline-session-abc",
+            )
+
+        event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
+        assert event.source == SessionSource.CODEX
+
+        matching = [
+            rec
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING
+            and "Failed to load session" in rec.getMessage()
+        ]
+        assert matching, "Expected WARNING log for storage lookup failure"
 
     @pytest.mark.asyncio
     async def test_modified_input_is_applied_before_execution(
@@ -991,6 +1066,7 @@ class TestSyntheticCodexMcpAfterTool:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
+        hook_manager._session_storage = session_manager
         hook_manager._database = MagicMock()
         hook_manager.handle = MagicMock(return_value=HookResponse(decision="allow"))
         return hook_manager
@@ -1210,6 +1286,7 @@ class TestSyntheticCodexMcpAfterTool:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
+        hook_manager._session_storage = session_manager
         hook_manager._database = temp_db
         hook_manager.handle = workflow_handler.evaluate
 

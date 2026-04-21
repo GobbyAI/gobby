@@ -288,13 +288,20 @@ class ToolProxyService:
         metadata: dict[str, Any] = {"_platform_session_id": effective_session_id}
 
         hook_manager = self._resolve_hook_manager()
-        session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
+        session_storage = (
+            getattr(hook_manager, "_session_storage", None) if hook_manager else None
+        )
         session = None
-        if session_manager is not None:
+        if session_storage is not None:
             try:
-                session = session_manager.get(effective_session_id)
+                session = session_storage.get(effective_session_id)
             except Exception as exc:
-                logger.debug(f"Failed to load session {effective_session_id} for tool event: {exc}")
+                logger.warning(
+                    "Failed to load session %s for tool event; source will default to codex: %s",
+                    effective_session_id,
+                    exc,
+                    exc_info=True,
+                )
             else:
                 if session is not None:
                     session_source = getattr(session, "source", None)
@@ -315,7 +322,7 @@ class ToolProxyService:
         if cwd:
             metadata["project_path"] = cwd
 
-        return hook_manager, session_manager, session, source, metadata, cwd, project_id
+        return hook_manager, session_storage, session, source, metadata, cwd, project_id
 
     def _record_discovery_state(
         self,
