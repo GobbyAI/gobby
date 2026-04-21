@@ -357,27 +357,6 @@ class PipelineExecutor:
                             "Failed to create child session for pipeline, using caller session_id",
                             exc_info=True,
                         )
-                    else:
-                        # Exempt pipeline steps from progressive-discovery rules
-                        # without depending on event-time source resolution, which
-                        # races against the just-written session row (see #12135).
-                        try:
-                            from gobby.workflows.state_manager import (
-                                SessionVariableManager,
-                            )
-
-                            SessionVariableManager(self.session_manager.db).merge_variables(
-                                child_session.id,
-                                {"enforce_tool_schema_check": False},
-                            )
-                        except Exception:
-                            logger.warning(
-                                "Failed to seed enforce_tool_schema_check=False "
-                                "on pipeline session %s; progressive-discovery "
-                                "rules may block pipeline steps",
-                                child_session.id,
-                                exc_info=True,
-                            )
 
                 # 3. Build execution context (resolve defaults from pipeline input definitions)
                 resolved_defaults: dict[str, Any] = {}

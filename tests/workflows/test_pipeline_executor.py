@@ -1963,51 +1963,6 @@ class TestPipelineChildSession:
         assert call_kwargs["agent_depth"] == 0
 
     @pytest.mark.asyncio
-    async def test_execute_seeds_enforce_tool_schema_check_false(
-        self, mock_db, mock_execution_manager, mock_llm_service, simple_pipeline, monkeypatch
-    ) -> None:
-        """Pipeline child session is seeded with enforce_tool_schema_check=False.
-
-        Guards #12135: pipeline steps must be exempt from require-schema-before-call
-        via a session-scoped variable, so the rule short-circuits before source
-        resolution (which races against the just-written session row).
-        """
-        from gobby.workflows import pipeline_executor as pe_module
-        from gobby.workflows.pipeline_executor import PipelineExecutor
-
-        mock_session_manager = MagicMock()
-        child_session = MagicMock()
-        child_session.id = "child-session-exempt"
-        mock_session_manager.register.return_value = child_session
-        mock_session_manager.db = MagicMock()
-
-        captured = MagicMock()
-        monkeypatch.setattr(
-            "gobby.workflows.state_manager.SessionVariableManager",
-            lambda db: captured,
-        )
-
-        executor = PipelineExecutor(
-            db=mock_db,
-            execution_manager=mock_execution_manager,
-            llm_service=mock_llm_service,
-            session_manager=mock_session_manager,
-        )
-
-        await executor.execute(
-            pipeline=simple_pipeline,
-            inputs={},
-            project_id="proj-123",
-            session_id="caller-session-456",
-        )
-
-        captured.merge_variables.assert_called_once_with(
-            "child-session-exempt",
-            {"enforce_tool_schema_check": False},
-        )
-        assert pe_module is not None  # import guard — catches accidental module rename
-
-    @pytest.mark.asyncio
     async def test_context_session_id_is_child(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
