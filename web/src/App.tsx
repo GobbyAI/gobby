@@ -1342,6 +1342,8 @@ export default function App() {
                 agentHasGlobal={agentDefs.hasGlobal}
                 agentHasProject={agentDefs.hasProject}
                 paletteActions={commandPaletteActions}
+                onSttEnabledChange={updateSttEnabled}
+                onTtsEnabledChange={updateTtsEnabled}
                 voice={{
                   sttEnabled: settings.sttEnabled,
                   ttsEnabled: settings.ttsEnabled,

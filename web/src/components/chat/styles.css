@@ -3200,6 +3200,18 @@
   color: var(--accent);
 }
 
+.chat-input-voice-toggle {
+  color: var(--text-secondary);
+}
+
+.chat-input-voice-toggle:hover {
+  color: var(--text-primary);
+}
+
+.chat-input-voice-toggle.chat-input-voice-toggle--active {
+  color: var(--accent);
+}
+
 .session-pane-action--icon {
   width: 1.875rem;
   padding: 0;

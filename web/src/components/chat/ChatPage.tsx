@@ -61,6 +61,8 @@ interface ChatPageProps {
   paletteActions?: CommandPaletteAction[];
   allProjectSessions?: GobbySession[];
   allProjectSessionsLoading?: boolean;
+  onSttEnabledChange?: (enabled: boolean) => void;
+  onTtsEnabledChange?: (enabled: boolean) => void;
 }
 
 export function ChatPage({
@@ -82,6 +84,8 @@ export function ChatPage({
   paletteActions = [],
   allProjectSessions = [],
   allProjectSessionsLoading = false,
+  onSttEnabledChange,
+  onTtsEnabledChange,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -778,11 +782,16 @@ export function ChatPage({
               agentHasGlobal={agentHasGlobal}
               agentHasProject={agentHasProject}
               sttEnabled={voice.sttEnabled}
+              ttsEnabled={voice.ttsEnabled}
               voiceInputMode={voice.voiceInputMode}
               isRecording={voice.isRecording}
+              isSpeaking={voice.isSpeaking}
               startRecording={voice.startRecording}
               stopRecording={voice.stopRecording}
               cancelRecording={voice.cancelRecording}
+              stopTTS={voice.stopTTS}
+              onSttEnabledChange={onSttEnabledChange}
+              onTtsEnabledChange={onTtsEnabledChange}
               isMobile={isMobile}
               onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
               provider={effectiveInputProvider}

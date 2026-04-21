@@ -42,11 +42,16 @@ interface ChatInputProps {
   modeOptions?: ChatModeInfo[]
   modeDisabled?: boolean
   sttEnabled?: boolean
+  ttsEnabled?: boolean
   voiceInputMode?: VoiceInputMode
   isRecording?: boolean
+  isSpeaking?: boolean
   startRecording?: () => Promise<void>
   stopRecording?: () => Promise<void>
   cancelRecording?: () => void
+  stopTTS?: () => void
+  onSttEnabledChange?: (enabled: boolean) => void
+  onTtsEnabledChange?: (enabled: boolean) => void
   currentBranch?: string | null
   worktreePath?: string | null
   projectId?: string | null
@@ -116,11 +121,16 @@ export function ChatInput({
   modeOptions,
   modeDisabled = false,
   sttEnabled = false,
+  ttsEnabled = false,
   voiceInputMode = 'ptt',
   isRecording = false,
+  isSpeaking = false,
   startRecording,
   stopRecording,
   cancelRecording,
+  stopTTS,
+  onSttEnabledChange,
+  onTtsEnabledChange,
   currentBranch,
   worktreePath,
   projectId,
@@ -740,6 +750,65 @@ export function ChatInput({
                   <PanelIcon pinned={isActivityPanelPinned} />
                 </Button>
               )}
+              {onTtsEnabledChange && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => {
+                    if (isSpeaking) {
+                      stopTTS?.()
+                      return
+                    }
+                    onTtsEnabledChange(!ttsEnabled)
+                  }}
+                  title={
+                    isSpeaking
+                      ? 'Stop speaking'
+                      : ttsEnabled
+                        ? 'Disable text-to-speech'
+                        : 'Enable text-to-speech'
+                  }
+                  aria-label="Toggle text-to-speech"
+                  aria-pressed={ttsEnabled || isSpeaking}
+                  className={cn(
+                    'chat-input-voice-toggle',
+                    (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active',
+                  )}
+                >
+                  <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
+                </Button>
+              )}
+              {onSttEnabledChange && startRecording && stopRecording && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => {
+                    if (isRecording) {
+                      void stopRecording()
+                      return
+                    }
+                    if (!sttEnabled) {
+                      onSttEnabledChange(true)
+                    }
+                    void startRecording()
+                  }}
+                  title={
+                    isRecording
+                      ? 'Stop recording'
+                      : sttEnabled
+                        ? 'Start recording'
+                        : 'Enable speech-to-text and start recording'
+                  }
+                  aria-label="Toggle microphone"
+                  aria-pressed={isRecording || sttEnabled}
+                  className={cn(
+                    'chat-input-voice-toggle',
+                    (isRecording || sttEnabled) && 'chat-input-voice-toggle--active',
+                  )}
+                >
+                  <MicIcon />
+                </Button>
+              )}
             </div>
             {!canSelectModel && onWorktreeChange ? (
               <div className="chat-input-toolbar__right">
@@ -966,6 +1035,25 @@ function PaperclipIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
+function SpeakerIcon({ muted = false }: { muted?: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      {muted ? (
+        <>
+          <line x1="22" y1="9" x2="16" y2="15" />
+          <line x1="16" y1="9" x2="22" y2="15" />
+        </>
+      ) : (
+        <>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+        </>
+      )}
     </svg>
   )
 }
