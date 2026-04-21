@@ -358,6 +358,27 @@ class TestSessionStartAndHelpers:
             assert event.metadata["_platform_session_id"] == "new-sess-1"
             assert resp.decision == "allow"
 
+    def test_handle_session_start_skips_acp_child(self) -> None:
+        """Sessions spawned by daemon-owned qwen --acp / gemini --acp must not
+        register — the envelope carries gobby_acp_child='1' in terminal_context.
+        """
+        handler = _TestHandler()
+        event = _make_event(
+            event_type=HookEventType.SESSION_START,
+            session_id="acp-child-external-id",
+            source=SessionSource.QWEN,
+            data={
+                "cwd": "/tmp",
+                "terminal_context": {"gobby_acp_child": "1"},
+            },
+        )
+
+        resp = handler.handle_session_start(event)
+
+        assert resp.decision == "allow"
+        handler._session_manager.register_session.assert_not_called()
+        handler._session_storage.get.assert_not_called()
+
     def test_handle_session_start_pre_created(self) -> None:
         handler = _TestHandler()
         event = _make_event(event_type=HookEventType.SESSION_START, session_id="ext-1", data={})
