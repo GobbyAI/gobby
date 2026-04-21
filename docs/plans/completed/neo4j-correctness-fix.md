@@ -5,8 +5,8 @@
   Fix Neo4j as two derived projections, not source-of-truth storage:
 
   - Memory KG: stabilize entity identity, scope it correctly, make processing truthful, and update the KG UI to use stable ids.
-  - Code graph: remove the DEFINES vs CALLS identity mismatch, add explicit operator surfaces, and coordinate the schema change with gcode in ~/Projects/gobby-
-    cli.
+  - Code graph: remove the DEFINES vs CALLS identity mismatch, add explicit operator surfaces, and coordinate the schema change with gcode in the
+    separate `gobby-cli` repository.
 
   No backward compatibility for existing Neo4j contents is required. After the changes land, clear and rebuild both projections. Do not add long-lived
   compatibility branches or feature flags.
@@ -102,8 +102,8 @@
 
   Behavior:
 
-  - project_id=<id> sweeps that project only
-  - project_id=None sweeps globals only
+  - project_id=<id> sweeps that specific project
+  - project_id=None sweeps global entries
   - keep a separate all-project maintenance path if needed
 
   Wire scoped cleanup into:
