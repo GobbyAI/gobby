@@ -249,6 +249,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             PreTag="div"
             showLineNumbers
             startingLineNumber={parsed.startLine}
+            wrapLongLines
             lineNumberStyle={{
               minWidth: '2.5em',
               paddingRight: '1em',
@@ -260,7 +261,10 @@ function ToolResultContent({ call }: { call: ToolCall }) {
               margin: 0,
               borderRadius: 0,
               maxHeight: '24rem',
-              overflow: 'auto',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
             }}
           >
             {parsed.content}
@@ -293,8 +297,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
                   PreTag="div"
                   showLineNumbers
                   startingLineNumber={startLine}
+                  wrapLongLines
                   lineNumberStyle={lineNumberStyle}
-                  customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+                  customStyle={{
+                    margin: 0,
+                    borderRadius: '0.25rem',
+                    maxHeight: '24rem',
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                  }}
                 >
                   {content}
                 </SyntaxHighlighter>
@@ -460,7 +473,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           {call.status === 'error' && call.error && (
             <div>
               <div className="text-destructive-foreground mb-1 font-medium">Error</div>
-              <pre className="bg-destructive/30 rounded p-2 overflow-x-auto text-destructive-foreground">
+              <pre className="bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words overflow-x-hidden text-destructive-foreground">
                 {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
               </pre>
             </div>
@@ -785,7 +798,7 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
           {call.status === 'error' && call.error && (
             <div>
               <div className="text-destructive-foreground mb-1 font-medium mt-2">Error</div>
-              <pre className="bg-destructive/30 rounded p-2 overflow-x-auto text-destructive-foreground">
+              <pre className="bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words overflow-x-hidden text-destructive-foreground">
                 {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
               </pre>
             </div>
