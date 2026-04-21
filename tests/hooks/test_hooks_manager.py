@@ -974,6 +974,40 @@ class TestHookManagerSessionLookup:
         assert mock_register.called
         assert response.decision == "allow"
 
+    def test_handle_does_not_auto_register_unknown_session_end(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        """Unknown SESSION_END hooks should not create placeholder session rows."""
+        manager = hook_manager_with_mocks
+
+        event = HookEvent(
+            event_type=HookEventType.SESSION_END,
+            session_id="orphaned-session-end",
+            source=SessionSource.QWEN,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "transcript_path": str(temp_dir / "missing-transcript.jsonl"),
+            },
+            machine_id="test-machine-id",
+        )
+
+        with (
+            patch.object(manager._session_manager, "get_session_id", return_value=None),
+            patch.object(manager._session_manager, "lookup_session_id", return_value=None),
+            patch.object(manager._session_manager, "recover_session", return_value=None),
+        ):
+            response = manager.handle(event)
+
+        rows = manager._session_storage.db.fetchall(
+            "SELECT id FROM sessions WHERE external_id = ?",
+            ("orphaned-session-end",),
+        )
+
+        assert response.decision == "allow"
+        assert event.metadata.get("_platform_session_id") is None
+        assert rows == []
+
     def test_handle_recovers_existing_session_across_source_mismatch(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
