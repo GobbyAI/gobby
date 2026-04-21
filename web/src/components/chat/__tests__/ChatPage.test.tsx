@@ -48,8 +48,6 @@ vi.mock("../ChatInput", () => ({
     currentModel,
     currentReasoning,
     providerPickerDisabledReason,
-    onToggleActivityPanel,
-    isActivityPanelPinned,
   }: {
     proxyDeliveryNotice?: string | null;
     disabled?: boolean;
@@ -63,8 +61,6 @@ vi.mock("../ChatInput", () => ({
     currentModel?: string;
     currentReasoning?: string;
     providerPickerDisabledReason?: string | null;
-    onToggleActivityPanel?: () => void;
-    isActivityPanelPinned?: boolean;
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
@@ -79,15 +75,6 @@ vi.mock("../ChatInput", () => ({
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
       <span data-testid="chat-input-reasoning">{currentReasoning ?? ""}</span>
       <span data-testid="chat-input-provider-disabled-reason">{providerPickerDisabledReason ?? ""}</span>
-      {onToggleActivityPanel && (
-        <button
-          type="button"
-          data-testid="chat-input-panel-toggle"
-          onClick={onToggleActivityPanel}
-        >
-          {isActivityPanelPinned ? "Hide panel" : "Show panel"}
-        </button>
-      )}
     </div>
   ),
 }));
@@ -459,7 +446,7 @@ describe("ChatPage", () => {
       expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
         "true",
       );
-      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -487,7 +474,7 @@ describe("ChatPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
-      expect(screen.queryByTestId("agent-status-panel-toggle")).toBeNull();
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
     });
   });
 
@@ -839,7 +826,7 @@ describe("ChatPage", () => {
     });
   });
 
-  it("renders the activity-panel toggle inside the chat input when the input is visible", async () => {
+  it("renders the activity-panel toggle in the status bar when the chat input is visible", async () => {
     render(
       <ChatPage
         chat={createChat()}
@@ -849,10 +836,10 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId("chat-input-panel-toggle"));
+    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 

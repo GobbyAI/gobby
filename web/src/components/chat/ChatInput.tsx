@@ -92,8 +92,6 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
-  onToggleActivityPanel?: () => void
-  isActivityPanelPinned?: boolean
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -163,8 +161,6 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
-  onToggleActivityPanel,
-  isActivityPanelPinned = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -472,6 +468,13 @@ export function ChatInput({
   }, [pttEnabled, resetPTTGesture])
 
   useEffect(() => {
+    if (!sttEnabled) {
+      latchedRef.current = false
+      resetPTTGesture()
+    }
+  }, [sttEnabled, resetPTTGesture])
+
+  useEffect(() => {
     if (!pendingSttStart) return
     if (!sttEnabled || isRecording || !startRecording) return
 
@@ -614,10 +617,6 @@ export function ChatInput({
     primaryButtonKind === 'mic-recording' && 'ring-2 ring-red-500/70 ring-offset-2 ring-offset-background animate-pulse',
   )
 
-  const activityPanelButtonLabel = isActivityPanelPinned
-    ? 'Hide activity panel'
-    : 'Show activity panel'
-
   return (
     <div
       className={`border-t border-border bg-background px-4 py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
@@ -744,21 +743,6 @@ export function ChatInput({
                   disabled={disabled || agentPickerDisabled}
                 />
               )}
-              {onToggleActivityPanel && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={onToggleActivityPanel}
-                  title={activityPanelButtonLabel}
-                  aria-label={activityPanelButtonLabel}
-                  className={cn(
-                    'chat-input-panel-toggle',
-                    isActivityPanelPinned && 'chat-input-panel-toggle--active',
-                  )}
-                >
-                  <PanelIcon pinned={isActivityPanelPinned} />
-                </Button>
-              )}
               {onTtsEnabledChange && (
                 <Button
                   size="icon"
@@ -791,25 +775,33 @@ export function ChatInput({
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={() => {
-                    if (isRecording) {
-                      setPendingSttStart(false)
-                      void stopRecording()
-                      return
-                    }
-                    if (!sttEnabled) {
+                  onClick={async () => {
+                    try {
+                      if (isRecording) {
+                        // Click while recording → ship audio FIRST, then disable STT.
+                        setPendingSttStart(false)
+                        await stopRecording()
+                        onSttEnabledChange(false)
+                        return
+                      }
+                      if (sttEnabled) {
+                        // STT on, idle → disable STT.
+                        onSttEnabledChange(false)
+                        return
+                      }
+                      // STT off → enable and queue start.
                       setPendingSttStart(true)
                       onSttEnabledChange(true)
-                      return
+                    } catch (err) {
+                      console.error('Mic toggle failed:', err)
                     }
-                    void startRecording()
                   }}
                   title={
                     isRecording
-                      ? 'Stop recording'
+                      ? 'Stop and disable speech-to-text'
                       : sttEnabled
-                        ? 'Start recording'
-                        : 'Enable speech-to-text and start recording'
+                        ? 'Disable speech-to-text'
+                        : 'Enable speech-to-text'
                   }
                   aria-label="Toggle microphone"
                   aria-pressed={isRecording || sttEnabled}
@@ -818,7 +810,7 @@ export function ChatInput({
                     (isRecording || sttEnabled) && 'chat-input-voice-toggle--active',
                   )}
                 >
-                  <MicIcon />
+                  <MicIcon muted={!sttEnabled && !isRecording} />
                 </Button>
               )}
             </div>
@@ -1032,13 +1024,14 @@ function StopIcon() {
   )
 }
 
-function MicIcon() {
+function MicIcon({ muted = false }: { muted?: boolean } = {}) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
       <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
       <line x1="12" y1="19" x2="12" y2="23" />
       <line x1="8" y1="23" x2="16" y2="23" />
+      {muted && <line x1="3" y1="3" x2="21" y2="21" />}
     </svg>
   )
 }
@@ -1066,16 +1059,6 @@ function SpeakerIcon({ muted = false }: { muted?: boolean }) {
           <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
         </>
       )}
-    </svg>
-  )
-}
-
-function PanelIcon({ pinned }: { pinned: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <line x1="15" y1="3" x2="15" y2="21" />
-      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
     </svg>
   )
 }

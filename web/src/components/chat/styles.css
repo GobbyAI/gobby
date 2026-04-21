@@ -3188,18 +3188,6 @@
   line-height: 1;
 }
 
-.chat-input-panel-toggle {
-  color: var(--text-secondary);
-}
-
-.chat-input-panel-toggle:hover {
-  color: var(--text-primary);
-}
-
-.chat-input-panel-toggle.chat-input-panel-toggle--active {
-  color: var(--accent);
-}
-
 .chat-input-voice-toggle {
   color: var(--text-secondary);
 }

@@ -263,31 +263,6 @@ describe('ChatInput', () => {
     expect(screen.getByTitle('Attached session owns attachments')).toBeDisabled()
   })
 
-  it('renders the activity panel toggle beside the agent selector and keeps it enabled while input is disabled', async () => {
-    const onToggleActivityPanel = vi.fn()
-    const { container } = render(
-      <ChatInput
-        {...defaultProps}
-        disabled={true}
-        onAgentChange={vi.fn()}
-        agentName="default"
-        agentDefinitions={[{ name: 'default', source: 'project' } as any]}
-        onToggleActivityPanel={onToggleActivityPanel}
-      />,
-    )
-
-    const toggle = screen.getByRole('button', { name: 'Show activity panel' })
-    expect(toggle).toBeEnabled()
-
-    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
-    const agentIndicator = screen.getByTestId('agent-indicator')
-    expect(toolbarLeft?.children[toolbarLeft.children.length - 2]).toBe(agentIndicator)
-    expect(toolbarLeft?.lastElementChild).toBe(toggle)
-
-    await userEvent.click(toggle)
-    expect(onToggleActivityPanel).toHaveBeenCalledTimes(1)
-  })
-
   it('shows a mic button in PTT mode with empty input', () => {
     render(
       <ChatInput
@@ -415,6 +390,52 @@ describe('ChatInput', () => {
 
     await waitFor(() => {
       expect(callOrder).toEqual(['toggle:true', 'start:true'])
+    })
+  })
+
+  it('disables STT when the mic toggle is clicked while STT is on but idle', async () => {
+    const onSttEnabledChange = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        isRecording={false}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+        onSttEnabledChange={onSttEnabledChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+
+    expect(onSttEnabledChange).toHaveBeenCalledWith(false)
+  })
+
+  it('stops recording before disabling STT when the mic is clicked mid-recording', async () => {
+    const callOrder: string[] = []
+    const stopRecording = vi.fn(async () => {
+      callOrder.push('stop')
+    })
+    const onSttEnabledChange = vi.fn((enabled: boolean) => {
+      callOrder.push(`toggle:${String(enabled)}`)
+    })
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        isRecording={true}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={stopRecording}
+        cancelRecording={vi.fn()}
+        onSttEnabledChange={onSttEnabledChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+
+    await waitFor(() => {
+      expect(callOrder).toEqual(['stop', 'toggle:false'])
     })
   })
 

@@ -747,7 +747,7 @@ export function ChatPage({
               canControlViewedSession ? handleResumeViewedSession : undefined
             }
             onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
-            onTogglePanel={!showChatInput ? togglePanel : undefined}
+            onTogglePanel={togglePanel}
             isPanelPinned={isPinned}
           />
 
@@ -819,8 +819,6 @@ export function ChatPage({
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
-              onToggleActivityPanel={togglePanel}
-              isActivityPanelPinned={isPinned}
             />
           )}
         </ArtifactContext.Provider>
