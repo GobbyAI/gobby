@@ -195,6 +195,19 @@ class SessionStartMixin(EventHandlersBase):
             if isinstance(input_data.get("terminal_context"), dict)
             else None
         )
+
+        # Daemon-spawned ACP subprocesses (gemini --acp, qwen --acp) set
+        # GOBBY_ACP_CHILD=1 and GOBBY_HOOKS_DISABLED=1 in their environment.
+        # A current ghook short-circuits on GOBBY_HOOKS_DISABLED before ever
+        # calling the daemon; this branch catches the stale-ghook case where
+        # the binary isn't rebuilt yet but carries the GOBBY_ACP_CHILD marker
+        # in terminal_context.
+        if terminal_context and terminal_context.get("gobby_acp_child") == "1":
+            self.logger.info(
+                "Skipping session registration for ACP child process "
+                f"(cli={cli_source}, external_id={external_id})"
+            )
+            return HookResponse()
         gobby_session_id_from_env = (
             terminal_context.get("gobby_session_id") if terminal_context else None
         )
