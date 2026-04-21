@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import './tasks-page.css'
 import './task-views.css'
 import { useTasks } from '../../hooks/useTasks'
-import type { GobbyTask, GobbyTaskDetail } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge, TaskStateBadges } from './TaskBadges'
 import { TaskDetail } from './TaskDetail'
 import { TaskCreateForm } from './TaskCreateForm'
@@ -363,19 +363,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     return defaults
   }, [filters.taskType, filters.priority, selectedTaskId, allTasks, cloneDefaults])
 
-  const handleClone = useCallback((task: GobbyTaskDetail) => {
-    setCloneDefaults({
-      title: `[Clone] ${task.title}`,
-      description: task.description || undefined,
-      taskType: task.task_type,
-      priority: task.priority,
-      validationCriteria: task.validation_criteria || undefined,
-      labels: task.labels || undefined,
-      parentTaskId: task.parent_task_id || undefined,
-    })
-    setShowCreateForm(true)
-  }, [])
-
   const promptForSessionId = useCallback((ownerSessionId?: string | null): string | null => {
     if (ownerSessionId?.trim()) return ownerSessionId
     const value = window.prompt('Enter the session ID that should own this task')
@@ -723,7 +710,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         }}
         onSelectTask={setSelectedTaskId}
         onClose={() => setSelectedTaskId(null)}
-        onClone={handleClone}
       />
 
       <TaskCreateForm

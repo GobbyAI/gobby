@@ -14,8 +14,6 @@ vi.mock('../ReasoningTimeline', () => ({ ReasoningTimeline: () => null }))
 vi.mock('../ActionFeed', () => ({ ActionFeed: () => null }))
 vi.mock('../SessionViewer', () => ({ SessionViewer: () => null }))
 vi.mock('../CapabilityScope', () => ({ CapabilityScope: () => null }))
-vi.mock('../RawTraceView', () => ({ RawTraceView: () => null }))
-vi.mock('../OversightSelector', () => ({ OversightSelector: () => null }))
 vi.mock('../EscalationCard', () => ({
   EscalationCard: ({
     onResolve,
@@ -32,11 +30,8 @@ vi.mock('../EscalationCard', () => ({
 vi.mock('../TaskResults', () => ({ TaskResults: () => null }))
 vi.mock('../TokenTracker', () => ({ TokenTracker: () => null }))
 vi.mock('../TaskMemories', () => ({ TaskMemories: () => null }))
-vi.mock('../AssigneePicker', () => ({ AssigneePicker: () => null }))
 vi.mock('../TaskComments', () => ({ TaskComments: () => null }))
 vi.mock('../PermissionOverrides', () => ({ PermissionOverrides: () => null }))
-vi.mock('../TaskHandoff', () => ({ TaskHandoff: () => null }))
-vi.mock('../LaunchAgentDialog', () => ({ LaunchAgentDialog: () => null }))
 
 const SAMPLE_TASK: GobbyTaskDetail = {
   id: 'task-1',
@@ -184,7 +179,11 @@ describe('TaskDetail', () => {
       expect(screen.getByText('Fix the bug')).toBeTruthy()
     })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Resume' }))
+    await userEvent.selectOptions(
+      screen.getByLabelText('Change status'),
+      'resume',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Update' }))
 
     await waitFor(() => {
       expect(defaultProps.actions.deEscalateTask).toHaveBeenCalledWith(
