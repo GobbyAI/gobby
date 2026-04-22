@@ -606,7 +606,7 @@ class TestSessionCoordinatorInitialization:
             logger=logger,
         )
 
-        assert coordinator._session_storage is mock_session_storage
+        assert coordinator._session_manager is mock_session_storage
         assert coordinator._message_processor is mock_message_processor
         assert coordinator._agent_run_manager is mock_agent_run_manager
         assert coordinator._worktree_manager is mock_worktree_manager
@@ -616,7 +616,7 @@ class TestSessionCoordinatorInitialization:
         """Test initialization without dependencies (graceful degradation)."""
         coordinator = SessionCoordinator()
 
-        assert coordinator._session_storage is None
+        assert coordinator._session_manager is None
         assert coordinator._message_processor is None
         assert coordinator._agent_run_manager is None
         assert coordinator._worktree_manager is None

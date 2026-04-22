@@ -371,10 +371,10 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
 
         gobby memory fix-null-project             # Apply fixes
     """
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
     db = LocalDatabase()
-    session_mgr = LocalSessionManager(db)
+    session_mgr = SessionManager(db)
 
     # Find memories with NULL project_id and session source
     rows = db.fetchall(

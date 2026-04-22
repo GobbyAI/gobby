@@ -4,7 +4,7 @@ Covers:
 - AgentCommand dataclass and AgentCommandManager CRUD
 - Status transitions (pending → running → completed/failed/cancelled)
 - InterSessionMessageManager.get_undelivered_messages / mark_delivered
-- LocalSessionManager.is_ancestor
+- SessionManager.is_ancestor
 """
 
 from __future__ import annotations
@@ -322,18 +322,18 @@ class TestSessionAncestry:
     """is_ancestor checks parent-child chain."""
 
     def test_direct_parent(self, db: LocalDatabase) -> None:
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
-        mgr = LocalSessionManager(db)
+        mgr = SessionManager(db)
         parent = _create_session(db)
         child = _create_session(db, parent_id=parent)
 
         assert mgr.is_ancestor(ancestor_id=parent, descendant_id=child) is True
 
     def test_grandparent(self, db: LocalDatabase) -> None:
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
-        mgr = LocalSessionManager(db)
+        mgr = SessionManager(db)
         grandparent = _create_session(db)
         parent = _create_session(db, parent_id=grandparent)
         child = _create_session(db, parent_id=parent)
@@ -341,26 +341,26 @@ class TestSessionAncestry:
         assert mgr.is_ancestor(ancestor_id=grandparent, descendant_id=child) is True
 
     def test_not_ancestor(self, db: LocalDatabase) -> None:
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
-        mgr = LocalSessionManager(db)
+        mgr = SessionManager(db)
         s1 = _create_session(db)
         s2 = _create_session(db)
 
         assert mgr.is_ancestor(ancestor_id=s1, descendant_id=s2) is False
 
     def test_self_is_not_ancestor(self, db: LocalDatabase) -> None:
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
-        mgr = LocalSessionManager(db)
+        mgr = SessionManager(db)
         s = _create_session(db)
 
         assert mgr.is_ancestor(ancestor_id=s, descendant_id=s) is False
 
     def test_reverse_direction(self, db: LocalDatabase) -> None:
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
-        mgr = LocalSessionManager(db)
+        mgr = SessionManager(db)
         parent = _create_session(db)
         child = _create_session(db, parent_id=parent)
 

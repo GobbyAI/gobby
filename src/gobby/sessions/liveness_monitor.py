@@ -25,7 +25,7 @@ from gobby.config.tmux import TmuxConfig
 
 if TYPE_CHECKING:
     from gobby.sessions.processor import SessionMessageProcessor
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +56,13 @@ class SessionLivenessMonitor:
 
     def __init__(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         dispatch_summaries_fn: Callable[..., None] | None = None,
         generate_summaries_fn: Callable[..., Coroutine[Any, Any, None]] | None = None,
         message_processor: SessionMessageProcessor | None = None,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
     ) -> None:
-        self._session_storage = session_storage
+        self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
         self._generate_summaries_fn = generate_summaries_fn
         self._message_processor = message_processor
@@ -147,7 +147,7 @@ class SessionLivenessMonitor:
                     f"Session {session_id} parent PID {parent_pid} dead but tmux pane {tmux_pane} alive - refreshing",
                 )
                 try:
-                    self._session_storage.touch(session_id)
+                    self._session_manager.touch(session_id)
                 except Exception:
                     logger.warning(
                         f"SessionLivenessMonitor: failed to touch session {session_id}",
@@ -172,7 +172,7 @@ class SessionLivenessMonitor:
             tmux_pane is None when the session has no tmux pane.
         """
         try:
-            rows = self._session_storage.db.fetchall(
+            rows = self._session_manager.db.fetchall(
                 """
                 SELECT id, terminal_context
                 FROM sessions
@@ -280,7 +280,7 @@ class SessionLivenessMonitor:
 
         # 2. Mark session as expired
         try:
-            self._session_storage.update_status(session_id, "expired")
+            self._session_manager.update_status(session_id, "expired")
         except Exception:
             logger.warning(
                 f"SessionLivenessMonitor: failed to expire session {session_id}",

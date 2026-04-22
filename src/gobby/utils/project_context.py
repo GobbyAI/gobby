@@ -188,7 +188,7 @@ def set_project_context_from_session(
 
     Args:
         session_id: Resolved session UUID.
-        session_manager: LocalSessionManager instance.
+        session_manager: SessionManager instance.
         db: Database connection for project lookup.
 
     Returns:

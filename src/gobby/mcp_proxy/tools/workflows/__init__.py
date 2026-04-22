@@ -53,7 +53,7 @@ from gobby.mcp_proxy.tools.workflows._variables import (
     update_variable,
 )
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.loader import WorkflowLoader
@@ -70,7 +70,7 @@ __all__ = [
 
 def create_workflows_registry(
     loader: WorkflowLoader | None = None,
-    session_manager: LocalSessionManager | None = None,
+    session_manager: SessionManager | None = None,
     db: DatabaseProtocol | None = None,
     # Pipeline dependencies (resolved lazily at call time)
     executor_getter: Callable[[], Any | None] | None = None,
@@ -85,7 +85,7 @@ def create_workflows_registry(
 
     Args:
         loader: WorkflowLoader instance
-        session_manager: LocalSessionManager instance (created from db if not provided)
+        session_manager: SessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
         executor_getter: Callable returning PipelineExecutor (or None) at call time
         execution_manager_getter: Callable returning LocalPipelineExecutionManager
@@ -100,7 +100,7 @@ def create_workflows_registry(
     if session_manager is not None:
         _session_manager = session_manager
     elif _db is not None:
-        _session_manager = LocalSessionManager(_db)
+        _session_manager = SessionManager(_db)
     else:
         _session_manager = None
 

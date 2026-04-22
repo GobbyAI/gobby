@@ -16,30 +16,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.servers.http import HTTPServer
+    from gobby.storage.session_models import Session
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
-
-
-def _get_session_record(session_manager: Any, session_id: str) -> Any | None:
-    """Fetch a session from either storage or service-layer managers."""
-    if hasattr(session_manager, "get"):
-        return session_manager.get(session_id)
-    if hasattr(session_manager, "get_session"):
-        return session_manager.get_session(session_id)
-    return None
-
-
-def _session_attr(session: Any, name: str) -> Any:
-    """Read an attribute from an object or dict-shaped session."""
-    if isinstance(session, dict):
-        return session.get(name)
-    return getattr(session, name, None)
-
 
 def register_message_routes(
     router: APIRouter,
     server: "HTTPServer",
-    get_session_manager: "Callable[[], Any]",
+    get_session_manager: "Callable[[], SessionManager]",
 ) -> None:
     """Register message and transcript routes on the router."""
 
@@ -117,8 +102,8 @@ def register_message_routes(
                 status = await server.transcript_reader.get_transcript_status(session_id)
                 return dict(status)
 
-            sm = get_session_manager()
-            session = _get_session_record(sm, session_id)
+            session_manager = get_session_manager()
+            session: Session | None = session_manager.get(session_id)
             if not session:
                 return {
                     "session_id": session_id,
@@ -133,8 +118,8 @@ def register_message_routes(
                     "parsed_message_count": None,
                 }
 
-            transcript_path = _session_attr(session, "transcript_path")
-            external_id = _session_attr(session, "external_id")
+            transcript_path = session.transcript_path
+            external_id = session.external_id
             live_exists = bool(transcript_path and os.path.isfile(transcript_path))
 
             archive_dir = get_archive_dir()
@@ -154,7 +139,7 @@ def register_message_routes(
                 if archive_exists
                 else "missing",
                 "content_state": "uninspected" if (live_exists or archive_exists) else "missing",
-                "session_source": _session_attr(session, "source"),
+                "session_source": session.source,
                 "detected_source": None,
                 "source_mismatch": False,
                 "raw_record_count": None,
@@ -176,13 +161,13 @@ def register_message_routes(
 
             from fastapi.responses import Response
 
-            sm = get_session_manager()
-            session = _get_session_record(sm, session_id)
+            session_manager = get_session_manager()
+            session: Session | None = session_manager.get(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            transcript_path = _session_attr(session, "transcript_path")
-            external_id = _session_attr(session, "external_id")
+            transcript_path = session.transcript_path
+            external_id = session.external_id
 
             # Try original JSONL path first
             if transcript_path and os.path.isfile(transcript_path):
@@ -219,12 +204,12 @@ def register_message_routes(
     async def restore_transcript_endpoint(session_id: str) -> dict[str, Any]:
         """Restore a transcript from archive to disk for CLI resume."""
         try:
-            sm = get_session_manager()
-            session = _get_session_record(sm, session_id)
+            session_manager = get_session_manager()
+            session: Session | None = session_manager.get(session_id)
             if not session:
                 raise HTTPException(status_code=404, detail="Session not found")
-            external_id = _session_attr(session, "external_id")
-            transcript_path = _session_attr(session, "transcript_path")
+            external_id = session.external_id
+            transcript_path = session.transcript_path
             if not external_id or not transcript_path:
                 raise HTTPException(
                     status_code=404,

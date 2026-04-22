@@ -9,15 +9,15 @@ from fastapi.testclient import TestClient
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
 from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def mock_workflow_loader() -> AsyncMock:
 
 @pytest.fixture
 def http_server(
-    session_storage: LocalSessionManager,
+    session_storage: SessionManager,
     mock_pipeline_executor,
     mock_workflow_loader,
 ) -> HTTPServer:

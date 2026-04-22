@@ -56,7 +56,6 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler) -> None:
 def test_hook_manager_integration():
     with (
         patch("gobby.hooks.factory.LocalDatabase"),
-        patch("gobby.hooks.factory.LocalSessionManager"),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
@@ -97,7 +96,6 @@ def test_hook_manager_integration():
 def test_hook_manager_blocks_on_workflow():
     with (
         patch("gobby.hooks.factory.LocalDatabase"),
-        patch("gobby.hooks.factory.LocalSessionManager"),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,

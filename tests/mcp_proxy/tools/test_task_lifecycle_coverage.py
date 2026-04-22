@@ -70,7 +70,7 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
     """Create registry with patches for context managers."""
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSM,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
     ):
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "resolved-session"
@@ -203,7 +203,7 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSM,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
         ):
             mock_sm = MagicMock()
             MockSM.return_value = mock_sm
@@ -351,7 +351,7 @@ class TestReopenTask:
 
         with (
             patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as MockSTM,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSM,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSM,
             patch("gobby.workflows.task_claim_state.remove_claimed_task") as mock_remove,
         ):
             mock_sm = MagicMock()

@@ -10,7 +10,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stop_registry import StopRegistry
@@ -18,17 +18,17 @@ from gobby.autonomous.stuck_detector import StuckDetector
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.health_monitor import HealthMonitor
 from gobby.hooks.session_coordinator import SessionCoordinator
+from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.skill_manager import HookSkillManager
 from gobby.hooks.webhooks import WebhookDispatcher
 from gobby.memory.manager import MemoryManager
-from gobby.sessions.manager import SessionManager
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.hook_assembler import HookTranscriptAssembler
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.session_tasks import SessionTaskManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_client import DaemonClient
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class _Storage:
     """Container for storage managers."""
 
-    session: LocalSessionManager
+    session: SessionManager
     session_task: SessionTaskManager
     memory: LocalMemoryManager
     task: LocalTaskManager
@@ -86,7 +86,6 @@ class HookManagerComponents:
     database: LocalDatabase
     daemon_client: DaemonClient
     transcript_processor: ClaudeTranscriptParser
-    session_storage: LocalSessionManager
     session_task_manager: SessionTaskManager
     memory_storage: LocalMemoryManager
     task_manager: LocalTaskManager
@@ -174,7 +173,7 @@ class HookManagerFactory:
         transcript_processor = ClaudeTranscriptParser(logger_instance=hook_logger)
 
         # Create storage layer
-        storage = cls._create_storage(database)
+        storage = cls._create_storage(database, logger=hook_logger, config=config)
 
         # Initialize autonomous components
         autonomous = cls._create_autonomous(database)
@@ -201,15 +200,12 @@ class HookManagerFactory:
         # Initialize webhooks
         webhook_dispatcher = cls._create_webhooks(config)
 
-        # Initialize session management
-        session_mgr = SessionManager(
-            session_storage=storage.session,
-            logger_instance=hook_logger,
-            config=config,
-        )
+        # Use the same canonical SessionManager instance for both storage-
+        # and service-level hooks access so caches and DB operations stay aligned.
+        session_mgr = storage.session
 
         session_coordinator = SessionCoordinator(
-            session_storage=storage.session,
+            session_storage=cast(HookSessionManager, storage.session),
             message_processor=message_processor,
             agent_run_manager=storage.agent_run,
             worktree_manager=storage.worktree,
@@ -228,9 +224,8 @@ class HookManagerFactory:
         call_tool_fn = cls._build_sync_call_tool(tool_proxy_getter, loop, hook_logger)
 
         event_handlers = EventHandlers(
-            session_manager=session_mgr,
+            session_manager=cast(HookSessionManager, session_mgr),
             workflow_handler=workflow_components.handler,
-            session_storage=storage.session,
             session_task_manager=storage.session_task,
             message_processor=message_processor,
             task_manager=storage.task,
@@ -251,7 +246,6 @@ class HookManagerFactory:
             database=database,
             daemon_client=daemon_client,
             transcript_processor=transcript_processor,
-            session_storage=storage.session,
             session_task_manager=storage.session_task,
             memory_storage=storage.memory,
             task_manager=storage.task,
@@ -388,8 +382,13 @@ class HookManagerFactory:
         return LocalDatabase()
 
     @staticmethod
-    def _create_storage(database: LocalDatabase) -> _Storage:
-        session = LocalSessionManager(database)
+    def _create_storage(
+        database: LocalDatabase,
+        *,
+        logger: logging.Logger,
+        config: Any | None,
+    ) -> _Storage:
+        session = SessionManager(database, logger_instance=logger, config=config)
         session_task = SessionTaskManager(database)
         return _Storage(
             session=session,

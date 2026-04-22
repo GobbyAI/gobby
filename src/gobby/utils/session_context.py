@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def resolve_session_ref(
     Shared utility replacing duplicated closures in cross-session tools.
 
     Args:
-        session_manager: LocalSessionManager instance
+        session_manager: SessionManager instance
         ref: Session reference string
 
     Returns:
@@ -177,7 +177,7 @@ def _ref_requires_project_scope(session_ref: str) -> bool:
 
 def resolve_and_seed_contexts(
     session_ref: str | None,
-    session_manager: LocalSessionManager | None,
+    session_manager: SessionManager | None,
     *,
     project_ref: str | None = None,
     project_ref_is_fallback: bool = False,

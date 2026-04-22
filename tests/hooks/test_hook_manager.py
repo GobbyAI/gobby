@@ -24,7 +24,6 @@ def mock_components() -> MagicMock:
     components.database = MagicMock()
     components.daemon_client = MagicMock()
     components.transcript_processor = MagicMock()
-    components.session_storage = MagicMock()
     components.session_task_manager = MagicMock()
     components.memory_storage = MagicMock()
     components.message_manager = MagicMock()
@@ -716,6 +715,21 @@ class TestEnsureProjectInDb:
             MockPM.return_value.ensure_exists.side_effect = ValueError("DB error")
             # Should not raise
             manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
+
+
+class TestSessionManagerUnification:
+    """Tests for canonical session manager wiring inside HookManager."""
+
+    def test_init_keeps_only_canonical_session_manager(
+        self,
+        manager_with_mocks: HookManager,
+        mock_components: MagicMock,
+    ) -> None:
+        """HookManager should expose only the canonical session manager handle."""
+        manager = manager_with_mocks
+
+        assert manager._session_manager is mock_components.session_manager
+        assert not hasattr(manager, "_session_storage")
 
 
 # ─── Tests for _resolve_session_refs_in_tool_input ─────────────────────

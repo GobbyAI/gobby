@@ -452,7 +452,7 @@ class TestCreateTaskTool:
     async def test_create_task_with_all_optional_fields(self, mock_task_manager, mock_sync_manager):
         """Test create_task with all optional fields."""
         with patch(
-            "gobby.mcp_proxy.tools.tasks._context.LocalSessionManager"
+            "gobby.mcp_proxy.tools.tasks._context.SessionManager"
         ) as MockSessionManager:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
@@ -604,7 +604,7 @@ class TestCreateTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -657,7 +657,7 @@ class TestCreateTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -727,7 +727,7 @@ class TestCreateTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_st_instance = MagicMock()
@@ -800,7 +800,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
         ):
             mock_st_instance = MagicMock()
@@ -858,7 +858,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -1671,7 +1671,7 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.LocalSessionManager"
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
             ) as MockSessionManager,
         ):
             mock_proj_instance = MagicMock()
@@ -1727,7 +1727,7 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.LocalSessionManager"
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
             ) as MockSessionManager,
         ):
             mock_proj_instance = MagicMock()
@@ -1767,7 +1767,7 @@ class TestCloseTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
             patch("gobby.utils.git.run_git_command") as mock_git,
@@ -1776,7 +1776,7 @@ class TestCloseTaskTool:
                 side_effect=lambda sha, cwd=None: sha,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.LocalSessionManager"
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
             ) as MockCloseSessionManager,
         ):
             mock_st_instance = MagicMock()
@@ -1787,7 +1787,7 @@ class TestCloseTaskTool:
             mock_session_manager.get.return_value = None
             MockSessionManager.return_value = mock_session_manager
 
-            # Patch the LocalSessionManager used inside close_task
+            # Patch the SessionManager used inside close_task
             mock_close_session_manager = MagicMock()
             mock_close_session_manager.get.return_value = None
             MockCloseSessionManager.return_value = mock_close_session_manager
@@ -2127,7 +2127,7 @@ class TestSessionIntegrationTools:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -2198,7 +2198,7 @@ class TestSessionIntegrationTools:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             mock_st_instance.get_session_tasks.return_value = [
@@ -2495,7 +2495,7 @@ class TestSessionVariableMirroring:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_st_instance = MagicMock()
@@ -2545,7 +2545,7 @@ class TestSessionVariableMirroring:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
             patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
             patch("gobby.utils.git.run_git_command") as mock_git,
@@ -2554,7 +2554,7 @@ class TestSessionVariableMirroring:
                 side_effect=lambda sha, cwd=None: sha,
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.LocalSessionManager"
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
             ) as MockCloseSessionManager,
         ):
             mock_st_instance = MagicMock()
@@ -2565,7 +2565,7 @@ class TestSessionVariableMirroring:
             mock_session_manager.get.return_value = None
             MockSessionManager.return_value = mock_session_manager
 
-            # Patch the LocalSessionManager used inside close_task
+            # Patch the SessionManager used inside close_task
             mock_close_session_manager = MagicMock()
             mock_close_session_manager.get.return_value = None
             MockCloseSessionManager.return_value = mock_close_session_manager
@@ -2620,7 +2620,7 @@ class TestSessionVariableMirroring:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_st_instance = MagicMock()

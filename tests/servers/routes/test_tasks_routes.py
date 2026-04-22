@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -41,7 +41,7 @@ def task_manager(temp_db) -> LocalTaskManager:
 
 @pytest.fixture
 def session(temp_db, project_id: str):
-    session_manager = LocalSessionManager(temp_db)
+    session_manager = SessionManager(temp_db)
     return session_manager.register(
         external_id="test-external-session",
         machine_id="test-machine",
@@ -67,7 +67,7 @@ def server(temp_db, task_manager):
     srv = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
-        session_manager=LocalSessionManager(temp_db),
+        session_manager=SessionManager(temp_db),
         task_manager=task_manager,
     )
     return srv

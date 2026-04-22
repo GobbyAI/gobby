@@ -24,7 +24,7 @@ from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer, create_server, run_server
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -34,9 +34,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[s
 
 
 @pytest.fixture
-def basic_http_server(session_storage: LocalSessionManager) -> HTTPServer:
+def basic_http_server(session_storage: SessionManager) -> HTTPServer:
     """Create a basic HTTP server instance for testing."""
     mock_config = MagicMock()
     mock_config.logging.max_size_mb = 10
@@ -190,7 +190,7 @@ class TestHTTPServerInit:
         server = HTTPServer(services=services, port=8000, test_mode=True)
         assert server.broadcaster is not None
 
-    def test_init_with_session_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_init_with_session_manager(self, session_storage: SessionManager) -> None:
         """Test HTTPServer with session manager."""
         services = ServiceContainer(
             config=MagicMock(),
@@ -667,7 +667,7 @@ class TestCreateServer:
         assert server.test_mode is True
 
     @pytest.mark.asyncio
-    async def test_create_server_with_all_args(self, session_storage: LocalSessionManager) -> None:
+    async def test_create_server_with_all_args(self, session_storage: SessionManager) -> None:
         """Test create_server with all arguments."""
         mock_mcp_manager = MagicMock()
         mock_config = MagicMock()
@@ -738,7 +738,7 @@ class TestAdminEndpoints:
         assert data["daemon"] is None
 
     def test_status_check_with_task_manager(
-        self, session_storage: LocalSessionManager, temp_db: LocalDatabase
+        self, session_storage: SessionManager, temp_db: LocalDatabase
     ) -> None:
         """Test status check includes task stats."""
         from gobby.storage.tasks import LocalTaskManager
@@ -767,7 +767,7 @@ class TestAdminEndpoints:
         assert "in_progress" in data["tasks"]
 
     def test_status_check_with_memory_manager(
-        self, session_storage: LocalSessionManager, temp_db: LocalDatabase
+        self, session_storage: SessionManager, temp_db: LocalDatabase
     ) -> None:
         """Test status check includes memory stats."""
         mock_memory_manager = MagicMock()
@@ -796,7 +796,7 @@ class TestAdminEndpoints:
         assert data["memory"]["count"] == 10
 
     def test_status_check_memory_manager_failure(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test status check handles memory manager failure."""
         mock_memory_manager = MagicMock()
@@ -843,7 +843,7 @@ class TestAdminEndpoints:
         # Metrics are now exported via OTel/Prometheus SDK, not custom format
         assert "# HELP" in response.text or "# TYPE" in response.text
 
-    def test_config_endpoint_error_handling(self, session_storage: LocalSessionManager) -> None:
+    def test_config_endpoint_error_handling(self, session_storage: SessionManager) -> None:
         """Test config endpoint handles errors."""
         services = ServiceContainer(
             config=None,
@@ -881,7 +881,7 @@ class TestMCPEndpoints:
     """
 
     @pytest.fixture
-    def mcp_server(self, session_storage: LocalSessionManager) -> HTTPServer:
+    def mcp_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for MCP tests."""
         services = ServiceContainer(
             config=None,
@@ -1022,7 +1022,7 @@ class TestMCPEndpointsWithManager:
     @pytest.fixture
     def http_server_with_mcp(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> HTTPServer:
         """Create HTTP server and set mcp_manager after init to avoid GobbyDaemonTools."""
         services = ServiceContainer(
@@ -1092,7 +1092,7 @@ class TestCodeEndpoints:
     """Tests for code execution endpoints."""
 
     @pytest.fixture
-    def code_server(self, session_storage: LocalSessionManager) -> HTTPServer:
+    def code_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for code endpoint tests."""
         services = ServiceContainer(
             config=None,
@@ -1162,7 +1162,7 @@ class TestHooksEndpoints:
         assert response.status_code == 503
         assert "HookManager not initialized" in response.json()["detail"]
 
-    def test_execute_hook_with_mock_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_execute_hook_with_mock_manager(self, session_storage: SessionManager) -> None:
         """Test execute hook with mocked hook manager."""
         services = ServiceContainer(
             config=None,
@@ -1200,7 +1200,7 @@ class TestHooksEndpoints:
             assert response.json()["continue"] is True
 
     def test_execute_hook_graceful_error_on_adapter_exception(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test hook returns graceful response when adapter throws exception.
 
@@ -1252,7 +1252,7 @@ class TestHooksEndpoints:
             assert "Database connection failed" in data["hookSpecificOutput"]["additionalContext"]
 
     def test_execute_hook_graceful_error_for_unsupported_hook_type(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test graceful error response for hook types that don't support additionalContext."""
         services = ServiceContainer(
@@ -1304,7 +1304,7 @@ class TestWebhooksEndpoints:
     """Tests for webhooks endpoints."""
 
     @pytest.fixture
-    def webhooks_server(self, session_storage: LocalSessionManager) -> HTTPServer:
+    def webhooks_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for webhooks tests."""
         services = ServiceContainer(
             config=None,
@@ -1333,7 +1333,7 @@ class TestWebhooksEndpoints:
         assert data["enabled"] is False
         assert data["endpoints"] == []
 
-    def test_list_webhooks_endpoint_exists(self, session_storage: LocalSessionManager) -> None:
+    def test_list_webhooks_endpoint_exists(self, session_storage: SessionManager) -> None:
         """Test webhooks endpoint works with minimal config."""
         services = ServiceContainer(
             config=None,
@@ -1381,7 +1381,7 @@ class TestExceptionHandlers:
     """Tests for exception handlers."""
 
     def test_global_exception_handler_logs_details(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test that global exception handler logs request details."""
         services = ServiceContainer(
@@ -1414,7 +1414,7 @@ class TestExceptionHandlers:
         assert data["error_logged"] is True
 
     def test_global_exception_handler_includes_path(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test exception handler includes request path in logs."""
         services = ServiceContainer(
@@ -1441,7 +1441,7 @@ class TestExceptionHandlers:
         assert data["status"] == "error"
 
     def test_global_exception_handler_downgrades_client_disconnect(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Client disconnects should not be logged as unhandled server errors."""
         services = ServiceContainer(
@@ -1479,7 +1479,7 @@ class TestExceptionHandlers:
 class TestLifespan:
     """Tests for FastAPI lifespan management."""
 
-    def test_lifespan_sets_running_flag(self, session_storage: LocalSessionManager) -> None:
+    def test_lifespan_sets_running_flag(self, session_storage: SessionManager) -> None:
         """Test that lifespan sets _running flag."""
         services = ServiceContainer(
             config=None,
@@ -1499,7 +1499,7 @@ class TestLifespan:
             # During lifespan, _running should be True
             assert server._running is True
 
-    def test_lifespan_initializes_hook_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_lifespan_initializes_hook_manager(self, session_storage: SessionManager) -> None:
         """Test that lifespan initializes HookManager."""
         mock_config = MagicMock()
         mock_config.logging.hook_manager = "/tmp/hooks.log"
@@ -1525,7 +1525,7 @@ class TestLifespan:
             with TestClient(server.app):
                 MockHM.assert_called_once()
 
-    def test_lifespan_cleans_up_voice_resources(self, session_storage: LocalSessionManager) -> None:
+    def test_lifespan_cleans_up_voice_resources(self, session_storage: SessionManager) -> None:
         """Test that lifespan uses the explicit voice cleanup hook on shutdown."""
         services = ServiceContainer(
             config=None,
@@ -1650,7 +1650,7 @@ class TestRunServer:
 class TestInternalRegistries:
     """Tests for internal registry handling."""
 
-    def test_list_tools_internal_server(self, session_storage: LocalSessionManager) -> None:
+    def test_list_tools_internal_server(self, session_storage: SessionManager) -> None:
         """Test listing tools from internal server."""
         mock_internal_manager = MagicMock()
         mock_internal_manager.is_internal.return_value = True
@@ -1681,7 +1681,7 @@ class TestInternalRegistries:
         assert data["tools"][0]["name"] == "tool1"
 
     def test_list_tools_internal_server_not_found(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test listing tools from non-existent internal server."""
         mock_internal_manager = MagicMock()
@@ -1710,7 +1710,7 @@ class TestInternalRegistries:
         assert data["success"] is False
         assert "not found" in data["error"]
 
-    def test_call_tool_internal_server(self, session_storage: LocalSessionManager) -> None:
+    def test_call_tool_internal_server(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server."""
         mock_internal_manager = MagicMock()
         mock_internal_manager.is_internal.return_value = True
@@ -1743,7 +1743,7 @@ class TestInternalRegistries:
         assert data["success"] is True
         assert data["result"] == {"result": "success"}
 
-    def test_call_tool_internal_server_error(self, session_storage: LocalSessionManager) -> None:
+    def test_call_tool_internal_server_error(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server with error."""
         mock_internal_manager = MagicMock()
         mock_internal_manager.is_internal.return_value = True
@@ -1773,7 +1773,7 @@ class TestInternalRegistries:
 
         assert response.status_code == 500
 
-    def test_get_tool_schema_internal_server(self, session_storage: LocalSessionManager) -> None:
+    def test_get_tool_schema_internal_server(self, session_storage: SessionManager) -> None:
         """Test getting tool schema from internal server."""
         mock_internal_manager = MagicMock()
         mock_internal_manager.is_internal.return_value = True

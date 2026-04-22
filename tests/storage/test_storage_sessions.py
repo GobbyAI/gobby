@@ -1,4 +1,4 @@
-"""Tests for the LocalSessionManager storage layer."""
+"""Tests for the SessionManager storage layer."""
 
 from unittest.mock import patch
 from uuid import uuid4
@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SYSTEM_SESSION_ID, LocalSessionManager
+from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -16,7 +16,7 @@ class TestSession:
 
     def test_from_row(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test creating Session from database row."""
@@ -39,7 +39,7 @@ class TestSession:
 
     def test_to_dict(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test converting Session to dictionary."""
@@ -130,12 +130,12 @@ class TestSession:
         assert session.can_proxy_attach is False
 
 
-class TestLocalSessionManager:
-    """Tests for LocalSessionManager class."""
+class TestSessionManager:
+    """Tests for SessionManager class."""
 
     def test_register_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test registering a new session."""
@@ -167,7 +167,7 @@ class TestLocalSessionManager:
 
     def test_register_recreates_missing_system_parent_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Register self-heals the system parent row before inserting children."""
@@ -198,7 +198,7 @@ class TestLocalSessionManager:
 
     def test_register_session_has_stats_columns(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that a newly registered session has the stats columns."""
@@ -229,7 +229,7 @@ class TestLocalSessionManager:
 
     def test_register_persists_sandbox_metadata(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         session = session_manager.register(
@@ -251,7 +251,7 @@ class TestLocalSessionManager:
 
     def test_register_preserves_unknown_sandbox_metadata_as_null(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         session = session_manager.register(
@@ -278,7 +278,7 @@ class TestLocalSessionManager:
 
     def test_register_upserts_on_conflict(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that register updates existing session on conflict."""
@@ -306,7 +306,7 @@ class TestLocalSessionManager:
 
     def test_get_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test getting a session by ID."""
@@ -322,14 +322,14 @@ class TestLocalSessionManager:
         assert retrieved.id == created.id
         assert retrieved.external_id == "get-test"
 
-    def test_get_nonexistent(self, session_manager: LocalSessionManager) -> None:
+    def test_get_nonexistent(self, session_manager: SessionManager) -> None:
         """Test getting nonexistent session returns None."""
         result = session_manager.get("nonexistent-id")
         assert result is None
 
     def test_find_by_external_id(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test finding session by external_id, machine_id, project_id, source."""
@@ -350,7 +350,7 @@ class TestLocalSessionManager:
         assert found is not None
         assert found.id == session.id
 
-    def test_find_by_external_id_not_found(self, session_manager: LocalSessionManager) -> None:
+    def test_find_by_external_id_not_found(self, session_manager: SessionManager) -> None:
         """Test find_by_external_id returns None when not found."""
         result = session_manager.find_by_external_id(
             external_id="nonexistent",
@@ -362,7 +362,7 @@ class TestLocalSessionManager:
 
     def test_find_parent_no_handoff_ready(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test find_parent returns None when no handoff_ready session."""
@@ -383,7 +383,7 @@ class TestLocalSessionManager:
 
     def test_update_status(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating session status."""
@@ -401,7 +401,7 @@ class TestLocalSessionManager:
 
     def test_update_title(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating session title."""
@@ -418,7 +418,7 @@ class TestLocalSessionManager:
 
     def test_update_title_schedules_tmux_rename(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Title changes propagate to tmux through the shared title update path."""
@@ -441,7 +441,7 @@ class TestLocalSessionManager:
 
     def test_update_title_can_update_source_without_renaming(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Changing provenance alone should not notify listeners or rename tmux."""
@@ -473,7 +473,7 @@ class TestLocalSessionManager:
 
     def test_update_title_notifies_listeners(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Listeners receive successful title changes."""
@@ -495,7 +495,7 @@ class TestLocalSessionManager:
 
     def test_update_title_skips_noop_listener_notifications(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """No-op title updates do not notify listeners or rewrite updated_at."""
@@ -521,7 +521,7 @@ class TestLocalSessionManager:
 
     def test_update_title_missing_session_does_not_notify_listener(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
     ) -> None:
         """Missing sessions return None and do not notify listeners."""
         calls: list[tuple[str, str]] = []
@@ -536,7 +536,7 @@ class TestLocalSessionManager:
 
     def test_update_title_listener_failure_does_not_break_update(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """One broken listener cannot block the title update or later listeners."""
@@ -564,7 +564,7 @@ class TestLocalSessionManager:
 
     def test_unregister_title_listener(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Unregistered listeners are not called."""
@@ -589,7 +589,7 @@ class TestLocalSessionManager:
 
     def test_update_stats(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating session stats."""
@@ -624,7 +624,7 @@ class TestLocalSessionManager:
     @pytest.mark.unit
     def test_update_model(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating session model."""
@@ -645,7 +645,7 @@ class TestLocalSessionManager:
     @pytest.mark.unit
     def test_create_web_chat_session_sets_model_and_chat_mode(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         session = session_manager.create_web_chat_session(
@@ -673,7 +673,7 @@ class TestLocalSessionManager:
 
     def test_update_summary(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating session summary."""
@@ -696,7 +696,7 @@ class TestLocalSessionManager:
 
     def test_list_sessions(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test listing sessions."""
@@ -718,7 +718,7 @@ class TestLocalSessionManager:
 
     def test_list_with_filters(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test listing sessions with filters."""
@@ -748,7 +748,7 @@ class TestLocalSessionManager:
 
     def test_list_with_limit(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test listing sessions with limit."""
@@ -765,7 +765,7 @@ class TestLocalSessionManager:
 
     def test_delete_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test deleting a session."""
@@ -780,14 +780,14 @@ class TestLocalSessionManager:
         assert result is True
         assert session_manager.get(session.id) is None
 
-    def test_delete_nonexistent(self, session_manager: LocalSessionManager) -> None:
+    def test_delete_nonexistent(self, session_manager: SessionManager) -> None:
         """Test deleting nonexistent session returns False."""
         result = session_manager.delete("nonexistent-id")
         assert result is False
 
     def test_expire_stale_sessions(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test expiring stale sessions."""
@@ -817,7 +817,7 @@ class TestLocalSessionManager:
 
     def test_pause_inactive_active_sessions(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test pausing inactive active sessions."""
@@ -842,7 +842,7 @@ class TestLocalSessionManager:
 
     def test_pause_inactive_active_sessions_preserves_last_activity_time(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Auto-pausing should not make a stale session look freshly active."""
@@ -875,7 +875,7 @@ class TestLocalSessionManager:
 
     def test_pause_then_expire_stale_session_uses_last_activity_time(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """A very old session should expire in the same cleanup sweep after pause."""
@@ -902,7 +902,7 @@ class TestLocalSessionManager:
 
     def test_expire_empty_sessions(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Zero-message active and paused sessions should fast-expire."""
@@ -937,7 +937,7 @@ class TestLocalSessionManager:
 
     def test_expire_empty_sessions_ignores_non_empty_and_non_active_statuses(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Fast-expire should skip sessions that are non-empty or already expired."""
@@ -973,7 +973,7 @@ class TestLocalSessionManager:
 
     def test_prune_empty_sessions(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Prune should only hard-delete old expired zero-message sessions."""
@@ -1046,7 +1046,7 @@ class TestLocalSessionManager:
 
     def test_prune_empty_sessions_skips_retained_references(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Prune should skip empty expired sessions still referenced by retained history."""
@@ -1135,7 +1135,7 @@ class TestLocalSessionManager:
 
     def test_prune_empty_sessions_large_batch_preserves_retained_refs(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Large prune batches should delete stale empties while keeping referenced rows."""
@@ -1207,7 +1207,7 @@ class TestLocalSessionManager:
 
     def test_transcript_processing_lifecycle(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test transcript processing lifecycle methods."""
@@ -1243,7 +1243,7 @@ class TestLocalSessionManager:
 
     def test_update_parent_session_id(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating parent session ID."""
@@ -1267,7 +1267,7 @@ class TestLocalSessionManager:
 
     def test_storage_allows_self_parenting_without_guard(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """
@@ -1317,7 +1317,7 @@ class TestLocalSessionManager:
 
     def test_find_parent_without_source_filter(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test find_parent without source filter finds any source."""
@@ -1341,7 +1341,7 @@ class TestLocalSessionManager:
 
     def test_find_children(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test finding child sessions of a parent."""
@@ -1377,7 +1377,7 @@ class TestLocalSessionManager:
 
     def test_find_children_no_children(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test find_children returns empty list when no children."""
@@ -1393,7 +1393,7 @@ class TestLocalSessionManager:
 
     def test_update_multiple_fields(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating multiple session fields at once."""
@@ -1423,7 +1423,7 @@ class TestLocalSessionManager:
 
     def test_update_resume_metadata_fields(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating session_type/model/chat_mode together for tmux resume."""
@@ -1453,7 +1453,7 @@ class TestLocalSessionManager:
 
     def test_update_single_field(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating a single field."""
@@ -1471,7 +1471,7 @@ class TestLocalSessionManager:
 
     def test_update_no_fields(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test update with no fields returns session unchanged."""
@@ -1489,7 +1489,7 @@ class TestLocalSessionManager:
 
     def test_update_external_id_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating just external_id."""
@@ -1507,7 +1507,7 @@ class TestLocalSessionManager:
 
     def test_update_transcript_path_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating just transcript_path."""
@@ -1525,7 +1525,7 @@ class TestLocalSessionManager:
 
     def test_update_git_branch_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating just git_branch."""
@@ -1543,7 +1543,7 @@ class TestLocalSessionManager:
 
     def test_count_sessions(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test counting sessions."""
@@ -1565,7 +1565,7 @@ class TestLocalSessionManager:
 
     def test_count_with_filters(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test counting sessions with filters."""
@@ -1591,14 +1591,14 @@ class TestLocalSessionManager:
         paused_count = session_manager.count(status="paused")
         assert paused_count == 1
 
-    def test_count_no_results(self, session_manager: LocalSessionManager) -> None:
+    def test_count_no_results(self, session_manager: SessionManager) -> None:
         """Test count returns 0 when no sessions match."""
         count = session_manager.count(project_id="nonexistent-project")
         assert count == 0
 
     def test_count_by_status(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test counting sessions grouped by status."""
@@ -1629,7 +1629,7 @@ class TestLocalSessionManager:
         assert counts.get("active") == 2
         assert counts.get("paused") == 2
 
-    def test_count_by_status_empty(self, session_manager: LocalSessionManager) -> None:
+    def test_count_by_status_empty(self, session_manager: SessionManager) -> None:
         """Test count_by_status with no user sessions (only bootstrapped system session)."""
         counts = session_manager.count_by_status()
         # The bootstrapped system session is always present
@@ -1637,7 +1637,7 @@ class TestLocalSessionManager:
 
     def test_update_terminal_pickup_metadata(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating terminal pickup metadata."""
@@ -1664,7 +1664,7 @@ class TestLocalSessionManager:
 
     def test_update_terminal_pickup_metadata_partial(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating terminal pickup metadata with partial fields."""
@@ -1687,7 +1687,7 @@ class TestLocalSessionManager:
 
     def test_update_terminal_pickup_metadata_no_fields(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test update_terminal_pickup_metadata with no fields returns session unchanged."""
@@ -1705,7 +1705,7 @@ class TestLocalSessionManager:
 
     def test_update_terminal_pickup_context_injected_false(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating context_injected to False."""
@@ -1733,7 +1733,7 @@ class TestLocalSessionManager:
 
     def test_expire_stale_sessions_no_stale(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test expire_stale_sessions returns 0 when no stale sessions."""
@@ -1749,7 +1749,7 @@ class TestLocalSessionManager:
 
     def test_pause_inactive_active_sessions_no_inactive(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test pause_inactive_active_sessions returns 0 when no inactive sessions."""
@@ -1765,7 +1765,7 @@ class TestLocalSessionManager:
 
     def test_register_with_agent_depth_and_spawned_by(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test registering session with agent depth and spawned_by_agent_id."""
@@ -1783,7 +1783,7 @@ class TestLocalSessionManager:
 
     def test_update_summary_partial(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating summary with only summary_path."""
@@ -1805,7 +1805,7 @@ class TestLocalSessionManager:
 
     def test_update_summary_markdown_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating summary with only summary_markdown."""
@@ -1827,7 +1827,7 @@ class TestLocalSessionManager:
 
     def test_session_to_dict_includes_all_fields(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that to_dict includes all session fields."""
@@ -1882,7 +1882,7 @@ class TestLocalSessionManager:
 
     def test_get_pending_transcript_sessions_with_limit(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test get_pending_transcript_sessions respects limit."""
@@ -1902,7 +1902,7 @@ class TestLocalSessionManager:
 
     def test_get_pending_transcript_sessions_excludes_processed(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that get_pending_transcript_sessions excludes processed sessions."""
@@ -1921,7 +1921,7 @@ class TestLocalSessionManager:
 
     def test_get_pending_transcript_sessions_excludes_no_jsonl(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that get_pending_transcript_sessions excludes sessions without transcript_path."""
@@ -1939,7 +1939,7 @@ class TestLocalSessionManager:
 
     def test_register_updates_metadata_on_existing_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that register updates metadata when session exists."""
@@ -1985,7 +1985,7 @@ class TestLocalSessionManager:
 
     def test_list_without_filters(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test listing all sessions without filters."""
@@ -2011,7 +2011,7 @@ class TestSessionEdgeCases:
 
     def test_register_raises_on_session_disappeared_during_update(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that register raises RuntimeError if session disappears during update."""
@@ -2043,7 +2043,7 @@ class TestSessionEdgeCases:
 
     def test_register_raises_on_session_not_found_after_creation(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that register raises RuntimeError if session not found after creation."""
@@ -2060,7 +2060,7 @@ class TestSessionEdgeCases:
 
     def test_expire_stale_sessions_logs_when_sessions_expired(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that expire_stale_sessions logs when sessions are expired."""
@@ -2086,7 +2086,7 @@ class TestSessionEdgeCases:
 
     def test_pause_inactive_sessions_logs_when_sessions_paused(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that pause_inactive_active_sessions logs when sessions are paused."""
@@ -2112,7 +2112,7 @@ class TestSessionEdgeCases:
 
     def test_register_logs_on_new_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that register logs when creating a new session."""
@@ -2129,7 +2129,7 @@ class TestSessionEdgeCases:
 
     def test_register_logs_on_reusing_existing_session(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that register logs when reusing an existing session."""
@@ -2156,7 +2156,7 @@ class TestSessionEdgeCases:
 
     def test_session_from_row_with_null_agent_depth(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test Session.from_row handles NULL agent_depth by defaulting to 0."""
@@ -2180,7 +2180,7 @@ class TestSessionEdgeCases:
 
     def test_update_title_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating just title via update method."""
@@ -2199,7 +2199,7 @@ class TestSessionEdgeCases:
 
     def test_find_parent_returns_most_recent(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that find_parent returns the most recently updated session."""
@@ -2239,7 +2239,7 @@ class TestSessionEdgeCases:
 
     def test_count_with_all_filters(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test count with all three filters (project_id, status, source)."""
@@ -2268,7 +2268,7 @@ class TestSessionEdgeCases:
 
     def test_list_with_all_filters(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test list with all three filters (project_id, status, source)."""
@@ -2298,7 +2298,7 @@ class TestSessionEdgeCases:
 
     def test_update_terminal_pickup_agent_run_id_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating just agent_run_id in terminal pickup metadata.
@@ -2338,7 +2338,7 @@ class TestSessionEdgeCases:
 
     def test_update_terminal_pickup_original_prompt_only(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test updating just original_prompt in terminal pickup metadata."""
@@ -2365,7 +2365,7 @@ class TestProjectScopedSeqNum:
 
     def test_seq_num_per_project(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         temp_db,
     ) -> None:
         """Test that seq_num is assigned per project, not globally."""
@@ -2397,7 +2397,7 @@ class TestProjectScopedSeqNum:
 
     def test_resolve_session_reference_with_project_id(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         temp_db,
     ) -> None:
         """Test resolving #N format with project_id parameter."""
@@ -2425,7 +2425,7 @@ class TestProjectScopedSeqNum:
 
     def test_resolve_session_reference_requires_project_id_for_seq_num(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that resolve_session_reference raises ValueError for #N without project_id."""
@@ -2442,7 +2442,7 @@ class TestProjectScopedSeqNum:
 
     def test_resolve_session_reference_uuid_format(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test that UUID format still works with project-scoped resolution."""
@@ -2459,7 +2459,7 @@ class TestProjectScopedSeqNum:
 
     def test_resolve_session_reference_not_found(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Test ValueError raised when session not found."""
@@ -2472,7 +2472,7 @@ class TestResolveReferenceExternalId:
 
     def _seed_session_with_external_uuid(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         project_id: str,
         *,
         external_id: str,
@@ -2488,7 +2488,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_by_external_id_full_uuid(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """An external_id UUID resolves to the platform id."""
@@ -2506,7 +2506,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_by_external_id_full_uuid_no_project_scope(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """External_id UUID resolves with project_id=None too."""
@@ -2521,7 +2521,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_by_external_id_prefix(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """A prefix of an external_id resolves to the platform id."""
@@ -2539,7 +2539,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_prefers_id_match_over_external_id_match(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """If an id prefix matches, it wins regardless of external_id matches."""
@@ -2557,7 +2557,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_ambiguous_external_id_in_project_raises(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Two rows with the same external_id in a project → ValueError."""
@@ -2585,12 +2585,12 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_external_id_cross_project_no_scope_ambiguous_raises(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         temp_db,
     ) -> None:
         """Same external_id across two projects with project_id=None → ValueError.
 
-        Inserts directly via SQL because ``LocalSessionManager.register()`` has
+        Inserts directly via SQL because ``SessionManager.register()`` has
         a cross-project recovery path that overwrites the first row's
         ``project_id`` instead of creating a second row.
         """
@@ -2628,7 +2628,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_ambiguous_external_id_prefix_raises(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Multiple external_ids sharing a prefix → ValueError."""
@@ -2652,7 +2652,7 @@ class TestResolveReferenceExternalId:
 
     def test_resolve_reference_unknown_ref_still_raises(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
         """Unknown UUID → ValueError (not found)."""

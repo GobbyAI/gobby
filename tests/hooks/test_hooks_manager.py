@@ -377,7 +377,7 @@ class TestHookManagerSessionEnd:
                 return_value="test-session-id",
             ),
             patch.object(
-                hook_manager_with_mocks._session_storage, "get", return_value=mock_session
+                hook_manager_with_mocks._session_manager, "get", return_value=mock_session
             ),
             patch(
                 "gobby.tasks.commits.auto_link_commits", return_value=mock_result
@@ -892,7 +892,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        precreated = manager._session_storage.create_web_chat_session(
+        precreated = manager._session_manager.create_web_chat_session(
             machine_id="test-machine-id",
             project_id=project_id,
             source="codex",
@@ -1004,7 +1004,7 @@ class TestHookManagerSessionLookup:
         ):
             response = manager.handle(event)
 
-        rows = manager._session_storage.db.fetchall(
+        rows = manager._session_manager.db.fetchall(
             "SELECT id FROM sessions WHERE external_id = ?",
             ("orphaned-session-end",),
         )
@@ -1020,7 +1020,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        existing = manager._session_storage.register(
+        existing = manager._session_manager.register(
             external_id="shared-session-id",
             machine_id="test-machine-id",
             source="codex",
@@ -1046,7 +1046,7 @@ class TestHookManagerSessionLookup:
             manager._session_manager.get_session_id("shared-session-id", "claude")
             == existing_session_id
         )
-        rows = manager._session_storage.db.fetchall(
+        rows = manager._session_manager.db.fetchall(
             "SELECT id FROM sessions WHERE external_id = ?",
             ("shared-session-id",),
         )
@@ -1074,7 +1074,7 @@ class TestHookManagerSessionLookup:
         )
         assert session_id is not None
 
-        manager._session_storage.db.execute(
+        manager._session_manager.db.execute(
             "UPDATE sessions SET title = ?, digest_markdown = ? WHERE id = ?",
             ("Recovered Codex Title", "## digest", session_id),
         )
@@ -1096,7 +1096,7 @@ class TestHookManagerSessionLookup:
             response = manager.handle(repair_event)
 
         assert response.decision == "allow"
-        updated = manager._session_storage.get(session_id)
+        updated = manager._session_manager.get(session_id)
         assert updated is not None
         assert updated.terminal_context is not None
         assert updated.terminal_context["tmux_pane"] == "%5"

@@ -14,15 +14,15 @@ from gobby.servers.http import HTTPServer
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[s
 
 @pytest.fixture
 def http_server(
-    session_storage: LocalSessionManager,
+    session_storage: SessionManager,
     temp_dir: Path,
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
@@ -283,7 +283,7 @@ class TestSessionEndpoints:
     def test_get_session(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test getting a session by ID."""
@@ -310,7 +310,7 @@ class TestSessionEndpoints:
     def test_find_current_session(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test finding current session by composite key."""
@@ -377,7 +377,7 @@ class TestSessionEndpoints:
     def test_find_parent_session(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test finding parent session for handoff."""
@@ -405,7 +405,7 @@ class TestSessionEndpoints:
     def test_update_session_status(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test updating session status."""
@@ -443,7 +443,7 @@ class TestSessionEndpoints:
     def test_update_session_summary(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test updating session summary."""
@@ -481,7 +481,7 @@ class TestSessionEndpoints:
     def test_list_sessions(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test listing sessions."""
@@ -511,7 +511,7 @@ class TestSessionEndpoints:
     def test_list_sessions_with_filters(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Test listing sessions with query filters."""
@@ -546,7 +546,7 @@ class TestSessionEndpoints:
 
     def test_list_sessions_without_manager(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test listing sessions when session manager is None returns 503."""
         services = ServiceContainer(
@@ -565,7 +565,7 @@ class TestSessionEndpoints:
         assert response.status_code == 503
         assert "Session manager not available" in response.json()["detail"]
 
-    def test_register_without_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_register_without_manager(self, session_storage: SessionManager) -> None:
         """Test registering when session manager is None returns 503."""
         services = ServiceContainer(
             config=None,
@@ -588,7 +588,7 @@ class TestSessionEndpoints:
     def test_find_parent_with_cwd(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
         temp_dir: Path,
     ) -> None:
@@ -887,7 +887,7 @@ class TestMCPEndpointsWithManager:
     @pytest.fixture
     def http_server_with_mcp(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         mock_mcp_manager: FakeMCPManager,
     ) -> HTTPServer:
         """Create HTTP server with mock MCP manager."""
@@ -1009,7 +1009,7 @@ class TestExceptionHandling:
 
     def test_global_exception_returns_200(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test that global exception handler returns 200 to prevent hook failures."""
         # Create server that will raise an exception
@@ -1124,7 +1124,7 @@ class TestStopSignalEndpoints:
     @pytest.fixture
     def server_with_stop_registry(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> HTTPServer:
         """Create HTTP server with mock stop registry."""
         services = ServiceContainer(
@@ -1235,7 +1235,7 @@ class TestStopSignalEndpoints:
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]
 
-    def test_stop_signal_without_stop_registry(self, session_storage: LocalSessionManager) -> None:
+    def test_stop_signal_without_stop_registry(self, session_storage: SessionManager) -> None:
         """Test stop signal endpoints when stop registry not available."""
         services = ServiceContainer(
             config=None,

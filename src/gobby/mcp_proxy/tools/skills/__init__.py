@@ -28,7 +28,7 @@ from gobby.skills.hubs.manager import HubManager
 from gobby.skills.loader import SkillLoader
 from gobby.skills.search import SkillSearch
 from gobby.skills.updater import SkillUpdater
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ def create_skills_registry(
         db=db,
         storage=storage,
         notifier=notifier,
-        session_manager=LocalSessionManager(db),
+        session_manager=SessionManager(db),
         search=SkillSearch(
             config=search_config,
             db=db,

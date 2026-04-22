@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
@@ -50,8 +50,8 @@ def config_store(temp_db) -> ConfigStore:
 
 
 @pytest.fixture
-def session_manager(temp_db) -> LocalSessionManager:
-    return LocalSessionManager(temp_db)
+def session_manager(temp_db) -> SessionManager:
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -97,7 +97,7 @@ class TestSpawnAgent:
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         test_project,
     ) -> None:
         """Web chat mode returns conversation_id without spawning."""
@@ -179,7 +179,7 @@ class TestSpawnAgent:
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         test_project,
     ) -> None:
         """Web chat spawn should not overwrite a non-open task already owned elsewhere."""

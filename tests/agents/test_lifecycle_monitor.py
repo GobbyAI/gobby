@@ -18,7 +18,7 @@ import pytest
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -30,7 +30,7 @@ def agent_run_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
 
 @pytest.fixture
 def sample_session(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     sample_project: dict,
 ) -> dict:
     session = session_manager.register(
@@ -232,7 +232,7 @@ class TestCheckDeadAgents:
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
         temp_db: LocalDatabase,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
     ) -> None:
         """Worktrees are released when a dead agent is cleaned up."""
         child_session = session_manager.register(
@@ -504,7 +504,7 @@ class TestCheckIdleAgents:
     async def test_recent_session_activity_skips_pane_check(
         self,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         temp_db: LocalDatabase,
     ) -> None:
@@ -552,7 +552,7 @@ class TestCheckIdleAgents:
     async def test_stale_session_falls_through_to_pane_check(
         self,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         temp_db: LocalDatabase,
     ) -> None:
@@ -618,7 +618,7 @@ class TestCheckIdleAgents:
     async def test_stale_session_overrides_active_pane(
         self,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         temp_db: LocalDatabase,
     ) -> None:
@@ -957,7 +957,7 @@ class TestCheckExpiredAgents:
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
         temp_db: LocalDatabase,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
     ) -> None:
         """Expired agent cleanup releases worktrees."""
         child_session = session_manager.register(
@@ -1235,7 +1235,7 @@ class TestCheckInitializationTimeout:
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -1286,7 +1286,7 @@ class TestCheckInitializationTimeout:
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -1342,7 +1342,7 @@ class TestCheckInitializationTimeout:
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -1380,7 +1380,7 @@ class TestCheckInitializationTimeout:
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -1724,7 +1724,7 @@ class TestSessionExpirationOnCleanup:
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
         temp_db: LocalDatabase,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
     ) -> None:
         """Session is expired when a dead agent is cleaned up."""
         # Create a child session for the agent

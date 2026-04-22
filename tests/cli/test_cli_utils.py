@@ -157,14 +157,14 @@ class TestGetActiveSessionId:
     def test_with_active_session(self, temp_db) -> None:
         """Test finding an active session."""
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         # Create a project first
         proj_manager = LocalProjectManager(temp_db)
         project = proj_manager.create(name="test-proj", repo_path="/tmp/test")
 
         # Create an active session using register method
-        session_manager = LocalSessionManager(temp_db)
+        session_manager = SessionManager(temp_db)
         session = session_manager.register(
             source="test",
             external_id="ext-123",
@@ -202,12 +202,12 @@ class TestResolveSessionId:
     def test_resolves_active_session(self, temp_db) -> None:
         """Test resolving to active session when no ref provided."""
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(temp_db)
         project = proj_manager.create(name="test", repo_path="/tmp/test")
 
-        session_manager = LocalSessionManager(temp_db)
+        session_manager = SessionManager(temp_db)
         session = session_manager.register(
             source="test",
             external_id="ext-1",
@@ -231,12 +231,12 @@ class TestResolveSessionId:
     def test_resolves_session_reference(self, temp_db) -> None:
         """Test resolving a specific session reference."""
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(temp_db)
         project = proj_manager.create(name="test", repo_path="/tmp/test")
 
-        session_manager = LocalSessionManager(temp_db)
+        session_manager = SessionManager(temp_db)
         session = session_manager.register(
             source="test",
             external_id="ext-1",
@@ -252,12 +252,12 @@ class TestResolveSessionId:
     def test_resolves_seq_num_with_project_context(self, temp_db) -> None:
         """Test resolving #N format using project context."""
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(temp_db)
         project = proj_manager.create(name="test", repo_path="/tmp/test")
 
-        session_manager = LocalSessionManager(temp_db)
+        session_manager = SessionManager(temp_db)
         session = session_manager.register(
             source="test",
             external_id="ext-1",
@@ -277,13 +277,13 @@ class TestResolveSessionId:
     def test_resolves_seq_num_with_explicit_project_id(self, temp_db) -> None:
         """Test resolving #N format with explicit project_id parameter."""
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         proj_manager = LocalProjectManager(temp_db)
         project1 = proj_manager.create(name="project1", repo_path="/tmp/p1")
         project2 = proj_manager.create(name="project2", repo_path="/tmp/p2")
 
-        session_manager = LocalSessionManager(temp_db)
+        session_manager = SessionManager(temp_db)
         session1 = session_manager.register(
             source="test", external_id="ext-1", machine_id="m-1", project_id=project1.id
         )

@@ -33,7 +33,7 @@ from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.integration
 
@@ -63,7 +63,7 @@ def project(temp_db, tmp_path):
 @pytest.fixture
 def session_storage(temp_db):
     """Create a session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture

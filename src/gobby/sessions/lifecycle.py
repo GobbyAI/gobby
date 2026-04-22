@@ -26,7 +26,7 @@ from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import (
     TokenEvent,
     TokenEventStore,
@@ -65,7 +65,7 @@ class SessionLifecycleManager:
     ):
         self.db = db
         self.config = config
-        self.session_manager = LocalSessionManager(db)
+        self.session_manager = SessionManager(db)
         self.token_event_store = TokenEventStore(db)
         self.memory_manager = memory_manager
         self.llm_service = llm_service

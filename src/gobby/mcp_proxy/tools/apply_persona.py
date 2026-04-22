@@ -187,9 +187,9 @@ def _resolve_session_identity(
 ) -> tuple[str | None, str | None]:
     """Resolve project and source metadata for a session when available."""
     try:
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
-        session_row = LocalSessionManager(db).get(session_id)
+        session_row = SessionManager(db).get(session_id)
     except Exception as e:
         logger.debug("Failed to resolve session metadata for %s: %s", session_id, e)
         return None, cli_source

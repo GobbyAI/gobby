@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.sessions.transcript_reader import TranscriptReader
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 
 def register_message_tools(
     registry: InternalToolRegistry,
     message_manager: object | None = None,  # Deprecated, ignored
-    session_manager: LocalSessionManager | None = None,
+    session_manager: SessionManager | None = None,
     transcript_reader: TranscriptReader | None = None,
 ) -> None:
     """
@@ -27,7 +27,7 @@ def register_message_tools(
     Args:
         registry: The InternalToolRegistry to register tools with
         message_manager: Deprecated, ignored
-        session_manager: LocalSessionManager for resolving session references
+        session_manager: SessionManager for resolving session references
         transcript_reader: Optional TranscriptReader for JSONL + gzip fallback reads
     """
 

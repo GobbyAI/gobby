@@ -84,7 +84,7 @@ def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(tokens_module, "LocalDatabase", lambda: fake_db)
     monkeypatch.setattr(tokens_module, "run_migrations", lambda db: None)
-    monkeypatch.setattr(tokens_module, "LocalSessionManager", lambda db: fake_manager)
+    monkeypatch.setattr(tokens_module, "SessionManager", lambda db: fake_manager)
     monkeypatch.setattr(tokens_module, "TokenEventStore", lambda db: _FakeStore())
     monkeypatch.setattr(tokens_module, "_load_session_messages", lambda *_args, **_kwargs: [])
 
@@ -109,7 +109,7 @@ def test_audit_all_continues_after_transcript_failure(
 
     monkeypatch.setattr(tokens_module, "LocalDatabase", lambda: fake_db)
     monkeypatch.setattr(tokens_module, "run_migrations", lambda db: None)
-    monkeypatch.setattr(tokens_module, "LocalSessionManager", lambda db: fake_manager)
+    monkeypatch.setattr(tokens_module, "SessionManager", lambda db: fake_manager)
     monkeypatch.setattr(tokens_module, "TokenEventStore", lambda db: _FakeStore())
     monkeypatch.setattr(tokens_module, "_load_session_messages", _load_messages)
 

@@ -36,6 +36,7 @@ from gobby.hooks.dispatchers.webhook import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
+from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
 
@@ -160,7 +161,6 @@ class HookManager:
         self._database = components.database
         self._daemon_client = components.daemon_client
         self._transcript_processor = components.transcript_processor
-        self._session_storage = components.session_storage
         self._session_task_manager = components.session_task_manager
         self._memory_storage = components.memory_storage
         self._task_manager = components.task_manager
@@ -175,7 +175,7 @@ class HookManager:
         self._pipeline_executor = components.pipeline_executor
         self._workflow_handler = components.workflow_handler
         self._webhook_dispatcher = components.webhook_dispatcher
-        self._session_manager = components.session_manager
+        self._session_manager = cast(HookSessionManager, components.session_manager)
         self._session_coordinator = components.session_coordinator
         self._health_monitor = components.health_monitor
         self._hook_assembler = components.hook_assembler
@@ -199,7 +199,7 @@ class HookManager:
         from gobby.hooks.event_enrichment import EventEnricher
 
         self._enricher = EventEnricher(
-            session_storage=self._session_storage,
+            session_storage=self._session_manager,
             injected_sessions=self._injected_sessions,
             inter_session_msg_manager=self._inter_session_msg_manager,
         )
@@ -816,7 +816,7 @@ class HookManager:
             try:
                 await generate_session_summaries(
                     session_id=session_id,
-                    session_manager=self._session_storage,
+                    session_manager=self._session_manager,
                     llm_service=self._llm_service,
                     db=self._database,
                 )

@@ -21,7 +21,7 @@ import aiofiles
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
     from gobby.servers.websocket.server import WebSocketServer
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -49,13 +49,13 @@ class SessionMessageProcessor:
         db: DatabaseProtocol,
         poll_interval: float = 2.0,
         websocket_server: "WebSocketServer | None" = None,
-        session_manager: "LocalSessionManager | None" = None,
+        session_manager: "SessionManager | None" = None,
         hook_manager: "HookManager | None" = None,
     ):
         self.db = db
         self.poll_interval = poll_interval
         self.websocket_server: WebSocketServer | None = websocket_server
-        self.session_manager: LocalSessionManager | None = session_manager
+        self.session_manager: SessionManager | None = session_manager
         self._hook_manager: HookManager | None = hook_manager
 
         # Track active sessions: session_id -> transcript_path

@@ -249,7 +249,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             # For complex tools (multi_replace, etc), check if they modify files
             # This logic could be expanded, but for now stick to the basic set
 
-            if not is_failure and is_edit and self._session_storage:
+            if not is_failure and is_edit and self._session_manager:
                 try:
                     # Check if file is internal .gobby file
                     file_path = (
@@ -299,7 +299,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                                 )
 
                         if has_claimed_task:
-                            self._session_storage.mark_had_edits(session_id)
+                            self._session_manager.mark_had_edits(session_id)
                 except Exception as e:
                     # Don't fail the event if tracking fails
                     self.logger.warning(f"Failed to process file edit: {e}")
@@ -338,7 +338,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             from gobby.workflows.state_manager import SessionVariableManager
 
-            db = getattr(self._session_storage, "db", None)
+            db = getattr(self._session_manager, "db", None)
             if db:
                 SessionVariableManager(db).append_to_set_variable(
                     session_id, "session_edited_files", [rel_path]

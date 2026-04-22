@@ -36,7 +36,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def _auto_subscribe_lineage(
     completion_registry: Any,
     completion_id: str,
     session_id: str,
-    session_manager: "LocalSessionManager | None",
+    session_manager: "SessionManager | None",
     continuation_prompt: str | None,
     db: DatabaseProtocol | None,
 ) -> None:
@@ -114,7 +114,7 @@ def register_pipeline_tools(
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
     db: DatabaseProtocol | None = None,
-    session_manager: "LocalSessionManager | None" = None,
+    session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
     def_manager: LocalWorkflowDefinitionManager | None = None,
 ) -> None:
@@ -549,7 +549,7 @@ def _register_exposed_pipeline_tools(
     registry: InternalToolRegistry,
     loader: Any | None,
     executor_getter: Callable[[], Any | None],
-    session_manager: "LocalSessionManager | None" = None,
+    session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
     db: DatabaseProtocol | None = None,
 ) -> None:
@@ -591,7 +591,7 @@ def _create_pipeline_tool(
     pipeline: Any,
     loader: Any,
     executor_getter: Callable[[], Any | None],
-    session_manager: "LocalSessionManager | None" = None,
+    session_manager: "SessionManager | None" = None,
     completion_registry: Any | None = None,
     db: DatabaseProtocol | None = None,
 ) -> None:

@@ -28,7 +28,7 @@ def create_metrics_registry(
 
     Args:
         metrics_manager: ToolMetricsManager instance
-        session_storage: Optional LocalSessionManager for usage reporting
+        session_storage: Optional SessionManager for usage reporting
 
     Returns:
         InternalToolRegistry with metrics tools registered

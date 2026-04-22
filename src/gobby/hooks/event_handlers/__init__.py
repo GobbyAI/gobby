@@ -20,6 +20,7 @@ from gobby.hooks.event_handlers._misc import MiscEventHandlerMixin
 from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.event_handlers._tool import EDIT_TOOLS, ToolEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
     from gobby.code_index.trigger import CodeIndexTrigger
@@ -27,9 +28,7 @@ if TYPE_CHECKING:
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.skill_manager import HookSkillManager
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.session_tasks import SessionTaskManager
-    from gobby.storage.sessions import LocalSessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -52,9 +51,9 @@ class EventHandlers(
 
     def __init__(
         self,
-        session_manager: SessionManager | None = None,
+        session_manager: HookSessionManager | None = None,
         workflow_handler: WorkflowHookHandler | None = None,
-        session_storage: LocalSessionManager | None = None,
+        session_storage: HookSessionManager | None = None,
         session_task_manager: SessionTaskManager | None = None,
         message_processor: Any | None = None,
         task_manager: LocalTaskManager | None = None,
@@ -75,7 +74,7 @@ class EventHandlers(
         Args:
             session_manager: SessionManager for session operations
             workflow_handler: WorkflowHookHandler for lifecycle workflows
-            session_storage: LocalSessionManager for session storage
+            session_storage: Compatibility alias for session_manager
             session_task_manager: SessionTaskManager for session-task links
             message_processor: SessionMessageProcessor for message handling
             task_manager: LocalTaskManager for task operations
@@ -88,9 +87,9 @@ class EventHandlers(
             code_index_trigger: Optional trigger for code indexing on file changes.
             logger: Optional logger instance
         """
-        self._session_manager = session_manager
+        manager = session_manager or session_storage
+        self._session_manager = manager
         self._workflow_handler = workflow_handler
-        self._session_storage = session_storage
         self._session_task_manager = session_task_manager
         self._message_processor = message_processor
         self._task_manager = task_manager

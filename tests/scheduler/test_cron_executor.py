@@ -10,7 +10,7 @@ import pytest
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
-from gobby.storage.sessions import SYSTEM_SESSION_ID, LocalSessionManager
+from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
@@ -155,7 +155,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
     pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
-    pipeline_executor.session_manager = LocalSessionManager(temp_db)
+    pipeline_executor.session_manager = SessionManager(temp_db)
 
     execution = MagicMock()
     execution.id = "pe-cron-123"

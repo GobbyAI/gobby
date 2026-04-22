@@ -76,9 +76,9 @@ class TemplatingMixin:
                 session_id = event.metadata.get("_platform_session_id")
                 if session_id:
                     from gobby.storage.projects import LocalProjectManager
-                    from gobby.storage.sessions import LocalSessionManager
+                    from gobby.storage.sessions import SessionManager
 
-                    session_db = LocalSessionManager(self.db).get(session_id)
+                    session_db = SessionManager(self.db).get(session_id)
                     if session_db and session_db.project_id:
                         proj = LocalProjectManager(self.db).get(session_db.project_id)
                         if proj:

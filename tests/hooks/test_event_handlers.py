@@ -54,11 +54,12 @@ def mock_dependencies() -> dict[str, Any]:
     workflow_handler = MagicMock()
     workflow_handler.evaluate.return_value = HookResponse(decision="allow", context="")
     session_storage = MagicMock()
+    session_manager = session_storage
     # Default: no handoff parent found (tests that need one override this)
     session_storage.find_parent.return_value = None
     session_storage.update.return_value = None
     return {
-        "session_manager": MagicMock(),
+        "session_manager": session_manager,
         "workflow_handler": workflow_handler,
         "session_storage": session_storage,
         "message_processor": MagicMock(),

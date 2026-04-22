@@ -292,7 +292,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 monitor = TmuxPaneMonitor(
                     session_end_callback=app.state.hook_manager._event_handlers.handle_session_end,
                     config=server.services.config.tmux,
-                    session_storage=app.state.hook_manager._session_storage,
+                    session_storage=app.state.hook_manager._session_manager,
                 )
                 set_tmux_pane_monitor(monitor)
                 await monitor.start()
@@ -304,7 +304,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
         try:
             from gobby.sessions.liveness_monitor import SessionLivenessMonitor
 
-            session_storage = app.state.hook_manager._session_storage
+            session_storage = app.state.hook_manager._session_manager
             liveness_monitor = SessionLivenessMonitor(
                 session_storage=session_storage,
                 dispatch_summaries_fn=getattr(

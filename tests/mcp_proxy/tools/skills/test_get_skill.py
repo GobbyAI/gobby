@@ -8,7 +8,7 @@ import pytest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = pytest.mark.unit
@@ -228,7 +228,7 @@ class TestGetSkillTool:
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         # Create a session to track against
-        session_mgr = LocalSessionManager(populated_db)
+        session_mgr = SessionManager(populated_db)
         session = session_mgr.register(
             external_id="test-ext-id",
             machine_id="test-machine",
@@ -272,7 +272,7 @@ class TestGetSkillTool:
         """Test that calling get_skill twice with same session records only one row."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
-        session_mgr = LocalSessionManager(populated_db)
+        session_mgr = SessionManager(populated_db)
         session = session_mgr.register(
             external_id="test-ext-id",
             machine_id="test-machine",

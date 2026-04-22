@@ -17,14 +17,13 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.memory.manager import MemoryManager
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.tasks import TaskSyncManager
@@ -45,7 +44,7 @@ def setup_internal_registries(
     db: DatabaseProtocol | None = None,
     sync_manager: TaskSyncManager | None = None,
     task_validator: TaskValidator | None = None,
-    local_session_manager: LocalSessionManager | None = None,
+    local_session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
     llm_service: LLMService | None = None,
     agent_runner: AgentRunner | None = None,
@@ -80,7 +79,7 @@ def setup_internal_registries(
         db: Database connection for registries that only need storage (skills)
         sync_manager: Task sync manager for git sync
         task_validator: Task validator for validation
-        local_session_manager: Local session manager for session CRUD
+        local_session_manager: Session manager for session CRUD
         metrics_manager: Tool metrics manager for metrics operations
         llm_service: LLM service for AI-powered operations
         agent_runner: Agent runner for spawning subagents

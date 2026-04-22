@@ -23,8 +23,7 @@ def _make_event_handlers() -> EventHandlers:
     session_storage = MagicMock()
     session_storage.db = MagicMock()
     session_storage.db.fetchall.return_value = []
-
-    session_manager = MagicMock()
+    session_manager = session_storage
 
     return EventHandlers(
         session_manager=session_manager,

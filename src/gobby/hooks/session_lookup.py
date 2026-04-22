@@ -11,13 +11,13 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.session_types import HookSessionManager
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.hooks.session_coordinator import SessionCoordinator
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.session_tasks import SessionTaskManager
 
 
@@ -33,7 +33,7 @@ class SessionLookupService:
 
     def __init__(
         self,
-        session_manager: SessionManager,
+        session_manager: HookSessionManager,
         session_coordinator: SessionCoordinator,
         session_task_manager: SessionTaskManager,
         get_machine_id: Callable[[], str],

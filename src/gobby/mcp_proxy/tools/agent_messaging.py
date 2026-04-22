@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from gobby.storage.agent_commands import AgentCommandManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.inter_session_messages import InterSessionMessageManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.workflows.state_manager import SessionVariableManager
 
 # Type alias for the broadcast callback
@@ -46,7 +46,7 @@ class CommandLike(Protocol):
 def add_messaging_tools(
     registry: InternalToolRegistry,
     message_manager: InterSessionMessageManager,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     command_manager: AgentCommandManager,
     session_var_manager: SessionVariableManager,
     db: DatabaseProtocol,

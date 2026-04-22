@@ -6,7 +6,7 @@ import shlex
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ async def execute_mcp_step(
     rendered_step: Any,
     context: dict[str, Any],
     tool_proxy_getter: Any | None,
-    session_manager: "LocalSessionManager | None" = None,
+    session_manager: "SessionManager | None" = None,
 ) -> Any:
     """Execute an MCP tool call step."""
     mcp_config = rendered_step.mcp

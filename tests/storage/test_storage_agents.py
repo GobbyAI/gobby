@@ -6,7 +6,7 @@ import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,7 @@ def agent_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
 
 @pytest.fixture
 def sample_session(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     sample_project: dict,
 ) -> dict:
     """Create a sample session for agent run testing."""
@@ -206,7 +206,7 @@ class TestLocalAgentRunManager:
     def test_create_agent_run_with_child_session(
         self,
         agent_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -505,7 +505,7 @@ class TestLocalAgentRunManager:
     def test_update_child_session(
         self,
         agent_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -662,7 +662,7 @@ class TestLocalAgentRunManager:
     def test_list_running(
         self,
         agent_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:

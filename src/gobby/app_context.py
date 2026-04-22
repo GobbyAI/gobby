@@ -16,7 +16,7 @@ from gobby.llm import LLMService
 from gobby.memory.manager import MemoryManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemorySyncManager
@@ -35,7 +35,7 @@ class ServiceContainer:
     database: DatabaseProtocol
 
     # Core Managers
-    session_manager: LocalSessionManager
+    session_manager: SessionManager
     task_manager: LocalTaskManager
     span_storage: Any | None = None  # SpanStorage
 

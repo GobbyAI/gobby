@@ -6,15 +6,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
     from gobby.config.skills import SkillsConfig
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.skill_manager import HookSkillManager
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.session_tasks import SessionTaskManager
-    from gobby.storage.sessions import LocalSessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
@@ -23,10 +22,9 @@ if TYPE_CHECKING:
 class EventHandlersBase:
     """Base class for EventHandlers mixins with type hints for shared state."""
 
-    _session_manager: SessionManager | None
+    _session_manager: HookSessionManager | None
     _workflow_handler: WorkflowHookHandler | None
     _workflow_config: WorkflowConfig | None
-    _session_storage: LocalSessionManager | None
     _session_task_manager: SessionTaskManager | None
     _message_processor: Any | None
     _task_manager: LocalTaskManager | None

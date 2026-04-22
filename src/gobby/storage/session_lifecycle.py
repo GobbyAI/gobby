@@ -1,7 +1,7 @@
 """Session lifecycle operations.
 
 Standalone functions for expiring and pausing inactive sessions.
-Extracted from LocalSessionManager as part of the Strangler Fig
+Extracted from SessionManager as part of the Strangler Fig
 decomposition.
 """
 

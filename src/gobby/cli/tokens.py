@@ -16,7 +16,7 @@ from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEvent, TokenEventStore
 
 
@@ -143,7 +143,7 @@ def audit_tokens(
     db = LocalDatabase()
     try:
         run_migrations(db)
-        session_manager = LocalSessionManager(db)
+        session_manager = SessionManager(db)
         store = TokenEventStore(db)
 
         if audit_all:

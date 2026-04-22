@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +314,7 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
 def get_task_session_liveness(
     task_id: str,
     session_task_manager: SessionTaskManager | None,
-    session_manager: LocalSessionManager | None,
+    session_manager: SessionManager | None,
     exclude_session_id: str | None = None,
 ) -> bool:
     """

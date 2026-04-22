@@ -43,9 +43,9 @@ class SessionEndMixin(EventHandlersBase):
 
         # Fetch session once and reuse for auto-link and agent completion
         session = None
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
-                session = self._session_storage.get(session_id)
+                session = self._session_manager.get(session_id)
             except Exception as e:
                 self.logger.warning(f"Failed to fetch session {session_id}: {e}")
 
@@ -140,7 +140,7 @@ class SessionEndMixin(EventHandlersBase):
         # Mark as handoff_ready if session is ending due to /clear or /compact,
         # so the new session can find this parent and generate handoff summaries.
         # Claude Code session-end uses 'reason' field (not 'source').
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 end_status = "expired"
                 end_reason = event.data.get("reason")
@@ -149,10 +149,10 @@ class SessionEndMixin(EventHandlersBase):
                 # Don't downgrade handoff_ready -> expired (PRE_COMPACT may have
                 # already set handoff_ready before SESSION_END fires)
                 if end_status == "expired":
-                    current = self._session_storage.get(session_id)
+                    current = self._session_manager.get(session_id)
                     if current and current.status == "handoff_ready":
                         end_status = "handoff_ready"
-                self._session_storage.update_status(session_id, end_status)
+                self._session_manager.update_status(session_id, end_status)
             except Exception as e:
                 self.logger.warning(f"Failed to update session status on end: {e}")
 

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
     from gobby.storage.session_models import Session
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
     TranscriptParser = (
         ClaudeTranscriptParser
@@ -390,7 +390,7 @@ class TranscriptReader:
 
     def __init__(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         archive_dir: str | None = None,
         # Deprecated: kept for backwards-compat callers, ignored
         message_manager: object | None = None,

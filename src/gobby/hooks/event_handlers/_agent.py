@@ -72,8 +72,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
             if prompt_lower not in ("/clear", "/exit") and self._session_manager:
                 try:
                     self._session_manager.update_session_status(session_id, "active")
-                    if self._session_storage:
-                        self._session_storage.reset_transcript_processed(session_id)
+                    if self._session_manager:
+                        self._session_manager.reset_transcript_processed(session_id)
                 except Exception as e:
                     self.logger.warning(f"Failed to update session status: {e}")
 
@@ -91,11 +91,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 # Belt-and-suspenders: set handoff_source directly in addition to
                 # the prepare-clear-handoff rule, so session-end marks handoff_ready
                 # even if the rule engine is slow or disabled.
-                if self._session_storage:
+                if self._session_manager:
                     try:
                         from gobby.workflows.state_manager import SessionVariableManager
 
-                        sv_mgr = SessionVariableManager(self._session_storage.db)
+                        sv_mgr = SessionVariableManager(self._session_manager.db)
                         sv_mgr.set_variable(session_id, "handoff_source", prompt_lower.lstrip("/"))
                     except Exception as e:
                         self.logger.warning(f"Failed to set handoff_source: {e}")
@@ -141,12 +141,12 @@ class AgentEventHandlerMixin(EventHandlersBase):
         - Active skills: _active_skill_names session variable
         - Agent definition: workflow_definitions table
         """
-        if not self._session_storage:
+        if not self._session_manager:
             return
 
         from gobby.workflows.state_manager import SessionVariableManager
 
-        sv_mgr = SessionVariableManager(self._session_storage.db)
+        sv_mgr = SessionVariableManager(self._session_manager.db)
         variables = sv_mgr.get_variables(session_id)
 
         identity_reinject = bool(variables.get("_agent_identity_reinject"))
@@ -161,7 +161,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         # Get project_id for project-specific agent resolution
         project_id = None
         try:
-            session_row = self._session_storage.get(session_id)
+            session_row = self._session_manager.get(session_id)
             if session_row:
                 project_id = session_row.project_id
         except Exception as e:
@@ -174,7 +174,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         from gobby.workflows.agent_resolver import resolve_agent
 
-        agent_body = resolve_agent(agent_name, self._session_storage.db, project_id=project_id)
+        agent_body = resolve_agent(agent_name, self._session_manager.db, project_id=project_id)
         if not agent_body:
             return
 
@@ -195,7 +195,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
         from gobby.skills.manager import SkillManager
 
-        all_skills = SkillManager(self._session_storage.db).list_skills()
+        all_skills = SkillManager(self._session_manager.db).list_skills()
         formatted, _, _ = select_and_format_agent_skills(
             agent_body, all_skills, active_skills, cli_source
         )
@@ -299,11 +299,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
             raise RuntimeError("skill_manager not initialized")
         skills = self._skill_manager.discover_core_skills()
 
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv = sv_mgr.get_variables(session_id)
                 if sv:
                     active_names = sv.get("_active_skill_names")
@@ -469,9 +469,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
         self.logger.debug(log_msg)
 
         # Track pending subagent depth for auto-registration
-        if session_id and subagent_id and self._session_storage:
+        if session_id and subagent_id and self._session_manager:
             try:
-                row = self._session_storage.db.fetchone(
+                row = self._session_manager.db.fetchone(
                     "SELECT agent_depth FROM sessions WHERE external_id = ? AND status = 'active'"
                     " ORDER BY updated_at DESC LIMIT 1",
                     (session_id,),
@@ -485,11 +485,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 self.logger.debug(f"Failed to track subagent depth: {e}")
 
         # Toggle is_subagent so rule engine unblocks native task tools
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "is_subagent", True)
                 self.logger.debug(f"Set is_subagent=True for session {session_id}")
             except (sqlite3.Error, KeyError, TypeError, ValueError) as e:
@@ -507,11 +507,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
             self.logger.debug("SUBAGENT_STOP")
 
         # Clear is_subagent so rule engine re-blocks native task tools
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "is_subagent", False)
                 self.logger.debug(f"Set is_subagent=False for session {session_id}")
             except (sqlite3.Error, KeyError, TypeError, ValueError) as e:

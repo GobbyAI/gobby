@@ -18,8 +18,7 @@ def _make_event_handlers() -> EventHandlers:
     session_storage.db = MagicMock()
     # Make db.fetchall return empty lists so iteration works
     session_storage.db.fetchall.return_value = []
-
-    session_manager = MagicMock()
+    session_manager = session_storage
 
     return EventHandlers(
         session_manager=session_manager,
@@ -70,7 +69,7 @@ class TestAgentNameOverride:
             mock_cs.assert_not_called()
 
         mock_resolve.assert_called_once_with(
-            "custom-agent", handlers._session_storage.db, project_id="proj-1"
+            "custom-agent", handlers._session_manager.db, project_id="proj-1"
         )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -95,7 +94,7 @@ class TestAgentNameOverride:
                 project_id=None,
             )
 
-            mock_cs.assert_called_once_with(handlers._session_storage.db)
+            mock_cs.assert_called_once_with(handlers._session_manager.db)
             mock_cs.return_value.get.assert_called_once_with("default_agent")
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -115,7 +114,7 @@ class TestAgentNameOverride:
         )
 
         mock_resolve.assert_called_once_with(
-            "my-agent", handlers._session_storage.db, project_id="proj-2"
+            "my-agent", handlers._session_manager.db, project_id="proj-2"
         )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")

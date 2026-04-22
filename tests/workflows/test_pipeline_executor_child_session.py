@@ -208,19 +208,19 @@ class TestPipelineChildSession:
         """Pipeline MCP steps resolve and dispatch against the real stored child session.
 
         This closes the remaining mock-only gap from #12138 by exercising the
-        full PipelineExecutor -> LocalSessionManager -> execute_mcp_step path
+        full PipelineExecutor -> SessionManager -> execute_mcp_step path
         with real DB-backed session rows. The tool proxy still matches
         production shape: tool_proxy.session_manager stays None.
         """
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         project = LocalProjectManager(temp_db).create("pipeline-storage-backed")
         project_id = project.id
         execution_manager = LocalPipelineExecutionManager(temp_db, project_id=project_id)
-        session_manager = LocalSessionManager(temp_db)
+        session_manager = SessionManager(temp_db)
         caller_session = session_manager.register(
             external_id="caller-ext-storage",
             machine_id="test-machine",

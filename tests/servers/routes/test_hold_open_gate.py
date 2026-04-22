@@ -21,7 +21,7 @@ from gobby.servers.routes.mcp.hooks import MAX_PENDING_PER_SESSION, _maybe_hold_
 
 pytestmark = pytest.mark.unit
 
-_LSM_PATCH = "gobby.storage.sessions.LocalSessionManager"
+_SESSION_MANAGER_PATCH = "gobby.storage.sessions.SessionManager"
 
 
 def _make_request(
@@ -58,7 +58,7 @@ async def test_unknown_session_returns_none() -> None:
     db = MagicMock()
     request = _make_request(db=db)
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = None
         result = await _maybe_hold_open(request, "no-such", "PreToolUse", {}, "claude")
 
@@ -71,7 +71,7 @@ async def test_terminal_session_returns_none() -> None:
     session = _make_session(session_type="terminal")
     request = _make_request(db=db)
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-1", "PreToolUse", {}, "claude")
 
@@ -84,7 +84,7 @@ async def test_no_pending_manager_returns_none() -> None:
     session = _make_session(session_type="web_chat")
     request = _make_request(db=db, pending_manager=None)
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-1", "PreToolUse", {}, "claude")
 
@@ -106,7 +106,7 @@ async def test_web_chat_pre_tool_use_approve() -> None:
     request = _make_request(db=db, pending_manager=manager)
     payload = {"input_data": {"tool_name": "bash", "arguments": {"command": "ls"}}}
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-web-1", "PreToolUse", payload, "web_chat")
 
@@ -127,7 +127,7 @@ async def test_web_chat_pre_tool_use_falls_back_to_external_id_lookup() -> None:
     request = _make_request(db=db, pending_manager=manager)
     payload = {"input_data": {"tool_name": "bash", "arguments": {"command": "ls"}}}
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         store = MockSM.return_value
         store.get.return_value = None
         store.resolve_session_reference.side_effect = ValueError("not a session ref")
@@ -154,7 +154,7 @@ async def test_web_chat_pre_tool_use_deny_on_timeout() -> None:
     request = _make_request(db=db, pending_manager=manager)
     payload = {"input_data": {"tool_name": "bash", "arguments": {}}}
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-web-1", "PreToolUse", payload, "web_chat")
 
@@ -171,7 +171,7 @@ async def test_web_chat_rate_limit_deny() -> None:
     request = _make_request(db=db, pending_manager=manager)
     payload = {"input_data": {"tool_name": "bash", "arguments": {}}}
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-web-1", "PreToolUse", payload, "web_chat")
 
@@ -193,7 +193,7 @@ async def test_web_chat_ask_user_question() -> None:
     request = _make_request(db=db, pending_manager=manager)
     payload = {"input_data": {"question": "Continue?"}}
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(
             request, "sess-web-1", "AskUserQuestion", payload, "web_chat"
@@ -213,7 +213,7 @@ async def test_unsupported_hook_type_returns_none() -> None:
 
     request = _make_request(db=db, pending_manager=manager)
 
-    with patch(_LSM_PATCH) as MockSM:
+    with patch(_SESSION_MANAGER_PATCH) as MockSM:
         MockSM.return_value.get.return_value = session
         result = await _maybe_hold_open(request, "sess-1", "Stop", {}, "web_chat")
 

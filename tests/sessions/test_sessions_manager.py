@@ -1,21 +1,21 @@
 """Tests for the SessionManager service layer."""
 
+from importlib import import_module
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.sessions.manager import SessionManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage with temp database."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def test_project(project_storage: LocalProjectManager) -> dict:
 
 
 @pytest.fixture
-def session_mgr(session_storage: LocalSessionManager) -> SessionManager:
+def session_mgr(session_storage: SessionManager) -> SessionManager:
     """Create a SessionManager instance for testing."""
     return SessionManager(
         session_storage=session_storage,
@@ -78,10 +78,10 @@ class TestSessionManagerRegistration:
 
         assert session_id is not None
         # Verify session data
-        session = session_mgr.get_session(session_id)
+        session = session_mgr.get(session_id)
         assert session is not None
-        assert session["title"] == "Test Session Title"
-        assert session["git_branch"] == "feature/test"
+        assert session.title == "Test Session Title"
+        assert session.git_branch == "feature/test"
 
     def test_register_caches_mapping(
         self,
@@ -114,9 +114,9 @@ class TestSessionManagerRegistration:
             git_branch="main",
         )
 
-        session = session_mgr.get_session(session_id)
+        session = session_mgr.get(session_id)
         assert session is not None
-        assert session["git_branch"] == "main"
+        assert session.git_branch == "main"
 
 
 class TestSessionManagerLookup:
@@ -209,22 +209,22 @@ class TestSessionManagerLookup:
             title="Full Data Session",
         )
 
-        session = session_mgr.get_session(session_id)
+        session = session_mgr.get(session_id)
         assert session is not None
-        assert session["id"] == session_id
-        assert session["external_id"] == "full-data"
-        assert session["source"] == "gemini"
-        assert session["title"] == "Full Data Session"
+        assert session.id == session_id
+        assert session.external_id == "full-data"
+        assert session.source == "gemini"
+        assert session.title == "Full Data Session"
 
     def test_get_session_nonexistent(self, session_mgr: SessionManager) -> None:
         """Test getting nonexistent session returns None."""
-        result = session_mgr.get_session("nonexistent-uuid")
+        result = session_mgr.get("nonexistent-uuid")
         assert result is None
 
     def test_recover_session_prefers_metadata_rich_candidate(
         self,
         session_mgr: SessionManager,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Cross-source recovery should prefer the candidate with transcript metadata."""
@@ -260,7 +260,7 @@ class TestSessionManagerLookup:
     def test_recover_session_returns_none_for_ambiguous_candidates(
         self,
         session_mgr: SessionManager,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict,
     ) -> None:
         """Recovery should refuse ties instead of silently picking a row."""
@@ -307,9 +307,9 @@ class TestSessionManagerStatus:
         result = session_mgr.update_session_status(session_id, "paused")
         assert result is True
 
-        session = session_mgr.get_session(session_id)
+        session = session_mgr.get(session_id)
         assert session is not None
-        assert session["status"] == "paused"
+        assert session.status == "paused"
 
     def test_mark_session_expired(
         self,
@@ -327,9 +327,9 @@ class TestSessionManagerStatus:
         result = session_mgr.mark_session_expired(session_id)
         assert result is True
 
-        session = session_mgr.get_session(session_id)
+        session = session_mgr.get(session_id)
         assert session is not None
-        assert session["status"] == "expired"
+        assert session.status == "expired"
 
     def test_update_nonexistent_session(self, session_mgr: SessionManager) -> None:
         """Test updating status of nonexistent session."""
@@ -443,3 +443,12 @@ class TestSessionManagerCaching:
         # All session IDs should be unique
         session_ids = [sid for _, sid in results]
         assert len(set(session_ids)) == 5
+
+
+def test_session_manager_import_is_storage_canonical() -> None:
+    """Canonical SessionManager should come from gobby.storage.sessions."""
+    storage_sessions = import_module("gobby.storage.sessions")
+    canonical_cls = getattr(storage_sessions, "SessionManager", None)
+
+    assert canonical_cls is not None
+    assert SessionManager is canonical_cls

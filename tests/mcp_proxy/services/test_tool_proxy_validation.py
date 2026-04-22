@@ -829,7 +829,7 @@ class TestWorkflowBeforeToolEnforcement:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
-        hook_manager._session_storage = session_manager
+        hook_manager._session_manager = session_manager
         hook_manager._database = MagicMock()
         hook_manager.handle = MagicMock(return_value=HookResponse(decision="allow"))
         return hook_manager
@@ -924,7 +924,7 @@ class TestWorkflowBeforeToolEnforcement:
             project_id="project-123",
             external_id="pipeline-exec-123",
         )
-        mock_hook_manager._session_storage.get.return_value = pipeline_session
+        mock_hook_manager._session_manager.get.return_value = pipeline_session
 
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
@@ -953,7 +953,7 @@ class TestWorkflowBeforeToolEnforcement:
         """
         import logging
 
-        mock_hook_manager._session_storage.get.side_effect = RuntimeError(
+        mock_hook_manager._session_manager.get.side_effect = RuntimeError(
             "simulated storage failure"
         )
 
@@ -1066,7 +1066,7 @@ class TestSyntheticCodexMcpAfterTool:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
-        hook_manager._session_storage = session_manager
+        hook_manager._session_manager = session_manager
         hook_manager._database = MagicMock()
         hook_manager.handle = MagicMock(return_value=HookResponse(decision="allow"))
         return hook_manager
@@ -1286,7 +1286,7 @@ class TestSyntheticCodexMcpAfterTool:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
-        hook_manager._session_storage = session_manager
+        hook_manager._session_manager = session_manager
         hook_manager._database = temp_db
         hook_manager.handle = workflow_handler.evaluate
 

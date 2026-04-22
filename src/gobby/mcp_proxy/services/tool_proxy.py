@@ -289,7 +289,9 @@ class ToolProxyService:
         metadata: dict[str, Any] = {"_platform_session_id": effective_session_id}
 
         hook_manager = self._resolve_hook_manager()
-        session_storage = getattr(hook_manager, "_session_storage", None) if hook_manager else None
+        session_storage = (
+            getattr(hook_manager, "_session_manager", None) if hook_manager else None
+        )
         session = None
         if session_storage is not None:
             try:

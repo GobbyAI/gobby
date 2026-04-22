@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +69,19 @@ class ChildSessionManager:
     - Agent depth (0 = human-initiated, 1+ = agent-spawned)
     - Which agent spawned them (for tracking and cleanup)
 
-    Thread-safe: Uses the underlying LocalSessionManager's thread safety.
+    Thread-safe: Uses the underlying SessionManager's thread safety.
     """
 
     def __init__(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         max_agent_depth: int = 1,
     ) -> None:
         """
         Initialize ChildSessionManager.
 
         Args:
-            session_storage: LocalSessionManager for SQLite operations.
+            session_storage: SessionManager for SQLite operations.
             max_agent_depth: Maximum allowed nesting depth (default: 1).
                 Depth 0 = human-initiated session.
                 Depth 1 = agent can spawn, but child cannot spawn further.

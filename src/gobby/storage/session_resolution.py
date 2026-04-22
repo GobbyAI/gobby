@@ -1,7 +1,7 @@
 """Session reference resolution.
 
 Resolves session references (#N, N, UUID, prefix) to UUIDs.
-Extracted from LocalSessionManager.resolve_session_reference()
+Extracted from SessionManager.resolve_session_reference()
 as part of the Strangler Fig decomposition.
 """
 

@@ -13,6 +13,8 @@ from gobby.runner_init import resolve_embedding_api_key
 
 pytestmark = pytest.mark.unit
 
+_RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.SessionManager"
+
 
 @pytest.fixture(autouse=True)
 def fast_stop_hook_grace_window():
@@ -145,7 +147,7 @@ def create_base_patches(
         patch("gobby.runner_init.get_machine_id", return_value="test-machine"),
         patch("gobby.runner_init.LocalDatabase"),
         patch("gobby.runner_init.run_migrations"),
-        patch("gobby.runner_init.LocalSessionManager"),
+        patch(_RUNNER_INIT_SESSION_MANAGER_PATCH),
         patch("gobby.runner_init.LocalTaskManager"),
         patch("gobby.runner_init.SessionTaskManager"),
         patch("gobby.runner_init.MCPClientManager", return_value=mock_mcp_manager),

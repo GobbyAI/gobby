@@ -5,7 +5,7 @@ import pytest
 from gobby.hooks.event_handlers import EDIT_TOOLS, EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -20,7 +20,7 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     in_repo_file.parent.mkdir(parents=True)
 
     # 1. Setup managers
-    session_manager = LocalSessionManager(temp_db)
+    session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
     project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
@@ -102,7 +102,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
     outside_file = tmp_path / "outside" / "settings.json"
     outside_file.parent.mkdir(parents=True)
 
-    session_manager = LocalSessionManager(temp_db)
+    session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
     project_manager = LocalProjectManager(temp_db)
     session_var_manager = SessionVariableManager(temp_db)
@@ -143,7 +143,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
 
 def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
     """Test had_edits is NOT set if no task is claimed."""
-    session_manager = LocalSessionManager(temp_db)
+    session_manager = SessionManager(temp_db)
     task_manager = LocalTaskManager(temp_db)
     project_manager = LocalProjectManager(temp_db)
     handlers = EventHandlers(session_storage=session_manager, task_manager=task_manager)

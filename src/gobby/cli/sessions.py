@@ -10,13 +10,13 @@ import click
 
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 
-def get_session_manager() -> LocalSessionManager:
+def get_session_manager() -> SessionManager:
     """Get initialized session manager."""
     db = LocalDatabase()
-    return LocalSessionManager(db)
+    return SessionManager(db)
 
 
 def _format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
@@ -520,13 +520,13 @@ def restore_transcript(
     """
     from gobby.sessions.transcript_archive import get_archive_dir
     from gobby.sessions.transcript_archive import restore_transcript as _restore
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
     if not session_ref and not restore_all:
         raise click.UsageError("Provide a session reference or use --all")
 
     with LocalDatabase() as db:
-        sm = LocalSessionManager(db)
+        sm = SessionManager(db)
         results: list[dict[str, Any]] = []
 
         if restore_all:

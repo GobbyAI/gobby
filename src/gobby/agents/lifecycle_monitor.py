@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -59,7 +59,7 @@ class AgentLifecycleMonitor:
         self,
         agent_run_manager: LocalAgentRunManager,
         db: DatabaseProtocol,
-        session_manager: LocalSessionManager | None = None,
+        session_manager: SessionManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
         clone_storage: LocalCloneManager | None = None,
         check_interval_seconds: float = 30.0,

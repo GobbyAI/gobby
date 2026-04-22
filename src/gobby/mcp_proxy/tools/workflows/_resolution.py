@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.utils.project_context import get_project_context
@@ -17,7 +17,7 @@ from gobby.utils.project_context import get_project_context
 logger = logging.getLogger(__name__)
 
 
-def resolve_session_id(session_manager: LocalSessionManager, ref: str) -> str:
+def resolve_session_id(session_manager: SessionManager, ref: str) -> str:
     """Resolve session reference (#N, N, UUID, or prefix) to UUID."""
     project_ctx = get_project_context()
     project_id = project_ctx.get("id") if project_ctx else None
@@ -27,7 +27,7 @@ def resolve_session_id(session_manager: LocalSessionManager, ref: str) -> str:
 def resolve_session_task_value(
     value: Any,
     session_id: str | None,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     db: DatabaseProtocol,
 ) -> Any:
     """

@@ -16,7 +16,7 @@ from typing import Any
 
 from gobby.storage.agents import AgentRun
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def _close_terminal_window(
 
     ctx: dict[str, Any] = {}
     try:
-        session_mgr = LocalSessionManager(db)
+        session_mgr = SessionManager(db)
         session = session_mgr.get(session_id)
         if session and session.terminal_context:
             ctx = session.terminal_context
@@ -200,7 +200,7 @@ async def kill_agent(
     if session_id and not target_pid:
         # Strategy 1: Check session's terminal_context
         try:
-            session_mgr = LocalSessionManager(db)
+            session_mgr = SessionManager(db)
             session = session_mgr.get(session_id)
             if session and session.terminal_context:
                 ctx_pid = session.terminal_context.get("parent_pid")

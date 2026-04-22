@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 
 @pytest.fixture
@@ -99,11 +99,11 @@ def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
 
 
 @pytest.fixture
-def session_manager(temp_db: "LocalDatabase") -> "LocalSessionManager":
+def session_manager(temp_db: "LocalDatabase") -> "SessionManager":
     """Create a session manager with temp database."""
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture

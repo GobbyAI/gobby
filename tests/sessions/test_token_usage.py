@@ -6,7 +6,7 @@ from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +28,7 @@ def db(tmp_path):
 
 @pytest.fixture
 def session_manager(db):
-    return LocalSessionManager(db)
+    return SessionManager(db)
 
 
 @pytest.fixture

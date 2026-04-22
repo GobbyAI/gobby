@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -46,7 +46,7 @@ class RegistryContext:
     # Derived managers (initialized in __post_init__)
     dep_manager: TaskDependencyManager = field(init=False)
     session_task_manager: SessionTaskManager = field(init=False)
-    session_manager: LocalSessionManager = field(init=False)
+    session_manager: SessionManager = field(init=False)
     session_var_manager: SessionVariableManager = field(init=False)
     project_manager: LocalProjectManager = field(init=False)
     worktree_manager: LocalWorktreeManager = field(init=False)
@@ -62,7 +62,7 @@ class RegistryContext:
         db = self.task_manager.db
         self.dep_manager = TaskDependencyManager(db)
         self.session_task_manager = SessionTaskManager(db)
-        self.session_manager = LocalSessionManager(db)
+        self.session_manager = SessionManager(db)
         self.session_var_manager = SessionVariableManager(db)
         self.project_manager = LocalProjectManager(db)
         self.worktree_manager = LocalWorktreeManager(db)

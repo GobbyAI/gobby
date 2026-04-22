@@ -353,10 +353,10 @@ class RunningAgentRegistry:
         ctx: dict[str, Any] = {}
         try:
             from gobby.storage.database import LocalDatabase
-            from gobby.storage.sessions import LocalSessionManager
+            from gobby.storage.sessions import SessionManager
 
             db = LocalDatabase()
-            session_mgr = LocalSessionManager(db)
+            session_mgr = SessionManager(db)
             session = session_mgr.get(agent.session_id)
             if session and session.terminal_context:
                 ctx = session.terminal_context
@@ -497,10 +497,10 @@ class RunningAgentRegistry:
             # Only used when agent.pid is not set (e.g., daemon restart lost PID)
             try:
                 from gobby.storage.database import LocalDatabase
-                from gobby.storage.sessions import LocalSessionManager
+                from gobby.storage.sessions import SessionManager
 
                 db = LocalDatabase()
-                session_mgr = LocalSessionManager(db)
+                session_mgr = SessionManager(db)
                 session = session_mgr.get(agent.session_id)
                 if session and session.terminal_context:
                     ctx_pid = session.terminal_context.get("parent_pid")

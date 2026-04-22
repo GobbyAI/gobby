@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 
 def register_commits_tools(
     registry: InternalToolRegistry,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     db: Any | None = None,
 ) -> None:
     """
@@ -28,7 +28,7 @@ def register_commits_tools(
 
     Args:
         registry: The InternalToolRegistry to register tools with
-        session_manager: LocalSessionManager instance for session operations
+        session_manager: SessionManager instance for session operations
         db: Database for dependency injection (optional)
     """
 

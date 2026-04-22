@@ -88,7 +88,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
             response_data = input_data.get("response")
             model_name = input_data.get("model_name") or input_data.get("model")
 
-            if isinstance(response_data, dict) and self._session_storage:
+            if isinstance(response_data, dict) and self._session_manager:
                 usage = response_data.get("usageMetadata")
                 if usage:
                     input_tokens = usage.get("promptTokenCount", 0)
@@ -98,7 +98,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
                     # Update session usage in DB
                     try:
-                        self._session_storage.update_usage(
+                        self._session_manager.update_usage(
                             session_id=session_id,
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
@@ -109,7 +109,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                         self.logger.debug(
                             f"Updated Gemini session usage: {input_tokens} in, {output_tokens} out"
                         )
-                        refreshed = self._session_storage.get(session_id)
+                        refreshed = self._session_manager.get(session_id)
                         app_ctx = get_app_context()
                         ws_server = app_ctx.websocket_server if app_ctx is not None else None
                         if refreshed is not None and ws_server is not None:

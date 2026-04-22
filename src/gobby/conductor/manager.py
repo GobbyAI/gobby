@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.servers.chat_session import ChatSession
     from gobby.storage.cron_models import CronJob
     from gobby.storage.pipelines import LocalPipelineExecutionManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class ConductorManager:
         self,
         project_id: str,
         project_path: str | None,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         config: ConductorConfig,
         execution_manager: LocalPipelineExecutionManager | None = None,
     ) -> None:

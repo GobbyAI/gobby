@@ -101,7 +101,7 @@ class PipelineExecutor:
             event_callback: Optional async callback for broadcasting events.
                            Signature: async def callback(event: str, execution_id: str, **kwargs)
             tool_proxy_getter: Optional callable returning ToolProxyService for MCP steps
-            session_manager: Optional LocalSessionManager for session creation
+            session_manager: Optional SessionManager for session creation
             completion_registry: Optional CompletionEventRegistry for wait steps
         """
         self.db = db

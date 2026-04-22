@@ -87,7 +87,7 @@ def create_agents_registry(
 
     Args:
         runner: AgentRunner instance for executing agents.
-        session_manager: Optional LocalSessionManager for resolving session references.
+        session_manager: Optional SessionManager for resolving session references.
         task_manager: Task manager for spawn_agent task resolution.
         worktree_storage: Worktree storage for spawn_agent isolation.
         git_manager: Git manager for spawn_agent isolation.

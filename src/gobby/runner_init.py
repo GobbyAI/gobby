@@ -34,7 +34,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.migrations import run_migrations
 from gobby.storage.session_tasks import SessionTaskManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemorySyncManager
@@ -222,7 +222,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     except Exception as e:
         logger.warning(f"Failed to populate model metadata: {e}")
 
-    runner.session_manager = LocalSessionManager(runner.database)
+    runner.session_manager = SessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)
     runner.session_task_manager = SessionTaskManager(runner.database)
 

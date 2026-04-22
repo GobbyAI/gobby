@@ -11,6 +11,8 @@ from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
 
+_SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
+
 
 @pytest.fixture
 def mock_db():
@@ -30,7 +32,7 @@ def mock_config():
 
 @pytest.fixture
 def manager(mock_db, mock_config):
-    with patch("gobby.sessions.lifecycle.LocalSessionManager"):
+    with patch(_SESSION_MANAGER_PATCH):
         return SessionLifecycleManager(mock_db, mock_config)
 
 

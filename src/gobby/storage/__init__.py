@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from gobby.storage.mcp import LocalMCPManager as LocalMCPManager
     from gobby.storage.migrations import run_migrations as run_migrations
     from gobby.storage.projects import LocalProjectManager as LocalProjectManager
-    from gobby.storage.sessions import LocalSessionManager as LocalSessionManager
+    from gobby.storage.sessions import SessionManager as SessionManager
     from gobby.storage.task_dependencies import TaskDependencyManager as TaskDependencyManager
     from gobby.storage.tasks import LocalTaskManager as LocalTaskManager
 
@@ -26,7 +26,7 @@ __all__ = [
     "LocalExpansionRunManager",
     "LocalMCPManager",
     "LocalProjectManager",
-    "LocalSessionManager",
+    "SessionManager",
     "LocalTaskManager",
     "TaskDependencyManager",
     "run_migrations",
@@ -42,7 +42,7 @@ _EXPORTS = {
     "LocalExpansionRunManager": ("gobby.storage.expansion_runs", "LocalExpansionRunManager"),
     "LocalMCPManager": ("gobby.storage.mcp", "LocalMCPManager"),
     "LocalProjectManager": ("gobby.storage.projects", "LocalProjectManager"),
-    "LocalSessionManager": ("gobby.storage.sessions", "LocalSessionManager"),
+    "SessionManager": ("gobby.storage.sessions", "SessionManager"),
     "LocalTaskManager": ("gobby.storage.tasks", "LocalTaskManager"),
     "TaskDependencyManager": ("gobby.storage.task_dependencies", "TaskDependencyManager"),
     "run_migrations": ("gobby.storage.migrations", "run_migrations"),

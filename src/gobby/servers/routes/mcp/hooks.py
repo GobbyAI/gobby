@@ -160,12 +160,12 @@ async def _maybe_hold_open(
     ``None`` if the session is not a web chat session (so the caller should
     fall through to the normal adapter response path).
     """
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
     db = request.app.state.server.services.database
     if not db:
         return None
-    session_store = LocalSessionManager(db)
+    session_store = SessionManager(db)
     db_session = await asyncio.to_thread(session_store.get, session_id)
     if not db_session:
         try:

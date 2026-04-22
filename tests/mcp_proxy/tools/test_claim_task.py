@@ -88,7 +88,7 @@ class TestClaimTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -161,7 +161,7 @@ class TestClaimTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -218,7 +218,7 @@ class TestClaimTaskTool:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -413,7 +413,7 @@ class TestClaimTaskSessionVariables:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
         ):
             mock_st_instance = MagicMock()
@@ -467,7 +467,7 @@ class TestClaimTaskVsUpdateTask:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -537,7 +537,7 @@ class TestClaimTaskCrossProjectBlocking:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -574,7 +574,7 @@ class TestClaimTaskCrossProjectBlocking:
             patch(
                 "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
             ) as MockSessionTaskManager,
-            patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance

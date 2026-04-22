@@ -68,7 +68,7 @@ def _create_registry(db: Any, project_id: str | None = None, hub_manager: Any | 
         patch("gobby.mcp_proxy.tools.skills.SkillSearch") as MockSearch,
         patch("gobby.mcp_proxy.tools.skills.SkillUpdater") as MockUpdater,
         patch("gobby.mcp_proxy.tools.skills.SkillLoader") as MockLoader,
-        patch("gobby.mcp_proxy.tools.skills.LocalSessionManager") as MockSM,
+        patch("gobby.mcp_proxy.tools.skills.SessionManager") as MockSM,
         patch("gobby.mcp_proxy.tools.skills.SkillChangeNotifier") as MockNotifier,
     ):
         mock_storage = MagicMock()

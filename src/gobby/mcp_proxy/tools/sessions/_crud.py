@@ -14,21 +14,21 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 _SUPPORTED_SESSION_SOURCES = ("claude", "gemini", "qwen", "codex")
 
 
 def register_crud_tools(
     registry: InternalToolRegistry,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
 ) -> None:
     """
     Register session CRUD tools with a registry.
 
     Args:
         registry: The InternalToolRegistry to register tools with
-        session_manager: LocalSessionManager instance for session operations
+        session_manager: SessionManager instance for session operations
     """
 
     @registry.tool(
