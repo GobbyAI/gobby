@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -609,3 +609,242 @@ class TestCodexBackend:
             }
         )
         assert session._consume_deferred_context() == '<skill name="task-transitions">...'
+
+    @pytest.mark.asyncio
+    async def test_send_message_normalizes_realistic_completed_mcp_items(self) -> None:
+        handlers: dict[str, list[Any]] = {}
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            completed_events = [
+                {
+                    "threadId": "thread-other",
+                    "item": {
+                        "id": "item-other",
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "mcpToolCall": {
+                            "server": "gobby-tasks",
+                            "tool": "close_task",
+                            "arguments": '{"task_id":"#7"}',
+                        },
+                        "result": {"success": True},
+                    },
+                },
+                {
+                    "threadId": "thread-1",
+                    "item": {
+                        "id": "item-compact-1",
+                        "type": ">>>contextCompaction<<<",
+                        "status": "completed",
+                    },
+                },
+                {
+                    "threadId": "thread-1",
+                    "item": {
+                        "id": "item-msg-1",
+                        "type": "assistantMessage",
+                        "status": "completed",
+                        "assistantMessage": {"content": [{"type": "output_text", "text": "hello"}]},
+                    },
+                },
+                {
+                    "threadId": "thread-1",
+                    "item": {
+                        "id": "item-mcp-1",
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "mcpToolCall": {
+                            "server": "gobby-tasks",
+                            "tool": "close_task",
+                            "arguments": '{"task_id":"#42","changes_summary":"done"}',
+                        },
+                        "result": {"success": True, "task_id": "#42"},
+                    },
+                },
+            ]
+            for params in completed_events:
+                for handler in handlers.get("item/completed", []):
+                    handler("item/completed", params)
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id="turn-1")
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._on_post_tool = AsyncMock()
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+
+        events = [event async for event in backend.send_message(session, "close the task")]
+
+        assert isinstance(events[-1], DoneEvent)
+        session._on_post_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby-tasks__close_task",
+                "tool_input": {"task_id": "#42", "changes_summary": "done"},
+                "tool_response": {"success": True, "task_id": "#42"},
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "close_task",
+            }
+        )
+
+    def test_translate_approval_request_parses_json_string_arguments_for_mcp_tool_call(
+        self,
+    ) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+
+        tool_name, input_data = backend._translate_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thread-1",
+                "itemId": "item-mcp-1",
+                "serverName": "gobby-tasks",
+                "name": "close_task",
+                "arguments": '{"task_id":"#42","changes_summary":"done"}',
+            },
+        )
+
+        assert tool_name == "mcp__gobby__call_tool"
+        assert input_data == {
+            "task_id": "#42",
+            "changes_summary": "done",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+
+    @pytest.mark.asyncio
+    async def test_send_message_dispatches_pre_tool_once_per_item_and_resets_each_turn(
+        self,
+    ) -> None:
+        handlers: dict[str, list[Any]] = {}
+        turn_count = 0
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            nonlocal turn_count
+            turn_count += 1
+            turn_id = f"turn-{turn_count}"
+            for handler in handlers.get("turn/started", []):
+                handler("turn/started", {"threadId": "thread-1", "turn": {"id": turn_id}})
+            for handler in handlers.get("item/started", []):
+                handler(
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": turn_id,
+                        "itemId": "item-mcp-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "close_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                        },
+                    },
+                )
+                handler(
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": turn_id,
+                        "itemId": "item-mcp-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "close_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                        },
+                    },
+                )
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": turn_id},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id=turn_id)
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session.chat_mode = "bypass"
+        session._on_pre_tool = AsyncMock()
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+        backend._sessions_by_thread["thread-1"] = session
+
+        [event async for event in backend.send_message(session, "first turn")]
+        with patch(
+            "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+            return_value=None,
+        ):
+            approval_result = await backend.handle_approval_request(
+                "item/mcpToolCall/requestApproval",
+                {
+                    "threadId": "thread-1",
+                    "itemId": "item-mcp-1",
+                    "serverName": "gobby-tasks",
+                    "name": "close_task",
+                    "arguments": '{"task_id":"#42"}',
+                },
+            )
+        [event async for event in backend.send_message(session, "second turn")]
+
+        assert approval_result == backend._accept_response("item/mcpToolCall/requestApproval")
+        assert session._on_pre_tool.await_args_list == [
+            call(
+                {
+                    "tool_name": "mcp__gobby-tasks__close_task",
+                    "tool_input": {"task_id": "#42"},
+                }
+            ),
+            call(
+                {
+                    "tool_name": "mcp__gobby-tasks__close_task",
+                    "tool_input": {"task_id": "#42"},
+                }
+            ),
+        ]
