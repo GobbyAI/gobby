@@ -69,6 +69,7 @@ const SAMPLE_SESSIONS = [
 beforeEach(() => {
   mockFetch = createMockFetch();
   mockFetch.mockJsonResponse("/api/sessions", { sessions: SAMPLE_SESSIONS });
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {

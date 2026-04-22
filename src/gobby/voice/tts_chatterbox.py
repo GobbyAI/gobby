@@ -236,6 +236,12 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         max_generation_tokens: int | None = None,
     ) -> Any:
         turbo_decoder = getattr(model, "t3", None)
+        if turbo_decoder is None:
+            return model.generate(
+                text,
+                temperature=self._config.tts_temperature,
+            )
+
         original_inference_turbo = getattr(turbo_decoder, "inference_turbo", None)
         token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
 
