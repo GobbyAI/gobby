@@ -12,7 +12,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.adapters.codex_impl.adapter import CodexAdapter
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.adapters.codex_impl.item_normalization import (
+    build_post_tool_lifecycle_payload,
+    build_pre_tool_lifecycle_payload,
+    parse_mcp_arguments,
+)
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.gemini_acp_client import GeminiACPClient, StreamEvent
 from gobby.adapters.qwen import QwenAdapter
@@ -306,13 +312,17 @@ class ManagedChatSessionBase:
         """Run managed AFTER_TOOL hooks and queue any returned context."""
         if self._on_post_tool is None:
             return None
-        response = await self._on_post_tool(
-            {
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_response": tool_response,
-            }
-        )
+        payload = {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "tool_response": tool_response,
+        }
+        normalized_payload = normalize_tool_fields(dict(payload))
+        for key in ("mcp_server", "mcp_tool"):
+            value = normalized_payload.get(key)
+            if isinstance(value, str) and value:
+                payload[key] = value
+        response = await self._on_post_tool(payload)
         self._queue_deferred_context(response)
         return response
 
@@ -571,6 +581,32 @@ class CodexManagedChatSession(
     _pending_approval_decision: str | None = field(default=None, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
+    _before_tool_dedup_keys: set[str] = field(default_factory=set, repr=False)
+    _before_tool_cached_responses: dict[str, dict[str, Any] | None] = field(
+        default_factory=dict,
+        repr=False,
+    )
+
+    async def _dispatch_before_tool_once(
+        self,
+        dedup_key: str | None,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if dedup_key:
+            if dedup_key in self._before_tool_dedup_keys:
+                return self._before_tool_cached_responses.get(dedup_key)
+            self._before_tool_dedup_keys.add(dedup_key)
+        try:
+            response = await self._apply_pre_tool_lifecycle(tool_name, tool_input)
+        except Exception:
+            if dedup_key:
+                self._before_tool_dedup_keys.discard(dedup_key)
+                self._before_tool_cached_responses.pop(dedup_key, None)
+            raise
+        if dedup_key:
+            self._before_tool_cached_responses[dedup_key] = response
+        return response
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         if not self._connected:
@@ -1028,19 +1064,6 @@ class CodexWebChatBackend:
         return {"decision": "accept"}
 
     @staticmethod
-    def _extract_tool_args(payload: dict[str, Any]) -> dict[str, Any]:
-        for key in ("tool_input", "toolArgs", "arguments", "input", "params"):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                return dict(value)
-        return {}
-
-    @staticmethod
-    def _compose_mcp_tool_name(server_name: str, tool_name: str) -> str:
-        """Return the canonical MCP tool name used by shared lifecycle logic."""
-        return f"mcp__{server_name}__{tool_name}"
-
-    @staticmethod
     def _extract_mcp_tool_name(message: Any) -> str | None:
         if not isinstance(message, str):
             return None
@@ -1051,107 +1074,18 @@ class CodexWebChatBackend:
         return tool_name or None
 
     @staticmethod
-    def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
-        """Return the best-effort tool item payload from an item/completed event."""
+    def _extract_before_tool_dedup_key(params: dict[str, Any]) -> str | None:
+        for key in ("itemId", "elicitationId"):
+            value = params.get(key)
+            if isinstance(value, str) and value:
+                return value
         item = params.get("item")
-        if isinstance(item, dict):
-            return item
-
-        toolish_fields = {
-            "type",
-            "itemType",
-            "name",
-            "toolName",
-            "tool_name",
-            "arguments",
-            "toolArgs",
-            "tool_input",
-            "input",
-            "output",
-            "result",
-            "toolResult",
-        }
-        if any(field in params for field in toolish_fields):
-            return params
-
-        return {}
-
-    @staticmethod
-    def _looks_like_tool_item(item: dict[str, Any]) -> bool:
-        """Identify completed Codex items that represent tool execution."""
-        item_type = item.get("type") or item.get("itemType")
-        if item_type in {"commandExecution", "fileChange", "mcpToolCall"}:
-            return True
-
-        if any(
-            isinstance(item.get(tool_type), dict)
-            for tool_type in ("commandExecution", "fileChange", "mcpToolCall")
-        ):
-            return True
-
-        toolish_fields = (
-            "name",
-            "toolName",
-            "tool_name",
-            "arguments",
-            "toolArgs",
-            "tool_input",
-            "input",
-            "output",
-            "result",
-            "toolResult",
-        )
-        return any(field in item for field in toolish_fields)
-
-    def _build_completed_tool_lifecycle_payload(
-        self,
-        params: dict[str, Any],
-    ) -> tuple[str, dict[str, Any], Any] | None:
-        """Normalize completed Codex tool items into managed lifecycle payloads."""
-        item = self._extract_completed_item_payload(params)
-        if not item or not self._looks_like_tool_item(item):
+        if not isinstance(item, dict):
             return None
-
-        item_type = item.get("type") or item.get("itemType") or ""
-        nested_payload = item.get(item_type)
-
-        item_data: dict[str, Any] = {}
-        if isinstance(nested_payload, dict):
-            item_data.update(nested_payload)
-        item_data.update(item)
-
-        raw_tool_name = (
-            item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
-        )
-        if not raw_tool_name and item_type == "mcpToolCall":
-            server_name = item_data.get("server") or item_data.get("serverName")
-            mcp_tool = item_data.get("tool") or item_data.get("toolName") or item_data.get("name")
-            if (
-                isinstance(server_name, str)
-                and server_name
-                and isinstance(mcp_tool, str)
-                and mcp_tool
-            ):
-                raw_tool_name = self._compose_mcp_tool_name(server_name, mcp_tool)
-
-        if isinstance(raw_tool_name, str) and raw_tool_name:
-            normalized = normalize_tool_fields({"tool_name": raw_tool_name})
-            tool_name = str(normalized.get("tool_name", raw_tool_name))
-        elif item_type == "commandExecution":
-            tool_name = "Bash"
-        elif item_type == "fileChange":
-            tool_name = "Write"
-        else:
-            return None
-
-        tool_input = self._extract_tool_args(item_data)
-        tool_response = (
-            item_data.get("tool_response")
-            or item_data.get("tool_result")
-            or item_data.get("output")
-            or item_data.get("result")
-        )
-        return tool_name, tool_input, tool_response
+        item_id = item.get("id") or item.get("itemId")
+        if isinstance(item_id, str) and item_id:
+            return item_id
+        return None
 
     def _translate_approval_request(
         self,
@@ -1164,11 +1098,7 @@ class CodexWebChatBackend:
                 return None, {}
             server_name = params.get("serverName")
             tool_name = self._extract_mcp_tool_name(params.get("message"))
-            elicitation_data = (
-                dict(meta.get("tool_params", {}))
-                if isinstance(meta.get("tool_params"), dict)
-                else {}
-            )
+            elicitation_data = parse_mcp_arguments(meta.get("tool_params"))
             if (
                 isinstance(server_name, str)
                 and server_name
@@ -1195,32 +1125,42 @@ class CodexWebChatBackend:
 
         if item_type == "fileChange":
             changes = payload.get("changes")
-            input_data: dict[str, Any] = {}
+            file_change_input: dict[str, Any] = {}
             if isinstance(changes, list):
-                input_data["changes"] = changes
+                file_change_input["changes"] = changes
                 if changes and isinstance(changes[0], dict):
                     first = changes[0]
                     for key in ("file_path", "path", "target_path"):
                         value = first.get(key)
                         if isinstance(value, str) and value:
-                            input_data["file_path"] = value
+                            file_change_input["file_path"] = value
                             break
-            return "Write", input_data
+            return "Write", file_change_input
 
         if item_type == "mcpToolCall":
-            server_name = payload.get("serverName")
-            raw_name = payload.get("tool_name") or payload.get("toolName") or payload.get("name")
-            input_data = self._extract_tool_args(payload)
+            server_name = payload.get("serverName") or payload.get("server")
+            raw_name = (
+                payload.get("tool_name")
+                or payload.get("toolName")
+                or payload.get("name")
+                or payload.get("tool")
+            )
+            mcp_input_data: dict[str, Any] = {}
+            for key in ("tool_input", "toolArgs", "arguments", "input", "params"):
+                if key not in payload:
+                    continue
+                mcp_input_data = parse_mcp_arguments(payload.get(key))
+                break
             if (
                 isinstance(server_name, str)
                 and server_name
                 and isinstance(raw_name, str)
                 and raw_name
             ):
-                input_data["server_name"] = server_name
-                input_data["tool_name"] = raw_name
-                return "mcp__gobby__call_tool", input_data
-            return None, input_data
+                mcp_input_data["server_name"] = server_name
+                mcp_input_data["tool_name"] = raw_name
+                return "mcp__gobby__call_tool", mcp_input_data
+            return None, mcp_input_data
 
         return None, {}
 
@@ -1245,7 +1185,11 @@ class CodexWebChatBackend:
         if not tool_name:
             return self._decline_response(method)
 
-        lifecycle_response = await session._apply_pre_tool_lifecycle(tool_name, input_data)
+        lifecycle_response = await session._dispatch_before_tool_once(
+            self._extract_before_tool_dedup_key(params),
+            tool_name,
+            input_data,
+        )
         if isinstance(lifecycle_response, dict) and lifecycle_response.get("decision") == "block":
             return self._decline_response(method)
 
@@ -1304,6 +1248,8 @@ class CodexWebChatBackend:
         turn_completed = asyncio.Event()
         saw_text_output = False
         transcript_offset = await session._get_transcript_offset()
+        session._before_tool_dedup_keys.clear()
+        session._before_tool_cached_responses.clear()
 
         def _matches(params: dict[str, Any]) -> bool:
             thread_id = params.get("threadId")
@@ -1337,6 +1283,7 @@ class CodexWebChatBackend:
             "thread/closed",
             "agent/messageDelta",
             "item/agentMessage/delta",
+            "item/started",
             "item/completed",
         ]
         for method in event_methods:
@@ -1366,9 +1313,12 @@ class CodexWebChatBackend:
                     continue
 
                 if method == "item/completed":
-                    payload = self._build_completed_tool_lifecycle_payload(params)
-                    if payload is not None:
-                        tool_name, tool_input, tool_response = payload
+                    post_tool_payload = build_post_tool_lifecycle_payload(
+                        params,
+                        tool_name_map=CodexAdapter.TOOL_MAP,
+                    )
+                    if post_tool_payload is not None:
+                        tool_name, tool_input, tool_response = post_tool_payload
                         await session._apply_post_tool_lifecycle(
                             tool_name,
                             tool_input,
@@ -1377,6 +1327,8 @@ class CodexWebChatBackend:
                     continue
 
                 if method == "turn/started":
+                    session._before_tool_dedup_keys.clear()
+                    session._before_tool_cached_responses.clear()
                     turn_id = params.get("turnId")
                     if not turn_id:
                         turn_data = params.get("turn")
@@ -1384,6 +1336,20 @@ class CodexWebChatBackend:
                             turn_id = turn_data.get("id")
                     if isinstance(turn_id, str) and turn_id:
                         session._turn_id = turn_id
+                    continue
+
+                if method == "item/started":
+                    pre_tool_payload = build_pre_tool_lifecycle_payload(
+                        params,
+                        tool_name_map=CodexAdapter.TOOL_MAP,
+                    )
+                    if pre_tool_payload is not None:
+                        tool_name, tool_input = pre_tool_payload
+                        await session._dispatch_before_tool_once(
+                            self._extract_before_tool_dedup_key(params),
+                            tool_name,
+                            tool_input,
+                        )
                     continue
 
                 if method == "thread/closed":

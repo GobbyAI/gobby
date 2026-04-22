@@ -606,6 +606,8 @@ class TestCodexBackend:
                 "tool_name": "mcp__gobby-tasks__close_task",
                 "tool_input": {"task_id": "#42"},
                 "tool_response": {"success": True},
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "close_task",
             }
         )
         assert session._consume_deferred_context() == '<skill name="task-transitions">...'
