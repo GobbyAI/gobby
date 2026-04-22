@@ -317,16 +317,31 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             for name in hub_names:
                 try:
                     config = server.hub_manager.get_config(name)
-                    entry: dict[str, Any] = {
-                        "name": name,
-                        "type": config.type,
-                        "base_url": config.base_url,
-                        "repo": config.repo,
-                    }
-                    entry.update(server.hub_manager.auth_status(name))
-                    hubs.append(entry)
                 except KeyError:
-                    pass
+                    # Hub name reported by list_hubs but config missing — skip
+                    # silently so the rest of the endpoint still renders.
+                    continue
+                entry: dict[str, Any] = {
+                    "name": name,
+                    "type": config.type,
+                    "base_url": config.base_url,
+                    "repo": config.repo,
+                }
+                # auth_status may hit the secret store / network. A failure here
+                # should not 500 the entire /api/skills/hubs endpoint — fall back
+                # to a well-typed "unknown" shape so the UI can still render.
+                try:
+                    entry.update(server.hub_manager.auth_status(name))
+                except Exception as auth_exc:
+                    logger.warning(
+                        "auth_status failed for hub %r (%s): %s",
+                        name,
+                        type(auth_exc).__name__,
+                        auth_exc,
+                    )
+                    entry.setdefault("auth_configured", None)
+                    entry.setdefault("auth_key_name", None)
+                hubs.append(entry)
             return {"hubs": hubs}
         except Exception as e:
             logger.error(f"Failed to list hubs: {e}")

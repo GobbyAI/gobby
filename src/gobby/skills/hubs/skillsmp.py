@@ -157,12 +157,16 @@ class SkillsMPProvider(HubProvider):
                 "SkillsMP API key not configured. "
                 "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
             )
-        page = 1 if limit <= 0 else (offset // limit) + 1
+        # Coerce non-positive limits to a sane browse default. Callers that pass
+        # limit=0 mean "browse mode" — the API still needs a positive limit for
+        # pagination to work, and forwarding 0 (or negative) yields a 400.
+        safe_limit = limit if limit > 0 else 50
+        page = (offset // safe_limit) + 1
 
         result = await self._make_request(
             method="GET",
             endpoint="/skills/search",
-            params={"q": "", "limit": limit, "page": page},
+            params={"q": "", "limit": safe_limit, "page": page},
         )
 
         return [self._skill_to_info(skill) for skill in self._unwrap_skills(result)]
