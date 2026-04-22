@@ -30,15 +30,22 @@ def record_statusline_seen(session_id: str, when: datetime) -> datetime | None:
     with _STATUSLINE_LAST_SEEN_LOCK:
         previous = _STATUSLINE_LAST_SEEN.get(session_id)
         _STATUSLINE_LAST_SEEN[session_id] = when
-        return previous
+    # Drive the TTL sweep opportunistically so tracker growth is bounded by
+    # the prune interval rather than by whoever happens to call
+    # prune_trackers() externally. The _LAST_PRUNE_AT interval gate inside
+    # prune_trackers makes this a near-no-op on most writes.
+    prune_trackers(when)
+    return previous
 
 
 def record_session_activity(session_id: str, when: datetime | None = None) -> None:
     """Record a non-statusline activity pulse for a platform session id."""
     if not session_id:
         return
+    effective_when = when or datetime.now(UTC)
     with _SESSION_ACTIVITY_LAST_SEEN_LOCK:
-        _SESSION_ACTIVITY_LAST_SEEN[session_id] = when or datetime.now(UTC)
+        _SESSION_ACTIVITY_LAST_SEEN[session_id] = effective_when
+    prune_trackers(effective_when)
 
 
 def last_session_activity(session_id: str) -> datetime | None:
