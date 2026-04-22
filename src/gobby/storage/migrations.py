@@ -7,7 +7,7 @@ For existing databases at or above the minimum supported version:
     Any migrations in MIGRATIONS beyond BASELINE_VERSION are applied incrementally.
 
 To add a new migration:
-    1. Add helper callables to gobby.storage._migration_actions when needed.
+    1. Add helper callables to gobby.storage.migration_helpers when needed.
     2. Add the migration to gobby.storage._migration_registry.MIGRATIONS.
     3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
 """
@@ -16,7 +16,9 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from gobby.storage._migration_actions import (
+from gobby.storage._migration_registry import MIGRATIONS
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migration_helpers import (
     _add_column_if_missing,
     _add_prune_empty_session_indexes,
     _add_summary_column,
@@ -44,8 +46,6 @@ from gobby.storage._migration_actions import (
     _table_exists,
     _tasks_claimed_session_fk_is_set_null,
 )
-from gobby.storage._migration_registry import MIGRATIONS
-from gobby.storage.database import LocalDatabase
 
 logger = logging.getLogger(__name__)
 

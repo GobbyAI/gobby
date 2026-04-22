@@ -2,7 +2,8 @@
 
 from collections.abc import Callable
 
-from gobby.storage._migration_actions import (
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migration_helpers import (
     _add_column_if_missing,
     _add_prune_empty_session_indexes,
     _add_summary_column,
@@ -23,7 +24,6 @@ from gobby.storage._migration_actions import (
     _setup_fts_tables,
     _setup_memories_fts,
 )
-from gobby.storage.database import LocalDatabase
 
 MigrationAction = str | Callable[[LocalDatabase], None]
 

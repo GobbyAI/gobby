@@ -1,4 +1,4 @@
-"""Migration action helpers for storage schema upgrades."""
+"""Helper callables for storage schema migration steps."""
 
 from gobby.sessions.model_family import normalize_model
 from gobby.storage.database import LocalDatabase
