@@ -333,7 +333,15 @@ class TestDispatchMcpCallsSessionResolution:
         resolve_to: str | None,
         resolve_exc=None,
     ) -> tuple[AsyncMock, MagicMock]:
-        """Build an AsyncMock proxy whose _mcp_manager.session_manager resolves refs."""
+        """Build an AsyncMock proxy whose session_manager resolves refs.
+
+        The dispatcher reads ``proxy.session_manager`` directly (see
+        hooks/dispatchers/mcp.py). AsyncMock auto-generates child mocks
+        for any unset attribute, so the real session_manager must be
+        bound to the proxy at that exact attribute path — otherwise the
+        auto-generated stand-in silently absorbs the calls the test
+        means to assert against.
+        """
         session_manager = MagicMock()
         session_manager.db = MagicMock()
         if resolve_exc is not None:
@@ -346,8 +354,7 @@ class TestDispatchMcpCallsSessionResolution:
         session_manager.get.return_value = session
 
         proxy = AsyncMock()
-        proxy._mcp_manager = MagicMock()
-        proxy._mcp_manager.session_manager = session_manager
+        proxy.session_manager = session_manager
         return proxy, session_manager
 
     def test_dispatch_resolves_external_id_before_setting_session_context(self) -> None:
