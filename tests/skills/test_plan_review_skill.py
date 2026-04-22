@@ -117,6 +117,10 @@ class TestPlanReviewContent:
         planner uses (matching contract)."""
         assert "needs_requirements:" in body
 
+    def test_autonomous_exit_uses_end_agent_run_without_session_id(self, body: str) -> None:
+        assert "end_agent_run" in body
+        assert "session_id" not in body
+
     def test_nits_do_not_block_approval(self, body: str) -> None:
         """Severity distinction: blocking vs nit. Nits alone approve."""
         lowered = body.lower()

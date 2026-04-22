@@ -224,3 +224,9 @@ both branch on that prefix.
 
 Do **not** approve a plan you do not understand. When in doubt, escalate with
 specific questions rather than manufacturing findings or rubber-stamping.
+
+## Autonomous Exit
+
+When running as spawned `plan-adversary`, finish the verdict first
+(`mark_task_review_approved` or `escalate_task`), then call
+`end_agent_run` on `gobby-agents` with **no arguments** to finish the run.

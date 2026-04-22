@@ -12,6 +12,7 @@ These tests lock in:
   - only gobby-skills:get_skill permitted during that step,
   - transition out gates on skill_loaded,
   - instructions explicitly direct the agent to plan-review,
+  - terminate-step exit wiring uses end_agent_run,
   - both escalation prefixes (planning_changes_requested:, needs_requirements:)
     survive the trim so the interactive planner's branching (Step 7.6) matches
     the autonomous state machine's.
@@ -111,7 +112,22 @@ class TestAdversaryInstructionsPreserveContracts:
             "reopen_task",
             "mark_task_needs_review",
             "spawn",
-            "kill_agent",
+            "end_agent_run",
             "uv run",
         ):
             assert rule in instructions, f"Missing critical rule: {rule}"
+
+    def test_kill_agent_removed_from_instructions(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "kill_agent" not in instructions
+
+
+class TestAdversaryTerminateStep:
+    def test_terminate_step_only_allows_end_agent_run(self, agent: AgentDefinitionBody) -> None:
+        terminate = next(s for s in (agent.steps or []) if s.name == "terminate")
+        assert terminate.allowed_mcp_tools == ["gobby-agents:end_agent_run"]
+
+    def test_review_step_blocks_premature_end_agent_run(self, agent: AgentDefinitionBody) -> None:
+        review = next(s for s in (agent.steps or []) if s.name == "review")
+        blocked = review.blocked_mcp_tools or []
+        assert "gobby-agents:end_agent_run" in blocked

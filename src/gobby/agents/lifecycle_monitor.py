@@ -677,6 +677,12 @@ class AgentLifecycleMonitor:
         conditions (context_full) that require immediate failure rather
         than the standard reprompt flow.
         """
+        latest_run = await asyncio.to_thread(self._agent_run_manager.get, run.id)
+        if latest_run is None or latest_run.status not in ("pending", "running"):
+            self._idle_detector.reset_idle(run.id)
+            return 0
+
+        run = latest_run
         tmux_name = run.tmux_session_name
         assert tmux_name is not None
 

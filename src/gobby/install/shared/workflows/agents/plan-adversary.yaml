@@ -17,7 +17,7 @@ instructions: |
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required review work is complete.
-  - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
+  - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
 
   You are the adversarial plan reviewer for a front-half planning task.
   Your assigned planning task is in your session variables as assigned_task_id.
@@ -49,7 +49,7 @@ instructions: |
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call mark_task_needs_review.
   - Do NOT spawn other agents.
-  - Do NOT terminate without calling kill_agent.
+  - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
 
@@ -126,6 +126,7 @@ steps:
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:reopen_task"
+      - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
@@ -145,13 +146,13 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call kill_agent to terminate."
+    status_message: "Call end_agent_run with no arguments to finish the run."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

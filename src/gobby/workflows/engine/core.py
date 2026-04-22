@@ -232,6 +232,8 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         skill_manager: Any | None = None,
         metrics_event_store: "MetricsEventStore | None" = None,
         mcp_dispatcher: Any | None = None,
+        runner: Any | None = None,
+        completion_registry: Any | None = None,
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
@@ -239,6 +241,8 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         self._skill_manager = skill_manager
         self._event_store = metrics_event_store
         self._mcp_dispatcher = mcp_dispatcher
+        self._runner = runner
+        self._completion_registry = completion_registry
 
     async def evaluate(
         self,
@@ -459,7 +463,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # 4c. Step workflow transition processing (after successful MCP tool calls)
                 _step_transition_msg: str | None = None
                 if is_after_tool:
-                    _step_transition_msg = self._process_step_after_tool(
+                    _step_transition_msg = await self._process_step_after_tool(
                         event, session_id, variables
                     )
 

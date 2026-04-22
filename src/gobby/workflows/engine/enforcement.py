@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pydantic
 
+from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -33,10 +34,16 @@ class EnforcementMixin:
     definition_manager: LocalWorkflowDefinitionManager
 
     if TYPE_CHECKING:
+        from gobby.agents.runner import AgentRunner
+        from gobby.events.completion_registry import CompletionEventRegistry
+
         # Provided by TemplatingMixin at runtime via RuleEngine MRO
         def _evaluate_condition(
             self, condition: str, ctx: dict[str, Any], effect_type: str
         ) -> bool: ...
+
+        _runner: AgentRunner | None
+        _completion_registry: CompletionEventRegistry | None
 
     def _get_step_for_session(
         self, session_id: str
@@ -224,7 +231,35 @@ class EnforcementMixin:
                 return True
         return False
 
-    def _process_step_after_tool(
+    async def _complete_agent_workflow_run(
+        self,
+        session_id: str,
+        workflow_name: str,
+    ) -> None:
+        """Complete an agent-backed run when its workflow reaches a terminal step."""
+
+        if self._runner is None:
+            return
+
+        db_agent = self._runner.run_storage.get_by_session(session_id)
+        run_id = db_agent.id if db_agent else self._runner.get_run_id_by_session(session_id)
+        if not run_id:
+            return
+
+        await complete_and_notify_agent_run(
+            self._runner,
+            run_id,
+            completion_registry=self._completion_registry,
+            notify_result={
+                "status": "success",
+                "run_id": run_id,
+                "via": "workflow_terminate",
+                "workflow": workflow_name,
+            },
+            message=f"Agent {run_id} completed via workflow terminate",
+        )
+
+    async def _process_step_after_tool(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> str | None:
         """Process step workflow on_mcp_success handlers and transitions after tool completion.
@@ -361,6 +396,10 @@ class EnforcementMixin:
                         variables["step_workflow_complete"] = True
                         logger.info(
                             f"Exit condition met for workflow {instance.workflow_name} (session={session_id}, step={instance.current_step})",
+                        )
+                        await self._complete_agent_workflow_run(
+                            session_id,
+                            instance.workflow_name,
                         )
 
                 # Build transition notification for AfterTool additionalContext

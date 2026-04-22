@@ -89,6 +89,8 @@ class HookManager:
         message_processor: Any | None = None,
         memory_sync_manager: Any | None = None,
         task_sync_manager: Any | None = None,
+        agent_runner: Any | None = None,
+        completion_registry: Any | None = None,
         code_index_trigger: Any | None = None,
     ):
         """
@@ -107,6 +109,8 @@ class HookManager:
             message_processor: SessionMessageProcessor instance
             memory_sync_manager: Optional MemorySyncManager instance
             task_sync_manager: Optional TaskSyncManager instance
+            agent_runner: Optional AgentRunner for workflow-bound agent completion
+            completion_registry: Optional CompletionEventRegistry for wait wakeups
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -151,6 +155,8 @@ class HookManager:
             message_processor=message_processor,
             memory_sync_manager=memory_sync_manager,
             task_sync_manager=task_sync_manager,
+            agent_runner=agent_runner,
+            completion_registry=completion_registry,
             get_machine_id=self.get_machine_id,
             resolve_project_id=self._resolve_project_id,
             code_index_trigger=code_index_trigger,

@@ -126,6 +126,8 @@ class HookManagerFactory:
         message_processor: Any | None,
         memory_sync_manager: Any | None,
         task_sync_manager: Any | None,
+        agent_runner: Any | None,
+        completion_registry: Any | None,
         get_machine_id: Callable[[], str],
         resolve_project_id: Callable[[str | None, str | None], str],
         code_index_trigger: Any | None = None,
@@ -144,6 +146,8 @@ class HookManagerFactory:
             message_processor: SessionMessageProcessor instance
             memory_sync_manager: Optional MemorySyncManager instance
             task_sync_manager: Optional TaskSyncManager instance
+            agent_runner: Optional AgentRunner for agent-scoped workflow completion
+            completion_registry: Optional CompletionEventRegistry for wait-step wakeups
             get_machine_id: Callable returning machine ID
             resolve_project_id: Callable resolving project ID from (project_id, cwd)
 
@@ -192,6 +196,8 @@ class HookManagerFactory:
             autonomous,
             memory_sync_manager,
             task_sync_manager,
+            agent_runner,
+            completion_registry,
             tool_proxy_getter,
             resolve_project_id,
             broadcaster,
@@ -439,6 +445,8 @@ class HookManagerFactory:
         autonomous: _Autonomous,
         memory_sync_manager: Any | None,
         task_sync_manager: Any | None,
+        agent_runner: Any | None,
+        completion_registry: Any | None,
         tool_proxy_getter: Any | None,
         resolve_project_id: Callable[[str | None, str | None], str],
         broadcaster: Any | None,
@@ -466,6 +474,8 @@ class HookManagerFactory:
             skill_manager=skill_manager,
             metrics_event_store=metrics_event_store,
             mcp_dispatcher=inline_dispatcher,
+            runner=agent_runner,
+            completion_registry=completion_registry,
         )
 
         pipeline_executor = None
