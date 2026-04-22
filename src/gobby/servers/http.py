@@ -392,9 +392,11 @@ class HTTPServer:
             return_exceptions=True,
         )
 
-        for (transport, task), result in zip(pending, results, strict=False):
-            if not task.done():
-                task.cancel()
+        # asyncio.wait_for cancels the inner task on timeout, and gather has
+        # already awaited completion with return_exceptions=True. We only need
+        # to classify results for logging — no secondary cancellation pass or
+        # lingering cleanup is required.
+        for (transport, _task), result in zip(pending, results, strict=False):
             if isinstance(result, TimeoutError):
                 logger.warning(
                     "Timed out terminating Streamable HTTP session %s after %.1fs",
@@ -407,12 +409,6 @@ class HTTPServer:
                     getattr(transport, "mcp_session_id", "<unknown>"),
                     result,
                 )
-
-        lingering = [task for _transport, task in pending if not task.done()]
-        for task in lingering:
-            task.cancel()
-        if lingering:
-            await asyncio.gather(*lingering, return_exceptions=True)
 
     def resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """
