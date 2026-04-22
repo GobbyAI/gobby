@@ -18,6 +18,7 @@ from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 from gobby.workflows.enforcement.blocking import (
     is_discovery_tool,
     is_infrastructure_tool,
+    is_operator_tool,
 )
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -112,6 +113,10 @@ class EnforcementMixin:
 
                 mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
 
+                # Operator/debug MCP tools bypass agent block-lists
+                if is_operator_tool(mcp_tool_name):
+                    return None
+
                 if mcp_key and self._mcp_tool_matches(mcp_key, blocked_mcp_tools):
                     return HookResponse(
                         decision="block",
@@ -175,6 +180,12 @@ class EnforcementMixin:
 
                 # Discovery MCP tools always pass
                 if is_discovery_tool(mcp_tool_name):
+                    return None
+
+                # Operator/debug MCP tools (e.g. send_keys) always pass so
+                # humans can drive a stuck agent regardless of its step
+                # allow-list
+                if is_operator_tool(mcp_tool_name):
                     return None
 
                 mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
@@ -283,7 +294,10 @@ class EnforcementMixin:
                 if handler_when and not self._evaluate_condition(
                     handler_when,
                     {
-                        "vars": {**instance.variables, **variables},
+                        # Instance variables last so workflow-local state wins
+                        # over session-wide observer/handoff state with
+                        # colliding names (e.g. task_claimed).
+                        "vars": {**variables, **instance.variables},
                         "tool_input": handler_tool_input,
                         "tool_output": tool_output,
                     },
@@ -304,7 +318,13 @@ class EnforcementMixin:
 
         # Evaluate transitions
         for transition in step.transitions:
-            ctx = {"vars": {**instance.variables, **variables}}
+            # Instance variables last so workflow-local state wins over
+            # session-wide observer/handoff state with colliding names.
+            # Without this precedence, a session-level task_claimed=True
+            # written by _session_start task handoff would fire the
+            # claim -> load_skill transition before the workflow's own
+            # claim_task handler ever runs (see task #12267).
+            ctx = {"vars": {**variables, **instance.variables}}
             if not transition.when or self._evaluate_condition(transition.when, ctx, "transition"):
                 old_step = instance.current_step
                 new_step = transition.to

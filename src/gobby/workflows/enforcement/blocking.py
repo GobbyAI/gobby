@@ -31,6 +31,16 @@ INFRASTRUCTURE_TOOLS = {
 }
 
 
+# Out-of-band operator/debug channels. Callers are typically humans driving
+# a session from the web app or CLI; they target a session whose workflow
+# they aren't bound by. These bypass step/agent allow-lists so a dev can
+# always interrogate a stuck agent (e.g. send_keys into a terminate step
+# whose allow-list only lists kill_agent).
+OPERATOR_TOOLS = {
+    "send_keys",
+}
+
+
 MESSAGE_DELIVERY_TOOLS = {"deliver_pending_messages"}
 
 
@@ -77,6 +87,23 @@ def is_discovery_tool(tool_name: str | None) -> bool:
         True if this is a discovery tool that doesn't need schema unlock
     """
     return tool_name in DISCOVERY_TOOLS if tool_name else False
+
+
+def is_operator_tool(tool_name: str | None) -> bool:
+    """Check if the tool is an out-of-band operator/debug channel.
+
+    Operator tools (e.g. send_keys) are invoked by humans from the web app
+    or CLI to inspect or poke a running session. They are not agent actions
+    and must bypass step/agent MCP allow-lists so an operator can always
+    reach a stuck agent.
+
+    Args:
+        tool_name: The MCP tool name (from tool_input.tool_name)
+
+    Returns:
+        True if this is an operator tool that bypasses enforcement
+    """
+    return tool_name in OPERATOR_TOOLS if tool_name else False
 
 
 def is_tool_unlocked(
