@@ -12,6 +12,7 @@ class SessionEndMixin(EventHandlersBase):
     def handle_session_end(self, event: HookEvent) -> HookResponse:
         """Handle SESSION_END event."""
         from gobby.tasks.commits import auto_link_commits
+        from gobby.workflows.state_manager import WorkflowInstanceManager
 
         external_id = event.session_id
         session_id = event.metadata.get("_platform_session_id")
@@ -71,6 +72,24 @@ class SessionEndMixin(EventHandlersBase):
                 self._session_coordinator.complete_agent_run(session)
             except Exception as e:
                 self.logger.warning(f"Failed to complete agent run: {e}")
+
+        # Session-bound workflow instances must be cleared when the session ends
+        # so agent-only step enforcement cannot leak onto later requests.
+        if session_id and self._workflow_handler and self._workflow_handler.rule_engine:
+            try:
+                deleted_count = WorkflowInstanceManager(
+                    self._workflow_handler.rule_engine.db
+                ).delete_instances_for_session(session_id)
+                if deleted_count > 0:
+                    self.logger.info(
+                        f"SESSION_END: deleted {deleted_count} workflow instances "
+                        f"for session {session_id}"
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"SESSION_END: failed to delete workflow instances for "
+                    f"session {session_id}: {e}"
+                )
 
         # Unregister from message processor
         if self._message_processor and (session_id or external_id):

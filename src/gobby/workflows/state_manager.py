@@ -81,6 +81,15 @@ class WorkflowInstanceManager:
             (session_id, workflow_name),
         )
 
+    def delete_instances_for_session(self, session_id: str) -> int:
+        """Delete all workflow instances for a session and return deleted row count."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM workflow_instances WHERE session_id = ?",
+                (session_id,),
+            )
+            return cursor.rowcount
+
     def set_enabled(self, session_id: str, workflow_name: str, enabled: bool) -> None:
         """Toggle the enabled state of a workflow instance."""
         now = datetime.now(UTC).isoformat()

@@ -189,6 +189,46 @@ def test_delete_instance_nonexistent(db) -> None:
     mgr.delete_instance("nonexistent", "nonexistent")
 
 
+def test_delete_instances_for_session(db) -> None:
+    """Test deleting all workflow instances for one session returns row count."""
+    from gobby.workflows.definitions import WorkflowInstance
+    from gobby.workflows.state_manager import WorkflowInstanceManager
+
+    _ensure_session(db, "s1")
+    _ensure_session(db, "s2")
+    mgr = WorkflowInstanceManager(db)
+
+    mgr.save_instance(
+        WorkflowInstance(
+            id="inst-1",
+            session_id="s1",
+            workflow_name="auto-task",
+        )
+    )
+    mgr.save_instance(
+        WorkflowInstance(
+            id="inst-2",
+            session_id="s1",
+            workflow_name="developer",
+        )
+    )
+    mgr.save_instance(
+        WorkflowInstance(
+            id="inst-3",
+            session_id="s2",
+            workflow_name="plan-adversary-steps",
+        )
+    )
+
+    deleted_count = mgr.delete_instances_for_session("s1")
+
+    assert deleted_count == 2
+    assert mgr.get_active_instances("s1") == []
+    remaining = mgr.get_active_instances("s2")
+    assert len(remaining) == 1
+    assert remaining[0].workflow_name == "plan-adversary-steps"
+
+
 def test_set_enabled(db) -> None:
     """Test toggling enabled state on an instance."""
     from gobby.workflows.definitions import WorkflowInstance
