@@ -140,7 +140,7 @@ Escalate **only when context is insufficient or a true human-intervention blocke
 For routine revision rounds, reject review instead:
 
 - If ≥1 `blocking` finding after the second pass → call
-  `mark_task_review_rejected(task_id=<planning_task>, rejection_notes="<formatted findings>", round=N)`.
+  `mark_task_review_rejected(task_id=<planning_task>, rejection_notes="<formatted findings>", round_number=N)`.
   Use the Output Format below for `rejection_notes`; the tool appends the
   `## Adversary Findings — Round N` section and returns the task to `open`.
 - If only `nit` findings remain → record them in the findings section so the
@@ -230,5 +230,5 @@ specific questions rather than manufacturing findings or rubber-stamping.
 ## Autonomous Exit
 
 When running as spawned `plan-adversary`, finish the verdict first
-(`mark_task_review_approved` or `escalate_task`), then call
+(`mark_task_review_approved`, `mark_task_review_rejected`, or `escalate_task`), then call
 `end_agent_run` on `gobby-agents` with **no arguments** to finish the run.

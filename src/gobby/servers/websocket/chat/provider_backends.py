@@ -581,11 +581,22 @@ class CodexManagedChatSession(
     _pending_approval_decision: str | None = field(default=None, repr=False)
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
-    _before_tool_dedup_keys: set[str] = field(default_factory=set, repr=False)
     _before_tool_cached_responses: dict[str, dict[str, Any] | None] = field(
         default_factory=dict,
         repr=False,
     )
+    _before_tool_inflight_tasks: dict[str, asyncio.Task[dict[str, Any] | None]] = field(
+        default_factory=dict,
+        repr=False,
+    )
+
+    def _reset_before_tool_state(self) -> None:
+        """Clear per-turn pre-tool lifecycle dedup state."""
+        for task in self._before_tool_inflight_tasks.values():
+            if not task.done():
+                task.cancel()
+        self._before_tool_inflight_tasks.clear()
+        self._before_tool_cached_responses.clear()
 
     async def _dispatch_before_tool_once(
         self,
@@ -593,20 +604,36 @@ class CodexManagedChatSession(
         tool_name: str,
         tool_input: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if dedup_key:
-            if dedup_key in self._before_tool_dedup_keys:
-                return self._before_tool_cached_responses.get(dedup_key)
-            self._before_tool_dedup_keys.add(dedup_key)
-        try:
-            response = await self._apply_pre_tool_lifecycle(tool_name, tool_input)
-        except Exception:
-            if dedup_key:
-                self._before_tool_dedup_keys.discard(dedup_key)
-                self._before_tool_cached_responses.pop(dedup_key, None)
-            raise
-        if dedup_key:
-            self._before_tool_cached_responses[dedup_key] = response
-        return response
+        if not dedup_key:
+            return await self._apply_pre_tool_lifecycle(tool_name, tool_input)
+
+        if dedup_key in self._before_tool_cached_responses:
+            return self._before_tool_cached_responses[dedup_key]
+
+        task = self._before_tool_inflight_tasks.get(dedup_key)
+        if task is None:
+            task = asyncio.create_task(self._apply_pre_tool_lifecycle(tool_name, tool_input))
+            self._before_tool_inflight_tasks[dedup_key] = task
+
+            def _finalize_pre_tool_task(
+                completed_task: asyncio.Task[dict[str, Any] | None],
+                *,
+                key: str = dedup_key,
+            ) -> None:
+                current_task = self._before_tool_inflight_tasks.get(key)
+                if current_task is completed_task:
+                    self._before_tool_inflight_tasks.pop(key, None)
+                if completed_task.cancelled():
+                    self._before_tool_cached_responses.pop(key, None)
+                    return
+                if completed_task.exception() is not None:
+                    self._before_tool_cached_responses.pop(key, None)
+                    return
+                self._before_tool_cached_responses[key] = completed_task.result()
+
+            task.add_done_callback(_finalize_pre_tool_task)
+
+        return await asyncio.shield(task)
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
         if not self._connected:
@@ -1248,8 +1275,7 @@ class CodexWebChatBackend:
         turn_completed = asyncio.Event()
         saw_text_output = False
         transcript_offset = await session._get_transcript_offset()
-        session._before_tool_dedup_keys.clear()
-        session._before_tool_cached_responses.clear()
+        session._reset_before_tool_state()
 
         def _matches(params: dict[str, Any]) -> bool:
             thread_id = params.get("threadId")
@@ -1327,8 +1353,7 @@ class CodexWebChatBackend:
                     continue
 
                 if method == "turn/started":
-                    session._before_tool_dedup_keys.clear()
-                    session._before_tool_cached_responses.clear()
+                    session._reset_before_tool_state()
                     turn_id = params.get("turnId")
                     if not turn_id:
                         turn_data = params.get("turn")

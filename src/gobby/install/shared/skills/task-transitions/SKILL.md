@@ -146,13 +146,13 @@ Used by QA agents after reviewing work. Same gates apply — if the reviewer mad
 call_tool("gobby-tasks", "mark_task_review_rejected", {
     "task_id": "#N",
     "rejection_notes": "Blocking findings that must be addressed before the next review",
-    "round": 2
+    "round_number": 2
 }, session_id="#2333")
 ```
 
 Used by structured review loops such as plan adversary rounds. The task returns
-to `open`; `round` is optional and updates `planning-round:N` when the review
-loop tracks numbered revisions.
+to `open`; `round_number` is optional and updates `planning-round:N` when the
+review loop tracks numbered revisions.
 
 ### Interactive vs Autonomous
 

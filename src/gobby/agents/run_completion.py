@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +24,11 @@ async def complete_and_notify_agent_run(
 ) -> bool:
     """Mark an agent run complete, then wake any waiters registered on it."""
 
-    completed = runner.complete_run(run_id, result=completion_result)
+    completed = await asyncio.to_thread(
+        runner.complete_run,
+        run_id,
+        result=completion_result,
+    )
 
     if completion_registry and notify_result is not None:
         if completion_registry.get_result(run_id) is not None:

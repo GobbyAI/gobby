@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,11 +26,12 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path) -> Iterator[LocalDatabase]:
     db_path = tmp_path / "test_block_observability.db"
     database = LocalDatabase(db_path)
     run_migrations(database)
-    return database
+    yield database
+    database.close()
 
 
 @pytest.fixture

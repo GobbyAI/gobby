@@ -32,28 +32,31 @@ class _FieldUpdateMixin:
         SessionManager.update_session_status().
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
-            (status, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
+                (status, now, session_id),
+            )
         return self.get(session_id)
 
     def mark_had_edits(self: _ManagerState, session_id: str) -> Session | None:
         """Mark session as having edits."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET had_edits = 1, updated_at = ? WHERE id = ?",
-            (now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET had_edits = 1, updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
         return self.get(session_id)
 
     def clear_had_edits(self: _ManagerState, session_id: str) -> None:
         """Reset had_edits after a task is closed with a linked commit."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET had_edits = 0, updated_at = ? WHERE id = ?",
-            (now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET had_edits = 0, updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
 
     def update_chat_mode(self: _ManagerState, session_id: str, chat_mode: str) -> None:
         """Persist the chat mode (plan, accept_edits, normal, bypass) for a session."""
@@ -62,10 +65,11 @@ class _FieldUpdateMixin:
                 f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
             )
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET chat_mode = ?, updated_at = ? WHERE id = ?",
-            (chat_mode, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET chat_mode = ?, updated_at = ? WHERE id = ?",
+                (chat_mode, now, session_id),
+            )
 
     def update_approved_tools(self: _ManagerState, session_id: str, tools: set[str]) -> None:
         """Persist the set of user-approved tools as JSON."""
@@ -73,10 +77,11 @@ class _FieldUpdateMixin:
 
         tools_json = _json.dumps(sorted(tools)) if tools else None
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET approved_tools_json = ?, updated_at = ? WHERE id = ?",
-            (tools_json, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET approved_tools_json = ?, updated_at = ? WHERE id = ?",
+                (tools_json, now, session_id),
+            )
 
     def update_title(
         self: _ManagerState,
@@ -105,7 +110,8 @@ class _FieldUpdateMixin:
             values["title"] = title
         if source_changed:
             values["title_source"] = title_source
-        self.db.safe_update("sessions", values, "id = ?", (session_id,))
+        with self.db.transaction():
+            self.db.safe_update("sessions", values, "id = ?", (session_id,))
         updated = self.get(session_id)
         if updated is None:
             return None
@@ -151,16 +157,17 @@ class _FieldUpdateMixin:
     ) -> Session | None:
         """Update session summary."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            """
-            UPDATE sessions
-            SET summary_path = COALESCE(?, summary_path),
-                summary_markdown = COALESCE(?, summary_markdown),
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (summary_path, summary_markdown, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET summary_path = COALESCE(?, summary_path),
+                    summary_markdown = COALESCE(?, summary_markdown),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (summary_path, summary_markdown, now, session_id),
+            )
         return self.get(session_id)
 
     def update_digest_markdown(
@@ -168,15 +175,16 @@ class _FieldUpdateMixin:
     ) -> Session | None:
         """Update session rolling digest markdown."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            """
-            UPDATE sessions
-            SET digest_markdown = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (digest_markdown, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET digest_markdown = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (digest_markdown, now, session_id),
+            )
         return self.get(session_id)
 
     def update_last_turn_markdown(
@@ -184,15 +192,16 @@ class _FieldUpdateMixin:
     ) -> Session | None:
         """Update session last turn markdown record."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            """
-            UPDATE sessions
-            SET last_turn_markdown = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (last_turn_markdown, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET last_turn_markdown = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (last_turn_markdown, now, session_id),
+            )
         return self.get(session_id)
 
     def update_last_digest_input_hash(
@@ -200,15 +209,16 @@ class _FieldUpdateMixin:
     ) -> None:
         """Update the last digest input hash for idempotency."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            """
-            UPDATE sessions
-            SET last_digest_input_hash = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (hash_value, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET last_digest_input_hash = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (hash_value, now, session_id),
+            )
 
     def update_parent_session_id(
         self: _ManagerState, session_id: str, parent_session_id: str
@@ -217,8 +227,9 @@ class _FieldUpdateMixin:
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",
-            (parent_session_id, now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET parent_session_id = ?, updated_at = ? WHERE id = ?",
+                (parent_session_id, now, session_id),
+            )
         return self.get(session_id)

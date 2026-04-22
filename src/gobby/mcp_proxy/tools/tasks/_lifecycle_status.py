@@ -346,10 +346,20 @@ def register_mark_task_review_rejected(
     def mark_task_review_rejected(
         task_id: str,
         rejection_notes: str | None = None,
-        round: int | None = None,
+        round_number: int | None = None,
+        **legacy_kwargs: Any,
     ) -> dict[str, Any]:
         """Reject a task after review and return it to open status."""
         from gobby.utils.session_context import get_current_session_id
+
+        legacy_round = legacy_kwargs.pop("round", None)
+        if legacy_kwargs:
+            unexpected = ", ".join(sorted(legacy_kwargs))
+            return {"error": f"Unexpected arguments for mark_task_review_rejected: {unexpected}"}
+        if round_number is not None and legacy_round is not None:
+            return {"error": "Use either round_number or round, not both"}
+        if round_number is None:
+            round_number = legacy_round
 
         session_id = get_current_session_id()
         if not session_id:
@@ -380,7 +390,7 @@ def register_mark_task_review_rejected(
             updated = ctx.task_manager.mark_task_review_rejected(
                 resolved_id,
                 rejection_notes=rejection_notes,
-                round=round,
+                round_number=round_number,
             )
         except ValueError as e:
             return {"error": str(e)}
@@ -427,7 +437,7 @@ def register_mark_task_review_rejected(
                     "description": "Optional review findings or rejection notes to append to the task description.",
                     "default": None,
                 },
-                "round": {
+                "round_number": {
                     "type": "integer",
                     "description": "Optional planning round number used to update the planning-round:N label.",
                     "default": None,

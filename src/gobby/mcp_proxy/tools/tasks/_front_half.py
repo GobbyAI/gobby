@@ -892,7 +892,7 @@ def _adversary_prompt(
         "is sound.\n\n"
         "If blocking issues remain, append a concise 'Adversary Findings' section to the "
         "planning task description with structured findings, then call "
-        f"mark_task_review_rejected(..., round={planning_round + 1}). "
+        f"mark_task_review_rejected(..., round_number={planning_round + 1}). "
         "If the plan is sound, approve the planning task with mark_task_review_approved."
     )
 

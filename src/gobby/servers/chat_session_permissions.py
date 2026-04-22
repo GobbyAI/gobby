@@ -13,6 +13,7 @@ from typing import Any
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
+from gobby.hooks.logging_utils import block_tool_name, log_structured_block
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
@@ -36,16 +37,6 @@ from gobby.storage.config_store import ConfigStore
 logger = logging.getLogger(__name__)
 
 
-def _block_tool_name(tool_name: str, input_data: dict[str, Any]) -> str:
-    """Return tool identity used in structured block logs."""
-    if tool_name == "mcp__gobby__call_tool":
-        server_name = str(input_data.get("server_name", ""))
-        mcp_tool_name = str(input_data.get("tool_name", ""))
-        if server_name and mcp_tool_name:
-            return f"{server_name}:{mcp_tool_name}"
-    return tool_name or "-"
-
-
 def _resolve_session_lifecycle_block_reason(
     *,
     session_id: str,
@@ -62,28 +53,11 @@ def _resolve_session_lifecycle_block_reason(
         "source=session-lifecycle rule=pre-tool-callback "
         "detail=pre-tool lifecycle callback omitted reason",
         session_id,
-        _block_tool_name(tool_name, input_data),
+        block_tool_name(tool_name, input_data),
     )
     return (
         f"Session lifecycle blocked {tool_name} without providing a reason. "
         "Inspect the pre-tool lifecycle hook response."
-    )
-
-
-def _log_session_lifecycle_block(
-    *,
-    session_id: str,
-    tool_name: str,
-    input_data: dict[str, Any],
-    reason: str,
-) -> None:
-    """Emit structured session-lifecycle block log for observability."""
-    logger.info(
-        "BLOCK session=%s event=before_tool tool=%s "
-        "source=session-lifecycle rule=pre-tool-callback reason=%s",
-        session_id,
-        _block_tool_name(tool_name, input_data),
-        reason,
     )
 
 
@@ -276,10 +250,13 @@ class ChatSessionPermissionsMixin:
                     input_data=input_data,
                     reason=resp.get("reason"),
                 )
-                _log_session_lifecycle_block(
+                log_structured_block(
+                    logger,
                     session_id=session_id,
-                    tool_name=tool_name,
-                    input_data=input_data,
+                    event="before_tool",
+                    tool=block_tool_name(tool_name, input_data),
+                    source="session-lifecycle",
+                    rule="pre-tool-callback",
                     reason=reason,
                 )
                 return PermissionResultDeny(message=reason)

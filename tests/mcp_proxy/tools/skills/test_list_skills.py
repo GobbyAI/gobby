@@ -1,9 +1,14 @@
 """Tests for list_skills MCP tool (TDD - written before implementation)."""
 
+from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.mcp_proxy.tools.skills.list_skills import register as register_list_skills
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.skills import LocalSkillManager
@@ -12,7 +17,7 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def db(tmp_path: Path):
+def db(tmp_path: Path) -> Iterator[LocalDatabase]:
     """Create a fresh database with migrations applied."""
     db_path = tmp_path / "test.db"
     database = LocalDatabase(db_path)
@@ -283,3 +288,65 @@ class TestListSkillsInternalFilter:
 
         names = {s["name"] for s in result["skills"]}
         assert "methodology-two" not in names
+
+
+@pytest.mark.asyncio
+async def test_list_skills_offloads_direct_storage_calls_to_asyncio_to_thread() -> None:
+    storage = MagicMock()
+    storage.list_skills.return_value = []
+    ctx = SkillsContext(
+        db=MagicMock(),
+        storage=storage,
+        notifier=MagicMock(),
+        session_manager=MagicMock(),
+        search=MagicMock(),
+        updater=MagicMock(),
+        loader=MagicMock(),
+        project_id="proj-1",
+        hub_manager=None,
+    )
+    registry = InternalToolRegistry(name="gobby-skills")
+    register_list_skills(ctx, registry)
+    tool = registry.get_tool("list_skills")
+    assert tool is not None
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch(
+        "gobby.mcp_proxy.tools.skills.list_skills.asyncio.to_thread", new=fake_to_thread
+    ) as _:
+        result = await tool(include_internal=True)
+
+    assert result["success"] is True
+    storage.list_skills.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_skills_offloads_overfetch_batches_to_asyncio_to_thread() -> None:
+    storage = MagicMock()
+    storage.list_skills.side_effect = [[], []]
+    ctx = SkillsContext(
+        db=MagicMock(),
+        storage=storage,
+        notifier=MagicMock(),
+        session_manager=MagicMock(),
+        search=MagicMock(),
+        updater=MagicMock(),
+        loader=MagicMock(),
+        project_id="proj-1",
+        hub_manager=None,
+    )
+    registry = InternalToolRegistry(name="gobby-skills")
+    register_list_skills(ctx, registry)
+    tool = registry.get_tool("list_skills")
+    assert tool is not None
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch("gobby.mcp_proxy.tools.skills.list_skills.asyncio.to_thread", new=fake_to_thread):
+        result = await tool()
+
+    assert result["success"] is True
+    storage.list_skills.assert_called_once()

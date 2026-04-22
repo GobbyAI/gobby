@@ -473,7 +473,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             updated = server.task_manager.mark_task_review_rejected(
                 resolved_id,
                 rejection_notes=body.notes,
-                round=body.round,
+                round_number=body.round,
             )
             result = updated.to_dict()
             await _broadcast_task("task_review_rejected", result)

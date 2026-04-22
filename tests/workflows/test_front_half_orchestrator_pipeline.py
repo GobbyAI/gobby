@@ -14,7 +14,11 @@ def test_dispatch_planner_passes_artifact_path_initial_variable() -> None:
     with PIPELINE_PATH.open() as f:
         data = yaml.safe_load(f)
 
-    dispatch_planner = next(step for step in data["steps"] if step["id"] == "dispatch_planner")
+    dispatch_planner = next(
+        (step for step in data["steps"] if step["id"] == "dispatch_planner"),
+        None,
+    )
+    assert dispatch_planner is not None
     arguments = dispatch_planner["mcp"]["arguments"]
     assert (
         arguments["initial_variables"]["artifact_path"]

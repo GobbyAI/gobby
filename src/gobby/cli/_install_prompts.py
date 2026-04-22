@@ -247,7 +247,7 @@ def _prompt_hub_api_keys(
                         click.echo(f"    Stored {auth_key_name}")
                         result["stored"] += 1
                     except Exception as e:
-                        logger.warning(f"Failed to store {auth_key_name}: {e}")
+                        logger.warning("Failed to store %s: %s", auth_key_name, e)
                         click.echo(f"    Warning: Failed to store {auth_key_name}: {e}")
                         result["unresolved"].append((hub_name, auth_key_name))
                 else:
@@ -324,7 +324,7 @@ def _prompt_api_keys(
                         click.echo(f"    Stored {secret_name}")
                         result["stored"] += 1
                     except Exception as e:
-                        logger.warning(f"Failed to store {secret_name}: {e}")
+                        logger.warning("Failed to store %s: %s", secret_name, e)
                         click.echo(f"    Warning: Failed to store {secret_name}: {e}")
                 else:
                     result["skipped"] += 1
@@ -593,7 +593,7 @@ def _run_voice_install(
     no_interactive: bool = False,
     *,
     db: LocalDatabase | None = None,
-    _secret_store: SecretStore | None = None,
+    secret_store: SecretStore | None = None,
 ) -> None:
     """Interactive voice chat setup.
 

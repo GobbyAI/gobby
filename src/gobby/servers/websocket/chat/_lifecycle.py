@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.servers.chat_session_base import ChatSessionProtocol
 
 if TYPE_CHECKING:
@@ -18,19 +19,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
-
-
-def _block_tool_name(event_data: dict[str, Any]) -> str:
-    """Return tool identity used in structured lifecycle block logs."""
-    tool_name = str(event_data.get("tool_name", ""))
-    if tool_name in {"call_tool", "mcp__gobby__call_tool"}:
-        tool_input = event_data.get("tool_input") or {}
-        if isinstance(tool_input, dict):
-            server_name = str(tool_input.get("server_name", ""))
-            mcp_tool_name = str(tool_input.get("tool_name", ""))
-            if server_name and mcp_tool_name:
-                return f"{server_name}:{mcp_tool_name}"
-    return tool_name or "-"
 
 
 def _extract_rule_name(reason: str | None) -> str | None:
@@ -64,31 +52,10 @@ def _warn_block_fallback(
         "BLOCK fallback session=%s event=%s tool=%s source=%s rule=%s detail=%s",
         session_id,
         event_type.value,
-        _block_tool_name(event_data),
+        block_tool_name_from_event_data(event_data),
         source,
         rule_name,
         detail,
-    )
-
-
-def _log_block(
-    *,
-    session_id: str,
-    event_type: HookEventType,
-    event_data: dict[str, Any],
-    source: str,
-    rule_name: str,
-    reason: str,
-) -> None:
-    """Emit structured block log for websocket lifecycle paths."""
-    logger.info(
-        "BLOCK session=%s event=%s tool=%s source=%s rule=%s reason=%s",
-        session_id,
-        event_type.value,
-        _block_tool_name(event_data),
-        source,
-        rule_name,
-        reason,
     )
 
 
@@ -235,12 +202,13 @@ class ChatLifecycleMixin:
                             "reason. Inspect workflow block handling."
                         )
                         response.reason = reason
-                    _log_block(
+                    log_structured_block(
+                        logger,
                         session_id=db_session_id,
-                        event_type=event_type,
-                        event_data=event.data,
+                        event=event_type.value,
+                        tool=block_tool_name_from_event_data(event.data),
                         source=block_source,
-                        rule_name=rule_name,
+                        rule=rule_name,
                         reason=reason,
                     )
                 return {
@@ -380,12 +348,13 @@ class ChatLifecycleMixin:
                         "Blocking webhook denied this web chat event without providing "
                         "a reason. Inspect webhook responses for the blocking endpoint."
                     )
-                _log_block(
+                log_structured_block(
+                    logger,
                     session_id=event.session_id,
-                    event_type=event.event_type,
-                    event_data=event.data,
+                    event=event.event_type.value,
+                    tool=block_tool_name_from_event_data(event.data),
                     source="webhook",
-                    rule_name="webhook-dispatch",
+                    rule="webhook-dispatch",
                     reason=resolved_reason,
                 )
                 return {

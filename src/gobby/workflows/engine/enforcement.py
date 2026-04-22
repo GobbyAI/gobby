@@ -243,12 +243,44 @@ class EnforcementMixin:
             return
 
         run_storage: LocalAgentRunManager | Any | None = getattr(self._runner, "run_storage", None)
+        logger.debug(
+            "_complete_agent_workflow_run session=%s workflow=%s run_storage=%s",
+            session_id,
+            workflow_name,
+            type(run_storage).__name__ if run_storage is not None else None,
+        )
         db_agent = None
         get_by_session = getattr(run_storage, "get_by_session", None)
+        logger.debug(
+            "_complete_agent_workflow_run session=%s workflow=%s has_get_by_session=%s",
+            session_id,
+            workflow_name,
+            callable(get_by_session),
+        )
         if callable(get_by_session):
             db_agent = get_by_session(session_id)
-        run_id = db_agent.id if db_agent else self._runner.get_run_id_by_session(session_id)
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s db_agent=%s",
+                session_id,
+                workflow_name,
+                getattr(db_agent, "id", None),
+            )
+        fallback_run_id = None
+        if db_agent is None:
+            fallback_run_id = self._runner.get_run_id_by_session(session_id)
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s fallback_run_id=%s",
+                session_id,
+                workflow_name,
+                fallback_run_id,
+            )
+        run_id = db_agent.id if db_agent else fallback_run_id
         if not run_id:
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s no_run_id_found",
+                session_id,
+                workflow_name,
+            )
             return
 
         await complete_and_notify_agent_run(

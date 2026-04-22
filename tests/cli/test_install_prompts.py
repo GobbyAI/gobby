@@ -297,7 +297,7 @@ class TestVoiceInstall:
 
 
 class TestInstallCommandSharedStores:
-    def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path) -> None:
+    def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path: Path) -> None:
         config = MagicMock()
         config.database_path = str(tmp_path / "shared.db")
         db = MagicMock()

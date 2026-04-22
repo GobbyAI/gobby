@@ -226,7 +226,7 @@ class TestFrontHalfTick:
         task_manager.mark_task_review_rejected(
             planning_task.id,
             rejection_notes="Sequencing is weak",
-            round=1,
+            round_number=1,
         )
 
         with session_context_for_test(test_session):
@@ -269,7 +269,7 @@ class TestFrontHalfTick:
         task_manager.mark_task_review_rejected(
             planning_task.id,
             rejection_notes="Still missing critical constraints",
-            round=3,
+            round_number=3,
         )
 
         with session_context_for_test(test_session):

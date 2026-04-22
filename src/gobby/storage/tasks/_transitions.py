@@ -255,6 +255,7 @@ def mark_task_review_rejected(
 
     normalized_round = None
     if round_number is not None:
+        # Tools/routes may pass an int-like value; normalize once before validation.
         normalized_round = int(round_number)
         if normalized_round < 1:
             raise ValueError("round must be >= 1 when provided")

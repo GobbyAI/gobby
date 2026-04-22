@@ -87,7 +87,16 @@ class EventHandlers(
             code_index_trigger: Optional trigger for code indexing on file changes.
             logger: Optional logger instance
         """
-        manager = session_manager or session_storage
+        if (
+            session_manager is not None
+            and session_storage is not None
+            and session_manager is not session_storage
+        ):
+            raise ValueError(
+                "session_manager and session_storage must reference the same object "
+                "when both are provided"
+            )
+        manager = session_manager if session_manager is not None else session_storage
         self._session_manager = manager
         self._workflow_handler = workflow_handler
         self._session_task_manager = session_task_manager

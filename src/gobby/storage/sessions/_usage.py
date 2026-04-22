@@ -26,6 +26,21 @@ class _UsageMixin:
         model: str | None = None,
     ) -> bool:
         """Update session usage statistics."""
+        if any(
+            value < 0
+            for value in (
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            )
+        ):
+            get_logger().warning(
+                "Rejected absolute usage update for session %s with negative token counts",
+                session_id,
+            )
+            return False
+
         query = """
         UPDATE sessions
         SET
@@ -71,10 +86,10 @@ class _UsageMixin:
         query = """
         UPDATE sessions
         SET
-            usage_input_tokens = COALESCE(usage_input_tokens, 0) + ?,
-            usage_output_tokens = COALESCE(usage_output_tokens, 0) + ?,
-            usage_cache_creation_tokens = COALESCE(usage_cache_creation_tokens, 0) + ?,
-            usage_cache_read_tokens = COALESCE(usage_cache_read_tokens, 0) + ?,
+            usage_input_tokens = MAX(COALESCE(usage_input_tokens, 0) + ?, 0),
+            usage_output_tokens = MAX(COALESCE(usage_output_tokens, 0) + ?, 0),
+            usage_cache_creation_tokens = MAX(COALESCE(usage_cache_creation_tokens, 0) + ?, 0),
+            usage_cache_read_tokens = MAX(COALESCE(usage_cache_read_tokens, 0) + ?, 0),
             context_window = COALESCE(?, context_window),
             model = COALESCE(?, model),
             updated_at = datetime('now')

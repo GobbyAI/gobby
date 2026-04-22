@@ -112,7 +112,8 @@ class _BulkUpdateMixin:
 
         values["updated_at"] = datetime.now(UTC).isoformat()
 
-        self.db.safe_update("sessions", values, "id = ?", (session_id,))
+        with self.db.transaction():
+            self.db.safe_update("sessions", values, "id = ?", (session_id,))
         return self.get(session_id)
 
     def update_stats(
@@ -149,7 +150,8 @@ class _BulkUpdateMixin:
             return self.get(session_id)
 
         values["updated_at"] = datetime.now(UTC).isoformat()
-        self.db.safe_update("sessions", values, "id = ?", (session_id,))
+        with self.db.transaction():
+            self.db.safe_update("sessions", values, "id = ?", (session_id,))
         return self.get(session_id)
 
     def recalculate_stats(self: _ManagerState, session_id: str) -> Session | None:

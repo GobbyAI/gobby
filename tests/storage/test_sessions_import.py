@@ -8,8 +8,12 @@ import pytest
 
 from gobby.storage import SessionManager as LazySessionManager
 from gobby.storage.sessions import SessionManager, ensure_system_session
+from gobby.storage.sessions import logger as public_logger
 from gobby.storage.sessions._constants import (
     ensure_system_session as internal_ensure_system_session,
+)
+from gobby.storage.sessions._constants import (
+    logger as internal_logger,
 )
 from gobby.storage.sessions._manager import SessionManager as InternalSessionManager
 
@@ -142,9 +146,11 @@ def _normalized_signature(func: object) -> str:
 
 
 def test_storage_sessions_public_imports_are_compatible() -> None:
+    """These imports stay public because callers patch the module namespace directly."""
     assert SessionManager is InternalSessionManager
     assert SessionManager is LazySessionManager
     assert ensure_system_session is internal_ensure_system_session
+    assert public_logger is internal_logger
 
 
 def test_session_manager_public_method_signatures_are_stable() -> None:

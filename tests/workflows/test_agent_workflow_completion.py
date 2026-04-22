@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,7 +22,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path: Path) -> LocalDatabase:
     database = LocalDatabase(tmp_path / "test_agent_workflow_completion.db")
     run_migrations(database)
     return database

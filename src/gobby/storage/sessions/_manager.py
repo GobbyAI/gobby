@@ -49,9 +49,9 @@ class SessionManager(
     _config: DaemonConfig | None
     _title_listeners: list[TitleChangeCallback]
     _session_mapping: dict[tuple[str, str], str]
-    _session_mapping_lock: Any
+    _session_mapping_lock: threading.Lock
     _session_metadata: dict[str, dict[str, Any]]
-    _session_metadata_lock: Any
+    _session_metadata_lock: threading.Lock
 
     _VALID_TITLE_SOURCES: ClassVar[set[str]] = {"heuristic", "llm", "manual"}
 

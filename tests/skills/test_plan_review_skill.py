@@ -111,6 +111,7 @@ class TestPlanReviewContent:
         """Routine revision rounds should use mark_task_review_rejected and
         return the planning task to open."""
         assert "mark_task_review_rejected" in body
+        assert "round_number" in body
         assert "returns the task to `open`" in body
 
     def test_halt_condition_uses_needs_requirements_prefix(self, body: str) -> None:
@@ -121,6 +122,9 @@ class TestPlanReviewContent:
     def test_autonomous_exit_uses_end_agent_run_without_session_id(self, body: str) -> None:
         assert "end_agent_run" in body
         assert "session_id" not in body
+
+    def test_autonomous_exit_allows_review_rejection_before_end_agent_run(self, body: str) -> None:
+        assert "mark_task_review_rejected" in body
 
     def test_nits_do_not_block_approval(self, body: str) -> None:
         """Severity distinction: blocking vs nit. Nits alone approve."""

@@ -293,12 +293,14 @@ class _SessionCRUDMixin:
         is still alive.
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?",
-            (now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
 
     def delete(self: _SessionCRUDHost, session_id: str) -> bool:
         """Delete session by ID."""
-        cursor = self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        with self.db.transaction():
+            cursor = self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return cursor.rowcount > 0

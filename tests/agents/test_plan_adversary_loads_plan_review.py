@@ -24,16 +24,11 @@ import pytest
 import yaml
 
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.agents._yaml_helpers import _field, find_step
 
 pytestmark = pytest.mark.unit
 
 ADVERSARY_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
-
-
-def _field(entry: object, name: str) -> object | None:
-    if isinstance(entry, dict):
-        return entry.get(name)
-    return getattr(entry, name, None)
 
 
 @pytest.fixture(scope="module")
@@ -50,19 +45,22 @@ class TestAdversarySkillLoading:
         assert names == ["claim", "load_skill", "review", "terminate"]
 
     def test_load_skill_step_targets_plan_review(self, agent: AgentDefinitionBody) -> None:
-        load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
         assert load_step.status_message is not None
         assert "plan-review" in load_step.status_message
 
     def test_load_skill_only_permits_get_skill(self, agent: AgentDefinitionBody) -> None:
-        load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
         assert load_step.allowed_mcp_tools == ["gobby-skills:get_skill"]
 
     def test_load_skill_sets_skill_loaded_variable(self, agent: AgentDefinitionBody) -> None:
         # on_mcp_success entries are dicts in the parsed YAML shape, not typed
         # objects — keep the isinstance-guarded extraction so this works for
         # both dict-valued and (future) model-object entries.
-        load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
         mcp_success = getattr(load_step, "on_mcp_success", []) or []
 
         triples = [
@@ -72,7 +70,8 @@ class TestAdversarySkillLoading:
         assert ("gobby-skills", "get_skill", "skill_loaded") in triples
 
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
-        load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
         transitions = load_step.transitions or []
         assert any(t.to == "review" and t.when and "skill_loaded" in t.when for t in transitions)
 
@@ -102,7 +101,8 @@ class TestAdversaryInstructionsPreserveContracts:
         assert "Round N" in instructions or "display round" in instructions.lower()
 
     def test_review_step_completes_on_review_rejection(self, agent: AgentDefinitionBody) -> None:
-        review_step = next(s for s in (agent.steps or []) if s.name == "review")
+        review_step = find_step(agent.steps or [], "review")
+        assert review_step is not None
         mcp_success = getattr(review_step, "on_mcp_success", None) or []
         triples = [
             (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
@@ -130,10 +130,12 @@ class TestAdversaryInstructionsPreserveContracts:
 
 class TestAdversaryTerminateStep:
     def test_terminate_step_only_allows_end_agent_run(self, agent: AgentDefinitionBody) -> None:
-        terminate = next(s for s in (agent.steps or []) if s.name == "terminate")
+        terminate = find_step(agent.steps or [], "terminate")
+        assert terminate is not None
         assert terminate.allowed_mcp_tools == ["gobby-agents:end_agent_run"]
 
     def test_review_step_blocks_premature_end_agent_run(self, agent: AgentDefinitionBody) -> None:
-        review = next(s for s in (agent.steps or []) if s.name == "review")
+        review = find_step(agent.steps or [], "review")
+        assert review is not None
         blocked = review.blocked_mcp_tools or []
         assert "gobby-agents:end_agent_run" in blocked

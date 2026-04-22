@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,6 +10,8 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
 
 logger = logging.getLogger(__name__)
+
+_MAX_OVERFETCH_ROUNDS = 3
 
 
 def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
@@ -79,27 +82,31 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     filtered = [s for s in filtered if s.name in active_set]
                 return filtered
 
-            skills: list[Any] = []
-            if not needs_overfetch:
-                skills = ctx.storage.list_skills(
+            async def _list_skills_batch(
+                *,
+                limit_value: int,
+                offset_value: int = 0,
+            ) -> list[Any]:
+                return await asyncio.to_thread(
+                    ctx.storage.list_skills,
                     project_id=ctx.project_id,
                     category=category,
                     enabled=enabled,
-                    limit=limit,
+                    limit=limit_value,
+                    offset=offset_value,
                     include_global=True,
                 )
+
+            skills: list[Any] = []
+            if not needs_overfetch:
+                skills = await _list_skills_batch(limit_value=limit)
             else:
-                _MAX_OVERFETCH_ROUNDS = 3
                 page_limit = limit * 5
                 offset = 0
                 for _ in range(_MAX_OVERFETCH_ROUNDS):
-                    batch = ctx.storage.list_skills(
-                        project_id=ctx.project_id,
-                        category=category,
-                        enabled=enabled,
-                        limit=page_limit,
-                        offset=offset,
-                        include_global=True,
+                    batch = await _list_skills_batch(
+                        limit_value=page_limit,
+                        offset_value=offset,
                     )
                     if not batch:
                         break

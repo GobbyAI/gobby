@@ -30,10 +30,12 @@ SYSTEM_SESSION_TITLE = "_system"
 
 def ensure_system_session(db: DatabaseProtocol) -> None:
     """Ensure the bootstrapped root session for cron/pipeline work exists."""
+    had_existing_sessions = False
     with db.transaction_immediate():
         existing = db.fetchone("SELECT id FROM sessions WHERE id = ?", (SYSTEM_SESSION_ID,))
         if existing is not None:
             return
+        had_existing_sessions = db.fetchone("SELECT 1 FROM sessions LIMIT 1") is not None
 
         project = db.fetchone("SELECT id FROM projects WHERE id = ?", (SYSTEM_SESSION_PROJECT_ID,))
         if project is None:
@@ -67,4 +69,8 @@ def ensure_system_session(db: DatabaseProtocol) -> None:
         if recreated is None:
             raise RuntimeError(f"Failed to recreate missing system session {SYSTEM_SESSION_ID}")
 
-    get_logger().warning("Recreated missing system session %s", SYSTEM_SESSION_ID)
+    log = get_logger()
+    if had_existing_sessions:
+        log.warning("Recreated missing system session %s", SYSTEM_SESSION_ID)
+    else:
+        log.info("Created system session %s", SYSTEM_SESSION_ID)

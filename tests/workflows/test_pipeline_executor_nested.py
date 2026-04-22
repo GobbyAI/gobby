@@ -19,7 +19,7 @@ class TestExecuteNestedPipeline:
     """Tests for _execute_nested_pipeline() method."""
 
     @pytest.fixture
-    def mock_loader(self):
+    def mock_loader(self) -> MagicMock:
         """Create a mock workflow loader."""
         loader = MagicMock()
         nested_pipeline = PipelineDefinition(
@@ -151,7 +151,7 @@ class TestExecuteNestedPipelineDictForm:
     """Tests for dict-form invoke_pipeline handling (Bug fixes #9358)."""
 
     @pytest.fixture
-    def mock_loader(self):
+    def mock_loader(self) -> MagicMock:
         """Create a mock async workflow loader."""
         loader = MagicMock()
         nested_pipeline = PipelineDefinition(

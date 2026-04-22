@@ -20,7 +20,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
 
@@ -141,14 +140,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except ValueError as e:
                 return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
-        # Single session manager instance for the duration of close_task
-        _session_manager = SessionManager(ctx.task_manager.db)
-
         # Resolve session for edit-awareness (used by commit checks below)
         _session: Session | None = None
         if resolved_session_id:
             try:
-                _session = _session_manager.get(resolved_session_id)
+                _session = ctx.session_manager.get(resolved_session_id)
             except (KeyError, ValueError, TypeError) as e:
                 logger.debug(f"Best-effort session lookup failed: {e}")
 
@@ -367,7 +363,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # The commit accounts for this task's edits; subsequent tasks start clean
         if resolved_session_id and (bool(task.commits) or bool(commit_sha)):
             try:
-                _session_manager.clear_had_edits(resolved_session_id)
+                ctx.session_manager.clear_had_edits(resolved_session_id)
             except Exception as e:
                 logger.debug(f"Best-effort had_edits reset failed: {e}")
 
