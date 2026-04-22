@@ -54,10 +54,10 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "find_parent_session": "(self, machine_id: 'str', source: 'str', "
     "project_id: 'str', max_attempts: 'int' = 30) -> 'tuple[str, str | None] | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
-    "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'builtins.list[Session]'",
+    "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
     "get_session_id": "(self, external_id: 'str', source: 'str') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
-    "-> 'builtins.list[Session]'",
+    "-> 'list[Session]'",
     "is_ancestor": "(self, ancestor_id: 'str', descendant_id: 'str') -> 'bool'",
     "list": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, limit: 'int' = 100, "
@@ -70,7 +70,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "pause_inactive_active_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "recalculate_stats": "(self, session_id: 'str') -> 'Session | None'",
-    "record_skills_used": "(self, session_id: 'str', skill_names: 'builtins.list[str]') -> 'int'",
+    "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",
     "register": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
     "project_id: 'str | None', title: 'str | None' = None, "
     "transcript_path: 'str | None' = None, git_branch: 'str | None' = None, "
@@ -87,13 +87,13 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "terminal_context: 'dict[str, Any] | None' = None, "
     "workflow_name: 'str | None' = None, agent_depth: 'int' = 0, "
     "sandbox_enabled: 'bool | None' = None) -> 'str'",
-    "register_title_listener": "(self, listener: 'Callable[[str, str], None]') -> 'None'",
+    "register_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
     "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",
     "touch": "(self, session_id: 'str') -> 'None'",
-    "unregister_title_listener": "(self, listener: 'Callable[[str, str], None]') -> 'None'",
+    "unregister_title_listener": "(self, listener: 'TitleChangeCallback') -> 'None'",
     "update": "(self, session_id: 'str', *, external_id: 'str | None' = None, "
     "source: 'str | None' = None, model: 'str | None' = None, "
     "chat_mode: 'str | None' = None, session_type: 'str | None' = None, "

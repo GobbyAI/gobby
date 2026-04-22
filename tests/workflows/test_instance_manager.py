@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 
 from gobby.storage.database import LocalDatabase
@@ -11,7 +14,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path: Path) -> Iterator[LocalDatabase]:
     database = LocalDatabase(tmp_path / "test.db")
     run_migrations(database)
     database.execute(

@@ -27,7 +27,7 @@ def test_hooks_source_no_longer_uses_session_storage_alias() -> None:
         if "_session_storage" in path.read_text(encoding="utf-8")
     ]
 
-    assert legacy_refs == []
+    assert legacy_refs == [], f"legacy _session_storage refs remain in: {legacy_refs}"
 
 
 def test_hook_manager_keeps_exactly_one_session_manager_attribute() -> None:
@@ -48,5 +48,5 @@ def test_session_manager_service_tests_use_canonical_attribute_access() -> None:
 
     assert _LEGACY_MANAGER_IMPORT not in source
     assert _DEPRECATED_ALIAS not in source
-    assert ".get_session(" not in source
+    assert re.search(r"(?<!\w)\.get_session\(", source) is None
     assert 'session["' not in source

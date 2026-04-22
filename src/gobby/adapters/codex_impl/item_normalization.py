@@ -7,9 +7,12 @@ item/completed notifications into normalized hook event data.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from gobby.hooks.normalization import normalize_tool_fields
+
+logger = logging.getLogger(__name__)
 
 TOOL_ITEM_TYPES: frozenset[str] = frozenset({"commandExecution", "fileChange", "mcpToolCall"})
 
@@ -168,7 +171,8 @@ def parse_mcp_arguments(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug("Failed to parse MCP arguments JSON %r: %s", raw, exc)
             return {}
         if isinstance(parsed, dict):
             return parsed

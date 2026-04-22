@@ -387,6 +387,45 @@ class TestHubs:
         assert hubs["authed-hub"]["auth_key_name"] == "SKILLSMP_API_KEY"
         assert hubs["authed-hub"]["auth_configured"] is False
 
+    def test_list_hubs_falls_back_when_auth_status_runtime_fails(
+        self, client: TestClient, hub_manager
+    ) -> None:
+        """Runtime auth-status failures degrade to an unknown-but-renderable shape."""
+        hub_manager.list_hubs.return_value = ["authed-hub"]
+
+        config = MagicMock()
+        config.type = "skillsmp"
+        config.base_url = "https://skillsmp.com/api/v1"
+        config.repo = None
+        hub_manager.get_config.return_value = config
+        hub_manager.auth_status.side_effect = RuntimeError("secret store unavailable")
+
+        response = client.get("/api/skills/hubs")
+
+        assert response.status_code == 200
+        hub = response.json()["hubs"][0]
+        assert hub["name"] == "authed-hub"
+        assert hub["auth_configured"] is None
+        assert hub["auth_key_name"] is None
+
+    def test_list_hubs_surfaces_programmer_errors_from_auth_status(
+        self, client: TestClient, hub_manager
+    ) -> None:
+        """Type/attribute/value errors should bubble instead of degrading silently."""
+        hub_manager.list_hubs.return_value = ["authed-hub"]
+
+        config = MagicMock()
+        config.type = "skillsmp"
+        config.base_url = "https://skillsmp.com/api/v1"
+        config.repo = None
+        hub_manager.get_config.return_value = config
+        hub_manager.auth_status.side_effect = ValueError("bad hub wiring")
+
+        response = client.get("/api/skills/hubs")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "bad hub wiring"
+
     @patch("gobby.skills.loader.SkillLoader")
     def test_install_from_hub(
         self, MockLoader, client: TestClient, hub_manager, skill_manager, websocket_server

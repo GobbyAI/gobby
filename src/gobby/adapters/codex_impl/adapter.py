@@ -29,17 +29,9 @@ from gobby.adapters.codex_impl.client import (
 )
 from gobby.adapters.codex_impl.item_normalization import (
     TOOL_ITEM_TYPES as _SHARED_TOOL_ITEM_TYPES,
-)
-from gobby.adapters.codex_impl.item_normalization import (
     build_tool_event_data as _shared_build_tool_event_data,
-)
-from gobby.adapters.codex_impl.item_normalization import (
     compose_mcp_tool_name as _shared_compose_mcp_tool_name,
-)
-from gobby.adapters.codex_impl.item_normalization import (
     extract_completed_item_payload as _shared_extract_completed_item_payload,
-)
-from gobby.adapters.codex_impl.item_normalization import (
     looks_like_tool_item as _shared_looks_like_tool_item,
 )
 from gobby.adapters.codex_impl.types import (
@@ -989,7 +981,9 @@ class CodexHooksAdapter(BaseAdapter):
                 }
                 if normalized_reason:
                     deny_result["reason"] = normalized_reason
-                    deny_result["hookSpecificOutput"]["permissionDecisionReason"] = normalized_reason
+                    deny_result["hookSpecificOutput"]["permissionDecisionReason"] = (
+                        normalized_reason
+                    )
 
                 system_parts: list[str] = []
                 if response.system_message:

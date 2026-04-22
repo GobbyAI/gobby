@@ -47,7 +47,7 @@ def test_setup_with_all_managers_none() -> None:
         memory_manager=None,
         task_manager=None,
         sync_manager=None,
-        local_session_manager=None,
+        session_manager=None,
         metrics_manager=None,
         agent_runner=None,
         worktree_storage=None,
@@ -157,7 +157,7 @@ async def test_setup_worktrees_registry_claim_resolves_session_refs(
 
     manager = setup_internal_registries(
         _config=mock_config,
-        local_session_manager=session_manager,
+        session_manager=session_manager,
         worktree_storage=worktree_storage,
         project_id=project.id,
     )
@@ -177,15 +177,15 @@ async def test_setup_worktrees_registry_claim_resolves_session_refs(
     assert claimed.agent_session_id == session.id
 
 
-def test_setup_sessions_with_local_session_manager() -> None:
-    """Test sessions registry is created with local_session_manager."""
+def test_setup_sessions_with_session_manager() -> None:
+    """Test sessions registry is created with session_manager."""
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    local_session_manager = MagicMock()
+    session_manager = MagicMock()
 
     manager = setup_internal_registries(
         _config=mock_config,
-        local_session_manager=local_session_manager,
+        session_manager=session_manager,
     )
 
     registries = manager.get_all_registries()

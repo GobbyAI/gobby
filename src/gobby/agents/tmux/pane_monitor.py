@@ -199,7 +199,7 @@ class TmuxPaneMonitor:
     def _lookup_session(self, session_id: str) -> Session | None:
         """Look up a session from the database."""
         if not self._session_manager:
-            logger.debug(f"No session storage configured, cannot look up {session_id}")
+            logger.debug(f"No _session_manager configured, cannot look up {session_id}")
             return None
         try:
             return self._session_manager.get(session_id)

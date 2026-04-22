@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
@@ -19,9 +18,7 @@ class _ManagerState(Protocol):
 
 
 class _TranscriptMixin:
-    def get_pending_transcript_sessions(
-        self: _ManagerState, limit: int = 10
-    ) -> builtins.list[Session]:
+    def get_pending_transcript_sessions(self: _ManagerState, limit: int = 10) -> list[Session]:
         """
         Get sessions that need transcript processing.
 

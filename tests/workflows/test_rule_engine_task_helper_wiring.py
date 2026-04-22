@@ -1,6 +1,8 @@
 """Regression tests for task-manager-backed rule evaluation."""
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -16,11 +18,12 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(tmp_path) -> LocalDatabase:
+def db(tmp_path: Path) -> Iterator[LocalDatabase]:
     db_path = tmp_path / "test_rule_engine_task_wiring.db"
     database = LocalDatabase(db_path)
     run_migrations(database)
-    return database
+    yield database
+    database.close()
 
 
 def _sync_bundled(db: LocalDatabase) -> None:

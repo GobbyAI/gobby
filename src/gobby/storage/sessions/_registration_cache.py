@@ -239,7 +239,7 @@ class _RegistrationCacheMixin:
                 return None
 
             ranked = sorted(candidates, key=_recovery_rank)
-            if len(ranked) > 1 and _recovery_score(ranked[0]) == _recovery_score(ranked[1]):
+            if len(ranked) > 1 and _recovery_rank(ranked[0]) == _recovery_rank(ranked[1]):
                 self.logger.warning(
                     "Ambiguous cross-source session recovery for external_id=%s source=%s "
                     "machine_id=%s project_id=%s candidates=%s",

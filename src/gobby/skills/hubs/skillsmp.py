@@ -113,13 +113,16 @@ class SkillsMPProvider(HubProvider):
         not provided by the list/search endpoints.
         """
         stars = skill.get("stars")
+        score = (
+            float(stars) if isinstance(stars, int | float) and not isinstance(stars, bool) else None
+        )
         return HubSkillInfo(
             slug=skill.get("id", skill.get("name", "")),
             display_name=skill.get("name", skill.get("id", "")),
             description=skill.get("description", ""),
             hub_name=self.hub_name,
             version=skill.get("version"),
-            score=float(stars) if isinstance(stars, int | float) else skill.get("score"),
+            score=score if score is not None else skill.get("score"),
         )
 
     async def search(

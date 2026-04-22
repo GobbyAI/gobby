@@ -44,7 +44,7 @@ def setup_internal_registries(
     db: DatabaseProtocol | None = None,
     sync_manager: TaskSyncManager | None = None,
     task_validator: TaskValidator | None = None,
-    local_session_manager: SessionManager | None = None,
+    session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
     llm_service: LLMService | None = None,
     agent_runner: AgentRunner | None = None,
@@ -79,7 +79,7 @@ def setup_internal_registries(
         db: Database connection for registries that only need storage (skills)
         sync_manager: Task sync manager for git sync
         task_validator: Task validator for validation
-        local_session_manager: Session manager for session CRUD
+        session_manager: Session manager for session CRUD
         metrics_manager: Tool metrics manager for metrics operations
         llm_service: LLM service for AI-powered operations
         agent_runner: Agent runner for spawning subagents
@@ -144,11 +144,11 @@ def setup_internal_registries(
             logger.debug("Tasks-ops registry initialized")
 
     # Initialize sessions registry (messages + session CRUD)
-    if local_session_manager is not None:
+    if session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 
         session_messages_registry = create_session_messages_registry(
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             llm_service=llm_service,
             config=_config,
             db=db,
@@ -171,7 +171,7 @@ def setup_internal_registries(
             memory_manager=memory_manager,
             llm_service=llm_service,
             memory_sync_manager=memory_sync_manager,
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             config=_config,
         )
         manager.add_registry(memory_registry)
@@ -182,8 +182,8 @@ def setup_internal_registries(
 
     workflows_registry = create_workflows_registry(
         loader=workflow_loader,
-        session_manager=local_session_manager,
-        db=getattr(local_session_manager, "db", None) if local_session_manager else None,
+        session_manager=session_manager,
+        db=getattr(session_manager, "db", None) if session_manager else None,
         executor_getter=lambda: pipeline_executor,
         execution_manager_getter=lambda: pipeline_execution_manager,
         completion_registry=completion_registry,
@@ -204,7 +204,7 @@ def setup_internal_registries(
 
         metrics_registry = create_metrics_registry(
             metrics_manager=metrics_manager,
-            session_storage=local_session_manager,
+            session_storage=session_manager,
             event_store=metrics_manager.event_store,
         )
         manager.add_registry(metrics_registry)
@@ -226,7 +226,7 @@ def setup_internal_registries(
 
         agents_registry = create_agents_registry(
             runner=agent_runner,
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             task_manager=task_manager,
             worktree_storage=worktree_storage,
             git_manager=git_manager,
@@ -241,7 +241,7 @@ def setup_internal_registries(
         # Add inter-agent messaging tools if dependencies are available
         if (
             inter_session_message_manager is not None
-            and local_session_manager is not None
+            and session_manager is not None
             and db is not None
         ):
             from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
@@ -251,7 +251,7 @@ def setup_internal_registries(
             add_messaging_tools(
                 registry=agents_registry,
                 message_manager=inter_session_message_manager,
-                session_manager=local_session_manager,
+                session_manager=session_manager,
                 command_manager=AgentCommandManager(db),
                 session_var_manager=SessionVariableManager(db),
                 db=db,
@@ -269,7 +269,7 @@ def setup_internal_registries(
             worktree_storage=worktree_storage,
             git_manager=git_manager,
             project_id=project_id,
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             task_manager=task_manager,
         )
         manager.add_registry(worktrees_registry)

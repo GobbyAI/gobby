@@ -242,15 +242,7 @@ class EnforcementMixin:
         if self._runner is None:
             return
 
-        run_storage: LocalAgentRunManager | Any | None = None
-        if hasattr(type(self._runner), "run_storage"):
-            try:
-                run_storage = self._runner.run_storage
-            except AttributeError:
-                run_storage = None
-        elif "run_storage" in getattr(self._runner, "__dict__", {}):
-            run_storage = self._runner.__dict__["run_storage"]
-
+        run_storage: LocalAgentRunManager | Any | None = getattr(self._runner, "run_storage", None)
         db_agent = None
         get_by_session = getattr(run_storage, "get_by_session", None)
         if callable(get_by_session):

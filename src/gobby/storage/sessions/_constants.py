@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import cast
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -15,7 +16,7 @@ def get_logger() -> logging.Logger:
     """Resolve package logger through the public import path for patch compatibility."""
     import gobby.storage.sessions as sessions_module
 
-    return sessions_module.logger
+    return cast(logging.Logger, getattr(sessions_module, "logger"))
 
 
 # Well-known system session ID — bootstrapped at DB init.

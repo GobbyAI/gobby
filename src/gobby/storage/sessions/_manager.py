@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import threading
 import uuid
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.storage.database import DatabaseProtocol
 
-from ._bootstrap import _SessionBootstrapMixin
+from ._bootstrap import TitleChangeCallback, _SessionBootstrapMixin
 from ._bulk_update import _BulkUpdateMixin
 from ._constants import get_logger
 from ._crud import _SessionCRUDMixin
@@ -48,7 +47,7 @@ class SessionManager(
     _storage: SessionManager
     logger: logging.Logger
     _config: DaemonConfig | None
-    _title_listeners: list[Callable[[str, str], None]]
+    _title_listeners: list[TitleChangeCallback]
     _session_mapping: dict[tuple[str, str], str]
     _session_mapping_lock: Any
     _session_metadata: dict[str, dict[str, Any]]
@@ -78,7 +77,7 @@ class SessionManager(
         self._storage: SessionManager = storage
         self.logger = logger_instance or get_logger()
         self._config = config
-        self._title_listeners: list[Callable[[str, str], None]] = []
+        self._title_listeners: list[TitleChangeCallback] = []
         self._session_mapping: dict[tuple[str, str], str] = {}
         self._session_mapping_lock = threading.Lock()
         self._session_metadata: dict[str, dict[str, Any]] = {}

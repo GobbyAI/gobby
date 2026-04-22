@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -21,7 +20,7 @@ class _ManagerState(Protocol):
 class _TerminalMixin:
     def get_sessions_since(
         self: _ManagerState, since: datetime, project_id: str | None = None
-    ) -> builtins.list[Session]:
+    ) -> list[Session]:
         """
         Get sessions created since a given timestamp.
 
@@ -101,9 +100,7 @@ class _TerminalMixin:
         self.db.safe_update("sessions", values, "id = ?", (session_id,))
         return self.get(session_id)
 
-    def record_skills_used(
-        self: _ManagerState, session_id: str, skill_names: builtins.list[str]
-    ) -> int:
+    def record_skills_used(self: _ManagerState, session_id: str, skill_names: list[str]) -> int:
         """Record skills used in a session (idempotent via UNIQUE constraint).
 
         Args:

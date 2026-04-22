@@ -257,35 +257,36 @@ class TestSessionManagerLookup:
         assert recovered.id == preferred.id
         assert session_mgr.get_session_id("shared-external-id", "gemini") == preferred.id
 
-    def test_recover_session_returns_none_for_ambiguous_candidates(
+    def test_recover_session_breaks_score_ties_with_rank(
         self,
         session_mgr: SessionManager,
         session_storage: SessionManager,
         test_project: dict,
     ) -> None:
-        """Recovery should refuse ties instead of silently picking a row."""
-        session_storage.register(
-            external_id="ambiguous-external-id",
+        """Recovery should pick the top-ranked row when completeness ties but rank differs."""
+        older = session_storage.register(
+            external_id="ranked-external-id",
             machine_id="machine-1",
             source="codex",
             project_id=test_project["id"],
         )
         session_storage.register(
-            external_id="ambiguous-external-id",
+            external_id="ranked-external-id",
             machine_id="machine-1",
             source="claude",
             project_id=test_project["id"],
         )
 
         recovered = session_mgr.recover_session(
-            external_id="ambiguous-external-id",
+            external_id="ranked-external-id",
             source="gemini",
             machine_id="machine-1",
             project_id=test_project["id"],
         )
 
-        assert recovered is None
-        assert session_mgr.get_session_id("ambiguous-external-id", "gemini") is None
+        assert recovered is not None
+        assert recovered.id == older.id
+        assert session_mgr.get_session_id("ranked-external-id", "gemini") == older.id
 
 
 class TestSessionManagerStatus:

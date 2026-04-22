@@ -43,7 +43,7 @@ Every plan is one Markdown document. The structure is:
 
 ### Canonical Template
 
-```markdown
+~~~markdown
 # {Epic Title}
 
 ## Overview
@@ -110,7 +110,7 @@ settings:
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
 
-```
+~~~
 
 ### Dependency Notation
 

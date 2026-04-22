@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
@@ -103,118 +102,115 @@ class _SessionCRUDMixin:
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
 
-        existing = self.find_by_external_id(
-            external_id, machine_id, project_id, source, session_type=session_type
-        )
-        if not existing and project_id:
-            existing = self.find_by_external_id_any_project(
-                external_id, machine_id, source, session_type=session_type
+        with self.db.transaction_immediate() as conn:
+            existing = self.find_by_external_id(
+                external_id,
+                machine_id,
+                project_id,
+                source,
+                session_type=session_type,
             )
-            if existing and existing.project_id != project_id:
-                self.db.execute(
-                    "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
-                    (project_id, now, existing.id),
+            if existing is None and project_id:
+                existing = self.find_by_external_id_any_project(
+                    external_id,
+                    machine_id,
+                    source,
+                    session_type=session_type,
                 )
-                get_logger().info(
-                    "Recovered session %s: project_id %s -> %s",
-                    existing.id,
-                    existing.project_id,
-                    project_id,
-                )
-        if existing:
-            self.db.execute(
-                """
-                UPDATE sessions SET
-                    title = COALESCE(?, title),
-                    transcript_path = COALESCE(?, transcript_path),
-                    git_branch = COALESCE(?, git_branch),
-                    parent_session_id = COALESCE(?, parent_session_id),
-                    sandbox_enabled = COALESCE(?, sandbox_enabled),
-                    sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
-                    status = 'active',
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    title,
-                    transcript_path,
-                    git_branch,
-                    parent_session_id,
-                    sandbox_enabled,
-                    sandbox_policy_hash,
-                    now,
-                    existing.id,
-                ),
-            )
-            get_logger().debug(
-                "Reusing existing session %s for external_id=%s", existing.id, external_id
-            )
-            session = self.get(existing.id)
-            if session is None:
-                raise RuntimeError(f"Session {existing.id} disappeared during update")
-            return session
-
-        session_id = str(uuid.uuid4())
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                max_seq_row = self.db.fetchone(
-                    "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = ?",
-                    (project_id,),
-                )
-                next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
-
-                self.db.execute(
-                    """
-                    INSERT INTO sessions (
-                        id, external_id, machine_id, source, project_id, title, title_source,
-                        transcript_path, git_branch, parent_session_id,
-                        agent_depth, spawned_by_agent_id, terminal_context,
-                        workflow_name, session_type, sandbox_enabled, sandbox_policy_hash,
-                        status, created_at, updated_at, seq_num,
-                        had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                if existing and existing.project_id != project_id:
+                    conn.execute(
+                        "UPDATE sessions SET project_id = ?, updated_at = ? WHERE id = ?",
+                        (project_id, now, existing.id),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                    get_logger().info(
+                        "Recovered session %s: project_id %s -> %s",
+                        existing.id,
+                        existing.project_id,
+                        project_id,
+                    )
+                    existing = self.get(existing.id)
+
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE sessions SET
+                        title = COALESCE(?, title),
+                        transcript_path = COALESCE(?, transcript_path),
+                        git_branch = COALESCE(?, git_branch),
+                        parent_session_id = COALESCE(?, parent_session_id),
+                        sandbox_enabled = COALESCE(?, sandbox_enabled),
+                        sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
+                        status = 'active',
+                        updated_at = ?
+                    WHERE id = ?
                     """,
                     (
-                        session_id,
-                        external_id,
-                        machine_id,
-                        source,
-                        project_id,
                         title,
                         transcript_path,
                         git_branch,
                         parent_session_id,
-                        agent_depth,
-                        spawned_by_agent_id,
-                        json.dumps(terminal_context) if terminal_context else None,
-                        workflow_name,
-                        session_type,
-                        None if sandbox_enabled is None else int(bool(sandbox_enabled)),
+                        sandbox_enabled,
                         sandbox_policy_hash,
                         now,
-                        now,
-                        next_seq_num,
+                        existing.id,
                     ),
                 )
-                break
-            except sqlite3.IntegrityError as e:
-                if (
-                    "UNIQUE constraint failed: sessions.seq_num" in str(e)
-                    and attempt < max_retries - 1
-                ):
-                    get_logger().warning("Seq_num collision (%s), retrying...", next_seq_num)
-                    continue
-                raise
+                get_logger().debug(
+                    "Reusing existing session %s for external_id=%s", existing.id, external_id
+                )
+                updated = self.get(existing.id)
+                if updated is None:
+                    raise RuntimeError(f"Session {existing.id} disappeared during update")
+                return updated
 
-        get_logger().debug("Created new session %s for external_id=%s", session_id, external_id)
+            session_id = str(uuid.uuid4())
+            max_seq_row = conn.execute(
+                "SELECT MAX(seq_num) as max_seq FROM sessions WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+            next_seq_num = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
 
-        session = self.get(session_id)
-        if session is None:
-            raise RuntimeError(f"Session {session_id} not found after creation")
-        return session
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, external_id, machine_id, source, project_id, title, title_source,
+                    transcript_path, git_branch, parent_session_id,
+                    agent_depth, spawned_by_agent_id, terminal_context,
+                    workflow_name, session_type, sandbox_enabled, sandbox_policy_hash,
+                    status, created_at, updated_at, seq_num,
+                    had_edits, message_count, turn_count, tool_call_count, last_assistant_content
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                """,
+                (
+                    session_id,
+                    external_id,
+                    machine_id,
+                    source,
+                    project_id,
+                    title,
+                    transcript_path,
+                    git_branch,
+                    parent_session_id,
+                    agent_depth,
+                    spawned_by_agent_id,
+                    json.dumps(terminal_context) if terminal_context else None,
+                    workflow_name,
+                    session_type,
+                    None if sandbox_enabled is None else int(bool(sandbox_enabled)),
+                    sandbox_policy_hash,
+                    now,
+                    now,
+                    next_seq_num,
+                ),
+            )
+
+            get_logger().debug("Created new session %s for external_id=%s", session_id, external_id)
+
+            created = self.get(session_id)
+            if created is None:
+                raise RuntimeError(f"Session {session_id} not found after creation")
+            return created
 
     def create_web_chat_session(
         self: _SessionCRUDHost,
@@ -240,34 +236,35 @@ class _SessionCRUDMixin:
             )
 
         bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
-        session = self.register(
-            external_id=bootstrap_external_id,
-            machine_id=machine_id,
-            source=source,
-            project_id=project_id,
-            title=title,
-            session_type="web_chat",
-            sandbox_enabled=sandbox_enabled,
-            sandbox_policy_hash=sandbox_policy_hash,
-        )
-        if model is None and chat_mode is None:
-            return session
+        with self.db.transaction_immediate():
+            session = self.register(
+                external_id=bootstrap_external_id,
+                machine_id=machine_id,
+                source=source,
+                project_id=project_id,
+                title=title,
+                session_type="web_chat",
+                sandbox_enabled=sandbox_enabled,
+                sandbox_policy_hash=sandbox_policy_hash,
+            )
+            if model is None and chat_mode is None:
+                return session
 
-        now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            """
-            UPDATE sessions
-            SET model = COALESCE(?, model),
-                chat_mode = COALESCE(?, chat_mode),
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (model, chat_mode, now, session.id),
-        )
-        updated = self.get(session.id)
-        if updated is None:
-            raise RuntimeError(f"Web chat session {session.id} disappeared after update")
-        return updated
+            now = datetime.now(UTC).isoformat()
+            self.db.execute(
+                """
+                UPDATE sessions
+                SET model = COALESCE(?, model),
+                    chat_mode = COALESCE(?, chat_mode),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (model, chat_mode, now, session.id),
+            )
+            updated = self.get(session.id)
+            if updated is None:
+                raise RuntimeError(f"Web chat session {session.id} disappeared after update")
+            return updated
 
     def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
         """Get session by ID."""
@@ -304,4 +301,4 @@ class _SessionCRUDMixin:
     def delete(self: _SessionCRUDHost, session_id: str) -> bool:
         """Delete session by ID."""
         cursor = self.db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        return bool(cursor.rowcount and cursor.rowcount > 0)
+        return cursor.rowcount > 0

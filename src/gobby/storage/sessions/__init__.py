@@ -23,5 +23,4 @@ __all__ = [
     "SYSTEM_SESSION_SOURCE",
     "SYSTEM_SESSION_TITLE",
     "ensure_system_session",
-    "logger",
 ]

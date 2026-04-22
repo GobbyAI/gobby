@@ -161,6 +161,9 @@ class _BulkUpdateMixin:
         Returns:
             Updated session or None if not found
         """
+        if self.get(session_id) is None:
+            return None
+
         sql = """
         UPDATE sessions SET
           message_count = (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id),

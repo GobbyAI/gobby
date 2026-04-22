@@ -159,7 +159,7 @@ class HTTPServer:
             db=services.mcp_db_manager.db if services.mcp_db_manager else None,
             sync_manager=services.task_sync_manager,
             task_validator=services.task_validator,
-            local_session_manager=services.session_manager,
+            session_manager=services.session_manager,
             metrics_manager=services.metrics_manager,
             llm_service=services.llm_service,
             agent_runner=services.agent_runner,

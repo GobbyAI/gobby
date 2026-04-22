@@ -72,7 +72,7 @@ Choice [I]:
 
 **Always** record the choice:
 
-```python
+```text
 set_variable(
     name="plan_review_mode",
     value="adversarial" | "delegated" | "plain",
@@ -101,7 +101,7 @@ Attach this plan to an existing task #N, or create a new planning root?
 
 - **New** →
 
-  ```python
+  ```text
   create_task(task_type="epic", category="planning", title="<from user>")
   ```
 
@@ -115,13 +115,13 @@ Two-sided mutual exclusion with the autonomous front-half orchestrator:
 
 **Active-front-half check.**
 
-```python
+```text
 active_fh = "conductor:front-half" in labels and "conductor:front-half-complete" not in labels
 ```
 
 **Live stage-child check.** Do **not** run a single `list_tasks(parent_task_id=#N)` — the default limit hides live children on large parents. Query each stage label explicitly:
 
-```python
+```text
 STAGE_LABELS = [
     "conductor-stage:requirements",
     "conductor-stage:planning",
@@ -163,7 +163,7 @@ After the sweep:
 
 Immediately after the guard passes:
 
-```python
+```text
 lock_label = f"interactive:planning-in-progress:{self_session_id}"
 add_label(task_id=plan_parent_ref, label=lock_label)
 set_variable(name="interactive_lock_label", value=lock_label, session_id="#<self>")
@@ -179,7 +179,7 @@ The companion rule `block-front-half-on-interactive-lock` blocks autonomous `fro
 
 On skill entry, before showing the mode menu, check:
 
-```python
+```text
 existing_task_id = get_variable(name="planning_task_id", session_id="#<self>")
 if existing_task_id:
     task = get_task(existing_task_id)
@@ -210,7 +210,7 @@ Ask the user:
 
 Load the drafting methodology as your first action:
 
-```python
+```text
 call_tool("gobby-skills", "get_skill", {"name": "plan-draft"})
 ```
 
@@ -231,7 +231,7 @@ Remember the two load-bearing rules from `plan-draft`:
 
 Persist the path:
 
-```python
+```text
 set_variable(name="artifact_path", value=".gobby/plans/task-<parent_seq>-plan.md", session_id="#<self>")
 ```
 
@@ -262,7 +262,7 @@ On approval, read `plan_review_mode` and branch:
 
 Before entering Step 7, verify `artifact_path` is still present:
 
-```python
+```text
 artifact_path = get_variable(name="artifact_path", session_id="#<self>")
 if not artifact_path:
     error("artifact_path is missing; aborting before review loop enters a fail-closed write gate.")
@@ -274,7 +274,7 @@ If the variable is absent, abort with a clear message instead of proceeding.
 
 If `planning_task_id` is not already set in session vars:
 
-```python
+```text
 planning = create_task(
     parent_task_id=plan_parent_ref,
     task_type="epic",
@@ -303,7 +303,7 @@ Surface: `Round {current_round + 1} of {max_rounds}`.
 
 Mirror the autonomous front-half's prompt shape (`_front_half.py::_adversary_prompt`):
 
-```python
+```text
 run = spawn_agent(
     agent="plan-adversary",
     task_id=planning_task_id,
@@ -324,7 +324,7 @@ The spawn path auto-injects `assigned_task_id` and auto-claims the task for the 
 
 Surface "Adversary reviewing — blocking turn", then:
 
-```python
+```text
 wait_for_completion(completion_id=adversary_run_id)
 ```
 
@@ -373,7 +373,7 @@ The skill stays in control through success and failure — no "exit and run a ra
 
 ### 8.1. Run the pipeline
 
-```python
+```text
 execution = run_pipeline(
     name="expand-task",
     inputs={"task_id": plan_parent_ref, "plan_file": artifact_path},
@@ -424,7 +424,7 @@ semantics deeper than we want to add for this feature.
 
 Every exit path from this skill — Step 6 plain-mode exit, Step 8 success, Step 8 failure/Escalate, Step 9 bypass/abort/restart, adversary crash — **must** run the same cleanup:
 
-```python
+```text
 lock_label = get_variable(name="interactive_lock_label", session_id="#<self>")
 if lock_label:
     remove_label(task_id=plan_parent_ref, label=lock_label)

@@ -79,7 +79,8 @@ def test_register_session_fallback_does_not_populate_caches(
         is None
     )
     # Intentional white-box assertion: register_session() owns cache population,
-    # so the regression surface includes the internal metadata cache staying empty.
+    # and this regression specifically guards that its private metadata cache stays
+    # empty on fallback. The coupling is deliberate because that's the bug surface.
     assert session_id not in session_mgr._session_metadata
 
 

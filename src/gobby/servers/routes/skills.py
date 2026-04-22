@@ -327,11 +327,13 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                     "base_url": config.base_url,
                     "repo": config.repo,
                 }
-                # auth_status may hit the secret store / network. A failure here
-                # should not 500 the entire /api/skills/hubs endpoint — fall back
-                # to a well-typed "unknown" shape so the UI can still render.
+                # auth_status is expected to be a local config/API-key lookup.
+                # Keep the UI resilient to unexpected runtime failures here, while
+                # surfacing programmer errors instead of degrading them away.
                 try:
                     entry.update(server.hub_manager.auth_status(name))
+                except (TypeError, AttributeError, ValueError):
+                    raise
                 except Exception as auth_exc:
                     logger.warning(
                         "auth_status failed for hub %r (%s): %s",
