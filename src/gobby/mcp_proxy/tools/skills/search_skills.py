@@ -153,13 +153,15 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             skills_by_id = {s.id: s for s in ctx.storage.get_skills_by_ids(skill_ids)}
 
             if not include_internal:
-                results = [
-                    r
-                    for r in results
-                    if not (
-                        (skill := skills_by_id.get(r.skill_id)) is not None and skill.is_internal()
-                    )
-                ][:top_k]
+                # Keep a result when its skill is unknown (best-effort) OR not
+                # flagged internal. Rewritten from a double-negative walrus
+                # comprehension so the intent reads top-to-bottom.
+                filtered_results = []
+                for r in results:
+                    skill = skills_by_id.get(r.skill_id)
+                    if skill is None or not skill.is_internal():
+                        filtered_results.append(r)
+                results = filtered_results[:top_k]
 
             # Format results with skill metadata
             result_list = []

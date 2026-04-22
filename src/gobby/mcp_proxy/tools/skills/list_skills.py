@@ -60,21 +60,56 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             # Over-fetch when a post-query filter (active_names or include_internal=False)
             # will trim results, so we can still fill `limit` after filtering.
+            #
+            # The fixed multiplier in the old implementation under-delivered when
+            # BOTH filters were active and aggressive (e.g. an active-skills
+            # allowlist of 5 names on a project with hundreds of internal skills).
+            # Fetch in bounded pages and stop as soon as we have enough post-filter
+            # results or the underlying storage reports EOF.
             needs_overfetch = active_names is not None or not include_internal
-            skills = ctx.storage.list_skills(
-                project_id=ctx.project_id,
-                category=category,
-                enabled=enabled,
-                limit=limit * 5 if needs_overfetch else limit,
-                include_global=True,
-            )
+            active_set = set(active_names) if active_names is not None else None
 
-            if not include_internal:
-                skills = [s for s in skills if not s.is_internal()]
+            def _apply_post_filters(
+                batch: list[Any],  # noqa: ANN401 — Skill domain model, imported lazily
+            ) -> list[Any]:
+                filtered = batch
+                if not include_internal:
+                    filtered = [s for s in filtered if not s.is_internal()]
+                if active_set is not None:
+                    filtered = [s for s in filtered if s.name in active_set]
+                return filtered
 
-            if active_names is not None:
-                active_set = set(active_names)
-                skills = [s for s in skills if s.name in active_set]
+            skills: list[Any] = []
+            if not needs_overfetch:
+                skills = ctx.storage.list_skills(
+                    project_id=ctx.project_id,
+                    category=category,
+                    enabled=enabled,
+                    limit=limit,
+                    include_global=True,
+                )
+            else:
+                _MAX_OVERFETCH_ROUNDS = 3
+                page_limit = limit * 5
+                offset = 0
+                for _ in range(_MAX_OVERFETCH_ROUNDS):
+                    batch = ctx.storage.list_skills(
+                        project_id=ctx.project_id,
+                        category=category,
+                        enabled=enabled,
+                        limit=page_limit,
+                        offset=offset,
+                        include_global=True,
+                    )
+                    if not batch:
+                        break
+                    skills.extend(_apply_post_filters(batch))
+                    if len(batch) < page_limit:
+                        # EOF from storage — no more pages to scan.
+                        break
+                    if len(skills) >= limit:
+                        break
+                    offset += page_limit
 
             skills = skills[:limit]
 
