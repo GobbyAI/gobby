@@ -16,7 +16,7 @@ from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import _set_context_for_request
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import reset_seeded_contexts
 from gobby.workflows.definitions import WorkflowInstance
@@ -81,7 +81,7 @@ class _SessionEndHandler(SessionEndMixin):
     def __init__(
         self,
         *,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         workflow_handler: WorkflowHookHandler,
     ) -> None:
         self.logger = MagicMock()
@@ -160,7 +160,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         )
     )
 
-    session_manager = LocalSessionManager(db)
+    session_manager = SessionManager(db)
     workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=db), enabled=True)
     hook_manager = SimpleNamespace(
         _workflow_handler=workflow_handler,
