@@ -36,6 +36,57 @@ from gobby.storage.config_store import ConfigStore
 logger = logging.getLogger(__name__)
 
 
+def _block_tool_name(tool_name: str, input_data: dict[str, Any]) -> str:
+    """Return tool identity used in structured block logs."""
+    if tool_name == "mcp__gobby__call_tool":
+        server_name = str(input_data.get("server_name", ""))
+        mcp_tool_name = str(input_data.get("tool_name", ""))
+        if server_name and mcp_tool_name:
+            return f"{server_name}:{mcp_tool_name}"
+    return tool_name or "-"
+
+
+def _resolve_session_lifecycle_block_reason(
+    *,
+    session_id: str,
+    tool_name: str,
+    input_data: dict[str, Any],
+    reason: str | None,
+) -> str:
+    """Return a non-empty session-lifecycle block reason and warn on fallback use."""
+    cleaned = (reason or "").strip()
+    if cleaned:
+        return cleaned
+    logger.warning(
+        "BLOCK fallback session=%s event=before_tool tool=%s "
+        "source=session-lifecycle rule=pre-tool-callback "
+        "detail=pre-tool lifecycle callback omitted reason",
+        session_id,
+        _block_tool_name(tool_name, input_data),
+    )
+    return (
+        f"Session lifecycle blocked {tool_name} without providing a reason. "
+        "Inspect the pre-tool lifecycle hook response."
+    )
+
+
+def _log_session_lifecycle_block(
+    *,
+    session_id: str,
+    tool_name: str,
+    input_data: dict[str, Any],
+    reason: str,
+) -> None:
+    """Emit structured session-lifecycle block log for observability."""
+    logger.info(
+        "BLOCK session=%s event=before_tool tool=%s "
+        "source=session-lifecycle rule=pre-tool-callback reason=%s",
+        session_id,
+        _block_tool_name(tool_name, input_data),
+        reason,
+    )
+
+
 class ChatSessionPermissionsMixin:
     """Tool permission, approval, and plan mode logic for ChatSession.
 
@@ -218,9 +269,20 @@ class ChatSessionPermissionsMixin:
         if invoke_pre_tool_callback and self._on_pre_tool:
             resp = await self._on_pre_tool({"tool_name": tool_name, "tool_input": input_data})
             if resp and resp.get("decision") == "block":
-                return PermissionResultDeny(
-                    message=resp.get("reason", "Blocked by session lifecycle")
+                session_id = str(getattr(self, "db_session_id", None) or self.conversation_id)
+                reason = _resolve_session_lifecycle_block_reason(
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    input_data=input_data,
+                    reason=resp.get("reason"),
                 )
+                _log_session_lifecycle_block(
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    input_data=input_data,
+                    reason=reason,
+                )
+                return PermissionResultDeny(message=reason)
 
         out_of_repo_path = find_out_of_repo_write_path(
             tool_name,

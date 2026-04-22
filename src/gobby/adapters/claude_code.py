@@ -5,12 +5,14 @@ HookEvent/HookResponse models. It implements the strangler fig pattern for safe
 migration from the existing HookManager.execute() method.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.adapters.base import (
     BaseAdapter,
     build_first_hook_session_metadata_lines,
+    normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
 from gobby.adapters.claude_contract import (
@@ -24,6 +26,8 @@ from gobby.llm.sdk_utils import compress_and_truncate
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
+
+logger = logging.getLogger(__name__)
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {
@@ -214,12 +218,18 @@ class ClaudeCodeAdapter(BaseAdapter):
             ensure_hook_specific_output()["additionalContext"] = additional_context
 
         is_denied = response.decision in ("deny", "block")
+        normalized_reason = normalize_adapter_response_reason(
+            response,
+            adapter_name=self.__class__.__name__,
+            hook_type=hook_type,
+            logger=logger,
+        )
         decision_style = contract.decision_style if contract else ClaudeDecisionStyle.NONE
 
         if decision_style == ClaudeDecisionStyle.TOP_LEVEL_BLOCK and is_denied:
             result["decision"] = "block"
-            if response.reason:
-                result["reason"] = response.reason
+            if normalized_reason:
+                result["reason"] = normalized_reason
         elif decision_style == ClaudeDecisionStyle.PRE_TOOL_USE:
             permission_decision: str | None = response.permission_decision
             if not permission_decision:
@@ -233,14 +243,14 @@ class ClaudeCodeAdapter(BaseAdapter):
             if (
                 permission_decision
                 or response.modified_input is not None
-                or response.reason
+                or normalized_reason
                 or additional_context
             ):
                 hook_output = ensure_hook_specific_output()
                 if permission_decision:
                     hook_output["permissionDecision"] = permission_decision
-                    if response.reason:
-                        hook_output["permissionDecisionReason"] = response.reason
+                    if normalized_reason:
+                        hook_output["permissionDecisionReason"] = normalized_reason
                 if response.modified_input is not None:
                     hook_output["updatedInput"] = response.modified_input
         elif decision_style == ClaudeDecisionStyle.PERMISSION_REQUEST:
@@ -262,8 +272,8 @@ class ClaudeCodeAdapter(BaseAdapter):
                         decision_payload["updatedInput"] = response.modified_input
                     if response.updated_permissions:
                         decision_payload["updatedPermissions"] = response.updated_permissions
-                elif response.reason:
-                    decision_payload["message"] = response.reason
+                elif normalized_reason:
+                    decision_payload["message"] = normalized_reason
                     if response.decision == "block":
                         decision_payload["interrupt"] = True
 
@@ -305,12 +315,12 @@ class ClaudeCodeAdapter(BaseAdapter):
                     hook_output["content"] = response.elicitation_content
         elif decision_style == ClaudeDecisionStyle.HARD_STOP and is_denied:
             result["continue"] = False
-            if response.reason:
-                result["stopReason"] = response.reason
+            if normalized_reason:
+                result["stopReason"] = normalized_reason
         elif decision_style == ClaudeDecisionStyle.NONE and is_denied:
             result["continue"] = False
-            if response.reason:
-                result["stopReason"] = response.reason
+            if normalized_reason:
+                result["stopReason"] = normalized_reason
 
         if (
             is_denied
@@ -318,8 +328,8 @@ class ClaudeCodeAdapter(BaseAdapter):
             and result.get("continue", True)
         ):
             result["continue"] = False
-            if response.reason:
-                result["stopReason"] = response.reason
+            if normalized_reason:
+                result["stopReason"] = normalized_reason
 
         if result.get("continue") is False:
             result.pop("decision", None)

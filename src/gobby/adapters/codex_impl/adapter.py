@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.adapters.base import (
     BaseAdapter,
     build_first_hook_session_metadata_lines,
+    normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
 from gobby.adapters.codex_impl.client import (
@@ -1012,16 +1013,25 @@ class CodexHooksAdapter(BaseAdapter):
         from gobby.llm.sdk_utils import compress_and_truncate
 
         hook_event_name = hook_type or "Unknown"
+        normalized_reason = normalize_adapter_response_reason(
+            response,
+            adapter_name=self.__class__.__name__,
+            hook_type=hook_type,
+            logger=logger,
+        )
 
         # Codex CLI 0.120.0 rejects ``updatedInput`` and ``permissionDecision=allow``
         # for PreToolUse hooks. When Gobby wants to rewrite a tool call, block the
         # current execution and tell the model exactly how to retry instead.
         has_retry_signal = bool(
-            response.auto_approve or response.reason or response.context or response.system_message
+            response.auto_approve
+            or normalized_reason
+            or response.context
+            or response.system_message
         )
         if response.modified_input and hook_event_name == "PreToolUse" and has_retry_signal:
             retry_reason = (
-                response.reason
+                normalized_reason
                 or "Retry the tool call with the corrected input from the hook message."
             )
             retry_parts: list[str] = []
@@ -1054,9 +1064,9 @@ class CodexHooksAdapter(BaseAdapter):
                         "permissionDecision": "deny",
                     },
                 }
-                if response.reason:
-                    deny_result["reason"] = response.reason
-                    deny_result["hookSpecificOutput"]["permissionDecisionReason"] = response.reason
+                if normalized_reason:
+                    deny_result["reason"] = normalized_reason
+                    deny_result["hookSpecificOutput"]["permissionDecisionReason"] = normalized_reason
 
                 system_parts: list[str] = []
                 if response.system_message:
@@ -1070,8 +1080,8 @@ class CodexHooksAdapter(BaseAdapter):
                 return deny_result
 
             block_result: dict[str, Any] = {"continue": False, "decision": "block"}
-            if response.reason:
-                block_result["reason"] = response.reason
+            if normalized_reason:
+                block_result["reason"] = normalized_reason
             return block_result
 
         result: dict[str, Any] = {"continue": True}

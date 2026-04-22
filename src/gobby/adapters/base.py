@@ -5,14 +5,23 @@ Adapters are responsible for translating between CLI-specific hook formats and
 the unified HookEvent/HookResponse models.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
+
+
+module_logger = logging.getLogger(__name__)
+
+ADAPTER_EMPTY_BLOCK_REASON_SENTINEL = (
+    "Blocked by hook (ghook fallback — no reason forwarded; file a bug)"
+)
 
 
 def system_message_has_session_banner(system_message: str | None) -> bool:
@@ -66,6 +75,32 @@ def build_first_hook_session_metadata_lines(
         lines.append(f"tmux pane: {metadata['terminal_tmux_pane']}")
 
     return lines
+
+
+def normalize_adapter_response_reason(
+    response: HookResponse,
+    *,
+    adapter_name: str,
+    hook_type: str | None,
+    logger: logging.Logger | None = None,
+) -> str | None:
+    """Return trimmed reason text, or a loud sentinel for blank block/deny responses."""
+    reason = response.reason.strip() if isinstance(response.reason, str) else None
+    if reason:
+        return reason
+
+    if response.decision not in {"deny", "block"}:
+        return None
+
+    (logger or module_logger).warning(
+        "%s translated %s without reason at adapter boundary; "
+        "using ghook fallback sentinel for hook_type=%s response=%s",
+        adapter_name,
+        response.decision,
+        hook_type or "unknown",
+        asdict(response),
+    )
+    return ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
 
 
 class BaseAdapter(ABC):

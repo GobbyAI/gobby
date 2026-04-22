@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,80 @@ if TYPE_CHECKING:
     from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
+
+_RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
+
+
+def _block_tool_name(event_data: dict[str, Any]) -> str:
+    """Return tool identity used in structured lifecycle block logs."""
+    tool_name = str(event_data.get("tool_name", ""))
+    if tool_name in {"call_tool", "mcp__gobby__call_tool"}:
+        tool_input = event_data.get("tool_input") or {}
+        if isinstance(tool_input, dict):
+            server_name = str(tool_input.get("server_name", ""))
+            mcp_tool_name = str(tool_input.get("tool_name", ""))
+            if server_name and mcp_tool_name:
+                return f"{server_name}:{mcp_tool_name}"
+    return tool_name or "-"
+
+
+def _extract_rule_name(reason: str | None) -> str | None:
+    """Extract rule name from standard Gobby rule block prefix."""
+    if not reason:
+        return None
+    match = _RULE_REASON_RE.match(reason)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _block_source_for_rule(rule_name: str) -> str:
+    """Map workflow block rule names onto observability source labels."""
+    if rule_name in {"agent-tool-enforcement", "step-tool-enforcement"}:
+        return "step-enforcement"
+    return "rule"
+
+
+def _warn_block_fallback(
+    *,
+    session_id: str,
+    event_type: HookEventType,
+    event_data: dict[str, Any],
+    source: str,
+    rule_name: str,
+    detail: str,
+) -> None:
+    """Emit a warning when lifecycle block handling has to synthesize a reason."""
+    logger.warning(
+        "BLOCK fallback session=%s event=%s tool=%s source=%s rule=%s detail=%s",
+        session_id,
+        event_type.value,
+        _block_tool_name(event_data),
+        source,
+        rule_name,
+        detail,
+    )
+
+
+def _log_block(
+    *,
+    session_id: str,
+    event_type: HookEventType,
+    event_data: dict[str, Any],
+    source: str,
+    rule_name: str,
+    reason: str,
+) -> None:
+    """Emit structured block log for websocket lifecycle paths."""
+    logger.info(
+        "BLOCK session=%s event=%s tool=%s source=%s rule=%s reason=%s",
+        session_id,
+        event_type.value,
+        _block_tool_name(event_data),
+        source,
+        rule_name,
+        reason,
+    )
 
 
 def _inject_agent_skills(
@@ -142,6 +217,32 @@ class ChatLifecycleMixin:
 
             # If workflow blocks, return immediately (before webhooks/handlers)
             if response.decision != "allow":
+                if response.decision == "block":
+                    rule_name = _extract_rule_name(response.reason) or "workflow-lifecycle"
+                    block_source = _block_source_for_rule(rule_name)
+                    reason = (response.reason or "").strip()
+                    if not reason:
+                        _warn_block_fallback(
+                            session_id=db_session_id,
+                            event_type=event_type,
+                            event_data=event.data,
+                            source=block_source,
+                            rule_name=rule_name,
+                            detail="workflow handler omitted block reason",
+                        )
+                        reason = (
+                            "Workflow lifecycle blocked this event without providing a "
+                            "reason. Inspect workflow block handling."
+                        )
+                        response.reason = reason
+                    _log_block(
+                        session_id=db_session_id,
+                        event_type=event_type,
+                        event_data=event.data,
+                        source=block_source,
+                        rule_name=rule_name,
+                        reason=reason,
+                    )
                 return {
                     "decision": response.decision,
                     "context": response.context,
@@ -265,11 +366,32 @@ class ChatLifecycleMixin:
 
             decision, reason = webhook_dispatcher.get_blocking_decision(results)
             if decision == "block":
-                logger.info(f"Webhook blocked web chat event: {reason}")
+                resolved_reason = (reason or "").strip()
+                if not resolved_reason:
+                    _warn_block_fallback(
+                        session_id=event.session_id,
+                        event_type=event.event_type,
+                        event_data=event.data,
+                        source="webhook",
+                        rule_name="webhook-dispatch",
+                        detail="blocking webhook omitted reason",
+                    )
+                    resolved_reason = (
+                        "Blocking webhook denied this web chat event without providing "
+                        "a reason. Inspect webhook responses for the blocking endpoint."
+                    )
+                _log_block(
+                    session_id=event.session_id,
+                    event_type=event.event_type,
+                    event_data=event.data,
+                    source="webhook",
+                    rule_name="webhook-dispatch",
+                    reason=resolved_reason,
+                )
                 return {
                     "decision": "block",
                     "context": None,
-                    "reason": reason or "Blocked by webhook",
+                    "reason": resolved_reason,
                     "system_message": None,
                 }
         except Exception as exc:

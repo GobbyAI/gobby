@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.adapters.base import ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.claude_contract import (
     CLAUDE_HOOK_EVENT_NAME_MAP,
@@ -472,7 +473,7 @@ class TestTranslateFromHookResponse:
         response = HookResponse(decision="deny")
         result = adapter.translate_from_hook_response(response)
         assert result["continue"] is False
-        assert "stopReason" not in result
+        assert result["stopReason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
         assert "decision" not in result
 
     def test_ask_decision(self) -> None:

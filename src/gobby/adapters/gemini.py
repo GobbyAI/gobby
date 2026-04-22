@@ -20,12 +20,14 @@ Key differences from Claude Code:
 - Different tool names (RunShellCommand vs Bash)
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import (
     BaseAdapter,
     build_first_hook_session_metadata_lines,
+    normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -33,6 +35,9 @@ from gobby.llm.sdk_utils import compress_and_truncate
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiAdapter(BaseAdapter):
@@ -321,14 +326,20 @@ class GeminiAdapter(BaseAdapter):
             Dict in Gemini CLI's expected format.
         """
         should_continue = response.decision != "deny"
+        normalized_reason = normalize_adapter_response_reason(
+            response,
+            adapter_name=self.__class__.__name__,
+            hook_type=hook_type,
+            logger=logger,
+        )
         result: dict[str, Any] = {
             "decision": response.decision,
             "continue": should_continue,
         }
 
         # Add reason if present
-        if response.reason:
-            result["reason"] = response.reason
+        if normalized_reason:
+            result["reason"] = normalized_reason
 
         hook_event_name = self._response_hook_event_name(hook_type)
         resolved_hook_type = hook_event_name or hook_type

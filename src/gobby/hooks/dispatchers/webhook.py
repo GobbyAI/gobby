@@ -9,9 +9,56 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+from typing import Any
 
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
+
+
+def _block_tool_name(event_data: dict[str, Any]) -> str:
+    """Return tool identity used in structured webhook block logs."""
+    tool_name = str(event_data.get("tool_name", ""))
+    if tool_name in {"call_tool", "mcp__gobby__call_tool"}:
+        tool_input = event_data.get("tool_input") or {}
+        if isinstance(tool_input, dict):
+            server_name = str(tool_input.get("server_name", ""))
+            mcp_tool_name = str(tool_input.get("tool_name", ""))
+            if server_name and mcp_tool_name:
+                return f"{server_name}:{mcp_tool_name}"
+    return tool_name or "-"
+
+
+def _resolve_webhook_block_reason(
+    event: HookEvent,
+    reason: str | None,
+    logger: logging.Logger,
+) -> str:
+    """Return a non-empty webhook block reason and warn on fallback use."""
+    cleaned = (reason or "").strip()
+    if cleaned:
+        return cleaned
+    logger.warning(
+        "BLOCK fallback session=%s event=%s tool=%s source=webhook "
+        "rule=webhook-dispatch detail=blocking webhook omitted reason",
+        event.session_id,
+        event.event_type.value,
+        _block_tool_name(event.data),
+    )
+    return (
+        f"Blocking webhook denied {event.event_type.value} without providing a reason. "
+        "Inspect webhook responses for the blocking endpoint."
+    )
+
+
+def _log_webhook_block(event: HookEvent, reason: str, logger: logging.Logger) -> None:
+    """Emit structured webhook block log for observability."""
+    logger.info(
+        "BLOCK session=%s event=%s tool=%s source=webhook rule=webhook-dispatch reason=%s",
+        event.session_id,
+        event.event_type.value,
+        _block_tool_name(event.data),
+        reason,
+    )
 
 
 def evaluate_blocking_webhooks(
@@ -40,8 +87,9 @@ def evaluate_blocking_webhooks(
         )
         decision, reason = webhook_dispatcher.get_blocking_decision(webhook_results)
         if decision == "block":
-            logger.info(f"Webhook blocked event: {reason}")
-            return HookResponse(decision="block", reason=reason or "Blocked by webhook")
+            resolved_reason = _resolve_webhook_block_reason(event, reason, logger)
+            _log_webhook_block(event, resolved_reason, logger)
+            return HookResponse(decision="block", reason=resolved_reason)
     except Exception as e:
         logger.error(f"Blocking webhook dispatch failed: {e}", exc_info=True)
         # Fail-open for webhook errors
