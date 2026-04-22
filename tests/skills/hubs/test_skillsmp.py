@@ -343,7 +343,25 @@ class TestSkillsMPSearchEndToEnd:
         assert [r.slug for r in results] == ["s1"]
         call_kwargs = mocked.await_args.kwargs
         assert call_kwargs["url"].endswith("/skills/search")
-        assert call_kwargs["params"] == {"q": "", "limit": 10, "offset": 0}
+        assert call_kwargs["params"] == {"q": "", "limit": 10, "page": 1}
+
+    @pytest.mark.asyncio
+    async def test_list_skills_translates_offset_to_page(self) -> None:
+        provider = SkillsMPProvider(
+            hub_name="skillsmp",
+            base_url="https://skillsmp.com/api/v1",
+            auth_token="sk_test_key",
+        )
+        mocked = self._mock_request_returning(
+            [{"id": "s3", "name": "S3", "description": ""}],
+            url="https://skillsmp.com/api/v1/skills/search",
+        )
+
+        with patch("httpx.AsyncClient.request", mocked):
+            results = await provider.list_skills(limit=10, offset=20)
+
+        assert [r.slug for r in results] == ["s3"]
+        assert mocked.await_args.kwargs["params"] == {"q": "", "limit": 10, "page": 3}
 
 
 class TestSkillsMPDownload:

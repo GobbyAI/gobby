@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.cli._install_prompts import _prompt_hub_api_keys
+from gobby.cli._install_prompts import (
+    _echo_install_summary,
+    _prompt_hub_api_keys,
+    _run_voice_install,
+)
+from gobby.cli.install import install as install_command
 from gobby.config.skills import HubConfig, SkillsConfig
 
 pytestmark = pytest.mark.unit
@@ -203,3 +209,135 @@ class TestPromptHubApiKeys:
         assert patched_deps["db_cls"].called
         called_path = patched_deps["db_cls"].call_args.args[0]
         assert str(called_path) == "/custom/path/to.db"
+
+    def test_uses_injected_db_and_secret_store(self, patched_deps) -> None:
+        patched_deps["load"].return_value = _config_with_hubs(
+            {
+                "skillsmp": HubConfig(
+                    type="skillsmp",
+                    base_url="https://skillsmp.com/api/v1",
+                    auth_key_name="SKILLSMP_API_KEY",
+                ),
+            }
+        )
+        injected_db = MagicMock()
+        injected_store = MagicMock()
+        injected_store.exists.return_value = False
+
+        with patch("click.prompt", return_value="shared-secret"):
+            result = _prompt_hub_api_keys(
+                no_interactive=False,
+                db=injected_db,
+                secret_store=injected_store,
+            )
+
+        patched_deps["db_cls"].assert_not_called()
+        patched_deps["store_cls"].assert_not_called()
+        injected_store.set.assert_called_once()
+        assert result["stored"] == 1
+
+
+class TestInstallSummary:
+    def test_forwards_injected_db_and_secret_store_to_prompts(self) -> None:
+        db = MagicMock()
+        secret_store = MagicMock()
+
+        with (
+            patch(
+                "gobby.cli._install_prompts._prompt_api_keys",
+                return_value={"stored": 0, "skipped": 0, "env_found": 0, "already_configured": 1},
+            ) as mock_prompt_api,
+            patch(
+                "gobby.cli._install_prompts._prompt_hub_api_keys",
+                return_value={
+                    "stored": 0,
+                    "skipped": 0,
+                    "already_configured": 0,
+                    "unresolved": [],
+                },
+            ) as mock_prompt_hub,
+        ):
+            assert (
+                _echo_install_summary(
+                    {"codex": {"success": True}},
+                    True,
+                    db=db,
+                    secret_store=secret_store,
+                )
+                is True
+            )
+
+        mock_prompt_api.assert_called_once_with(
+            no_interactive=True,
+            db=db,
+            secret_store=secret_store,
+        )
+        mock_prompt_hub.assert_called_once_with(
+            no_interactive=True,
+            db=db,
+            secret_store=secret_store,
+        )
+
+
+class TestVoiceInstall:
+    def test_uses_injected_db_for_voice_config_write(self) -> None:
+        db = MagicMock()
+        proc = MagicMock(returncode=0, stderr="")
+        results: dict[str, dict[str, object]] = {}
+
+        with (
+            patch("subprocess.run", return_value=proc),
+            patch("gobby.storage.config_store.ConfigStore") as mock_config_store,
+        ):
+            _run_voice_install(results, voice_flag=True, db=db)
+
+        mock_config_store.assert_called_once_with(db)
+        mock_config_store.return_value.set.assert_called_once_with("voice.enabled", True)
+        assert results["voice"]["success"] is True
+
+
+class TestInstallCommandSharedStores:
+    def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path) -> None:
+        config = MagicMock()
+        config.database_path = str(tmp_path / "shared.db")
+        db = MagicMock()
+        secret_store = MagicMock()
+
+        with (
+            patch("gobby.cli.install.load_full_config_from_db", return_value=config),
+            patch("gobby.cli.install.LocalDatabase", return_value=db) as mock_db_cls,
+            patch("gobby.cli.install.SecretStore", return_value=secret_store) as mock_store_cls,
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+            ),
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch("gobby.cli.install._run_standard_cli_install"),
+            patch("gobby.cli.install._run_embedding_install", return_value="none"),
+            patch("gobby.cli.install._run_voice_install") as mock_voice_install,
+            patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
+        ):
+            install_command.callback(
+                claude_flag=False,
+                gemini_flag=False,
+                codex_flag=True,
+                qwen_flag=False,
+                hooks_flag=False,
+                all_flag=False,
+                no_ext_services_flag=True,
+                neo4j_password=None,
+                voice_flag=False,
+                project_flag=False,
+                no_interactive_flag=True,
+                working_dir=tmp_path,
+            )
+
+        expected_path = Path(config.database_path).expanduser()
+        mock_db_cls.assert_called_once_with(expected_path)
+        mock_store_cls.assert_called_once_with(db)
+        assert mock_voice_install.call_args.kwargs["db"] is db
+        assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
+        assert mock_summary.call_args.kwargs["db"] is db
+        assert mock_summary.call_args.kwargs["secret_store"] is secret_store
+        db.close.assert_called_once()

@@ -134,7 +134,10 @@ class SeededContextTokens:
     resolved_project_id: str | None = None
 
 
-def _canonicalize_project_ref(project_ref: str | None, db: Any | None) -> str | None:
+def _canonicalize_project_ref(
+    project_ref: str | None,
+    db: DatabaseProtocol | None,
+) -> str | None:
     """Resolve a project UUID-or-name to its canonical UUID.
 
     When ``db`` is ``None`` we cannot consult ``LocalProjectManager``; accept

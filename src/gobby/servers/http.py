@@ -498,8 +498,14 @@ class HTTPServer:
                             extra={"completed": completed_count},
                         )
 
-            # Disconnect all MCP servers
-            await self._terminate_streamable_http_sessions()
+            try:
+                await self._terminate_streamable_http_sessions()
+            except Exception as exc:
+                logger.warning(
+                    "Error terminating Streamable HTTP sessions during shutdown: %s",
+                    exc,
+                    exc_info=True,
+                )
 
             # Disconnect all MCP servers
             if self.services.mcp_manager:

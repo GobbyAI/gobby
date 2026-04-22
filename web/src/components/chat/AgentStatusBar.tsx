@@ -34,12 +34,15 @@ function getClockSnapshot(): number {
 function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType']): {
   label: string
   className: string
-} {
+} | null {
   if (sessionType === 'web_chat') {
     return { label: 'WEB', className: 'session-kind-badge--web' }
   }
+  if (sessionType === 'terminal') {
+    return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+  }
 
-  return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+  return null
 }
 
 function formatSessionStateText(
@@ -118,12 +121,14 @@ export function AgentStatusBar({
             cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
           />
         </div>
-        {viewingMeta && sessionBadge && stateText ? (
+        {viewingMeta && stateText ? (
           <div className="chat-session-status">
             <span className="chat-session-status__state">{stateText}</span>
-            <span className={`session-kind-badge ${sessionBadge.className}`}>
-              {sessionBadge.label}
-            </span>
+            {sessionBadge ? (
+              <span className={`session-kind-badge ${sessionBadge.className}`}>
+                {sessionBadge.label}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </div>

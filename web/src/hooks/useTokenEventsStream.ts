@@ -9,6 +9,8 @@ interface Options {
   limit?: number
 }
 
+const EMPTY_EVENTS: TokenEvent[] = []
+
 function eventKey(event: TokenEvent): string {
   if (event.message_id) {
     return `${event.session_id}:${event.message_id}`
@@ -82,7 +84,7 @@ export function useTokenEventsStream({ sessionId = null, limit = 200 }: Options 
   })
   const seenKeysRef = useRef<Set<string>>(new Set())
   const events = useMemo(
-    () => (eventsState.sessionId === sessionId ? eventsState.events : []),
+    () => (eventsState.sessionId === sessionId ? eventsState.events : EMPTY_EVENTS),
     [eventsState.events, eventsState.sessionId, sessionId],
   )
 

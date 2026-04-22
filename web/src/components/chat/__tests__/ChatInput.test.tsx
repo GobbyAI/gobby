@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { ChatInput } from '../ChatInput'
@@ -102,6 +102,30 @@ function SttToggleHarness({
       stopRecording={vi.fn(async () => {})}
       cancelRecording={vi.fn()}
     />
+  )
+}
+
+function DeferredSttEnableHarness({
+  startRecording,
+}: {
+  startRecording: () => Promise<void>
+}) {
+  const [sttEnabled, setSttEnabled] = useState(false)
+
+  return (
+    <>
+      <button type="button" onClick={() => setSttEnabled(true)}>
+        Enable externally
+      </button>
+      <ChatInput
+        onSend={vi.fn()}
+        sttEnabled={sttEnabled}
+        onSttEnabledChange={vi.fn()}
+        startRecording={startRecording}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+      />
+    </>
   )
 }
 
@@ -410,6 +434,24 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByLabelText('Toggle microphone'))
 
     expect(onSttEnabledChange).toHaveBeenCalledWith(false)
+  })
+
+  it('clears the pending STT start when STT remains disabled', async () => {
+    const startRecording = vi.fn(async () => {})
+    render(<DeferredSttEnableHarness startRecording={startRecording} />)
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(startRecording).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Enable externally' }))
+
+    await waitFor(() => {
+      expect(startRecording).not.toHaveBeenCalled()
+    })
   })
 
   it('stops recording before disabling STT when the mic is clicked mid-recording', async () => {

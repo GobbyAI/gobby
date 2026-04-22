@@ -82,7 +82,7 @@
   Keep crossref graph behavior unchanged:
 
   - /api/memories/graph
-  - web/src/components/memory/MemoryGraph.tsx
+  - web/src/components/memory/KnowledgeGraph.tsx
 
   Invalidation and repair:
 

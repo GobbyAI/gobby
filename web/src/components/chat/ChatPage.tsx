@@ -166,10 +166,10 @@ export function ChatPage({
   }, []);
 
   useEffect(() => {
-    if (isMobile) {
+    if (isMobile && isPinned) {
       setIsPinned(false);
     }
-  }, [isMobile, setIsPinned]);
+  }, [isMobile, isPinned, setIsPinned]);
 
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
@@ -198,7 +198,7 @@ export function ChatPage({
         if (targetSession) {
           conversations.onSelectSession(targetSession);
         }
-        if (isMobile) {
+        if (isMobile && isPinned) {
           setIsPinned(false);
         }
         return;
@@ -206,11 +206,11 @@ export function ChatPage({
 
       chat.viewSession?.(target.sessionId);
       chat.observeSession?.(target.sessionId, "observe");
-      if (isMobile) {
+      if (isMobile && isPinned) {
         setIsPinned(false);
       }
     },
-    [chat, conversations, isMobile, parkCurrentSession, setIsPinned],
+    [chat, conversations, isMobile, isPinned, parkCurrentSession, setIsPinned],
   );
 
   const handleResumeSessionFromActivity = useCallback(
@@ -615,20 +615,20 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
     onApprovePlan?.();
-    if (isMobile) {
+    if (isMobile && isPinned) {
       setIsPinned(false);
     }
-  }, [isMobile, onApprovePlan, setIsPinned]);
+  }, [isMobile, isPinned, onApprovePlan, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
       setPendingPlanArtifactId(null);
       onRequestPlanChanges?.(feedback);
-      if (isMobile) {
+      if (isMobile && isPinned) {
         setIsPinned(false);
       }
     },
-    [isMobile, onRequestPlanChanges, setIsPinned],
+    [isMobile, isPinned, onRequestPlanChanges, setIsPinned],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically

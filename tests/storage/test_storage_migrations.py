@@ -516,14 +516,21 @@ def test_get_current_version_error(tmp_path) -> None:
         assert get_current_version(db) == 0
 
 
-def test_migration_219_clears_legacy_voice_config(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("provider_value", "db_name"),
+    [
+        ('"voxcpm"', "voice_legacy_voxcpm.db"),
+        ('"kokoro"', "voice_legacy_kokoro.db"),
+    ],
+)
+def test_migration_219_clears_legacy_voice_config(tmp_path, provider_value, db_name) -> None:
     """Migration 219 coerces legacy tts_provider and drops orphaned voice.tts_* keys."""
-    db_path = tmp_path / "voice_legacy.db"
+    db_path = tmp_path / db_name
     db = LocalDatabase(db_path)
     run_migrations(db)
 
     legacy_rows = [
-        ("voice.tts_provider", '"voxcpm"'),
+        ("voice.tts_provider", provider_value),
         ("voice.tts_voice", '"af_heart"'),
         ("voice.tts_speed", "1.0"),
         ("voice.tts_language", '"en-us"'),

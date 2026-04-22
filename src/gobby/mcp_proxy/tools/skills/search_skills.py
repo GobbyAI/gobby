@@ -136,7 +136,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             await asyncio.to_thread(indexer.ensure_fresh)
 
             # Over-fetch when we'll post-filter internal skills, so top_k survives the trim.
-            search_top_k = top_k * 2 if not include_internal else top_k
+            search_top_k = top_k * 3 if not include_internal else top_k
             results = await ctx.search.search_async(
                 query=query, top_k=search_top_k, filters=filters
             )

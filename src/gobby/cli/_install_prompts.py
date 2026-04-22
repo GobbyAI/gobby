@@ -7,9 +7,13 @@ import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
+
+if TYPE_CHECKING:
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +109,12 @@ _API_KEY_PROMPTS = [
 ]
 
 
-def _prompt_hub_api_keys(no_interactive: bool = False) -> dict[str, Any]:
+def _prompt_hub_api_keys(
+    no_interactive: bool = False,
+    *,
+    db: LocalDatabase | None = None,
+    secret_store: SecretStore | None = None,
+) -> dict[str, Any]:
     """Prompt for skill-hub API keys driven by resolved SkillsConfig.hubs.
 
     Iterates hubs whose ``auth_key_name`` is set and whose secret isn't already
@@ -126,81 +135,97 @@ def _prompt_hub_api_keys(no_interactive: bool = False) -> dict[str, Any]:
         "unresolved": [],  # list[tuple[str, str]] of (hub_name, auth_key_name)
     }
 
+    owns_db = False
     try:
         from gobby.cli.utils import load_full_config_from_db
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.secrets import SecretStore
 
         config = load_full_config_from_db()
         skills_cfg = config.skills
-        # Must match the resolved config's DB path — LocalDatabase() defaults
-        # to ~/.gobby/gobby-hub.db and would silently bypass a custom path.
-        db = LocalDatabase(Path(config.database_path).expanduser())
-        store = SecretStore(db)
+
+        if db is None:
+            from gobby.storage.database import LocalDatabase
+
+            # Must match the resolved config's DB path — LocalDatabase() defaults
+            # to ~/.gobby/gobby-hub.db and would silently bypass a custom path.
+            db = LocalDatabase(Path(config.database_path).expanduser())
+            owns_db = True
+        if secret_store is None:
+            from gobby.storage.secrets import SecretStore
+
+            secret_store = SecretStore(db)
     except Exception as e:
         click.echo(f"  Warning: Could not initialize hub key prompt: {e}")
         return result
+    store = secret_store
 
-    # Flatten to (hub_name, auth_key_name) so mypy sees auth_key_name as str.
-    auth_hubs: list[tuple[str, str]] = [
-        (name, cfg.auth_key_name) for name, cfg in skills_cfg.hubs.items() if cfg.auth_key_name
-    ]
-    pending: list[tuple[str, str]] = [
-        (name, key) for name, key in auth_hubs if not store.exists(key)
-    ]
-    result["already_configured"] = len(auth_hubs) - len(pending)
+    try:
+        # Flatten to (hub_name, auth_key_name) so mypy sees auth_key_name as str.
+        auth_hubs: list[tuple[str, str]] = [
+            (name, cfg.auth_key_name) for name, cfg in skills_cfg.hubs.items() if cfg.auth_key_name
+        ]
+        pending: list[tuple[str, str]] = [
+            (name, key) for name, key in auth_hubs if not store.exists(key)
+        ]
+        result["already_configured"] = len(auth_hubs) - len(pending)
 
-    if no_interactive:
-        result["unresolved"] = list(pending)
-        return result
+        if no_interactive:
+            result["unresolved"] = list(pending)
+            return result
 
-    if not pending:
-        return result
+        if not pending:
+            return result
 
-    click.echo("")
-    click.echo("-" * 40)
-    click.echo("Skill Hub API Keys (optional)")
-    click.echo("-" * 40)
-    click.echo("These enable authenticated skill hubs. Press Enter to skip.")
-    click.echo("")
+        click.echo("")
+        click.echo("-" * 40)
+        click.echo("Skill Hub API Keys (optional)")
+        click.echo("-" * 40)
+        click.echo("These enable authenticated skill hubs. Press Enter to skip.")
+        click.echo("")
 
-    for idx, (hub_name, auth_key_name) in enumerate(pending):
-        try:
-            value = click.prompt(
-                f"  {hub_name} ({auth_key_name})",
-                default="",
-                hide_input=True,
-                show_default=False,
-            )
-        except (click.Abort, EOFError):
-            click.echo("")
-            # Remaining pending hubs become unresolved.
-            for rh_name, rh_key in pending[idx:]:
-                result["unresolved"].append((rh_name, rh_key))
-            break
-
-        if value.strip():
+        for idx, (hub_name, auth_key_name) in enumerate(pending):
             try:
-                store.set(
-                    name=auth_key_name,
-                    plaintext_value=value.strip(),
-                    category="integration",
-                    description=f"API key for {hub_name} skill hub",
+                value = click.prompt(
+                    f"  {hub_name} ({auth_key_name})",
+                    default="",
+                    hide_input=True,
+                    show_default=False,
                 )
-                click.echo(f"    Stored {auth_key_name}")
-                result["stored"] += 1
-            except Exception as e:
-                logger.warning(f"Failed to store {auth_key_name}: {e}")
-                click.echo(f"    Warning: Failed to store {auth_key_name}: {e}")
+            except (click.Abort, EOFError):
+                click.echo("")
+                # Remaining pending hubs become unresolved.
+                for rh_name, rh_key in pending[idx:]:
+                    result["unresolved"].append((rh_name, rh_key))
+                break
+
+            if value.strip():
+                try:
+                    store.set(
+                        name=auth_key_name,
+                        plaintext_value=value.strip(),
+                        category="integration",
+                        description=f"API key for {hub_name} skill hub",
+                    )
+                    click.echo(f"    Stored {auth_key_name}")
+                    result["stored"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to store {auth_key_name}: {e}")
+                    click.echo(f"    Warning: Failed to store {auth_key_name}: {e}")
+                    result["unresolved"].append((hub_name, auth_key_name))
+            else:
+                result["skipped"] += 1
                 result["unresolved"].append((hub_name, auth_key_name))
-        else:
-            result["skipped"] += 1
-            result["unresolved"].append((hub_name, auth_key_name))
+        return result
+    finally:
+        if owns_db and db is not None:
+            db.close()
 
-    return result
 
-
-def _prompt_api_keys(no_interactive: bool = False) -> dict[str, Any]:
+def _prompt_api_keys(
+    no_interactive: bool = False,
+    *,
+    db: LocalDatabase | None = None,
+    secret_store: SecretStore | None = None,
+) -> dict[str, Any]:
     """Prompt for API keys and store them in the secret store.
 
     Skips keys that are already stored or found in environment variables.
@@ -214,64 +239,76 @@ def _prompt_api_keys(no_interactive: bool = False) -> dict[str, Any]:
     if no_interactive:
         return result
 
+    owns_db = False
     try:
-        from gobby.storage.database import LocalDatabase
-        from gobby.storage.secrets import SecretStore
+        if db is None:
+            from gobby.cli.utils import load_full_config_from_db
+            from gobby.storage.database import LocalDatabase
 
-        db = LocalDatabase()
-        store = SecretStore(db)
+            config = load_full_config_from_db()
+            db = LocalDatabase(Path(config.database_path).expanduser())
+            owns_db = True
+        if secret_store is None:
+            from gobby.storage.secrets import SecretStore
+
+            secret_store = SecretStore(db)
     except Exception as e:
         click.echo(f"  Warning: Could not initialize secret store: {e}")
         return result
+    store = secret_store
 
-    click.echo("")
-    click.echo("-" * 40)
-    click.echo("API Keys (optional)")
-    click.echo("-" * 40)
-    click.echo("These enable external integrations. Press Enter to skip any.")
-    click.echo("")
+    try:
+        click.echo("")
+        click.echo("-" * 40)
+        click.echo("API Keys (optional)")
+        click.echo("-" * 40)
+        click.echo("These enable external integrations. Press Enter to skip any.")
+        click.echo("")
 
-    for key_info in _API_KEY_PROMPTS:
-        secret_name = key_info["secret_name"]
-        env_var = key_info["env_var"]
-        label = key_info["label"]
+        for key_info in _API_KEY_PROMPTS:
+            secret_name = key_info["secret_name"]
+            env_var = key_info["env_var"]
+            label = key_info["label"]
 
-        # Check if already stored in secret store
-        if store.exists(secret_name):
-            click.echo(f"  {label}: (already configured)")
-            result["already_configured"] += 1
-            continue
+            # Check if already stored in secret store
+            if store.exists(secret_name):
+                click.echo(f"  {label}: (already configured)")
+                result["already_configured"] += 1
+                continue
 
-        # Check if set in environment
-        if os.environ.get(env_var):
-            click.echo(f"  {label}: (found in environment)")
-            result["env_found"] += 1
-            continue
+            # Check if set in environment
+            if os.environ.get(env_var):
+                click.echo(f"  {label}: (found in environment)")
+                result["env_found"] += 1
+                continue
 
-        # Prompt for value
-        try:
-            value = click.prompt(f"  {label}", default="", hide_input=True, show_default=False)
-        except (click.Abort, EOFError):
-            click.echo("")
-            break
-
-        if value.strip():
+            # Prompt for value
             try:
-                store.set(
-                    name=secret_name,
-                    plaintext_value=value.strip(),
-                    category=key_info["category"],
-                    description=key_info["description"],
-                )
-                click.echo(f"    Stored {secret_name}")
-                result["stored"] += 1
-            except Exception as e:
-                logger.warning(f"Failed to store {secret_name}: {e}")
-                click.echo(f"    Warning: Failed to store {secret_name}: {e}")
-        else:
-            result["skipped"] += 1
+                value = click.prompt(f"  {label}", default="", hide_input=True, show_default=False)
+            except (click.Abort, EOFError):
+                click.echo("")
+                break
 
-    return result
+            if value.strip():
+                try:
+                    store.set(
+                        name=secret_name,
+                        plaintext_value=value.strip(),
+                        category=key_info["category"],
+                        description=key_info["description"],
+                    )
+                    click.echo(f"    Stored {secret_name}")
+                    result["stored"] += 1
+                except Exception as e:
+                    logger.warning(f"Failed to store {secret_name}: {e}")
+                    click.echo(f"    Warning: Failed to store {secret_name}: {e}")
+            else:
+                result["skipped"] += 1
+
+        return result
+    finally:
+        if owns_db and db is not None:
+            db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +567,9 @@ def _run_voice_install(
     results: dict[str, dict[str, Any]],
     voice_flag: bool = False,
     no_interactive: bool = False,
+    *,
+    db: LocalDatabase | None = None,
+    secret_store: SecretStore | None = None,
 ) -> None:
     """Interactive voice chat setup.
 
@@ -542,6 +582,7 @@ def _run_voice_install(
         no_interactive: If True, skip the prompt (only install if voice_flag is set)
     """
     install_voice = voice_flag
+    del secret_store
 
     if not install_voice and not no_interactive:
         click.echo("-" * 40)
@@ -569,6 +610,7 @@ def _run_voice_install(
     import subprocess
     import sys
 
+    owns_db = False
     try:
         proc = subprocess.run(
             [
@@ -592,9 +634,16 @@ def _run_voice_install(
             # Enable voice in daemon config
             try:
                 from gobby.storage.config_store import ConfigStore
-                from gobby.storage.database import LocalDatabase
 
-                ConfigStore(LocalDatabase()).set("voice.enabled", True)
+                if db is None:
+                    from gobby.cli.utils import load_full_config_from_db
+                    from gobby.storage.database import LocalDatabase
+
+                    config = load_full_config_from_db()
+                    db = LocalDatabase(Path(config.database_path).expanduser())
+                    owns_db = True
+
+                ConfigStore(db).set("voice.enabled", True)
                 click.echo("Voice enabled in daemon config")
             except Exception as e:
                 logger.warning(f"Failed to update daemon config: {e}")
@@ -616,6 +665,9 @@ def _run_voice_install(
     except Exception as e:
         click.echo(f"Failed: {e}", err=True)
         results["voice"] = {"success": False, "error": str(e)}
+    finally:
+        if owns_db and db is not None:
+            db.close()
 
     click.echo("")
 
@@ -669,6 +721,9 @@ def _echo_migration_notice(project_path: Path) -> None:
 def _echo_install_summary(
     results: dict[str, dict[str, Any]],
     no_interactive_flag: bool,
+    *,
+    db: LocalDatabase | None = None,
+    secret_store: SecretStore | None = None,
 ) -> bool:
     """Print install summary, next steps, and API key prompts. Returns True if all succeeded."""
     click.echo("=" * 60)
@@ -689,8 +744,16 @@ def _echo_install_summary(
     click.echo("  2. Start a new session in your AI coding CLI")
     click.echo("  3. Your sessions will now be tracked locally")
 
-    api_key_result = _prompt_api_keys(no_interactive=no_interactive_flag)
-    hub_key_result = _prompt_hub_api_keys(no_interactive=no_interactive_flag)
+    api_key_result = _prompt_api_keys(
+        no_interactive=no_interactive_flag,
+        db=db,
+        secret_store=secret_store,
+    )
+    hub_key_result = _prompt_hub_api_keys(
+        no_interactive=no_interactive_flag,
+        db=db,
+        secret_store=secret_store,
+    )
 
     mcp_nothing_configured = (
         api_key_result["stored"] == 0

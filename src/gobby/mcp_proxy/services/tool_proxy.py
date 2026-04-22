@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
     from gobby.mcp_proxy.services.fallback import ToolFallbackResolver
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
+    from gobby.sessions.manager import SessionManager
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -77,7 +78,7 @@ class ToolProxyService:
         self._hook_manager_resolver = hook_manager_resolver
 
     @property
-    def session_manager(self) -> Any | None:
+    def session_manager(self) -> SessionManager | None:
         """Expose the MCP manager session manager for shared context helpers."""
         return getattr(self._mcp_manager, "session_manager", None)
 
@@ -288,9 +289,7 @@ class ToolProxyService:
         metadata: dict[str, Any] = {"_platform_session_id": effective_session_id}
 
         hook_manager = self._resolve_hook_manager()
-        session_storage = (
-            getattr(hook_manager, "_session_storage", None) if hook_manager else None
-        )
+        session_storage = getattr(hook_manager, "_session_storage", None) if hook_manager else None
         session = None
         if session_storage is not None:
             try:

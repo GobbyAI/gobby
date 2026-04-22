@@ -6,12 +6,14 @@ import { ChatPage } from "../ChatPage";
 
 const {
   clearArtifactsSpy,
+  isPinnedState,
   scrollToBottomSpy,
   setIsPinnedSpy,
   togglePanelSpy,
   isMobileState,
 } = vi.hoisted(() => ({
   clearArtifactsSpy: vi.fn(),
+  isPinnedState: { value: false },
   scrollToBottomSpy: vi.fn(),
   setIsPinnedSpy: vi.fn(),
   togglePanelSpy: vi.fn(),
@@ -230,7 +232,7 @@ vi.mock("../../activity/useActivityPanel", () => ({
   useActivityPanel: () => ({
     activeTab: "artifacts",
     closeIfAutoOpened: vi.fn(),
-    isPinned: false,
+    isPinned: isPinnedState.value,
     panelWidth: 320,
     setActiveTab: vi.fn(),
     setIsPinned: setIsPinnedSpy,
@@ -327,6 +329,7 @@ describe("ChatPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     isMobileState.value = false;
+    isPinnedState.value = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -918,8 +921,27 @@ describe("ChatPage", () => {
     expect(setIsPinnedSpy).not.toHaveBeenCalled();
   });
 
-  it("closes the activity panel after plan changes are requested on mobile", async () => {
+  it("does not unpin on mobile when the activity panel is already unpinned", async () => {
     isMobileState.value = true;
+
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+    });
+
+    expect(setIsPinnedSpy).not.toHaveBeenCalled();
+  });
+
+  it("closes the activity panel after plan changes are requested on mobile when pinned", async () => {
+    isMobileState.value = true;
+    isPinnedState.value = true;
     const onRequestPlanChanges = vi.fn();
 
     render(

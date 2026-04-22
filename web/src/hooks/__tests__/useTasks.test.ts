@@ -10,6 +10,23 @@ import { useTasks } from '../useTasks'
 
 let mockFetch: MockFetchInstance
 
+function jsonResponse(data: unknown): Response {
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 const SAMPLE_TASKS = [
   {
     id: 'task-1',
@@ -145,6 +162,69 @@ describe('useTasks', () => {
     )
     expect(result.current.allTasks).toHaveLength(4)
     expect(result.current.hasMore).toBe(false)
+  })
+
+  it('ignores stale loadMore responses after a refetch replaces the list', async () => {
+    mockFetch.restore()
+
+    const firstPage = {
+      ...TASK_LIST_RESPONSE,
+      tasks: SAMPLE_TASKS,
+      total: 3,
+    }
+    const refreshedPage = {
+      ...TASK_LIST_RESPONSE,
+      tasks: [{ ...SAMPLE_TASKS[0], id: 'task-refresh', ref: '#104', seq_num: 104 }],
+      total: 1,
+    }
+    const staleLoadMore = {
+      ...TASK_LIST_RESPONSE,
+      tasks: [{ ...SAMPLE_TASKS[1], id: 'task-stale', ref: '#105', seq_num: 105 }],
+      total: 3,
+    }
+
+    const deferredLoadMore = createDeferred<Response>()
+    let offsetZeroCallCount = 0
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('offset=2')) {
+        return deferredLoadMore.promise
+      }
+      if (url.includes('offset=0')) {
+        offsetZeroCallCount += 1
+        return Promise.resolve(jsonResponse(offsetZeroCallCount === 1 ? firstPage : refreshedPage))
+      }
+      return Promise.reject(new Error(`Unexpected URL: ${url}`))
+    })
+
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    window.fetch = fetchMock as unknown as typeof fetch
+
+    const { result } = renderHook(() => useTasks(undefined, 2))
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.allTasks.map(task => task.id)).toEqual(['task-1', 'task-2'])
+
+    act(() => {
+      void result.current.loadMore()
+    })
+
+    await waitFor(() => expect(result.current.isLoadingMore).toBe(true))
+
+    act(() => {
+      result.current.refreshTasks()
+    })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.allTasks.map(task => task.id)).toEqual(['task-refresh'])
+
+    await act(async () => {
+      deferredLoadMore.resolve(jsonResponse(staleLoadMore))
+      await Promise.resolve()
+    })
+
+    expect(result.current.allTasks.map(task => task.id)).toEqual(['task-refresh'])
+    expect(result.current.total).toBe(1)
   })
 
   it('re-fetches when filters change', async () => {

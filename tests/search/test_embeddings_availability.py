@@ -93,6 +93,54 @@ class TestIsEmbeddingReachable:
     """Probe behavior — real network is mocked."""
 
     @pytest.mark.asyncio
+    async def test_probe_uses_shared_lock_for_cache_read_and_write(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class TrackingLock:
+            def __init__(self) -> None:
+                self.enter_count = 0
+
+            def __enter__(self) -> TrackingLock:
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        lock = TrackingLock()
+        factory, _client = _mock_httpx_client(status=200)
+
+        with (
+            patch("gobby.search.embeddings._get_lock", return_value=lock),
+            patch("gobby.search.embeddings.httpx.AsyncClient", factory),
+        ):
+            assert await is_embedding_reachable(api_base="http://localhost:11434/v1") is True
+
+        assert lock.enter_count == 2
+
+    def test_clear_reachability_cache_uses_shared_lock(self) -> None:
+        class TrackingLock:
+            def __init__(self) -> None:
+                self.enter_count = 0
+
+            def __enter__(self) -> TrackingLock:
+                self.enter_count += 1
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        lock = TrackingLock()
+        _reachability_cache[("http://localhost:11434/v1", False)] = MagicMock()
+
+        with patch("gobby.search.embeddings._get_lock", return_value=lock):
+            _clear_reachability_cache()
+
+        assert lock.enter_count == 1
+        assert _reachability_cache == {}
+
+    @pytest.mark.asyncio
     async def test_not_configured_short_circuits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)

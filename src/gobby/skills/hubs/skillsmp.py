@@ -157,11 +157,12 @@ class SkillsMPProvider(HubProvider):
                 "SkillsMP API key not configured. "
                 "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
             )
+        page = 1 if limit <= 0 else (offset // limit) + 1
 
         result = await self._make_request(
             method="GET",
             endpoint="/skills/search",
-            params={"q": "", "limit": limit, "offset": offset},
+            params={"q": "", "limit": limit, "page": page},
         )
 
         return [self._skill_to_info(skill) for skill in self._unwrap_skills(result)]

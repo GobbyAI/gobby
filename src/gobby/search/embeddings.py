@@ -41,6 +41,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any
 from urllib.parse import urlparse
 
@@ -71,19 +72,14 @@ class _CacheEntry:
 
 
 _cache: dict[str, _CacheEntry] = {}
-_cache_lock: asyncio.Lock | None = None
+_cache_lock: RLock | None = None
 
 
-def _get_lock() -> asyncio.Lock:
-    """Lazy-init the asyncio lock.
-
-    Safe because asyncio is single-threaded: concurrent coroutines in the
-    same event loop cannot interleave during this synchronous function body,
-    so at most one Lock instance is ever created.
-    """
+def _get_lock() -> RLock:
+    """Lazy-init the shared cache lock."""
     global _cache_lock  # noqa: PLW0603
     if _cache_lock is None:
-        _cache_lock = asyncio.Lock()
+        _cache_lock = RLock()
     return _cache_lock
 
 
@@ -114,7 +110,8 @@ def _enforce_max_size() -> None:
 
 def clear_cache() -> None:
     """Clear the embedding cache. Useful for testing."""
-    _cache.clear()
+    with _get_lock():
+        _cache.clear()
 
 
 def _needs_nomic_prefix(model: str) -> bool:
@@ -182,7 +179,7 @@ async def generate_embeddings(
     lock = _get_lock()
 
     # --- Phase 1: Check cache for each text ---
-    async with lock:
+    with lock:
         _evict_expired()
         results: list[list[float] | None] = []
         miss_indices: list[int] = []
@@ -224,7 +221,7 @@ async def generate_embeddings(
         )
 
         # --- Phase 3: Store results in cache ---
-        async with lock:
+        with lock:
             now = time.monotonic()
             expires_at = now + _CACHE_TTL
 
@@ -542,7 +539,8 @@ _reachability_cache: dict[tuple[str, bool], _ReachabilityEntry] = {}
 
 def _clear_reachability_cache() -> None:
     """Clear the reachability probe cache. Exposed for tests."""
-    _reachability_cache.clear()
+    with _get_lock():
+        _reachability_cache.clear()
 
 
 def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, bool]:
@@ -550,15 +548,15 @@ def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, b
     return (api_base or "openai-default", has_key)
 
 
-def _prune_reachability_cache(now: float, cache_ttl: float) -> None:
-    """Drop stale entries and bound the cache size."""
+def _prune_reachability_cache(now: float, cache_ttl: float, *, incoming: int = 0) -> None:
+    """Drop stale entries and bound the cache size while holding the lock."""
     stale_keys = [
         key for key, entry in _reachability_cache.items() if (now - entry.checked_at) >= cache_ttl
     ]
     for key in stale_keys:
         del _reachability_cache[key]
 
-    overflow = len(_reachability_cache) - _REACHABILITY_CACHE_MAX_SIZE
+    overflow = len(_reachability_cache) + incoming - _REACHABILITY_CACHE_MAX_SIZE
     if overflow <= 0:
         return
 
@@ -607,11 +605,13 @@ async def is_embedding_reachable(
     effective_key = api_key or os.environ.get("OPENAI_API_KEY")
     has_key = bool(effective_key)
     cache_key = _reachability_cache_key(api_base, has_key)
+    lock = _get_lock()
 
     now = time.monotonic()
-    cached = _reachability_cache.get(cache_key)
-    if cached is not None and (now - cached.checked_at) < cache_ttl:
-        return cached.reachable
+    with lock:
+        cached = _reachability_cache.get(cache_key)
+        if cached is not None and (now - cached.checked_at) < cache_ttl:
+            return cached.reachable
 
     base = (api_base or "https://api.openai.com/v1").rstrip("/")
     url = f"{base}/models"
@@ -634,6 +634,11 @@ async def is_embedding_reachable(
         logger.debug("Embedding probe failed: url=%s err=%r", url, exc)
         reachable = False
 
-    _reachability_cache[cache_key] = _ReachabilityEntry(reachable=reachable, checked_at=now)
-    _prune_reachability_cache(now, cache_ttl)
+    checked_at = time.monotonic()
+    with lock:
+        _prune_reachability_cache(checked_at, cache_ttl, incoming=1)
+        _reachability_cache[cache_key] = _ReachabilityEntry(
+            reachable=reachable,
+            checked_at=checked_at,
+        )
     return reachable

@@ -192,7 +192,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         },
         { total: 0, passed: 0, failed: 0 },
       ),
-    [detailSteps],
+    [detailExec?.steps],
   )
 
   if (loading && executions.length === 0) {

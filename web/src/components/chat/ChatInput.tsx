@@ -470,9 +470,12 @@ export function ChatInput({
   useEffect(() => {
     if (!sttEnabled) {
       latchedRef.current = false
+      if (pendingSttStart) {
+        setPendingSttStart(false)
+      }
       resetPTTGesture()
     }
-  }, [sttEnabled, resetPTTGesture])
+  }, [pendingSttStart, sttEnabled, resetPTTGesture])
 
   useEffect(() => {
     if (!pendingSttStart) return

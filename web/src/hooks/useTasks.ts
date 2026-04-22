@@ -137,6 +137,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestVersionRef = useRef(0)
   const [filters, setFilters] = useState<TaskFilters>({
     status: null,
     priority: null,
@@ -176,10 +177,12 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
 
   // Fetch first page (replaces accumulated tasks)
   const fetchTasks = useCallback(async () => {
+    const requestVersion = ++requestVersionRef.current
     try {
       const baseUrl = getBaseUrl()
       const params = buildParams(0, pageSize)
       const response = await fetch(`${baseUrl}/api/tasks?${params}`)
+      if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
         setAllTasks(data.tasks || [])
@@ -189,21 +192,26 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
         setError(`Failed to fetch tasks (${response.status})`)
       }
     } catch (e) {
+      if (requestVersionRef.current !== requestVersion) return
       console.error('Failed to fetch tasks:', e)
       setError('Failed to fetch tasks')
     } finally {
-      setIsLoading(false)
+      if (requestVersionRef.current === requestVersion) {
+        setIsLoading(false)
+      }
     }
   }, [buildParams, pageSize])
 
   // Fetch the next page and append to allTasks (used for "Load more")
   const loadMore = useCallback(async () => {
     if (isLoadingMore) return
+    const requestVersion = requestVersionRef.current
     setIsLoadingMore(true)
     try {
       const baseUrl = getBaseUrl()
       const params = buildParams(allTasks.length, pageSize)
       const response = await fetch(`${baseUrl}/api/tasks?${params}`)
+      if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
         const incoming = data.tasks || []
@@ -224,6 +232,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
         setError(`Failed to load more tasks (${response.status})`)
       }
     } catch (e) {
+      if (requestVersionRef.current !== requestVersion) return
       console.error('Failed to load more tasks:', e)
       setError('Failed to load more tasks')
     } finally {

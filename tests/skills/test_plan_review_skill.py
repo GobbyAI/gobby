@@ -42,7 +42,7 @@ class TestPlanReviewFrontmatter:
 class TestPlanReviewContent:
     @pytest.fixture(scope="class")
     def body(self) -> str:
-        return SKILL_PATH.read_text()
+        return SKILL_PATH.read_text(encoding="utf-8")
 
     # --- attitude -----------------------------------------------------------
 
@@ -97,10 +97,10 @@ class TestPlanReviewContent:
         """These are contract-level and must all be flagged as blocking.
         Silent drift here breaks the expand-task pipeline on accepted plans."""
         for check in (
-            "explicit test tasks",      # TDD sandwich model
-            "file path",                # concrete target for code/config
-            "refactor",                 # canonical category (added in #12038)
-            "Phase N: Name",            # canonical phase heading
+            "explicit test tasks",  # TDD sandwich model
+            "file path",  # concrete target for code/config
+            "refactor",  # canonical category (added in #12038)
+            "Phase N: Name",  # canonical phase heading
         ):
             assert check in body, f"Missing gobby-specific check: {check}"
 

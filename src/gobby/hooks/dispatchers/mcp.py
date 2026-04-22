@@ -258,9 +258,7 @@ def dispatch_mcp_calls(
             )
 
             proxy = _get_proxy()
-            session_manager = None
-            if proxy and hasattr(proxy, "_mcp_manager"):
-                session_manager = getattr(proxy._mcp_manager, "session_manager", None)
+            session_manager = proxy.session_manager if proxy else None
 
             tokens = resolve_and_seed_contexts(
                 session_ref=_sid or None,

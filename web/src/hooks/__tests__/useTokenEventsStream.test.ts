@@ -47,6 +47,22 @@ describe("useTokenEventsStream", () => {
     expect(result.current.events).toEqual([]);
   });
 
+  it("returns a stable shared empty array when the viewed session changes", () => {
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useTokenEventsStream({ sessionId, limit: 50 }),
+      {
+        initialProps: { sessionId: "sess-1" },
+      },
+    );
+
+    rerender({ sessionId: "sess-2" });
+    const firstSharedEmpty = result.current.events;
+
+    rerender({ sessionId: "sess-3" });
+
+    expect(result.current.events).toBe(firstSharedEmpty);
+  });
+
   it("dedupes appended events against the latest state", () => {
     const event = makeEvent({ message_id: "msg-1" });
 
