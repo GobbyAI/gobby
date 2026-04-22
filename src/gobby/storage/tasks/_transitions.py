@@ -247,10 +247,10 @@ def mark_task_review_rejected(
 ) -> Task:
     """Reject a task after review and return it to open status."""
     task = get_task(db, task_id)
-    if task.status != "needs_review":
+    if task.status not in ("needs_review", "in_progress"):
         raise ValueError(
             f"Cannot reject review for task with status '{task.status}'. "
-            "Task must be in 'needs_review' status to reject review."
+            "Task must be in 'needs_review' or 'in_progress' status to reject review."
         )
 
     normalized_round = None

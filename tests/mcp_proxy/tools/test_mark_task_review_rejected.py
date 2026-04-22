@@ -55,6 +55,25 @@ def sample_task_open():
 
 
 @pytest.fixture
+def sample_task_in_progress():
+    return Task(
+        id="550e8400-e29b-41d4-a716-446655440000",
+        project_id="proj-1",
+        title="Planning Task",
+        status="in_progress",
+        priority=2,
+        task_type="task",
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        description="Existing description",
+        labels=["planning-round:0"],
+        seq_num=42,
+        claimed_by_session_id="session-abc",
+        assignee="session-abc",
+    )
+
+
+@pytest.fixture
 def lifecycle_registry(mock_task_manager, mock_sync_manager):
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
@@ -80,6 +99,33 @@ class TestMarkTaskReviewRejected:
             sample_task_needs_review,
             status="open",
             labels=["planning-round:1"],
+        )
+        mock_task_manager.mark_task_review_rejected.return_value = rejected_task
+
+        tool_func = lifecycle_registry._tools["mark_task_review_rejected"].func
+        result = tool_func(
+            task_id="#42",
+            rejection_notes="Need better sequencing",
+            round=1,
+        )
+
+        assert "error" not in result
+        mock_task_manager.mark_task_review_rejected.assert_called_once_with(
+            "#42",
+            rejection_notes="Need better sequencing",
+            round=1,
+        )
+
+    def test_reject_in_progress_task(
+        self, lifecycle_registry, mock_task_manager, sample_task_in_progress
+    ) -> None:
+        mock_task_manager.get_task.return_value = sample_task_in_progress
+        rejected_task = replace(
+            sample_task_in_progress,
+            status="open",
+            labels=["planning-round:1"],
+            claimed_by_session_id=None,
+            assignee=None,
         )
         mock_task_manager.mark_task_review_rejected.return_value = rejected_task
 

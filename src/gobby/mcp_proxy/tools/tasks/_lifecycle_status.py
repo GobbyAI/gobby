@@ -365,10 +365,10 @@ def register_mark_task_review_rejected(
             return {"error": f"Task {task_id} not found"}
         prior_assignee = get_claimed_session_id(task)
 
-        if task.status != "needs_review":
+        if task.status not in ("needs_review", "in_progress"):
             return {
                 "error": f"Cannot reject review for task with status '{task.status}'. "
-                "Task must be in 'needs_review' status to reject review."
+                "Task must be in 'needs_review' or 'in_progress' status to reject review."
             }
 
         try:
