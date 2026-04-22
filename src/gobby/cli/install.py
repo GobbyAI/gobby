@@ -265,8 +265,15 @@ def install(
         config = load_full_config_from_db()
         db = LocalDatabase(Path(config.database_path).expanduser())
         secret_store = SecretStore(db)
-    except Exception as exc:
-        logger.warning("Failed to initialize install database/secret store: %s", exc)
+    except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
+        # Missing config file, unreadable DB path, malformed config values.
+        # The orchestration proceeds with db/secret_store=None — downstream
+        # steps open their own DB via _ensure_db_and_secrets if they need it.
+        logger.warning(
+            "Failed to initialize install database/secret store (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
 
     try:
         # Standard CLIs (claude, gemini, qwen, codex)
