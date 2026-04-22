@@ -55,16 +55,22 @@ vi.mock('../../../hooks/useConfirmDialog', () => ({
   }),
 }))
 
-const fetchMock = vi.fn(async (_input?: RequestInfo | URL) =>
+const defaultFetchImpl = async (_input?: RequestInfo | URL) =>
   new Response(JSON.stringify([]), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
-  }),
-)
+  })
+
+const fetchMock = vi.fn(defaultFetchImpl)
 
 describe('FilesTab', () => {
   beforeEach(() => {
-    fetchMock.mockClear()
+    // mockReset wipes BOTH call history AND any per-test mockImplementation
+    // overrides so the custom /api/files/tree and /api/files/read handlers set
+    // in one test don't leak into the next. Re-apply the default empty-list
+    // implementation afterwards so tests that rely on the no-op stub still pass.
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(defaultFetchImpl)
     vi.stubGlobal('fetch', fetchMock)
     window.localStorage.clear()
   })

@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
+import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
@@ -335,6 +335,16 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
     return () => window.removeEventListener('click', handler)
   }, [ctxMenu])
 
+  // Hooks must be declared before any early returns (rules-of-hooks).
+  const treePaneStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!selectedFile) {
+      return undefined
+    }
+    return useHorizontal
+      ? { flex: 'none', width: `${leftWidth}px` }
+      : { flex: 'none', height: `${topHeight}%` }
+  }, [selectedFile, useHorizontal, leftWidth, topHeight])
+
   if (loading) return <div className="activity-tab-empty"><p>Loading files...</p></div>
   if (!projectId) return <div className="activity-tab-empty"><p>No project selected</p></div>
 
@@ -428,15 +438,6 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
   }
 
   const language = selectedFile ? detectLanguage(selectedFile) : 'text'
-  const getTreePaneStyle = (): CSSProperties | undefined => {
-    if (!selectedFile) {
-      return undefined
-    }
-
-    return useHorizontal
-      ? { flex: 'none', width: `${leftWidth}px` }
-      : { flex: 'none', height: `${topHeight}%` }
-  }
 
   return (
     <div className={`flex h-full ${useHorizontal ? 'flex-row' : 'flex-col'}`}>
@@ -447,7 +448,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             ? useHorizontal ? 'border-r border-border' : 'border-b border-border'
             : 'flex-1'
         }`}
-        style={getTreePaneStyle()}
+        style={treePaneStyle}
       >
         {rootEntries.length === 0 ? (
           <div className="activity-tab-empty"><p>No files</p></div>

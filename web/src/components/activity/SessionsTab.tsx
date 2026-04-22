@@ -119,7 +119,10 @@ function renderBadges(entry: WatchingSessionEntry) {
   return (
     <>
       {badges.map((badge) => (
-        <span key={`${badge.className}:${badge.label}`} className={`session-kind-badge ${badge.className}`}>
+        <span
+          key={`${badge.className}:${badge.label}`}
+          className={`session-kind-badge ${badge.className}`}
+        >
           {badge.label}
         </span>
       ))}

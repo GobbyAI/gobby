@@ -52,6 +52,16 @@ interface AskUserQuestionItem {
   multiSelect: boolean
 }
 
+// Shared <pre> styles used across tool-result fallbacks and error blocks.
+// Extracted so the long className lists don't drift between call-sites
+// (three result-fallback places and two error-block places).
+const TOOL_RESULT_PRE_CLASS =
+  'bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto ' +
+  'overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs'
+const TOOL_ERROR_PRE_CLASS =
+  'bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words ' +
+  'overflow-x-hidden text-destructive-foreground'
+
 const highlighterTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
@@ -338,7 +348,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
         {exitCode !== 0 && (
           <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
         )}
-        <pre className="bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs">
+        <pre className={TOOL_RESULT_PRE_CLASS}>
           {resultStr}
         </pre>
       </div>
@@ -377,7 +387,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
       {resultStr}
     </SyntaxHighlighter>
   ) : (
-    <pre className="bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs">
+    <pre className={TOOL_RESULT_PRE_CLASS}>
       {resultStr}
     </pre>
   )
@@ -473,7 +483,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           {call.status === 'error' && call.error && (
             <div>
               <div className="text-destructive-foreground mb-1 font-medium">Error</div>
-              <pre className="bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words overflow-x-hidden text-destructive-foreground">
+              <pre className={TOOL_ERROR_PRE_CLASS}>
                 {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
               </pre>
             </div>
@@ -798,7 +808,7 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
           {call.status === 'error' && call.error && (
             <div>
               <div className="text-destructive-foreground mb-1 font-medium mt-2">Error</div>
-              <pre className="bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words overflow-x-hidden text-destructive-foreground">
+              <pre className={TOOL_ERROR_PRE_CLASS}>
                 {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
               </pre>
             </div>

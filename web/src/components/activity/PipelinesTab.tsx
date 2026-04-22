@@ -176,26 +176,28 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     }
   }, [detailExec, executions, fetchDetail])
 
-  const detailSteps = detailExec?.steps ?? []
-  const { total: detailStepCount, passed: passedStepCount, failed: failedStepCount } = useMemo(
-    () => {
-      const steps = detailExec?.steps ?? []
-      return steps.reduce(
-        (counts, step) => {
-          counts.total += 1
-          if (step.status === 'completed' || step.status === 'success') {
-            counts.passed += 1
-          }
-          if (step.status === 'failed' || step.status === 'error') {
-            counts.failed += 1
-          }
-          return counts
-        },
-        { total: 0, passed: 0, failed: 0 },
-      )
-    },
-    [detailExec?.steps],
-  )
+  const {
+    steps: detailSteps,
+    total: detailStepCount,
+    passed: passedStepCount,
+    failed: failedStepCount,
+  } = useMemo(() => {
+    const steps: StepData[] = detailExec?.steps ?? []
+    const counts = steps.reduce(
+      (acc, step) => {
+        acc.total += 1
+        if (step.status === 'completed' || step.status === 'success') {
+          acc.passed += 1
+        }
+        if (step.status === 'failed' || step.status === 'error') {
+          acc.failed += 1
+        }
+        return acc
+      },
+      { total: 0, passed: 0, failed: 0 },
+    )
+    return { steps, ...counts }
+  }, [detailExec?.steps])
 
   if (loading && executions.length === 0) {
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>

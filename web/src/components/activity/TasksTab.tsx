@@ -703,11 +703,19 @@ export const TasksTab = memo(function TasksTab({
       const isAssigning = assigningTaskId === task.id;
       const isSelected = selectedTaskId === task.id;
 
+      const taskRowClass = [
+        "activity-task-row",
+        isSelected && "activity-task-row--selected",
+        getTaskBucket(task) === "closed" && "activity-task-row--closed",
+      ]
+        .filter(Boolean)
+        .join(" ")
+
       return (
         <div
           key={task.id}
           style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
-          className={`activity-task-row${isSelected ? " activity-task-row--selected" : ""}${getTaskBucket(task) === "closed" ? " activity-task-row--closed" : ""}`}
+          className={taskRowClass}
           role="treeitem"
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}

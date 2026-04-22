@@ -690,6 +690,8 @@ export function ChatInput({
                   </div>
                 )}
                 <button
+                  type="button"
+                  aria-label={`Remove ${qf.file.name}`}
                   className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
                   onClick={() => removeFile(qf.id)}
                 >
@@ -750,6 +752,11 @@ export function ChatInput({
                 <Button
                   size="icon"
                   variant="ghost"
+                  // Permit "stop speaking" even when the composer is disabled
+                  // (e.g. viewing a read-only session) — a trailing TTS playback
+                  // from the prior turn should always be interruptible. Only
+                  // block NEW starts on disabled.
+                  disabled={disabled && !isSpeaking}
                   onClick={() => {
                     if (isSpeaking) {
                       stopTTS?.()
@@ -778,6 +785,9 @@ export function ChatInput({
                 <Button
                   size="icon"
                   variant="ghost"
+                  // Stop-in-flight (ship audio + disable) is always allowed;
+                  // starting a NEW recording requires the composer to be enabled.
+                  disabled={disabled && !isRecording}
                   onClick={async () => {
                     try {
                       if (isRecording) {
