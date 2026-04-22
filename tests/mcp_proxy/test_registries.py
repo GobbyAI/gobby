@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.storage.worktrees import LocalWorktreeManager
 
 pytestmark = pytest.mark.unit
 
@@ -129,6 +130,51 @@ def test_setup_with_worktree_storage_only() -> None:
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
     assert "gobby-worktrees" in registry_names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_ref_kind", ["hash", "uuid"], ids=["hash-ref", "uuid-ref"])
+async def test_setup_worktrees_registry_claim_resolves_session_refs(
+    temp_db, project_manager, session_manager, session_ref_kind: str
+) -> None:
+    """Worktree registry wiring resolves shorthand and UUID session refs."""
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+    worktree_storage = LocalWorktreeManager(temp_db)
+    project = project_manager.create(name="test-project", repo_path="/tmp/test-project")
+    session = session_manager.register(
+        machine_id="test-machine",
+        source="codex",
+        project_id=project.id,
+        external_id="ext-test-session",
+        title="Test Session",
+    )
+    worktree = worktree_storage.create(
+        project_id=project.id,
+        branch_name=f"feature/{session_ref_kind}",
+        worktree_path=f"/tmp/worktrees/{session_ref_kind}",
+    )
+
+    manager = setup_internal_registries(
+        _config=mock_config,
+        local_session_manager=session_manager,
+        worktree_storage=worktree_storage,
+        project_id=project.id,
+    )
+
+    registry = manager.get_registry("gobby-worktrees")
+    assert registry is not None
+
+    session_ref = f"#{session.seq_num}" if session_ref_kind == "hash" else session.id
+    result = await registry.call(
+        "claim_worktree",
+        {"worktree_id": worktree.id, "session_id": session_ref},
+    )
+
+    assert result["success"] is True
+    claimed = worktree_storage.get(worktree.id)
+    assert claimed is not None
+    assert claimed.agent_session_id == session.id
 
 
 def test_setup_sessions_with_local_session_manager() -> None:
