@@ -51,7 +51,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "project_id: 'str', max_attempts: 'int' = 30) -> 'tuple[str, str | None] | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'builtins.list[Session]'",
-    "get_session": "(self, session_id: 'str') -> 'dict[str, Any] | None'",
     "get_session_id": "(self, external_id: 'str', source: 'str') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
     "-> 'builtins.list[Session]'",
