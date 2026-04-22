@@ -136,9 +136,26 @@ class TestChatterboxTurboProvider:
         mock_wav.cpu.return_value = mock_wav
         mock_wav.numpy.return_value = np.zeros(100, dtype=np.float32)
 
+        inference_calls: list[dict[str, Any]] = []
+
+        def inference_turbo(*args: object, **kwargs: Any) -> str:
+            inference_calls.append(kwargs.copy())
+            return "speech_tokens"
+
+        def generate(text: str, **kwargs: Any) -> Any:
+            assert text == "Test"
+            assert "audio_prompt_path" not in kwargs
+            mock_model.t3.inference_turbo(
+                t3_cond="conds",
+                text_tokens="tokens",
+                temperature=kwargs["temperature"],
+            )
+            return mock_wav
+
         mock_model = MagicMock()
         mock_model.sr = 24000
-        mock_model.generate.return_value = mock_wav
+        mock_model.t3 = SimpleNamespace(inference_turbo=inference_turbo)
+        mock_model.generate.side_effect = generate
         provider._model = mock_model
         provider._conditioning_ready = True
 
@@ -146,8 +163,65 @@ class TestChatterboxTurboProvider:
             pass
 
         call_kwargs = mock_model.generate.call_args
-        assert "audio_prompt_path" not in call_kwargs.kwargs
         assert call_kwargs.kwargs["temperature"] == voice_config.tts_temperature
+        assert "audio_prompt_path" not in call_kwargs.kwargs
+        assert inference_calls == [
+            {
+                "t3_cond": "conds",
+                "text_tokens": "tokens",
+                "temperature": voice_config.tts_temperature,
+                "max_gen_len": 96,
+            }
+        ]
+        assert mock_model.t3.inference_turbo is inference_turbo
+
+    @pytest.mark.asyncio
+    async def test_synthesize_stream_honors_generation_token_override(self, tmp_path: Path) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        ref = tmp_path / "reference.wav"
+        ref.write_bytes(b"RIFF" + b"\x00" * 100)
+        config = VoiceConfig(
+            enabled=True,
+            tts_enabled=True,
+            tts_provider="chatterbox",
+            tts_reference_audio=str(ref),
+            tts_device="cpu",
+            tts_chatterbox_max_generation_tokens=144,
+        )
+        provider = ChatterboxTurboProvider(config)
+
+        mock_wav = MagicMock()
+        mock_wav.squeeze.return_value = mock_wav
+        mock_wav.cpu.return_value = mock_wav
+        mock_wav.numpy.return_value = np.zeros(100, dtype=np.float32)
+
+        inference_calls: list[dict[str, Any]] = []
+
+        def inference_turbo(*args: object, **kwargs: Any) -> str:
+            inference_calls.append(kwargs.copy())
+            return "speech_tokens"
+
+        def generate(text: str, **kwargs: Any) -> Any:
+            mock_model.t3.inference_turbo(
+                t3_cond="conds",
+                text_tokens="tokens",
+                temperature=kwargs["temperature"],
+            )
+            return mock_wav
+
+        mock_model = MagicMock()
+        mock_model.sr = 24000
+        mock_model.t3 = SimpleNamespace(inference_turbo=inference_turbo)
+        mock_model.generate.side_effect = generate
+        provider._model = mock_model
+        provider._conditioning_ready = True
+
+        async for _ in provider.synthesize_stream("Override"):
+            pass
+
+        assert inference_calls[0]["max_gen_len"] == 144
+        assert provider._status_details()["tts_chatterbox_max_generation_tokens"] == 144
 
     def test_missing_reference_audio_makes_provider_unavailable(
         self, voice_config_no_ref: VoiceConfig

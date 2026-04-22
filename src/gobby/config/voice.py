@@ -43,6 +43,17 @@ class VoiceConfig(BaseModel):
         le=1.0,
         description="TTS sampling randomness (0.1–1.0, Chatterbox).",
     )
+    tts_chatterbox_max_generation_tokens: int = Field(
+        default=96,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum Turbo speech tokens to generate per utterance. Upstream "
+            "Chatterbox defaults to 1000; Gobby defaults to 96 to reduce "
+            "sentence-level latency. Raise this in config store for longer "
+            "utterances that need more headroom."
+        ),
+    )
     tts_device: str = Field(
         default="auto",
         description=(

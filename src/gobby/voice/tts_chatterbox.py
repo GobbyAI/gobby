@@ -163,6 +163,9 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             "tts_reference_audio_exists": self._reference_audio.exists(),
             "tts_reference_audio_conditioned": self._conditioning_ready,
             "tts_device": self._config.tts_device,
+            "tts_chatterbox_max_generation_tokens": (
+                self._config.tts_chatterbox_max_generation_tokens
+            ),
         }
 
     async def warmup(self) -> None:
@@ -204,6 +207,29 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         if message:
             return f"Chatterbox TTS synthesis failed: {message}"
         return "Chatterbox TTS synthesis failed"
+
+    def _generate_with_token_cap(self, model: Any, text: str) -> Any:
+        turbo_decoder = getattr(model, "t3", None)
+        original_inference_turbo = getattr(turbo_decoder, "inference_turbo", None)
+
+        if not callable(original_inference_turbo):
+            return model.generate(
+                text,
+                temperature=self._config.tts_temperature,
+            )
+
+        def _capped_inference_turbo(*args: Any, **kwargs: Any) -> Any:
+            kwargs["max_gen_len"] = self._config.tts_chatterbox_max_generation_tokens
+            return original_inference_turbo(*args, **kwargs)
+
+        turbo_decoder.inference_turbo = _capped_inference_turbo
+        try:
+            return model.generate(
+                text,
+                temperature=self._config.tts_temperature,
+            )
+        finally:
+            turbo_decoder.inference_turbo = original_inference_turbo
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Chatterbox Turbo model (thread-safe, async)."""
@@ -264,15 +290,8 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         model = await self._ensure_model()
 
         try:
-
-            def _generate() -> Any:
-                return model.generate(
-                    text,
-                    temperature=self._config.tts_temperature,
-                )
-
             async with self._synthesis_lock:
-                wav = await asyncio.to_thread(_generate)
+                wav = await asyncio.to_thread(self._generate_with_token_cap, model, text)
 
             # Convert torch.Tensor to PCM int16 bytes
             samples = wav.squeeze().cpu().numpy()
