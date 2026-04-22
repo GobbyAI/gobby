@@ -27,6 +27,21 @@ from gobby.adapters.base import (
 from gobby.adapters.codex_impl.client import (
     CodexAppServerClient,
 )
+from gobby.adapters.codex_impl.item_normalization import (
+    TOOL_ITEM_TYPES as _SHARED_TOOL_ITEM_TYPES,
+)
+from gobby.adapters.codex_impl.item_normalization import (
+    build_tool_event_data as _shared_build_tool_event_data,
+)
+from gobby.adapters.codex_impl.item_normalization import (
+    compose_mcp_tool_name as _shared_compose_mcp_tool_name,
+)
+from gobby.adapters.codex_impl.item_normalization import (
+    extract_completed_item_payload as _shared_extract_completed_item_payload,
+)
+from gobby.adapters.codex_impl.item_normalization import (
+    looks_like_tool_item as _shared_looks_like_tool_item,
+)
 from gobby.adapters.codex_impl.types import (
     CodexThread,
 )
@@ -152,7 +167,7 @@ class CodexAdapter(BaseAdapter):
     }
 
     # Item types that represent tool operations
-    TOOL_ITEM_TYPES = {"commandExecution", "fileChange", "mcpToolCall"}
+    TOOL_ITEM_TYPES = _SHARED_TOOL_ITEM_TYPES
 
     # Events we want to listen for session tracking
     SESSION_TRACKING_EVENTS = [
@@ -177,7 +192,7 @@ class CodexAdapter(BaseAdapter):
     @staticmethod
     def _compose_mcp_tool_name(server_name: str, tool_name: str) -> str:
         """Return the canonical MCP tool name used by shared hook logic."""
-        return f"mcp__{server_name}__{tool_name}"
+        return _shared_compose_mcp_tool_name(server_name, tool_name)
 
     @staticmethod
     def _extract_mcp_tool_name_from_message(message: Any) -> str | None:
@@ -208,111 +223,19 @@ class CodexAdapter(BaseAdapter):
             return {"action": "cancel", "content": None, "_meta": None}
         return {"decision": "decline"}
 
-    @staticmethod
-    def _extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
+    @classmethod
+    def _extract_completed_item_payload(cls, params: dict[str, Any]) -> dict[str, Any]:
         """Return the best-effort tool item payload from an item/completed event."""
-        item = params.get("item")
-        if isinstance(item, dict):
-            return item
-
-        toolish_fields = {
-            "type",
-            "itemType",
-            "name",
-            "toolName",
-            "tool_name",
-            "arguments",
-            "toolArgs",
-            "tool_input",
-            "input",
-            "output",
-            "result",
-            "toolResult",
-        }
-        if any(field in params for field in toolish_fields):
-            return params
-
-        return {}
+        return _shared_extract_completed_item_payload(params)
 
     @classmethod
     def _looks_like_tool_item(cls, item: dict[str, Any]) -> bool:
         """Identify completed Codex items that represent tool execution."""
-        item_type = item.get("type") or item.get("itemType")
-        if item_type in cls.TOOL_ITEM_TYPES:
-            return True
-
-        if any(isinstance(item.get(tool_type), dict) for tool_type in cls.TOOL_ITEM_TYPES):
-            return True
-
-        toolish_fields = (
-            "name",
-            "toolName",
-            "tool_name",
-            "arguments",
-            "toolArgs",
-            "tool_input",
-            "input",
-            "output",
-            "result",
-            "toolResult",
-            "callId",
-            "call_id",
-            "toolUseId",
-            "tool_use_id",
-        )
-        return any(field in item for field in toolish_fields)
+        return _shared_looks_like_tool_item(item)
 
     def _build_completed_tool_data(self, item: dict[str, Any]) -> dict[str, Any]:
         """Normalize a completed Codex tool item into hook event data."""
-        item_type = item.get("type") or item.get("itemType") or ""
-        nested_payload = item.get(item_type)
-
-        item_data: dict[str, Any] = {}
-        if isinstance(nested_payload, dict):
-            item_data.update(nested_payload)
-        item_data.update(item)
-
-        item_id = item_data.get("id") or item_data.get("itemId") or ""
-        raw_tool_name = (
-            item_data.get("tool_name") or item_data.get("toolName") or item_data.get("name")
-        )
-        if not raw_tool_name and item_type == "mcpToolCall":
-            server_name = item_data.get("server")
-            mcp_tool = item_data.get("tool")
-            if (
-                isinstance(server_name, str)
-                and server_name
-                and isinstance(mcp_tool, str)
-                and mcp_tool
-            ):
-                raw_tool_name = self._compose_mcp_tool_name(server_name, mcp_tool)
-        if isinstance(raw_tool_name, str) and raw_tool_name:
-            item_data.setdefault("tool_name", self.normalize_tool_name(raw_tool_name))
-        elif item_type == "commandExecution":
-            item_data.setdefault("tool_name", "Bash")
-        elif item_type == "fileChange":
-            item_data.setdefault("tool_name", "Write")
-
-        if "tool_input" not in item_data:
-            if "arguments" in item_data and "toolArgs" not in item_data:
-                item_data["toolArgs"] = item_data["arguments"]
-            elif "input" in item_data:
-                item_data["tool_input"] = item_data["input"]
-
-        if "tool_response" not in item_data and "tool_result" not in item_data:
-            if "output" in item_data:
-                item_data["tool_response"] = item_data["output"]
-            elif "result" in item_data:
-                item_data["tool_response"] = item_data["result"]
-
-        item_data.setdefault("item_id", item_id)
-        item_data.setdefault("item_type", item_type)
-        item_data.setdefault("status", item.get("status", item_data.get("status", "")))
-
-        from gobby.hooks.normalization import normalize_tool_fields
-
-        normalize_tool_fields(item_data)
-        return item_data
+        return _shared_build_tool_event_data(item, tool_name_map=self.TOOL_MAP)
 
     @staticmethod
     def is_codex_available() -> bool:
@@ -491,7 +414,7 @@ class CodexAdapter(BaseAdapter):
                 logger.debug("Unable to derive MCP tool identity from elicitation request")
                 return None
 
-            original_tool = self._compose_mcp_tool_name(server_name, tool_name)
+            original_tool = _shared_compose_mcp_tool_name(server_name, tool_name)
             tool_params = meta.get("tool_params")
             tool_input = tool_params if isinstance(tool_params, dict) else {}
             data = {

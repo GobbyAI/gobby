@@ -57,7 +57,8 @@ def looks_like_tool_item(item: dict[str, Any]) -> bool:
         return True
     if any(isinstance(item.get(tool_type), dict) for tool_type in TOOL_ITEM_TYPES):
         return True
-    return any(field in item for field in TOOLISH_FIELDS)
+    toolish_fields = TOOLISH_FIELDS - {"type", "itemType"}
+    return any(field in item for field in toolish_fields)
 
 
 def build_tool_event_data(
