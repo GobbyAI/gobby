@@ -13,6 +13,7 @@ import pydantic
 
 from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
@@ -241,7 +242,19 @@ class EnforcementMixin:
         if self._runner is None:
             return
 
-        db_agent = self._runner.run_storage.get_by_session(session_id)
+        run_storage: LocalAgentRunManager | Any | None = None
+        if hasattr(type(self._runner), "run_storage"):
+            try:
+                run_storage = self._runner.run_storage
+            except AttributeError:
+                run_storage = None
+        elif "run_storage" in getattr(self._runner, "__dict__", {}):
+            run_storage = self._runner.__dict__["run_storage"]
+
+        db_agent = None
+        get_by_session = getattr(run_storage, "get_by_session", None)
+        if callable(get_by_session):
+            db_agent = get_by_session(session_id)
         run_id = db_agent.id if db_agent else self._runner.get_run_id_by_session(session_id)
         if not run_id:
             return

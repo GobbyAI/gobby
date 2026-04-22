@@ -72,8 +72,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             if prompt_lower not in ("/clear", "/exit") and self._session_manager:
                 try:
                     self._session_manager.update_session_status(session_id, "active")
-                    if self._session_manager:
-                        self._session_manager.reset_transcript_processed(session_id)
+                    self._session_manager.reset_transcript_processed(session_id)
                 except Exception as e:
                     self.logger.warning(f"Failed to update session status: {e}")
 

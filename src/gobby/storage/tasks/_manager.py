@@ -578,7 +578,7 @@ class LocalTaskManager:
             self.db,
             task_id=task_id,
             rejection_notes=rejection_notes,
-            round=round,
+            round_number=round,
         )
         self._notify_listeners()
         return task

@@ -41,6 +41,8 @@ from gobby.servers.routes.sessions.statusline_activity import record_session_act
 from gobby.telemetry.tracing import create_span
 
 if TYPE_CHECKING:
+    from gobby.agents.runner import AgentRunner
+    from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
 
 
@@ -89,8 +91,8 @@ class HookManager:
         message_processor: Any | None = None,
         memory_sync_manager: Any | None = None,
         task_sync_manager: Any | None = None,
-        agent_runner: Any | None = None,
-        completion_registry: Any | None = None,
+        agent_runner: "AgentRunner | None" = None,
+        completion_registry: "CompletionEventRegistry | None" = None,
         code_index_trigger: Any | None = None,
     ):
         """
@@ -205,7 +207,7 @@ class HookManager:
         from gobby.hooks.event_enrichment import EventEnricher
 
         self._enricher = EventEnricher(
-            session_storage=self._session_manager,
+            session_manager=self._session_manager,
             injected_sessions=self._injected_sessions,
             inter_session_msg_manager=self._inter_session_msg_manager,
         )

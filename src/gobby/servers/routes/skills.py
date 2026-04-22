@@ -339,8 +339,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                         type(auth_exc).__name__,
                         auth_exc,
                     )
-                    entry.setdefault("auth_configured", None)
-                    entry.setdefault("auth_key_name", None)
+                    entry["auth_configured"] = None
+                    entry["auth_key_name"] = None
                 hubs.append(entry)
             return {"hubs": hubs}
         except Exception as e:

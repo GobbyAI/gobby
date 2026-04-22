@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol
@@ -199,7 +200,7 @@ class _SessionCRUDMixin:
                     ),
                 )
                 break
-            except Exception as e:
+            except sqlite3.IntegrityError as e:
                 if (
                     "UNIQUE constraint failed: sessions.seq_num" in str(e)
                     and attempt < max_retries - 1
@@ -263,10 +264,10 @@ class _SessionCRUDMixin:
             """,
             (model, chat_mode, now, session.id),
         )
-        session.model = model if model is not None else session.model
-        session.chat_mode = chat_mode if chat_mode is not None else session.chat_mode
-        session.updated_at = now
-        return session
+        updated = self.get(session.id)
+        if updated is None:
+            raise RuntimeError(f"Web chat session {session.id} disappeared after update")
+        return updated
 
     def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
         """Get session by ID."""

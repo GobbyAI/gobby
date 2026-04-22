@@ -243,7 +243,7 @@ def mark_task_review_rejected(
     task_id: str,
     *,
     rejection_notes: str | None = None,
-    round: int | None = None,
+    round_number: int | None = None,
 ) -> Task:
     """Reject a task after review and return it to open status."""
     task = get_task(db, task_id)
@@ -254,8 +254,8 @@ def mark_task_review_rejected(
         )
 
     normalized_round = None
-    if round is not None:
-        normalized_round = int(round)
+    if round_number is not None:
+        normalized_round = int(round_number)
         if normalized_round < 1:
             raise ValueError("round must be >= 1 when provided")
 

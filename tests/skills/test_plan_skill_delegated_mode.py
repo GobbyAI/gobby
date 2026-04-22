@@ -6,7 +6,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-SKILL_PATH = Path("src/gobby/install/shared/skills/plan/SKILL.md")
+SKILL_PATH = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/skills/plan/SKILL.md"
 
 
 @pytest.fixture(scope="module")
@@ -22,7 +22,7 @@ def test_menu_exposes_interactive_delegated_and_plain(body: str) -> None:
 
 
 def test_pre_set_plan_review_mode_skips_menu(body: str) -> None:
-    assert 'If `plan_review_mode` is already set' in body
+    assert "If `plan_review_mode` is already set" in body
     assert '"adversarial"' in body
     assert '"delegated"' in body
     assert '"plain"' in body

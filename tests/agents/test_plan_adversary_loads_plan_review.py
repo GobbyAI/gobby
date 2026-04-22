@@ -30,6 +30,12 @@ pytestmark = pytest.mark.unit
 ADVERSARY_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
 
 
+def _field(entry: object, name: str) -> object | None:
+    if isinstance(entry, dict):
+        return entry.get(name)
+    return getattr(entry, name, None)
+
+
 @pytest.fixture(scope="module")
 def agent() -> AgentDefinitionBody:
     with ADVERSARY_PATH.open() as f:
@@ -58,11 +64,6 @@ class TestAdversarySkillLoading:
         # both dict-valued and (future) model-object entries.
         load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
         mcp_success = getattr(load_step, "on_mcp_success", []) or []
-
-        def _field(entry: object, name: str) -> object | None:
-            if isinstance(entry, dict):
-                return entry.get(name)
-            return getattr(entry, name, None)
 
         triples = [
             (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
@@ -104,19 +105,7 @@ class TestAdversaryInstructionsPreserveContracts:
         review_step = next(s for s in (agent.steps or []) if s.name == "review")
         mcp_success = getattr(review_step, "on_mcp_success", None) or []
         triples = [
-            (
-                (
-                    entry.get("server")
-                    if isinstance(entry, dict)
-                    else getattr(entry, "server", None)
-                ),
-                (entry.get("tool") if isinstance(entry, dict) else getattr(entry, "tool", None)),
-                (
-                    entry.get("variable")
-                    if isinstance(entry, dict)
-                    else getattr(entry, "variable", None)
-                ),
-            )
+            (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
             for entry in mcp_success
         ]
         assert ("gobby-tasks", "mark_task_review_rejected", "review_complete") in triples

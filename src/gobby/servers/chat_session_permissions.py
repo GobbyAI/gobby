@@ -54,7 +54,7 @@ def _resolve_session_lifecycle_block_reason(
     reason: str | None,
 ) -> str:
     """Return a non-empty session-lifecycle block reason and warn on fallback use."""
-    cleaned = (reason or "").strip()
+    cleaned = str(reason or "").strip()
     if cleaned:
         return cleaned
     logger.warning(

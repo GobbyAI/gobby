@@ -302,7 +302,7 @@ def install(
             voice_flag=voice_flag,
             no_interactive=no_interactive_flag,
             db=db,
-            secret_store=secret_store,
+            _secret_store=secret_store,
         )
 
         # Docker services (Qdrant + Neo4j, installed by default if Docker available)

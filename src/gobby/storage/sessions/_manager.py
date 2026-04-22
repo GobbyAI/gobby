@@ -175,7 +175,10 @@ class SessionManager(
         status: str,
     ) -> bool:
         """
-        Update session status in database.
+        Update session status and return a service-friendly success flag.
+
+        This wraps update_status() for hooks, routes, and other callers that
+        only need True/False plus logging rather than the updated Session row.
 
         Returns:
             True if updated successfully, False otherwise

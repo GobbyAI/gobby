@@ -54,7 +54,7 @@ class _UsageMixin:
                 )
                 return cursor.rowcount > 0
         except Exception as e:
-            get_logger().error(f"Failed to update session usage {session_id}: {e}")
+            get_logger().error(f"Failed to update session usage {session_id}: {e}", exc_info=True)
             return False
 
     def add_usage_delta(
@@ -96,5 +96,8 @@ class _UsageMixin:
                 )
                 return cursor.rowcount > 0
         except Exception as e:
-            get_logger().error(f"Failed to add usage delta for session {session_id}: {e}")
+            get_logger().error(
+                f"Failed to add usage delta for session {session_id}: {e}",
+                exc_info=True,
+            )
             return False

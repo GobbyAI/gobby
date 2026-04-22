@@ -63,6 +63,7 @@ async def _run_subprocess(*args: str, timeout: float = 5.0) -> tuple[int, str, s
 async def _close_terminal_window(
     session_id: str,
     db: DatabaseProtocol,
+    session_manager: SessionManager | None = None,
     signal_name: str = "TERM",
     timeout: float = 5.0,
 ) -> dict[str, Any]:
@@ -74,7 +75,7 @@ async def _close_terminal_window(
 
     ctx: dict[str, Any] = {}
     try:
-        session_mgr = SessionManager(db)
+        session_mgr = session_manager or SessionManager(db)
         session = session_mgr.get(session_id)
         if session and session.terminal_context:
             ctx = session.terminal_context
@@ -186,10 +187,17 @@ async def kill_agent(
         Dict with success status and details.
     """
     session_id = run.child_session_id or run.parent_session_id
+    session_manager = SessionManager(db) if session_id else None
 
     # Try terminal-specific close
     if close_terminal and session_id:
-        result = await _close_terminal_window(session_id, db, signal_name, timeout)
+        result = await _close_terminal_window(
+            session_id,
+            db,
+            session_manager=session_manager,
+            signal_name=signal_name,
+            timeout=timeout,
+        )
         if result.get("success"):
             return result
 
@@ -200,8 +208,7 @@ async def kill_agent(
     if session_id and not target_pid:
         # Strategy 1: Check session's terminal_context
         try:
-            session_mgr = SessionManager(db)
-            session = session_mgr.get(session_id)
+            session = session_manager.get(session_id) if session_manager else None
             if session and session.terminal_context:
                 ctx_pid = session.terminal_context.get("parent_pid")
                 if ctx_pid:

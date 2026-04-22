@@ -829,7 +829,6 @@ class TestWorkflowBeforeToolEnforcement:
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
         hook_manager._session_manager = session_manager
-        hook_manager._session_manager = session_manager
         hook_manager._database = MagicMock()
         hook_manager.handle = MagicMock(return_value=HookResponse(decision="allow"))
         return hook_manager
@@ -976,8 +975,7 @@ class TestWorkflowBeforeToolEnforcement:
         matching = [
             rec
             for rec in caplog.records
-            if rec.levelno == logging.WARNING
-            and "Failed to load session" in rec.getMessage()
+            if rec.levelno == logging.WARNING and "Failed to load session" in rec.getMessage()
         ]
         assert matching, "Expected WARNING log for storage lookup failure"
 
@@ -1065,7 +1063,6 @@ class TestSyntheticCodexMcpAfterTool:
 
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
-        hook_manager._session_manager = session_manager
         hook_manager._session_manager = session_manager
         hook_manager._database = MagicMock()
         hook_manager.handle = MagicMock(return_value=HookResponse(decision="allow"))
@@ -1242,7 +1239,9 @@ class TestSyntheticCodexMcpAfterTool:
     ) -> None:
         """Codex terminal proxy schema shims should resolve #N refs before injecting skills."""
         sync_bundled_rules(temp_db, get_bundled_rules_path())
-        temp_db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
+        temp_db.execute(
+            "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        )
 
         async def mock_dispatcher(
             server_name: str, tool_name: str, arguments: dict[str, object], event: object
@@ -1285,7 +1284,6 @@ class TestSyntheticCodexMcpAfterTool:
 
         hook_manager = MagicMock()
         hook_manager._workflow_handler = workflow_handler
-        hook_manager._session_manager = session_manager
         hook_manager._session_manager = session_manager
         hook_manager._database = temp_db
         hook_manager.handle = workflow_handler.evaluate

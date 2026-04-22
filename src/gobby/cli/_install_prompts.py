@@ -185,7 +185,7 @@ def _prompt_hub_api_keys(
         return result
 
     try:
-        with _ensure_db_and_secrets(db, secret_store) as (_db, secret_store):
+        with _ensure_db_and_secrets(db, secret_store) as (_db, resolved_store):
             # Flatten to (hub_name, auth_key_name) so mypy sees auth_key_name as str.
             auth_hubs: list[tuple[str, str]] = [
                 (name, cfg.auth_key_name)
@@ -193,7 +193,7 @@ def _prompt_hub_api_keys(
                 if cfg.auth_key_name
             ]
             pending: list[tuple[str, str]] = [
-                (name, key) for name, key in auth_hubs if not secret_store.exists(key)
+                (name, key) for name, key in auth_hubs if not resolved_store.exists(key)
             ]
             result["already_configured"] = len(auth_hubs) - len(pending)
 
@@ -238,7 +238,7 @@ def _prompt_hub_api_keys(
 
                 if value.strip():
                     try:
-                        secret_store.set(
+                        resolved_store.set(
                             name=auth_key_name,
                             plaintext_value=value.strip(),
                             category="integration",
@@ -279,7 +279,7 @@ def _prompt_api_keys(
         return result
 
     try:
-        with _ensure_db_and_secrets(db, secret_store) as (_db, secret_store):
+        with _ensure_db_and_secrets(db, secret_store) as (_db, resolved_store):
             click.echo("")
             click.echo("-" * 40)
             click.echo("API Keys (optional)")
@@ -293,7 +293,7 @@ def _prompt_api_keys(
                 label = key_info["label"]
 
                 # Check if already stored in secret store
-                if secret_store.exists(secret_name):
+                if resolved_store.exists(secret_name):
                     click.echo(f"  {label}: (already configured)")
                     result["already_configured"] += 1
                     continue
@@ -315,7 +315,7 @@ def _prompt_api_keys(
 
                 if value.strip():
                     try:
-                        secret_store.set(
+                        resolved_store.set(
                             name=secret_name,
                             plaintext_value=value.strip(),
                             category=key_info["category"],
@@ -593,7 +593,7 @@ def _run_voice_install(
     no_interactive: bool = False,
     *,
     db: LocalDatabase | None = None,
-    secret_store: SecretStore | None = None,
+    _secret_store: SecretStore | None = None,
 ) -> None:
     """Interactive voice chat setup.
 
@@ -606,12 +606,6 @@ def _run_voice_install(
         no_interactive: If True, skip the prompt (only install if voice_flag is set)
     """
     install_voice = voice_flag
-    # secret_store is accepted only so this helper matches the signature of
-    # the sibling install steps in the orchestrator (see _echo_install_summary
-    # / cli/install.py — the caller passes it unconditionally). Voice install
-    # never reads secrets, so we drop the reference and rely on the CM below
-    # for DB handling if we need to toggle voice in the config store.
-    del secret_store
 
     if not install_voice and not no_interactive:
         click.echo("-" * 40)

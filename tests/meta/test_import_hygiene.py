@@ -6,7 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from gobby.hooks.hook_manager import HookManager
+
+pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_GOBBY_DIR = REPO_ROOT / "src" / "gobby"
@@ -27,11 +31,19 @@ def _find_token_hits(*roots: Path, token: str) -> list[str]:
     return hits
 
 
+def _count_lines(path: Path) -> int:
+    count = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for _ in handle:
+            count += 1
+    return count
+
+
 def test_storage_sessions_package_files_stay_under_size_limits() -> None:
     files = sorted(SESSIONS_DIR.glob("*.py"))
     assert files, "Expected session storage package files to exist"
 
-    line_counts = {path.name: sum(1 for _ in path.open("r", encoding="utf-8")) for path in files}
+    line_counts = {path.name: _count_lines(path) for path in files}
 
     for name, count in line_counts.items():
         assert count < 1000, f"{name} exceeded 1000 LOC ({count})"

@@ -57,10 +57,11 @@ class _TranscriptMixin:
             Updated session or None if not found
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET transcript_processed = TRUE, updated_at = ? WHERE id = ?",
-            (now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET transcript_processed = TRUE, updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
         return self.get(session_id)
 
     def reset_transcript_processed(self: _ManagerState, session_id: str) -> Session | None:
@@ -74,8 +75,9 @@ class _TranscriptMixin:
             Updated session or None if not found
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
-            "UPDATE sessions SET transcript_processed = FALSE, updated_at = ? WHERE id = ?",
-            (now, session_id),
-        )
+        with self.db.transaction():
+            self.db.execute(
+                "UPDATE sessions SET transcript_processed = FALSE, updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
         return self.get(session_id)

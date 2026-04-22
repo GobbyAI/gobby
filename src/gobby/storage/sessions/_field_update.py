@@ -25,7 +25,12 @@ class _ManagerState(Protocol):
 
 class _FieldUpdateMixin:
     def update_status(self: _ManagerState, session_id: str, status: str) -> Session | None:
-        """Update session status."""
+        """Persist a session status change and return the reloaded row.
+
+        Storage-layer callers use this when they need the updated Session back.
+        Service-style callers that only need a success flag should use
+        SessionManager.update_session_status().
+        """
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
@@ -44,9 +49,10 @@ class _FieldUpdateMixin:
 
     def clear_had_edits(self: _ManagerState, session_id: str) -> None:
         """Reset had_edits after a task is closed with a linked commit."""
+        now = datetime.now(UTC).isoformat()
         self.db.execute(
-            "UPDATE sessions SET had_edits = 0 WHERE id = ?",
-            (session_id,),
+            "UPDATE sessions SET had_edits = 0, updated_at = ? WHERE id = ?",
+            (now, session_id),
         )
 
     def update_chat_mode(self: _ManagerState, session_id: str, chat_mode: str) -> None:

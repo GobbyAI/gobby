@@ -709,7 +709,7 @@ export const TasksTab = memo(function TasksTab({
         getTaskBucket(task) === "closed" && "activity-task-row--closed",
       ]
         .filter(Boolean)
-        .join(" ")
+        .join(" ");
 
       return (
         <div

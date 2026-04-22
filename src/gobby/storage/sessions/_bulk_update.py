@@ -171,5 +171,6 @@ class _BulkUpdateMixin:
         WHERE id = ?
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(sql, (now, session_id))
+        with self.db.transaction():
+            self.db.execute(sql, (now, session_id))
         return self.get(session_id)

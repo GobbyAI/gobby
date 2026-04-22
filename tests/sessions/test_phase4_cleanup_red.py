@@ -32,9 +32,9 @@ def test_hooks_source_no_longer_uses_session_storage_alias() -> None:
 
 def test_hook_manager_keeps_exactly_one_session_manager_attribute() -> None:
     """HookManager should keep only _session_manager after cleanup."""
-    source = (_repo_root() / "src" / "gobby" / "hooks" / "hook_manager.py").read_text(
-        encoding="utf-8"
-    )
+    source_path = _repo_root() / "src" / "gobby" / "hooks" / "hook_manager.py"
+    assert source_path.exists()
+    source = source_path.read_text(encoding="utf-8")
     attrs = set(re.findall(r"self\._session_(manager|storage)\b", source))
 
     assert attrs == {"manager"}
@@ -42,9 +42,9 @@ def test_hook_manager_keeps_exactly_one_session_manager_attribute() -> None:
 
 def test_session_manager_service_tests_use_canonical_attribute_access() -> None:
     """Session-manager tests should stop using shim imports and dict-style assertions."""
-    source = (_repo_root() / "tests" / "sessions" / "test_sessions_manager.py").read_text(
-        encoding="utf-8"
-    )
+    source_path = _repo_root() / "tests" / "sessions" / "test_sessions_manager.py"
+    assert source_path.exists()
+    source = source_path.read_text(encoding="utf-8")
 
     assert _LEGACY_MANAGER_IMPORT not in source
     assert _DEPRECATED_ALIAS not in source

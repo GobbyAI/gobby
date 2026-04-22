@@ -71,7 +71,6 @@ class _TestHandler(SessionEventHandlerMixin):
     def __init__(self) -> None:
         self.logger = MagicMock()
         self._session_manager = MagicMock()
-        self._session_manager = MagicMock()
         self._session_manager.update.return_value = None
         self._session_coordinator = MagicMock()
         self._message_processor = MagicMock()
@@ -302,7 +301,8 @@ class TestHandleSessionEnd:
         ]
         assert "interactive:planning-in-progress:sess-1" in called_labels
         assert not any(
-            lbl and lbl.startswith("interactive:planning-in-progress:")
+            lbl
+            and lbl.startswith("interactive:planning-in-progress:")
             and lbl != "interactive:planning-in-progress:sess-1"
             for lbl in called_labels
         )

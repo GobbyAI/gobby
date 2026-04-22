@@ -45,12 +45,12 @@ class TmuxPaneMonitor:
         session_end_callback: Callable[[HookEvent], Any],
         config: TmuxConfig | None = None,
         poll_interval: float = 5.0,
-        session_storage: SessionManager | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         self._callback = session_end_callback
         self._config = config or TmuxConfig()
         self._poll_interval = poll_interval
-        self._session_manager = session_storage
+        self._session_manager = session_manager
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}

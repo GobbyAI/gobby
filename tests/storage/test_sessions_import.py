@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from gobby.storage import SessionManager as LazySessionManager
 from gobby.storage.sessions import SessionManager, ensure_system_session
 from gobby.storage.sessions._constants import (
     ensure_system_session as internal_ensure_system_session,
 )
 from gobby.storage.sessions._manager import SessionManager as InternalSessionManager
+
+pytestmark = pytest.mark.unit
 
 EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "__init__": "(self, db: 'DatabaseProtocol | None' = None, *, session_storage: "
@@ -144,6 +148,7 @@ def test_storage_sessions_public_imports_are_compatible() -> None:
 
 
 def test_session_manager_public_method_signatures_are_stable() -> None:
+    """Public SessionManager signatures are part of the compatibility surface."""
     public_methods = {
         name: _normalized_signature(member)
         for name, member in inspect.getmembers(SessionManager, predicate=inspect.isfunction)

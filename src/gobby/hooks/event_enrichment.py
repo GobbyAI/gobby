@@ -56,11 +56,11 @@ class EventEnricher:
 
     def __init__(
         self,
-        session_storage: Any,  # Avoid runtime import of SessionManager
+        session_manager: Any,  # Avoid runtime import of SessionManager
         injected_sessions: set[str],
         inter_session_msg_manager: InterSessionMessageManager | None = None,
     ):
-        self._session_manager = session_storage
+        self._session_manager = session_manager
         self._injected_sessions = injected_sessions
         self._inter_session_msg_manager = inter_session_msg_manager
 

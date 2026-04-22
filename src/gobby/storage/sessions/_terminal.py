@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import builtins
-import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -116,8 +115,8 @@ class _TerminalMixin:
         """
         now = datetime.now(UTC).isoformat()
         count = 0
-        for name in skill_names:
-            try:
+        with self.db.transaction():
+            for name in skill_names:
                 cursor = self.db.execute(
                     "INSERT OR IGNORE INTO session_skills (session_id, skill_name, created_at) "
                     "VALUES (?, ?, ?)",
@@ -125,6 +124,4 @@ class _TerminalMixin:
                 )
                 if cursor.rowcount == 1:
                     count += 1
-            except sqlite3.IntegrityError:
-                continue  # UNIQUE constraint violation - idempotent
         return count
