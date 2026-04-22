@@ -144,7 +144,7 @@ filterwarnings = [
     "ignore:unclosed database:ResourceWarning",
     # Ignore fork() deprecation warning from embedded spawner tests (expected on macOS)
     "ignore:This process.*is multi-threaded.*use of fork:DeprecationWarning",
-    # Ignore pkg_resources deprecation from optional voice dependencies (perth via chatterbox-tts)
+    # Ignore pkg_resources deprecation from optional voice dependencies (resemble-perth via chatterbox-tts)
     "ignore:pkg_resources is deprecated as an API\\.:UserWarning",
     # Ignore MCP SDK streamable_http_client deprecation (upstream)
     "ignore:Use `streamable_http_client` instead:DeprecationWarning",

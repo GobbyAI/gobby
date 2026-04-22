@@ -131,7 +131,7 @@ uv run pytest -m "not slow"
 uv run pytest -m integration
 ```
 
-**Important:** The repo has 14,000+ tests (30+ min full run). Do NOT run the full suite unless explicitly asked. Target specific files or modules.
+**Important:** The repo has over 15,000 tests (30+ min full run). Do NOT run the full suite unless explicitly asked. Target specific files or modules.
 
 **Coverage threshold:** 80% minimum (enforced in CI and pre-push).
 

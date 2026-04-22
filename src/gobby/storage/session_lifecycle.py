@@ -27,6 +27,11 @@ def _build_empty_session_prune_reference_guards(db: DatabaseProtocol) -> tuple[s
     """Return guard clauses for retained session references present in this schema."""
     guards: list[str] = []
 
+    # table_name is drawn from _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS, a
+    # hardcoded module-scope constant; it never comes from user input. The
+    # f-string interpolation into PRAGMA is safe here — do not "fix" this
+    # into a parameterized call (PRAGMA does not accept bound parameters
+    # for identifiers anyway).
     for table_name, columns in _EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS:
         rows = db.fetchall(f"PRAGMA table_info({table_name})")
         if not rows:

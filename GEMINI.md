@@ -202,5 +202,5 @@ Type hints required. Use `async/await` for I/O. Run `ruff format` and `ruff chec
 | ------- | ---------- |
 | "Edit/Write blocked" | Create or claim a task first |
 | "Task has no commits" | Commit with `[task-id]` in message before closing |
-| "Agent depth exceeded" | Max nesting is 3 - reduce agent spawning depth |
+| "Agent depth exceeded" | Max nesting is 5 — reduce agent spawning depth (enforced maximum). |
 | Import errors | Run `uv sync` |

@@ -97,6 +97,7 @@ Attach this plan to an existing task #N, or create a new planning root?
 Two-sided mutual exclusion with the autonomous front-half orchestrator:
 
 **Active-front-half check.**
+
 ```python
 active_fh = "conductor:front-half" in labels and "conductor:front-half-complete" not in labels
 ```

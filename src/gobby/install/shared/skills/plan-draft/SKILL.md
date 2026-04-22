@@ -158,7 +158,7 @@ Each feature task (category `code` or `config`) gets expanded into three childre
 - **[IMPL]** — make tests pass
 - **[REF]** — refactor while keeping tests green
 
-```
+```text
 Feature Task
 ├── [TDD] Write failing tests for feature
 ├── [IMPL] Implement feature

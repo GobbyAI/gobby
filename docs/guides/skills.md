@@ -62,8 +62,16 @@ Use conventional commits format:
 | `license` | string | License identifier (MIT, Apache-2.0, etc.) |
 | `compatibility` | string | Notes on requirements or limitations |
 | `allowed-tools` | string/list | Tool patterns the skill may use |
-| `internal` | boolean | Methodology skill loaded by other skills via `get_skill` rather than invoked by users. Hidden from `list_skills` and `search_skills` by default; set `include_internal: true` on either tool to surface them. `get_skill(name=...)` always resolves regardless. Orthogonal to `metadata.gobby.audience` — use this when the skill is a shared drafting/review/setup methodology, not a user-facing command. |
+| `internal` | boolean | Methodology skill loaded by other skills; hidden from listings by default. See _internal field (details)_ below. |
 | `metadata` | object | Nested metadata namespaces |
+
+#### internal field (details)
+
+A skill flagged `internal: true` is a shared methodology consumed by other skills rather than a user-facing command (e.g. a drafting, review, or setup helper loaded into a workflow).
+
+- **Discovery surfaces**: `list_skills` and `search_skills` hide internal skills by default. Pass `include_internal: true` to surface them.
+- **Direct resolution**: `get_skill(name=...)` always returns the skill regardless of the `internal` flag — skills that load other skills do not need to pass `include_internal`.
+- **Orthogonal to `metadata.gobby.audience`**: `internal` controls default visibility in generic discovery tools; `audience` narrows the intended caller (interactive vs autonomous vs all). Use `internal` when the skill is a building block for other skills, not when you just want to restrict which surfaces load it.
 
 ### Metadata Namespaces
 
