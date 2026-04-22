@@ -78,6 +78,7 @@ class TestChatterboxTurboProvider:
         provider = ChatterboxTurboProvider(voice_config)
         assert provider.sample_rate == 24000
         assert provider._model is None
+        assert provider._runtime_primed is False
 
     def test_is_available_checks_import(self, voice_config: VoiceConfig) -> None:
         from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
@@ -165,6 +166,7 @@ class TestChatterboxTurboProvider:
         call_kwargs = mock_model.generate.call_args
         assert call_kwargs.kwargs["temperature"] == voice_config.tts_temperature
         assert "audio_prompt_path" not in call_kwargs.kwargs
+        assert provider._runtime_primed is True
         assert inference_calls == [
             {
                 "t3_cond": "conds",
@@ -249,11 +251,14 @@ class TestChatterboxTurboProvider:
             new=AsyncMock(side_effect=lambda func, *args: func(*args)),
         ):
             with patch.object(provider, "_prepare_reference_conditioning") as mock_prepare:
-                await provider.warmup()
-                await provider.warmup()
+                with patch.object(provider, "_prime_synthesis_runtime") as mock_prime:
+                    await provider.warmup()
+                    await provider.warmup()
 
         assert provider._conditioning_ready is True
+        assert provider._runtime_primed is True
         mock_prepare.assert_called_once_with(provider._model)
+        mock_prime.assert_called_once_with(provider._model)
 
     @pytest.mark.asyncio
     async def test_warmup_raises_when_reference_preparation_fails(
@@ -279,6 +284,30 @@ class TestChatterboxTurboProvider:
                     await provider.warmup()
 
         assert provider._conditioning_ready is False
+
+    @pytest.mark.asyncio
+    async def test_warmup_raises_when_runtime_priming_fails(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        provider._model = MagicMock(sr=24000)
+        provider._conditioning_ready = True
+
+        with patch(
+            "gobby.voice.tts_chatterbox.asyncio.to_thread",
+            new=AsyncMock(side_effect=lambda func, *args: func(*args)),
+        ):
+            with patch.object(
+                provider,
+                "_prime_synthesis_runtime",
+                side_effect=RuntimeError("prime failed"),
+            ):
+                with pytest.raises(RuntimeError, match="prime failed"):
+                    await provider.warmup()
+
+        assert provider._runtime_primed is False
 
     @pytest.mark.asyncio
     async def test_prepare_reference_conditioning_casts_inputs_to_float32_on_mps(

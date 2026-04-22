@@ -19,6 +19,9 @@ from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is
 
 logger = logging.getLogger(__name__)
 
+_WARMUP_PRIME_TEXT = "warm up"
+_WARMUP_PRIME_MAX_GENERATION_TOKENS = 8
+
 
 def _auto_device() -> str:
     """Detect best available device: cuda > mps > cpu."""
@@ -147,6 +150,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         self._sample_rate = 24000  # Chatterbox outputs 24kHz
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
         self._conditioning_ready = False
+        self._runtime_primed = False
 
     def _availability(self) -> tuple[bool, str]:
         if not _module_is_available("chatterbox"):
@@ -162,6 +166,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             "tts_reference_audio": str(self._reference_audio),
             "tts_reference_audio_exists": self._reference_audio.exists(),
             "tts_reference_audio_conditioned": self._conditioning_ready,
+            "tts_runtime_primed": self._runtime_primed,
             "tts_device": self._config.tts_device,
             "tts_chatterbox_max_generation_tokens": (
                 self._config.tts_chatterbox_max_generation_tokens
@@ -170,7 +175,21 @@ class ChatterboxTurboProvider(BaseTTSProvider):
 
     async def warmup(self) -> None:
         """Public entry point for preloading the TTS model."""
-        await self._ensure_model()
+        model = await self._ensure_model()
+        if self._runtime_primed:
+            return
+
+        async with self._synthesis_lock:
+            if self._runtime_primed:
+                return
+            logger.info("Priming Chatterbox Turbo synthesis runtime")
+            try:
+                await asyncio.to_thread(self._prime_synthesis_runtime, model)
+            except Exception as exc:
+                self._runtime_primed = False
+                raise RuntimeError(self._format_synthesis_error(exc)) from exc
+            self._runtime_primed = True
+            logger.info("Chatterbox Turbo synthesis runtime primed successfully")
 
     def unload(self) -> None:
         """Release the model to reclaim memory.
@@ -183,6 +202,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             self._model.conds = None
         self._model = None
         self._conditioning_ready = False
+        self._runtime_primed = False
 
     def _prepare_reference_conditioning(self, model: Any) -> None:
         _prepare_turbo_conditionals(
@@ -208,9 +228,16 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             return f"Chatterbox TTS synthesis failed: {message}"
         return "Chatterbox TTS synthesis failed"
 
-    def _generate_with_token_cap(self, model: Any, text: str) -> Any:
+    def _generate_with_token_cap(
+        self,
+        model: Any,
+        text: str,
+        *,
+        max_generation_tokens: int | None = None,
+    ) -> Any:
         turbo_decoder = getattr(model, "t3", None)
         original_inference_turbo = getattr(turbo_decoder, "inference_turbo", None)
+        token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
 
         if not callable(original_inference_turbo):
             return model.generate(
@@ -219,7 +246,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             )
 
         def _capped_inference_turbo(*args: Any, **kwargs: Any) -> Any:
-            kwargs["max_gen_len"] = self._config.tts_chatterbox_max_generation_tokens
+            kwargs["max_gen_len"] = token_cap
             return original_inference_turbo(*args, **kwargs)
 
         turbo_decoder.inference_turbo = _capped_inference_turbo
@@ -230,6 +257,16 @@ class ChatterboxTurboProvider(BaseTTSProvider):
             )
         finally:
             turbo_decoder.inference_turbo = original_inference_turbo
+
+    def _prime_synthesis_runtime(self, model: Any) -> None:
+        self._generate_with_token_cap(
+            model,
+            _WARMUP_PRIME_TEXT,
+            max_generation_tokens=min(
+                self._config.tts_chatterbox_max_generation_tokens,
+                _WARMUP_PRIME_MAX_GENERATION_TOKENS,
+            ),
+        )
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Chatterbox Turbo model (thread-safe, async)."""
@@ -292,6 +329,7 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         try:
             async with self._synthesis_lock:
                 wav = await asyncio.to_thread(self._generate_with_token_cap, model, text)
+                self._runtime_primed = True
 
             # Convert torch.Tensor to PCM int16 bytes
             samples = wav.squeeze().cpu().numpy()
