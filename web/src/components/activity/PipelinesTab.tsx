@@ -178,8 +178,9 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
 
   const detailSteps = detailExec?.steps ?? []
   const { total: detailStepCount, passed: passedStepCount, failed: failedStepCount } = useMemo(
-    () =>
-      detailSteps.reduce(
+    () => {
+      const steps = detailExec?.steps ?? []
+      return steps.reduce(
         (counts, step) => {
           counts.total += 1
           if (step.status === 'completed' || step.status === 'success') {
@@ -191,7 +192,8 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           return counts
         },
         { total: 0, passed: 0, failed: 0 },
-      ),
+      )
+    },
     [detailExec?.steps],
   )
 
