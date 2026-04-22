@@ -17,7 +17,7 @@ class TestBuildOutputs:
 
     def test_build_outputs_pure_expression_with_len(
         self, mock_db, mock_execution_manager, mock_llm_service
-    ):
+    ) -> None:
         """Pipeline outputs with len() in pure ${{ }} expressions should evaluate correctly.
 
         Regression test: _build_outputs was routing all ${{ }} expressions through
@@ -58,7 +58,7 @@ class TestBuildOutputs:
 
     def test_build_outputs_mixed_string_uses_jinja2(
         self, mock_db, mock_execution_manager, mock_llm_service
-    ):
+    ) -> None:
         """Mixed strings (not pure ${{ }}) should still use Jinja2 rendering."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
         from gobby.workflows.templates import TemplateEngine
@@ -93,7 +93,7 @@ class TestBuildOutputs:
 
     def test_build_outputs_conditional_expression_with_len(
         self, mock_db, mock_execution_manager, mock_llm_service
-    ):
+    ) -> None:
         """Conditional expressions with len() should work in pipeline outputs.
 
         This matches the orchestrator pattern:
@@ -132,7 +132,7 @@ class TestBuildOutputs:
 
     def test_build_outputs_any_all_in_expressions(
         self, mock_db, mock_execution_manager, mock_llm_service
-    ):
+    ) -> None:
         """any() and all() should work in pipeline expressions.
 
         Regression test for orchestrator qa_gate failure:

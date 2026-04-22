@@ -309,7 +309,7 @@ class TestGetSkillTool:
     @pytest.mark.asyncio
     async def test_get_skill_resolves_internal_skill_by_name(
         self, db: LocalDatabase, storage: LocalSkillManager
-    ):
+    ) -> None:
         """get_skill must still resolve internal skills — they're loaded by other skills."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 

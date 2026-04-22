@@ -49,6 +49,8 @@ class TestRenderSkillsForContext:
         assert "# Bridge content" in rendered
         assert "### Skill Summaries" in rendered
         assert "- `brevity`: Terse output mode." in rendered
+        # Summary-mode skills must NOT have their full content injected.
+        assert "# Brevity content" not in rendered
 
 
 class TestRecommendSkillsForTask:

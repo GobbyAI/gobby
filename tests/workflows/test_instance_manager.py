@@ -189,7 +189,7 @@ def test_delete_instance_nonexistent(db) -> None:
     mgr.delete_instance("nonexistent", "nonexistent")
 
 
-def test_delete_instances_for_session(db) -> None:
+def test_delete_instances_for_session(db: LocalDatabase) -> None:
     """Test deleting all workflow instances for one session returns row count."""
     from gobby.workflows.definitions import WorkflowInstance
     from gobby.workflows.state_manager import WorkflowInstanceManager

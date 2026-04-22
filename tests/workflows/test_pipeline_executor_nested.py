@@ -208,10 +208,10 @@ class TestExecuteNestedPipelineDictForm:
 
         call_args = mock_execution_manager.create_execution.call_args
         inputs_json = call_args.kwargs.get("inputs_json") or call_args[1].get("inputs_json")
-        if inputs_json:
-            saved_inputs = json.loads(inputs_json)
-            assert saved_inputs.get("_current_iteration") == 1
-            assert saved_inputs.get("parent_session_id") == "sess-123"
+        assert inputs_json is not None, "create_execution was not called with inputs_json"
+        saved_inputs = json.loads(inputs_json)
+        assert saved_inputs.get("_current_iteration") == 1
+        assert saved_inputs.get("parent_session_id") == "sess-123"
 
     @pytest.mark.asyncio
     async def test_dict_form_falls_back_to_parent_inputs_without_arguments(
@@ -487,7 +487,12 @@ class TestNestedPipelineDepthLimit:
     async def test_self_recursion_allowed(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
-        """Self-recursion (A->A) is allowed, bounded by depth limit."""
+        """Self-recursion (A->A) is allowed, bounded by depth limit.
+
+        We don't require execute to succeed (the test env may raise for other
+        reasons — approval gates, depth ceiling, etc). We require only that
+        whatever RuntimeError surfaces is NOT the cross-pipeline cycle error.
+        """
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         pipeline = PipelineDefinition(
@@ -506,8 +511,13 @@ class TestNestedPipelineDepthLimit:
                 project_id="proj-123",
                 _pipeline_stack=frozenset({"orchestrator"}),
             )
-        except RuntimeError as e:
-            assert "cycle detected" not in str(e).lower()
+        except RuntimeError as exc:
+            # Self-recursion must never be classified as a cycle — the depth
+            # limit is the only legitimate bound on re-entrancy.
+            assert "cycle detected" not in str(exc).lower()
+        else:
+            # Clean success is also fine; nothing more to assert.
+            pass
 
     @pytest.mark.asyncio
     async def test_nested_pipeline_within_limit(

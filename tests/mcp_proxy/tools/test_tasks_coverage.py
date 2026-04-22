@@ -159,7 +159,7 @@ class TestCreateTaskTool:
     @pytest.mark.asyncio
     async def test_create_task_accepts_refactor_category(
         self, mock_task_manager, mock_sync_manager
-    ):
+    ) -> None:
         """Happy-path: create_task(category='refactor') succeeds.
 
         Expansion produces refactor tasks (expansion_service.py:566). Before this was a

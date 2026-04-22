@@ -57,19 +57,22 @@ class TestPlannerSkillLoading:
 
     def test_load_skill_sets_skill_loaded_variable(self, agent: AgentDefinitionBody) -> None:
         """on_mcp_success contract: a successful get_skill flips skill_loaded,
-        which is what the transition reads."""
+        which is what the transition reads.
+
+        on_mcp_success entries are dicts in the parsed YAML shape, not typed
+        objects — use an isinstance-guarded extraction so this works for both
+        dict-valued and (future) model-object entries.
+        """
         load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
-        mcp_success = getattr(load_step, "on_mcp_success", None) or []
+        mcp_success = getattr(load_step, "on_mcp_success", []) or []
+
+        def _field(entry: object, name: str) -> object | None:
+            if isinstance(entry, dict):
+                return entry.get(name)
+            return getattr(entry, name, None)
+
         triples = [
-            (
-                (entry.get("server") if isinstance(entry, dict) else getattr(entry, "server", None)),
-                (entry.get("tool") if isinstance(entry, dict) else getattr(entry, "tool", None)),
-                (
-                    entry.get("variable")
-                    if isinstance(entry, dict)
-                    else getattr(entry, "variable", None)
-                ),
-            )
+            (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
             for entry in mcp_success
         ]
         assert ("gobby-skills", "get_skill", "skill_loaded") in triples

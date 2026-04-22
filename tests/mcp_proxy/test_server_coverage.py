@@ -105,9 +105,15 @@ class TestCallToolSessionResolution:
             session_id="11111111-1111-1111-1111-111111111111",
         )
 
-        positional = handler.tool_proxy.call_tool.call_args.args
-        # (server_name, tool_name, effective_arguments, effective_session_id)
-        assert positional[3] == "platform-uuid-7"
+        # tool_proxy.call_tool takes session_id as the 4th positional arg today
+        # (signature: call_tool(server_name, tool_name, arguments, session_id)).
+        # Prefer the kwargs lookup when present so the test doesn't break if the
+        # call site switches to keyword arguments.
+        call_args = handler.tool_proxy.call_tool.call_args
+        resolved = call_args.kwargs.get("session_id")
+        if resolved is None:
+            resolved = call_args.args[3]
+        assert resolved == "platform-uuid-7"
 
     @pytest.mark.asyncio
     async def test_call_tool_skips_session_context_when_unresolvable(
@@ -127,5 +133,8 @@ class TestCallToolSessionResolution:
         )
 
         assert any("could not resolve session ref" in rec.message for rec in caplog.records)
-        positional = handler.tool_proxy.call_tool.call_args.args
-        assert positional[3] is None
+        call_args = handler.tool_proxy.call_tool.call_args
+        resolved = call_args.kwargs.get("session_id")
+        if resolved is None and len(call_args.args) > 3:
+            resolved = call_args.args[3]
+        assert resolved is None

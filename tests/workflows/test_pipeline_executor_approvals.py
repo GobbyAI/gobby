@@ -17,7 +17,7 @@ class TestApprovalGateHandling:
     """Tests for approval gate handling in PipelineExecutor."""
 
     @pytest.fixture
-    def pipeline_with_approval(self):
+    def pipeline_with_approval(self) -> PipelineDefinition:
         """Create a pipeline with an approval gate step."""
         from gobby.workflows.definitions import PipelineApproval
 
@@ -304,7 +304,7 @@ class TestApproveMethod:
     """Tests for PipelineExecutor.approve() method."""
 
     @pytest.fixture
-    def pipeline_with_approval(self):
+    def pipeline_with_approval(self) -> PipelineDefinition:
         """Create a pipeline with an approval gate step."""
         from gobby.workflows.definitions import PipelineApproval
 

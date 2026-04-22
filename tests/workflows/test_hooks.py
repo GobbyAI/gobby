@@ -12,6 +12,7 @@ threading scenarios:
 import asyncio
 import concurrent.futures
 import json
+import logging
 import threading
 from datetime import UTC, datetime
 from typing import Any
@@ -1560,7 +1561,7 @@ class TestProjectPathResolution:
             metadata={"_platform_session_id": "platform-codex-session"},
         )
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(logging.WARNING):
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"

@@ -2478,7 +2478,7 @@ class TestResolveReferenceExternalId:
         external_id: str,
         source: str = "claude",
         machine_id: str = "m-ext",
-    ):
+    ) -> Session:
         return session_manager.register(
             external_id=external_id,
             machine_id=machine_id,

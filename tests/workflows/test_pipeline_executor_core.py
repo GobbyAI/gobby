@@ -389,8 +389,13 @@ class TestExecutePromptStep:
         context: dict = {"inputs": {}, "steps": {}}
         await execute_prompt_step("Generate a report", context, mock_llm_service)
 
+        # Inspect args/kwargs directly instead of str(call_args) so the test
+        # fails cleanly if the call signature changes.
         call_args = mock_llm_service.get_default_provider.return_value.generate_text.call_args
-        assert "Generate a report" in str(call_args)
+        actual_prompt = call_args.kwargs.get("prompt")
+        if actual_prompt is None and call_args.args:
+            actual_prompt = call_args.args[0]
+        assert actual_prompt == "Generate a report"
 
     @pytest.mark.asyncio
     async def test_prompt_step_handles_llm_error(
