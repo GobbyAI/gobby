@@ -156,7 +156,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 results = [
                     r
                     for r in results
-                    if not (skills_by_id.get(r.skill_id) and skills_by_id[r.skill_id].is_internal())
+                    if not (
+                        (skill := skills_by_id.get(r.skill_id)) is not None and skill.is_internal()
+                    )
                 ][:top_k]
 
             # Format results with skill metadata

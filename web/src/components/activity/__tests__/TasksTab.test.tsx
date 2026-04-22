@@ -353,9 +353,10 @@ describe("TasksTab", () => {
       expect(screen.getByText("Child medium new")).toBeTruthy();
     });
 
-    const titles = Array.from(
-      document.querySelectorAll(".activity-task-row-title"),
-    ).map((node) => node.textContent);
+    const titles = screen.getAllByRole("treeitem").map((node) => {
+      const titleNode = node.querySelector(".activity-task-row-title");
+      return titleNode?.textContent ?? node.textContent;
+    });
 
     expect(titles).toEqual([
       "Root high late",

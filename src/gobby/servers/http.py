@@ -374,27 +374,45 @@ class HTTPServer:
             "Terminating %d active Streamable HTTP session(s)",
             len(transports),
         )
+        pending: list[tuple[Any, asyncio.Task[None]]] = []
         for transport in transports:
             terminate = getattr(transport, "terminate", None)
             if not callable(terminate):
                 continue
-            try:
-                await asyncio.wait_for(
-                    terminate(),
+            pending.append((transport, asyncio.create_task(terminate())))
+
+        results = await asyncio.gather(
+            *(
+                asyncio.wait_for(
+                    task,
                     timeout=_STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
                 )
-            except TimeoutError:
+                for _transport, task in pending
+            ),
+            return_exceptions=True,
+        )
+
+        for (transport, task), result in zip(pending, results, strict=False):
+            if not task.done():
+                task.cancel()
+            if isinstance(result, TimeoutError):
                 logger.warning(
                     "Timed out terminating Streamable HTTP session %s after %.1fs",
                     getattr(transport, "mcp_session_id", "<unknown>"),
                     _STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
                 )
-            except Exception as e:
+            elif isinstance(result, Exception):
                 logger.warning(
                     "Failed to terminate Streamable HTTP session %s: %s",
                     getattr(transport, "mcp_session_id", "<unknown>"),
-                    e,
+                    result,
                 )
+
+        lingering = [task for _transport, task in pending if not task.done()]
+        for task in lingering:
+            task.cancel()
+        if lingering:
+            await asyncio.gather(*lingering, return_exceptions=True)
 
     def resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """

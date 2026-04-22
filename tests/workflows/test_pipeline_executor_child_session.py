@@ -201,6 +201,7 @@ class TestPipelineChildSession:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_mcp_steps_use_storage_backed_child_session_id(
         self, temp_db, mock_llm_service
     ) -> None:

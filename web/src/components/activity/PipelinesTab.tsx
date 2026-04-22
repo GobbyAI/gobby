@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
+import { memo, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
@@ -176,18 +176,28 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     }
   }, [detailExec, executions, fetchDetail])
 
+  const detailSteps = detailExec?.steps ?? []
+  const { total: detailStepCount, passed: passedStepCount, failed: failedStepCount } = useMemo(
+    () =>
+      detailSteps.reduce(
+        (counts, step) => {
+          counts.total += 1
+          if (step.status === 'completed' || step.status === 'success') {
+            counts.passed += 1
+          }
+          if (step.status === 'failed' || step.status === 'error') {
+            counts.failed += 1
+          }
+          return counts
+        },
+        { total: 0, passed: 0, failed: 0 },
+      ),
+    [detailSteps],
+  )
+
   if (loading && executions.length === 0) {
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
   }
-
-  const detailSteps = detailExec?.steps ?? []
-  const detailStepCount = detailSteps.length
-  const passedStepCount = detailSteps.filter(
-    (step) => step.status === 'completed' || step.status === 'success',
-  ).length
-  const failedStepCount = detailSteps.filter(
-    (step) => step.status === 'failed' || step.status === 'error',
-  ).length
 
   return (
     <div className="flex flex-col h-full">
@@ -271,10 +281,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {/* Detail pane */}
       {selectedId && detailExec && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div
-            className="flex items-center justify-between gap-3 px-3 border-b border-border"
-            style={{ height: 40, background: "var(--bg-secondary)" }}
-          >
+          <div className="pipeline-detail-header flex items-center justify-between gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <PipelineStatusDot status={detailExec.status} />
               <span className="text-xs font-medium text-foreground truncate">{detailExec.pipeline_name}</span>

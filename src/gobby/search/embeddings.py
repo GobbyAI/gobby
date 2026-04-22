@@ -609,7 +609,6 @@ async def is_embedding_reachable(
     cache_key = _reachability_cache_key(api_base, has_key)
 
     now = time.monotonic()
-    _prune_reachability_cache(now, cache_ttl)
     cached = _reachability_cache.get(cache_key)
     if cached is not None and (now - cached.checked_at) < cache_ttl:
         return cached.reachable

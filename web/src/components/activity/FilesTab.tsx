@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useRef } from 'react'
+import { memo, useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
@@ -428,6 +428,15 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
   }
 
   const language = selectedFile ? detectLanguage(selectedFile) : 'text'
+  const getTreePaneStyle = (): CSSProperties | undefined => {
+    if (!selectedFile) {
+      return undefined
+    }
+
+    return useHorizontal
+      ? { flex: 'none', width: `${leftWidth}px` }
+      : { flex: 'none', height: `${topHeight}%` }
+  }
 
   return (
     <div className={`flex h-full ${useHorizontal ? 'flex-row' : 'flex-col'}`}>
@@ -438,13 +447,7 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout 
             ? useHorizontal ? 'border-r border-border' : 'border-b border-border'
             : 'flex-1'
         }`}
-        style={
-          selectedFile
-            ? useHorizontal
-              ? { flex: 'none', width: `${leftWidth}px` }
-              : { flex: 'none', height: `${topHeight}%` }
-            : undefined
-        }
+        style={getTreePaneStyle()}
       >
         {rootEntries.length === 0 ? (
           <div className="activity-tab-empty"><p>No files</p></div>

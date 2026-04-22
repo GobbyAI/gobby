@@ -6,6 +6,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.hooks.broadcaster import HookEventBroadcaster
+from gobby.hooks.events import HookEvent
 from gobby.hooks.hook_types import (
     HookType,
     SessionStartInput,
@@ -53,11 +54,11 @@ def sample_input():
     )
 
 
-def _make_after_tool_event(data):
+def _make_after_tool_event(data) -> HookEvent:
     """Create a unified after_tool HookEvent for broadcaster tests."""
     from datetime import UTC, datetime
 
-    from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+    from gobby.hooks.events import HookEventType, SessionSource
 
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,

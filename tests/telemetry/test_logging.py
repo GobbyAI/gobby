@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +18,7 @@ _GOBBY_LOGGER_NAMES = ("gobby", "gobby.hooks", "gobby.mcp.server", "gobby.mcp.cl
 
 
 @pytest.fixture(autouse=True)
-def _restore_gobby_logger_state():
+def _restore_gobby_logger_state() -> Generator[None]:
     """Snapshot and restore the gobby logger tree around each test.
 
     ``setup_otel_logging`` (and ``init_telemetry`` by extension) mutate the
@@ -214,7 +215,7 @@ def test_init_telemetry_sets_providers(telemetry_config):
     assert metrics.get_meter_provider() is not None
 
 
-def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented():
+def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented() -> None:
     instrumentor = MagicMock()
     instrumentor.is_instrumented_by_opentelemetry = False
 
@@ -228,7 +229,7 @@ def test_shutdown_telemetry_skips_uninstrument_when_not_instrumented():
     mock_shutdown_providers.assert_called_once()
 
 
-def test_shutdown_telemetry_uninstruments_when_active():
+def test_shutdown_telemetry_uninstruments_when_active() -> None:
     instrumentor = MagicMock()
     instrumentor.is_instrumented_by_opentelemetry = True
 

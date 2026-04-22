@@ -584,6 +584,8 @@ export const TasksTab = memo(function TasksTab({
         : null,
     [selectedTaskId, tasks],
   );
+  const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
+  const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
 
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId;
@@ -882,38 +884,34 @@ export const TasksTab = memo(function TasksTab({
       )}
 
       {/* Detail pane */}
-      {selectedTaskId && (() => {
-        const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
-        const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
-        return (
-          <div className="activity-task-detail-shell">
-            <div className="activity-task-pane-bar activity-task-pane-bar--detail">
-              <span className="activity-task-pane-bar__title">
-                Task {headerRef ?? "—"}
-                {headerTitle ? <> – {headerTitle}</> : null}
-              </span>
-              {taskDetail && (
-                <div className="activity-task-pane-bar__chips">
-                  <TaskStateBadges task={taskDetail} />
-                  <PriorityBadge priority={taskDetail.priority ?? 4} />
-                  <TypeBadge type={taskDetail.task_type} />
-                </div>
-              )}
-            </div>
-            {detailLoading ? (
-              <p className="activity-task-detail-loading">
-                Loading...
-              </p>
-            ) : taskDetail ? (
-              <TaskDetail task={taskDetail} />
-            ) : (
-              <p className="activity-task-detail-empty">
-                Task not found
-              </p>
+      {selectedTaskId && (
+        <div className="activity-task-detail-shell">
+          <div className="activity-task-pane-bar activity-task-pane-bar--detail">
+            <span className="activity-task-pane-bar__title">
+              Task {headerRef ?? "—"}
+              {headerTitle ? <> – {headerTitle}</> : null}
+            </span>
+            {taskDetail && (
+              <div className="activity-task-pane-bar__chips">
+                <TaskStateBadges task={taskDetail} />
+                <PriorityBadge priority={taskDetail.priority ?? 4} />
+                <TypeBadge type={taskDetail.task_type} />
+              </div>
             )}
           </div>
-        );
-      })()}
+          {detailLoading ? (
+            <p className="activity-task-detail-loading">
+              Loading...
+            </p>
+          ) : taskDetail ? (
+            <TaskDetail task={taskDetail} />
+          ) : (
+            <p className="activity-task-detail-empty">
+              Task not found
+            </p>
+          )}
+        </div>
+      )}
 
       {taskMenu && (
         <>

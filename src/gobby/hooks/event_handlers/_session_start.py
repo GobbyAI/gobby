@@ -204,8 +204,12 @@ class SessionStartMixin(EventHandlersBase):
         # in terminal_context.
         if terminal_context and terminal_context.get("gobby_acp_child") == "1":
             self.logger.info(
-                "Skipping session registration for ACP child process "
-                f"(cli={cli_source}, external_id={external_id})"
+                "Skipping session registration for ACP child process",
+                extra={
+                    "cli": cli_source,
+                    "external_id": external_id,
+                    "gobby_acp_child": terminal_context.get("gobby_acp_child"),
+                },
             )
             return HookResponse()
         gobby_session_id_from_env = (

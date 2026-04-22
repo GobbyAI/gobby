@@ -1,5 +1,11 @@
 # Product Planning Agent Framework
 
+## Abandonment
+
+- **Abandoned**: April 2026, when the repo moved to the interactive `plan-draft` + `plan-review` + `plan-adversary` flow.
+- **Reason**: Superseded by a simpler plan-draft/plan-adversary approach that reused shared methodology skills instead of a larger persona-agent framework.
+- **Replaced by**: [docs/plans/plan-adversary-loop.md](../plan-adversary-loop.md), plus the implemented `plan`, `plan-draft`, `plan-review`, `planner.yaml`, and `plan-adversary.yaml` assets under `src/gobby/install/shared/`.
+
 ## Context
 
 Gobby needs structured product development workflows. Currently, users do ad-hoc planning in conversations that don't survive context compaction and have no artifact handoff between phases. We're building a framework of persona-based planning agents — discovery, product strategy, and architecture — that produce durable artifacts and can be orchestrated via pipeline. Inspired by structured product methodologies, adapted to be Gobby-native.
@@ -722,6 +728,8 @@ outputs:
 **Note**: `gobby-docs` is intentionally NOT in the pipeline. It's an anytime agent — spawn it ad-hoc to document anything, polish any artifact, or create new docs.
 
 ## Implementation Sequence
+
+The following sequence describes the originally planned implementation order for this abandoned effort and was not executed.
 
 1. **Create 10 skill directories + SKILL.md files** (no dependencies between them)
 2. **Create 6 agent YAML files** (reference skill tags from step 1)

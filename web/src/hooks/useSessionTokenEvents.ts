@@ -29,8 +29,11 @@ export function useSessionTokenEvents(sessionId: string | null, limit = 500) {
       abortRef.current?.abort()
       const controller = new AbortController()
       abortRef.current = controller
-      setError(null)
-      setIsLoading(true)
+      const isInitialOrReplace = options?.replace === true || !options?.since
+      if (isInitialOrReplace) {
+        setError(null)
+        setIsLoading(true)
+      }
 
       try {
         let url = `${getBaseUrl()}/api/sessions/${encodeURIComponent(sessionId)}/token-events?limit=${limit}`

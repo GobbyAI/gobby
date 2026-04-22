@@ -53,7 +53,7 @@ Before creating any plan, enter Claude Code's plan mode so exploration happens w
 
 Present the user:
 
-```
+```text
 How would you like to review this plan?
   A) Adversarial — spawn plan-adversary each round, iterate until approved
      (recommended; bundled in this skill)
@@ -78,14 +78,16 @@ Do **not** overload `plan_mode` — that is an existing boolean referenced by a 
 
 Ask:
 
-```
+```text
 Attach this plan to an existing task #N, or create a new planning root?
 ```
 
 - **New** →
+
   ```python
   create_task(task_type="epic", category="planning", title="<from user>")
   ```
+
   Parent task reference is what the user supplied (`#N`) or the newly created epic.
 
 - **Existing `#N`** → `get_task(#N)` and run the **attach guard** below.
@@ -415,11 +417,11 @@ Using the **exact** value stored in `interactive_lock_label` is critical — `re
 
 (For reference — the tree produced after Step 8 succeeds.)
 
-```
+```text
 L1: Root Epic (from plan title)
 └── L2: Phase Sub-Epic (from each ## Phase section)
     └── L3: Feature Task (from each ### N.N task heading)
-        ├── [TEST] Write failing tests    ← TDD sandwich (auto-generated)
+        ├── [TDD] Write failing tests     ← TDD sandwich (auto-generated)
         ├── [IMPL] Implement feature      ← TDD sandwich (auto-generated)
         └── [REF] Refactor with green tests ← TDD sandwich (auto-generated)
 ```

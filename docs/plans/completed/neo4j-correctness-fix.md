@@ -172,7 +172,7 @@
 
 ## 6. gcode coordinated cutover
 
-  Update ~/Projects/gobby-cli/crates/gcode/src/neo4j.rs so:
+  Update gobby-cli:crates/gcode/src/neo4j.rs so:
 
   - project symbol lookup ultimately targets CodeSymbol {id, project}
   - name resolution happens before graph queries, not as graph identity
@@ -232,9 +232,8 @@
   For code-graph failure state, pin a minimal persistent model:
 
   - keep graph_synced as success flag
-  - add one lightweight persistent failure marker, either:
-      - last_graph_sync_error, or
-      - graph_sync_attempted_at
+  - use graph_sync_attempted_at as the lightweight persistent failure marker
+  - set graph_sync_attempted_at when a graph sync is attempted; leave it NULL when no graph sync has been attempted yet or the project has been explicitly reset for rebuild
   - goal is to distinguish “attempted and failed” from “not yet attempted”
   - do not expand this into a larger telemetry project
 

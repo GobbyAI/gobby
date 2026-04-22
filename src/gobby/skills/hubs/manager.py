@@ -151,7 +151,7 @@ class HubManager:
         ``auth_key_name`` are reported as not requiring auth.
         """
         config = self.get_config(hub_name)
-        if config.auth_key_name is None:
+        if not config.auth_key_name:
             return {"auth_required": False, "auth_configured": True}
         return {
             "auth_required": True,

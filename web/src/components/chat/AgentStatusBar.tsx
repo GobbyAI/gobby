@@ -95,9 +95,14 @@ export function AgentStatusBar({
     contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
   const sessionBadge = viewingMeta ? getSessionKindBadge(viewingMeta.sessionType) : null
   const stateText = viewingMeta ? formatSessionStateText(interactionMode, isAttached) : null
+  const canAttach = !isAttached && !isAutonomousSession && Boolean(onAttach)
+  const canResume = !isAttached && !isAutonomousSession && Boolean(onResume)
+  const canDetach = isAttached && Boolean(onDetach)
   const hasActions =
     Boolean(onTogglePanel) ||
-    Boolean((!isAttached && !isAutonomousSession && onAttach) || (!isAttached && !isAutonomousSession && onResume) || (isAttached && onDetach))
+    canAttach ||
+    canResume ||
+    canDetach
 
   return (
     <div className="agent-status-bar" data-testid="agent-status-bar">

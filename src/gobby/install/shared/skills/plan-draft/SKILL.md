@@ -109,6 +109,7 @@ settings:
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
 ```
 
 ### Dependency Notation
@@ -161,7 +162,7 @@ Each feature task (category `code` or `config`) gets expanded into three childre
 Feature Task
 ├── [TDD] Write failing tests for feature
 ├── [IMPL] Implement feature
-└── [REF] Clean up, verify tests pass
+└── [REF] Refactor with green tests
 ```
 
 ### What the Plan MUST NOT Contain
@@ -249,14 +250,14 @@ list. `/gobby expand` creates this hierarchy automatically from the plan's
 L1: Root Epic (from plan title)
 └── L2: Phase Sub-Epic (from each ## Phase section)
     └── L3: Feature Task (from each ### N.N task heading)
-        ├── [TEST] Write failing tests    ← TDD sandwich (auto-generated)
+        ├── [TDD] Write failing tests     ← TDD sandwich (auto-generated)
         ├── [IMPL] Implement feature      ← TDD sandwich (auto-generated)
         └── [REF] Refactor with green tests ← TDD sandwich (auto-generated)
 ```
 
 ### Why Phases Must Be Sub-Epics
 
-- **TDD sandwiches are per-phase** — each phase gets its own [TEST]/[REF] wrapper.
+- **TDD sandwiches are per-phase** — each phase gets its own [TDD]/[REF] wrapper.
 - **Parallel dispatch** — phases with no cross-dependencies can be dispatched independently.
 - **Progress tracking** — phase completion is visible without scanning 30+ flat tasks.
 - **Dependency scoping** — intra-phase deps are local; cross-phase deps are explicit.
@@ -267,7 +268,7 @@ L1: Root Epic (from plan title)
 2. For each `## Phase N: Name` section:
    - Creates a phase sub-epic under the root.
    - Saves an expansion spec with that phase's `### N.N` tasks.
-   - Executes expansion with `tdd=true` — adds [TEST] and [REF] wrappers per phase.
+   - Executes expansion with `tdd=true` — adds [TDD] and [REF] wrappers per phase.
 3. Wires cross-phase dependencies (e.g., `depends: Phase N` becomes a dependency
    on the phase sub-epic).
 
