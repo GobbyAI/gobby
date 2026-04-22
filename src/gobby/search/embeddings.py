@@ -72,14 +72,16 @@ class _CacheEntry:
 
 
 _cache: dict[str, _CacheEntry] = {}
-_cache_lock: RLock | None = None
+# Initialize at module import: Python's import machinery is serialized, so two
+# concurrent _get_lock() callers cannot race to create distinct RLock objects.
+# The previous lazy-init pattern had exactly that race — two threads arriving
+# with _cache_lock=None would each call RLock() and one would overwrite the
+# other, leaving concurrent cache writers synchronized on different locks.
+_cache_lock: RLock = RLock()
 
 
 def _get_lock() -> RLock:
-    """Lazy-init the shared cache lock."""
-    global _cache_lock  # noqa: PLW0603
-    if _cache_lock is None:
-        _cache_lock = RLock()
+    """Return the shared cache lock. Preserved as a function for call-site stability."""
     return _cache_lock
 
 
