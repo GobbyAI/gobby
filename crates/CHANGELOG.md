@@ -7,6 +7,26 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Diagnose schema v2 with install provenance** — `ghook --diagnose` now emits two new fields, `install_method` and `install_source_url`, and stamps the output with `schema_version: 2`. Both fields are sourced from an optional sidecar file, `.ghook-install.json`, written by the installer next to the `ghook` binary. When no sidecar is present (e.g. plain `cargo install gobby-hooks`), both fields are `null` — so consumers can identify which install path produced a given binary in bug reports. The new schema lives at `crates/ghook/schemas/diagnose-output.v2.schema.json`; the v1 schema file is preserved unchanged as a frozen historical schema for tools that pinned to v1. The Gobby installer is the canonical sidecar writer; see `docs/guides/ghook-development-guide.md` for the full contract. (#4)
+
+### Changed
+
+#### CI/CD
+
+- **Release-time tag/version alignment guard** — the `release-ghook` workflow now fails fast if the pushed `ghook-v{X}` tag's version suffix doesn't match the version in `crates/ghook/Cargo.toml`. This closes the drift mode that produced [GobbyAI/gobby-cli#4](https://github.com/GobbyAI/gobby-cli/issues/4), where the public installer's `ghook-v{version}` GitHub-asset lookup could silently miss because the tag, crate version, and release name had diverged. The guard runs before clippy/tests so a misaligned tag never reaches crates.io or the GitHub release. (#4)
+
+### Fixed
+
+#### gobby-hooks
+
+- **Preserve non-stop block JSON** — folded forward from the unreleased 0.2.2 prep: `ghook` no longer collapses non-Stop block responses to a bare `Blocked by hook` message; the original block JSON is preserved for downstream consumers. (#141)
+
 ## [0.2.1] — gobby-hooks
 
 ### Fixed

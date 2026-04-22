@@ -20,6 +20,28 @@ jobs:
         with:
           components: clippy
 
+      - name: Verify tag matches Cargo.toml version
+        # Guards against the tag/crate/release drift that broke installer
+        # discovery in 0.2.x (see GobbyAI/gobby-cli#4): the public installer
+        # resolves a version from crates.io and then looks for a matching
+        # ghook-v{version} GitHub asset, so the tag, the crate version, and
+        # the release name all have to line up exactly. Fail fast here so a
+        # mismatched tag never produces a published crate or release.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag_version="${tag#ghook-v}"
+          if [ "$tag" = "$tag_version" ]; then
+            echo "::error::Tag '$tag' does not start with 'ghook-v'." >&2
+            exit 1
+          fi
+          cargo_version="$(cargo pkgid -p gobby-hooks | sed 's/.*@//')"
+          if [ "$tag_version" != "$cargo_version" ]; then
+            echo "::error::Tag version '$tag_version' does not match crates/ghook/Cargo.toml version '$cargo_version'." >&2
+            exit 1
+          fi
+          echo "Tag '$tag' aligns with crates/ghook/Cargo.toml version '$cargo_version'."
+
       - name: Clippy
         run: cargo clippy -p gobby-hooks --all-targets -- -D warnings
 
