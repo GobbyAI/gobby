@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 def register_message_routes(
     router: APIRouter,
     server: "HTTPServer",

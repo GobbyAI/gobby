@@ -41,9 +41,7 @@ class TestRenderSkillsForContext:
             content="# Brevity content",
         )
 
-        rendered = render_skills_for_context(
-            [(full_skill, "full"), (summary_skill, "summary")]
-        )
+        rendered = render_skills_for_context([(full_skill, "full"), (summary_skill, "summary")])
 
         assert "### bridge" in rendered
         assert "# Bridge content" in rendered

@@ -81,7 +81,9 @@ def test_rule_syncs_and_uses_helper_wiring(db: LocalDatabase) -> None:
     assert "task_status_in" in (body.when or "")
 
 
-def test_delegated_path_blocks_non_artifact_and_allows_artifact(db: LocalDatabase, tmp_path) -> None:
+def test_delegated_path_blocks_non_artifact_and_allows_artifact(
+    db: LocalDatabase, tmp_path
+) -> None:
     body = _sync_bundled(db)
     engine = RuleEngine(db)
     artifact_rel = ".gobby/plans/task-42-plan.md"
@@ -95,7 +97,10 @@ def test_delegated_path_blocks_non_artifact_and_allows_artifact(db: LocalDatabas
     }
 
     assert _evaluate_when(engine, body.when or "", file_path=other_abs, variables=variables) is True
-    assert _evaluate_when(engine, body.when or "", file_path=artifact_abs, variables=variables) is False
+    assert (
+        _evaluate_when(engine, body.when or "", file_path=artifact_abs, variables=variables)
+        is False
+    )
 
 
 def test_planner_path_blocks_until_task_reaches_terminal_status(

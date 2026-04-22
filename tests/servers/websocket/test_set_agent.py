@@ -49,6 +49,7 @@ def _make_session(db_session_id: str | None = "db-123") -> MagicMock:
 @pytest.fixture(autouse=True)
 def _mock_persona_resolution() -> Any:
     with pytest.MonkeyPatch.context() as mp:
+
         def _resolve_agent(*_args: Any, **_kwargs: Any) -> AgentDefinitionBody:
             return AgentDefinitionBody(name="persona-agent", surfaces=["persona"])
 
@@ -200,7 +201,9 @@ class TestSetAgentPersonaValidation:
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("gobby.workflows.agent_resolver.resolve_agent", lambda *_a, **_k: None)
-            await server._handle_set_agent(ws, {"conversation_id": "conv-1", "agent_name": "missing"})
+            await server._handle_set_agent(
+                ws, {"conversation_id": "conv-1", "agent_name": "missing"}
+            )
 
         server._send_error.assert_awaited_once()
         assert "Unknown agent definition" in server._send_error.call_args.args[1]

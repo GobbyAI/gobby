@@ -84,5 +84,3 @@ class TestPrepareTerminalSpawnMetadata:
         assert result.agent_run_id.startswith("run-")
         assert len(result.agent_run_id) == 16
         assert re.match(r"^run-[0-9a-f]{12}$", result.agent_run_id)
-
-

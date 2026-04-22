@@ -179,7 +179,9 @@ async def test_recommend_hybrid_semantic_fails(service: RecommendationService) -
 async def test_recommend_hybrid_llm_rerank_fails(
     service_with_semantic: RecommendationService,
 ) -> None:
-    service_with_semantic._llm_service.call_feature = AsyncMock(side_effect=RuntimeError("LLM down"))
+    service_with_semantic._llm_service.call_feature = AsyncMock(
+        side_effect=RuntimeError("LLM down")
+    )
 
     result = await service_with_semantic.recommend_tools("test", search_mode="hybrid")
     assert result["success"] is True

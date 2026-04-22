@@ -72,7 +72,9 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
     # 6. Verify had_edits is True
     session = session_manager.get(session.id)
     assert session.had_edits
-    assert session_var_manager.get_variables(session.id)["session_edited_files"] == ["src/edited.py"]
+    assert session_var_manager.get_variables(session.id)["session_edited_files"] == [
+        "src/edited.py"
+    ]
 
     # 7. Verify non-edit tool doesn't trigger it (if it was false)
     # Reset session for negative test

@@ -150,7 +150,7 @@ class TestSaveConfigValues:
                     },
                     "agent_sandbox": {
                         "extra_read_paths": ["/tmp/agent-read"],
-                    }
+                    },
                 }
             },
         )

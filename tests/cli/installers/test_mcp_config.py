@@ -30,15 +30,13 @@ pytestmark = pytest.mark.unit
 
 def test_remove_toml_table_block_preserves_trailing_comments_after_last_table() -> None:
     content = (
-        '[model]\nname = "gpt-5"\n\n'
-        '[mcp_servers.gobby]\ncommand = "uv"\n'
-        '\n# trailing comment\n\n'
+        '[model]\nname = "gpt-5"\n\n[mcp_servers.gobby]\ncommand = "uv"\n\n# trailing comment\n\n'
     )
 
     updated = _remove_toml_table_block(content, table_prefix="mcp_servers.gobby")
 
-    assert '[mcp_servers.gobby]' not in updated
-    assert updated.endswith('\n# trailing comment\n\n')
+    assert "[mcp_servers.gobby]" not in updated
+    assert updated.endswith("\n# trailing comment\n\n")
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +674,9 @@ class TestInstallDefaultMCPServers:
         mock_mcp_mgr.return_value.normalize_bundled_servers.assert_called_once_with()
 
         config = json.loads(mcp_path.read_text())
-        playwright_server = next(server for server in config["servers"] if server["name"] == "playwright")
+        playwright_server = next(
+            server for server in config["servers"] if server["name"] == "playwright"
+        )
         assert playwright_server["args"] == ["-y", "@playwright/mcp@latest"]
         chrome_server = next(
             server for server in config["servers"] if server["name"] == "chrome-devtools"

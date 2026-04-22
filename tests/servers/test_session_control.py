@@ -381,7 +381,9 @@ class TestContinueInChatTerminalKill:
         session_manager.update_parent_session_id.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_continue_in_chat_defaults_to_source_provider_and_normalizes_target_row(self) -> None:
+    async def test_continue_in_chat_defaults_to_source_provider_and_normalizes_target_row(
+        self,
+    ) -> None:
         """Continuation should preserve the source provider when the client omits it."""
         from gobby.servers.websocket.session_control import SessionControlMixin
 
@@ -706,7 +708,9 @@ class TestContinueInChatTerminalKill:
         source_session.terminal_context = None
 
         session_manager = MagicMock()
-        session_manager.get = MagicMock(side_effect=lambda session_id: source_session if session_id == "source-uuid" else None)
+        session_manager.get = MagicMock(
+            side_effect=lambda session_id: source_session if session_id == "source-uuid" else None
+        )
         session_manager.update = MagicMock()
         session_manager.update_parent_session_id = MagicMock()
 
@@ -991,7 +995,9 @@ class TestContinueInChatTerminalKill:
         assert host._pending_inject_contexts == {}
 
     @pytest.mark.asyncio
-    async def test_continue_in_chat_has_no_hidden_context_when_no_summary_or_digest_exists(self) -> None:
+    async def test_continue_in_chat_has_no_hidden_context_when_no_summary_or_digest_exists(
+        self,
+    ) -> None:
         """No-context fallback should leave the continuation without queued hidden context."""
         from gobby.servers.websocket.session_control import SessionControlMixin
 

@@ -117,7 +117,9 @@ class TestVectorSearch:
 
         assert results == []
 
-    async def test_filters_project_scoped_results_after_overfetch(self, client: Neo4jClient) -> None:
+    async def test_filters_project_scoped_results_after_overfetch(
+        self, client: Neo4jClient
+    ) -> None:
         """vector_search should overfetch candidates, then trim after project filtering."""
         client.query = AsyncMock(
             return_value=[

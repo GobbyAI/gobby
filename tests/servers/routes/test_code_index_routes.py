@@ -79,7 +79,9 @@ def test_graph_overview_returns_data(client: TestClient, mock_server: MagicMock)
 
 
 def test_search_falls_back_to_name_search(client: TestClient, mock_server: MagicMock) -> None:
-    response = client.get("/api/code-index/graph/search", params={"project_id": "proj-1", "q": "handler"})
+    response = client.get(
+        "/api/code-index/graph/search", params={"project_id": "proj-1", "q": "handler"}
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["results"][0]["id"] == "sym-1"
@@ -144,9 +146,7 @@ def test_rebuild_graph_returns_500_on_exception(client: TestClient, mock_server:
     assert response.json()["detail"] == "boom"
 
 
-def test_clear_graph_preserves_http_exception(
-    client: TestClient, mock_server: MagicMock
-) -> None:
+def test_clear_graph_preserves_http_exception(client: TestClient, mock_server: MagicMock) -> None:
     mock_server.services.code_indexer.clear_graph = AsyncMock(
         side_effect=HTTPException(status_code=418, detail="teapot")
     )
@@ -157,9 +157,7 @@ def test_clear_graph_preserves_http_exception(
     assert response.json()["detail"] == "teapot"
 
 
-def test_rebuild_graph_preserves_http_exception(
-    client: TestClient, mock_server: MagicMock
-) -> None:
+def test_rebuild_graph_preserves_http_exception(client: TestClient, mock_server: MagicMock) -> None:
     mock_server.services.code_indexer.rebuild_graph = AsyncMock(
         side_effect=HTTPException(status_code=422, detail="bad rebuild request")
     )

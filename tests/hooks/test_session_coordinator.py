@@ -466,6 +466,7 @@ class TestStartAgentRunIdempotency:
         assert coordinator.start_agent_run("run-missing") is False
         mock_agent_run_manager.start.assert_not_called()
 
+
 class TestWorktreeRelease:
     """Test worktree release on session end."""
 

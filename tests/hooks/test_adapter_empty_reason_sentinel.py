@@ -45,8 +45,12 @@ def test_shared_helper_warns_and_uses_sentinel_for_blank_block_reason(
 
     assert reason == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     messages = _warning_messages(caplog, logger_name="gobby.adapters.tests")
-    assert any("TestAdapter translated block without reason at adapter boundary" in msg for msg in messages)
-    assert any("response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages)
+    assert any(
+        "TestAdapter translated block without reason at adapter boundary" in msg for msg in messages
+    )
+    assert any(
+        "response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages
+    )
 
 
 def test_shared_helper_passes_through_populated_reason_without_warning(
@@ -75,10 +79,18 @@ def test_claude_blank_reason_uses_sentinel_and_logs_payload(
     with caplog.at_level(logging.WARNING, logger="gobby"):
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
-    assert result["hookSpecificOutput"]["permissionDecisionReason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
+    assert (
+        result["hookSpecificOutput"]["permissionDecisionReason"]
+        == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
+    )
     messages = _warning_messages(caplog, logger_name="gobby.adapters.claude_code")
-    assert any("ClaudeCodeAdapter translated block without reason at adapter boundary" in msg for msg in messages)
-    assert any("response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages)
+    assert any(
+        "ClaudeCodeAdapter translated block without reason at adapter boundary" in msg
+        for msg in messages
+    )
+    assert any(
+        "response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages
+    )
 
 
 def test_claude_populated_reason_passes_through_unchanged(
@@ -105,8 +117,13 @@ def test_gemini_blank_reason_uses_sentinel_and_logs_payload(
 
     assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     messages = _warning_messages(caplog, logger_name="gobby.adapters.gemini")
-    assert any("GeminiAdapter translated block without reason at adapter boundary" in msg for msg in messages)
-    assert any("response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages)
+    assert any(
+        "GeminiAdapter translated block without reason at adapter boundary" in msg
+        for msg in messages
+    )
+    assert any(
+        "response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages
+    )
 
 
 def test_gemini_populated_reason_passes_through_unchanged(
@@ -132,10 +149,18 @@ def test_codex_blank_reason_uses_sentinel_and_logs_payload(
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
     assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
-    assert result["hookSpecificOutput"]["permissionDecisionReason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
+    assert (
+        result["hookSpecificOutput"]["permissionDecisionReason"]
+        == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
+    )
     messages = _warning_messages(caplog, logger_name="gobby.adapters.codex_impl.adapter")
-    assert any("CodexHooksAdapter translated block without reason at adapter boundary" in msg for msg in messages)
-    assert any("response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages)
+    assert any(
+        "CodexHooksAdapter translated block without reason at adapter boundary" in msg
+        for msg in messages
+    )
+    assert any(
+        "response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages
+    )
 
 
 def test_codex_populated_reason_passes_through_unchanged(

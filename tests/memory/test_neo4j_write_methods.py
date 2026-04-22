@@ -68,9 +68,7 @@ class TestMergeNode:
         """merge_node works with empty properties."""
         client.query = AsyncMock(return_value=[])
 
-        await client.merge_node(
-            entity_key="gobby", name="Gobby", labels=["Project"], properties={}
-        )
+        await client.merge_node(entity_key="gobby", name="Gobby", labels=["Project"], properties={})
 
         client.query.assert_called_once()
         params = client.query.call_args[0][1]

@@ -16,7 +16,7 @@ def get_logger() -> logging.Logger:
     """Resolve package logger through the public import path for patch compatibility."""
     import gobby.storage.sessions as sessions_module
 
-    return cast(logging.Logger, getattr(sessions_module, "logger"))
+    return cast(logging.Logger, sessions_module.logger)
 
 
 # Well-known system session ID — bootstrapped at DB init.

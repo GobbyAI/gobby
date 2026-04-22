@@ -94,10 +94,14 @@ class TestTTSPipeline:
         pipeline.feed_text("First sentence. Second sentence. ")
         await pipeline.flush()
 
-        text_frames = [call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], str)]
+        text_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], str)
+        ]
         payloads = [json.loads(message) for message in text_frames]
         error_frames = [payload for payload in payloads if payload["type"] == "tts_status"]
-        binary_frames = [call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)]
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
 
         assert error_frames == [
             {

@@ -276,24 +276,18 @@ class TestTaskHasLabelPrefix:
                 labels=["planning-round:1", "interactive:planning-in-progress:sess-abc"],
             )
         )
-        assert (
-            task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True
-        )
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True
 
     def test_non_matching_prefix_returns_false(self) -> None:
         mgr = FakeTaskManager()
         mgr.add(FakeTask(id="#42", labels=["planning-round:1"]))
-        assert (
-            task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
-        )
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
 
     def test_prefix_is_strict_startswith_not_substring(self) -> None:
         """A label that *contains* the prefix mid-string must not match."""
         mgr = FakeTaskManager()
         mgr.add(FakeTask(id="#42", labels=["prefixed-interactive:planning-in-progress:x"]))
-        assert (
-            task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
-        )
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
 
     def test_empty_labels_returns_false(self) -> None:
         mgr = FakeTaskManager()
@@ -334,6 +328,4 @@ class TestTaskHasLabelPrefix:
                 ],
             )
         )
-        assert (
-            task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True
-        )
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True

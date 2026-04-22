@@ -1146,9 +1146,7 @@ class TestGobbyRunnerShutdown:
                 assert mock_server.should_exit is True
 
             fast_stop_hook_grace_window.side_effect = note_grace_wait
-            runner.http_server._terminate_streamable_http_sessions.side_effect = (
-                terminate_sessions
-            )
+            runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = MagicMock()

@@ -451,9 +451,7 @@ class TestCreateTaskTool:
     @pytest.mark.asyncio
     async def test_create_task_with_all_optional_fields(self, mock_task_manager, mock_sync_manager):
         """Test create_task with all optional fields."""
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._context.SessionManager"
-        ) as MockSessionManager:
+        with patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager:
             # Mock session manager to return the session_id as-is
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "sess-123"

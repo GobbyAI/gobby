@@ -350,9 +350,7 @@ class TestShlexQuoteFilter:
         assert result == "''"
 
 
-REQUIRE_UV_COMMAND_PATTERN = (
-    r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
-)
+REQUIRE_UV_COMMAND_PATTERN = r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
 
 
 class TestRequireUvRewrite:

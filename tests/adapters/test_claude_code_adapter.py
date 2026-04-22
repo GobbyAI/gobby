@@ -545,9 +545,7 @@ class TestTranslateFromHookResponse:
     def test_context_injection_post_tool_use_failure(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="allow", context="Failure context")
-        result = adapter.translate_from_hook_response(
-            response, hook_type="post-tool-use-failure"
-        )
+        result = adapter.translate_from_hook_response(response, hook_type="post-tool-use-failure")
         assert result["hookSpecificOutput"]["hookEventName"] == "PostToolUseFailure"
         assert "Failure context" in result["hookSpecificOutput"]["additionalContext"]
 

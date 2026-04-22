@@ -263,7 +263,10 @@ class TestInstallGemini:
                 settings = json.load(f)
 
             hook_command = settings["hooks"]["SessionStart"]["command"]
-            assert hook_command == "/custom/path/to/ghook --gobby-owned --cli=gemini --type=SessionStart"
+            assert (
+                hook_command
+                == "/custom/path/to/ghook --gobby-owned --cli=gemini --type=SessionStart"
+            )
 
     def test_install_gemini_ghook_fallback_when_not_found(
         self,

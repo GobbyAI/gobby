@@ -394,12 +394,7 @@ class TestIsTmuxPaneAlive:
         mock_result = MagicMock()
         mock_result.stdout = "%6\n"
         with patch("subprocess.run", return_value=mock_result) as mock_run:
-            assert (
-                SessionLivenessMonitor._is_tmux_pane_alive(
-                    "%6", "/tmp/tmux-1000/gobby"
-                )
-                is True
-            )
+            assert SessionLivenessMonitor._is_tmux_pane_alive("%6", "/tmp/tmux-1000/gobby") is True
 
         mock_run.assert_called_once_with(
             ["tmux", "-S", "/tmp/tmux-1000/gobby", "list-panes", "-a", "-F", "#{pane_id}"],

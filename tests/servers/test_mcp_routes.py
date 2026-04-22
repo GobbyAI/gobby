@@ -355,9 +355,7 @@ class TestListMCPTools:
             is_failure=False,
         )
 
-    def test_list_tools_internal_server_fallthrough(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_tools_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test listing tools falls through to MCP manager when internal registry not found."""
         server = create_http_server(
             port=60887,
@@ -499,9 +497,7 @@ class TestListMCPTools:
         data = response.json()
         assert data["tools"][0]["inputSchema"]["type"] == "object"
 
-    def test_list_tools_with_input_schema_model_dump(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_tools_with_input_schema_model_dump(self, session_storage: SessionManager) -> None:
         """Test listing tools with inputSchema having model_dump method."""
         server = create_http_server(
             port=60887,
@@ -553,9 +549,7 @@ class TestListMCPServers:
         assert data["connected"] == 0
         assert data["servers"] == []
 
-    def test_list_servers_with_internal_registries(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_servers_with_internal_registries(self, session_storage: SessionManager) -> None:
         """Test listing servers includes internal registries."""
         server = create_http_server(
             port=60887,
@@ -602,9 +596,7 @@ class TestListMCPServers:
         assert data["servers"][0]["name"] == "external-server"
         assert data["servers"][0]["transport"] == "http"
 
-    def test_list_servers_with_disconnected_servers(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_servers_with_disconnected_servers(self, session_storage: SessionManager) -> None:
         """Test listing servers shows disconnected servers."""
         server = create_http_server(
             port=60887,
@@ -747,9 +739,7 @@ class TestListAllMCPTools:
         if list_tasks_tool:
             assert list_tasks_tool["call_count"] == 10
 
-    def test_list_all_tools_external_server_disabled(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_all_tools_external_server_disabled(self, session_storage: SessionManager) -> None:
         """Test listing tools skips disabled external servers."""
         server = create_http_server(
             port=60887,
@@ -771,9 +761,7 @@ class TestListAllMCPTools:
         # Tools list should be empty for disabled server
         assert data["tools"].get("disabled-server") == []
 
-    def test_list_all_tools_external_server_failure(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_all_tools_external_server_failure(self, session_storage: SessionManager) -> None:
         """Test listing tools handles external server failure."""
         server = create_http_server(
             port=60887,
@@ -1576,9 +1564,7 @@ class TestSearchMCPTools:
         assert response.status_code == 400
         assert "query" in response.json()["detail"]["error"]
 
-    def test_search_tools_project_resolution_failure(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_search_tools_project_resolution_failure(self, session_storage: SessionManager) -> None:
         """Test searching tools when project resolution fails."""
         server = create_http_server(
             port=60887,
@@ -1677,9 +1663,7 @@ class TestSearchMCPTools:
 class TestEmbedMCPTools:
     """Tests for POST /mcp/tools/embed endpoint."""
 
-    def test_embed_tools_project_resolution_failure(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_embed_tools_project_resolution_failure(self, session_storage: SessionManager) -> None:
         """Test embedding tools when project resolution fails."""
         server = create_http_server(
             port=60887,
@@ -1934,9 +1918,7 @@ class TestMCPProxy:
         assert data["success"] is True
         assert data["result"] == {"items": [1, 2, 3]}
 
-    def test_proxy_external_server_tool_not_found(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_proxy_external_server_tool_not_found(self, session_storage: SessionManager) -> None:
         """Test proxy when tool not found on external server."""
         server = create_http_server(
             port=60887,
@@ -2034,9 +2016,7 @@ class TestRefreshMCPTools:
         assert data["success"] is False
         assert "not configured" in data["error"]
 
-    def test_refresh_tools_with_internal_servers(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_refresh_tools_with_internal_servers(self, session_storage: SessionManager) -> None:
         """Test refreshing tools with internal servers."""
         server = create_http_server(
             port=60887,
@@ -2277,9 +2257,7 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         assert response.json()["continue"] is True
 
-    def test_execute_hook_claude_envelope_source(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
         server = create_http_server(
             port=60887,
@@ -2501,9 +2479,7 @@ class TestHooksEndpoints:
         assert response.status_code == 400
         assert "Unsupported schema_version" in response.json()["detail"]
 
-    def test_execute_hook_envelope_requires_source(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_execute_hook_envelope_requires_source(self, session_storage: SessionManager) -> None:
         """Envelope requests still require source after normalization."""
         server = create_http_server(
             port=60887,

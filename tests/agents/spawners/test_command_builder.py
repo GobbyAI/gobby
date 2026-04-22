@@ -87,5 +87,3 @@ class TestBuildCliCommand:
         )
         assert cmd == ["gemini", "--acp", "--resume", "gem-session"]
         assert env == {"CUSTOM_VAR": "value"}
-
-

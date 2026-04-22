@@ -25,6 +25,7 @@ def mock_mcp_manager():
     }
     return manager
 
+
 class TestGitHubIntegrationAvailability:
     """Test is_available() method."""
 

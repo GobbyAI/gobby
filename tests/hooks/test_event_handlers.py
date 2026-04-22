@@ -1972,9 +1972,7 @@ class TestWorktreeHandlers:
             base_branch="main",
         )
 
-    def test_worktree_remove_deletes_git_worktree_and_record(
-        self, mock_dependencies: dict
-    ) -> None:
+    def test_worktree_remove_deletes_git_worktree_and_record(self, mock_dependencies: dict) -> None:
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(id="wt-123")
 
         handlers = EventHandlers(**mock_dependencies)

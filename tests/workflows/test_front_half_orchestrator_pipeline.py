@@ -16,4 +16,7 @@ def test_dispatch_planner_passes_artifact_path_initial_variable() -> None:
 
     dispatch_planner = next(step for step in data["steps"] if step["id"] == "dispatch_planner")
     arguments = dispatch_planner["mcp"]["arguments"]
-    assert arguments["initial_variables"]["artifact_path"] == "${{ steps.tick.output.artifacts.plan_file }}"
+    assert (
+        arguments["initial_variables"]["artifact_path"]
+        == "${{ steps.tick.output.artifacts.plan_file }}"
+    )

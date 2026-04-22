@@ -795,9 +795,7 @@ class TestAdminEndpoints:
         data = response.json()
         assert data["memory"]["count"] == 10
 
-    def test_status_check_memory_manager_failure(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_status_check_memory_manager_failure(self, session_storage: SessionManager) -> None:
         """Test status check handles memory manager failure."""
         mock_memory_manager = MagicMock()
         mock_memory_manager.get_stats.side_effect = RuntimeError("Memory error")
@@ -1380,9 +1378,7 @@ class TestWebhooksEndpoints:
 class TestExceptionHandlers:
     """Tests for exception handlers."""
 
-    def test_global_exception_handler_logs_details(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_global_exception_handler_logs_details(self, session_storage: SessionManager) -> None:
         """Test that global exception handler logs request details."""
         services = ServiceContainer(
             config=MagicMock(),
@@ -1413,9 +1409,7 @@ class TestExceptionHandlers:
         assert data["status"] == "error"
         assert data["error_logged"] is True
 
-    def test_global_exception_handler_includes_path(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_global_exception_handler_includes_path(self, session_storage: SessionManager) -> None:
         """Test exception handler includes request path in logs."""
         services = ServiceContainer(
             config=MagicMock(),
@@ -1680,9 +1674,7 @@ class TestInternalRegistries:
         assert data["tool_count"] == 1
         assert data["tools"][0]["name"] == "tool1"
 
-    def test_list_tools_internal_server_not_found(
-        self, session_storage: SessionManager
-    ) -> None:
+    def test_list_tools_internal_server_not_found(self, session_storage: SessionManager) -> None:
         """Test listing tools from non-existent internal server."""
         mock_internal_manager = MagicMock()
         mock_internal_manager.is_internal.return_value = True

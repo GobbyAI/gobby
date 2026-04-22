@@ -107,11 +107,11 @@ class TestPlanDraftContent:
         # Five numbered checks per the plan design
         # Don't pin exact numbering — just ensure each item is present.
         required_checks = (
-            "explicit test tasks",      # 1
-            "Dependency Tree",           # 2
-            "Categor",                   # 3
-            "Phase Heading",             # 4
-            "Self-Contained",            # 5
+            "explicit test tasks",  # 1
+            "Dependency Tree",  # 2
+            "Categor",  # 3
+            "Phase Heading",  # 4
+            "Self-Contained",  # 5
         )
         for check in required_checks:
             assert check in body, f"Verification checklist missing: {check}"

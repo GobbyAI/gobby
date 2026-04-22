@@ -862,9 +862,7 @@ class TestCodexMcpHookSynthesis:
     """Synthesis of BEFORE/AFTER_TOOL hook events from Codex rollout tail."""
 
     @pytest.mark.asyncio
-    async def test_dispatches_before_and_after_tool_for_mcp_call(
-        self, mock_db, tmp_path
-    ) -> None:
+    async def test_dispatches_before_and_after_tool_for_mcp_call(self, mock_db, tmp_path) -> None:
         hook_manager = MagicMock()
         processor = SessionMessageProcessor(
             mock_db,
@@ -921,16 +919,12 @@ class TestCodexMcpHookSynthesis:
         assert before.metadata["_synthesized_from"] == "codex_rollout"
 
         assert after.event_type == HookEventType.AFTER_TOOL
-        assert after.data["tool_response"] == {
-            "content": [{"type": "text", "text": "{...}"}]
-        }
+        assert after.data["tool_response"] == {"content": [{"type": "text", "text": "{...}"}]}
         assert "is_error" not in after.data
         assert after.data["duration_ns"] == 18_695_333
 
     @pytest.mark.asyncio
-    async def test_byte_offset_prevents_double_fire_on_retail(
-        self, mock_db, tmp_path
-    ) -> None:
+    async def test_byte_offset_prevents_double_fire_on_retail(self, mock_db, tmp_path) -> None:
         hook_manager = MagicMock()
         processor = SessionMessageProcessor(
             mock_db,
@@ -958,9 +952,7 @@ class TestCodexMcpHookSynthesis:
         assert hook_manager.handle.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_non_codex_source_does_not_synthesize(
-        self, mock_db, tmp_path
-    ) -> None:
+    async def test_non_codex_source_does_not_synthesize(self, mock_db, tmp_path) -> None:
         """Synthesis runs only for codex sessions; claude has its own pre/post-tool path."""
         hook_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)

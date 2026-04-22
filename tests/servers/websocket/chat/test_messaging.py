@@ -174,9 +174,7 @@ class TestStreamChatResponse:
             "_create_chat_session",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ):
-            with caplog.at_level(
-                "DEBUG", logger="gobby.servers.websocket.chat._messaging"
-            ):
+            with caplog.at_level("DEBUG", logger="gobby.servers.websocket.chat._messaging"):
                 await mixin._stream_chat_response(ws, "c1", "hi", None)
 
         messages = [json.loads(call[0][0]) for call in ws.send.call_args_list]

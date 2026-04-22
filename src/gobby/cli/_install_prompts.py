@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def _ensure_db_and_secrets(
     db: LocalDatabase | None,
     secret_store: SecretStore | None,
-) -> Generator[tuple[LocalDatabase, SecretStore], None, None]:
+) -> Generator[tuple[LocalDatabase, SecretStore]]:
     """Yield (db, secret_store), opening the DB only when this call created it.
 
     When the caller passes a pre-built ``db`` we use it as-is and do NOT close

@@ -190,9 +190,7 @@ class TestStreamableHttpShutdown:
         transport.mcp_session_id = "sess-timeout"
         transport.terminate = AsyncMock()
         http_server._mcp_server = MagicMock()
-        http_server._mcp_server.session_manager = MagicMock(
-            _server_instances={"one": transport}
-        )
+        http_server._mcp_server.session_manager = MagicMock(_server_instances={"one": transport})
 
         with patch("gobby.servers.http.asyncio.wait_for", side_effect=TimeoutError):
             await http_server._terminate_streamable_http_sessions()
@@ -210,9 +208,7 @@ class TestStreamableHttpShutdown:
         transport.mcp_session_id = "sess-ok"
         transport.terminate = AsyncMock()
         http_server._mcp_server = MagicMock()
-        http_server._mcp_server.session_manager = MagicMock(
-            _server_instances={"one": transport}
-        )
+        http_server._mcp_server.session_manager = MagicMock(_server_instances={"one": transport})
 
         async def _wait_for(awaitable, timeout):
             await awaitable

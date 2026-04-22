@@ -776,7 +776,9 @@ class TestRemoveMemoryFromGraph:
         """remove_memory_from_graph issues DETACH DELETE on the Memory node."""
         await service.remove_memory_from_graph("mem-1")
 
-        delete_calls = [c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]]
+        delete_calls = [
+            c for c in mock_neo4j.query.call_args_list if "DETACH DELETE m" in c.args[0]
+        ]
         assert len(delete_calls) == 1
         cypher = delete_calls[0].args[0]
         params = delete_calls[0].args[1]

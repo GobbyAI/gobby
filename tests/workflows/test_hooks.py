@@ -877,9 +877,7 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
     @pytest.mark.asyncio
-    async def test_codex_schema_lookup_rehydrates_and_injects_transition_skill(
-        self, db
-    ) -> None:
+    async def test_codex_schema_lookup_rehydrates_and_injects_transition_skill(self, db) -> None:
         """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill injection."""
         from gobby.workflows.rule_engine import RuleEngine
         from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules

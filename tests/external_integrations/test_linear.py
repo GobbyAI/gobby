@@ -23,6 +23,7 @@ def mock_mcp_manager():
     }
     return manager
 
+
 class TestLinearIntegrationAvailability:
     """Test is_available() method."""
 

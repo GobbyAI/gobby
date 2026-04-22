@@ -336,7 +336,9 @@ class TestUpdateDefinition:
             json={"model": "opus", "timeout": 600.0, "surfaces": ["spawn", "persona"]},
         )
         assert response.status_code == 200
-        definition = AgentDefinitionBody.model_validate_json(response.json()["definition"]["definition_json"])
+        definition = AgentDefinitionBody.model_validate_json(
+            response.json()["definition"]["definition_json"]
+        )
         assert definition.model == "opus"
         assert definition.timeout == 600.0
         assert definition.surfaces == ["spawn", "persona"]
