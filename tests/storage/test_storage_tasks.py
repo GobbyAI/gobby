@@ -873,6 +873,37 @@ class TestLocalTaskManager:
         assert approved.assignee is None
         assert approved.claimed_by_session_id is None
 
+    def test_mark_task_review_rejected_reopens_and_clears_canonical_owner(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Rejecting review should reopen work and release the active claim."""
+        session = session_manager.register(
+            external_id="rejected-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(
+            project_id,
+            "Reject me",
+            labels=["planning-round:0"],
+        )
+        task_manager.claim_task(task.id, session.id)
+        task_manager.mark_task_needs_review(task.id, review_notes="Ready for adversary")
+        task_manager.claim_task(task.id, session.id)
+
+        rejected = task_manager.mark_task_review_rejected(
+            task.id,
+            rejection_notes="Needs another planning round",
+            round=1,
+        )
+
+        assert rejected.status == "open"
+        assert rejected.assignee is None
+        assert rejected.claimed_by_session_id is None
+        assert "## Adversary Findings — Round 1" in (rejected.description or "")
+        assert "planning-round:1" in (rejected.labels or [])
+
     def test_escalate_task_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:

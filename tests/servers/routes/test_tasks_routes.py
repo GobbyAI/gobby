@@ -538,6 +538,25 @@ class TestLifecycleMutations:
         assert data["state"]["lifecycle_stage"] == "review_approved"
         assert data["state"]["is_merge_ready"] is True
 
+    def test_mark_task_review_rejected(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/review-rejected",
+            json={"notes": "Need another pass", "round": 1},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "open"
+        assert "## Adversary Findings — Round 1" in (data["description"] or "")
+        assert "planning-round:1" in (data["labels"] or [])
+
     def test_escalate_task(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/escalate",

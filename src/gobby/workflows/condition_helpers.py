@@ -112,6 +112,23 @@ def task_has_label_prefix(task_manager: Any, task_id: str | int | None, prefix: 
     return any(isinstance(label, str) and label.startswith(prefix) for label in labels)
 
 
+def task_status_in(task_manager: Any, task_id: str | int | None, *statuses: str) -> bool:
+    """Check whether the task's current status is in the provided set."""
+    if not task_id or not statuses:
+        return False
+    if not task_manager:
+        return False
+
+    normalized = _normalize_task_id(task_id)
+    task = task_manager.get_task(normalized)
+    if not task:
+        logger.debug(f"task_status_in: Task '{normalized}' not found")
+        return False
+
+    normalized_statuses = {status.strip() for status in statuses if isinstance(status, str)}
+    return bool(getattr(task, "status", None) in normalized_statuses)
+
+
 def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
     """Check if a single task and its subtree are complete."""
     task = task_manager.get_task(task_id)

@@ -98,6 +98,16 @@ class TaskReviewRequest(BaseModel):
     notes: str | None = Field(default=None, description="Review notes or approval notes")
 
 
+class TaskReviewRejectionRequest(BaseModel):
+    """Request body for review rejection transitions."""
+
+    notes: str | None = Field(default=None, description="Review findings or rejection notes")
+    round: int | None = Field(
+        default=None,
+        description="Optional planning round number used to update planning-round:N",
+    )
+
+
 class TaskEscalateRequest(BaseModel):
     """Request body for escalation."""
 
@@ -445,6 +455,28 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             )
             result = updated.to_dict()
             await _broadcast_task("task_review_approved", result)
+            return result
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.post("/{task_id}/review-rejected")
+    async def mark_task_review_rejected(
+        task_id: str, request_data: TaskReviewRejectionRequest | None = None
+    ) -> Any:
+        """Reject a task after review and return it to open status."""
+        try:
+            task = _resolve_task(task_id)
+            resolved_id = task.id
+            body = request_data or TaskReviewRejectionRequest()
+            updated = server.task_manager.mark_task_review_rejected(
+                resolved_id,
+                rejection_notes=body.notes,
+                round=body.round,
+            )
+            result = updated.to_dict()
+            await _broadcast_task("task_review_rejected", result)
             return result
         except TaskNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

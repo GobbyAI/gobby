@@ -45,7 +45,7 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call mark_task_review_approved.
+  - Do NOT call mark_task_review_approved or mark_task_review_rejected.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -122,6 +122,7 @@ steps:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:mark_task_review_rejected"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"

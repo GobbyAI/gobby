@@ -9,7 +9,7 @@ Active memory-lifecycle rules:
 - bootstrap-session-title-on-prompt: heuristic title bootstrap on first prompt
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
-- require-memory-review-before-status: block on before_tool (close_task, mark_task_needs_review, mark_task_review_approved)
+- require-memory-review-before-status: block on before_tool (close_task, mark_task_needs_review, mark_task_review_approved, mark_task_review_rejected)
 - clear-memory-review-on-create: set_variable on before_tool
 
 """
@@ -224,7 +224,7 @@ class TestRequireMemoryReviewBeforeStatus:
         assert "create_memory" in body.effects[0].reason
 
     def test_blocks_all_status_transitions(self, db, manager) -> None:
-        """Should block close_task, mark_task_needs_review, and mark_task_review_approved."""
+        """Should block close_task and all review lifecycle transitions."""
         _sync_bundled(db)
         row = manager.get_by_name("require-memory-review-before-status")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
@@ -232,6 +232,7 @@ class TestRequireMemoryReviewBeforeStatus:
         assert "gobby-tasks:close_task" in mcp_tools
         assert "gobby-tasks:mark_task_needs_review" in mcp_tools
         assert "gobby-tasks:mark_task_review_approved" in mcp_tools
+        assert "gobby-tasks:mark_task_review_rejected" in mcp_tools
 
     def test_has_when_condition(self, db, manager) -> None:
         """Only block when memory_review_completed is not set."""

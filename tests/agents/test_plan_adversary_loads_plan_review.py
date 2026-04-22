@@ -13,9 +13,9 @@ These tests lock in:
   - transition out gates on skill_loaded,
   - instructions explicitly direct the agent to plan-review,
   - terminate-step exit wiring uses end_agent_run,
-  - both escalation prefixes (planning_changes_requested:, needs_requirements:)
-    survive the trim so the interactive planner's branching (Step 7.6) matches
-    the autonomous state machine's.
+  - review rejection plus `needs_requirements:` survive the trim so the
+    interactive planner's branching (Step 7.6) matches the autonomous state
+    machine's.
 """
 
 from pathlib import Path
@@ -38,9 +38,7 @@ def agent() -> AgentDefinitionBody:
 
 
 class TestAdversarySkillLoading:
-    def test_has_load_skill_step_between_claim_and_review(
-        self, agent: AgentDefinitionBody
-    ) -> None:
+    def test_has_load_skill_step_between_claim_and_review(self, agent: AgentDefinitionBody) -> None:
         """Ordering is load-bearing: skill must be in context before reviewing."""
         names = [s.name for s in (agent.steps or [])]
         assert names == ["claim", "load_skill", "review", "terminate"]
@@ -75,9 +73,7 @@ class TestAdversarySkillLoading:
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
         load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
         transitions = load_step.transitions or []
-        assert any(
-            t.to == "review" and t.when and "skill_loaded" in t.when for t in transitions
-        )
+        assert any(t.to == "review" and t.when and "skill_loaded" in t.when for t in transitions)
 
 
 class TestAdversaryInstructionsPreserveContracts:
@@ -86,16 +82,16 @@ class TestAdversaryInstructionsPreserveContracts:
         assert "plan-review" in instructions
         assert "get_skill" in instructions
 
-    def test_both_escalation_prefixes_preserved(self, agent: AgentDefinitionBody) -> None:
-        """The interactive planner Step 7.6 branches on these exact prefixes.
-        Must match what's in plan-review and the _front_half.py state machine."""
-        instructions = agent.instructions or ""
-        assert "planning_changes_requested:" in instructions
-        assert "needs_requirements:" in instructions
-
-    def test_round_scoped_findings_header_referenced(
+    def test_review_rejection_and_requirements_contracts_preserved(
         self, agent: AgentDefinitionBody
     ) -> None:
+        """Revision rounds should use review rejection; insufficient-context
+        halts should use `needs_requirements:`."""
+        instructions = agent.instructions or ""
+        assert "mark_task_review_rejected" in instructions
+        assert "needs_requirements:" in instructions
+
+    def test_round_scoped_findings_header_referenced(self, agent: AgentDefinitionBody) -> None:
         """Output goes under ## Adversary Findings — Round N; the inline
         instructions reinforce plan-review's format so a sloppy adversary
         run doesn't write a bare `## Adversary Findings` that leaks into
@@ -103,6 +99,27 @@ class TestAdversaryInstructionsPreserveContracts:
         instructions = agent.instructions or ""
         assert "Adversary Findings" in instructions
         assert "Round N" in instructions or "display round" in instructions.lower()
+
+    def test_review_step_completes_on_review_rejection(self, agent: AgentDefinitionBody) -> None:
+        review_step = next(s for s in (agent.steps or []) if s.name == "review")
+        mcp_success = getattr(review_step, "on_mcp_success", None) or []
+        triples = [
+            (
+                (
+                    entry.get("server")
+                    if isinstance(entry, dict)
+                    else getattr(entry, "server", None)
+                ),
+                (entry.get("tool") if isinstance(entry, dict) else getattr(entry, "tool", None)),
+                (
+                    entry.get("variable")
+                    if isinstance(entry, dict)
+                    else getattr(entry, "variable", None)
+                ),
+            )
+            for entry in mcp_success
+        ]
+        assert ("gobby-tasks", "mark_task_review_rejected", "review_complete") in triples
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""

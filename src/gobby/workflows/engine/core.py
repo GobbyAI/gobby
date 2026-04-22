@@ -234,6 +234,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         mcp_dispatcher: Any | None = None,
         runner: Any | None = None,
         completion_registry: Any | None = None,
+        task_manager: Any | None = None,
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
@@ -243,6 +244,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         self._mcp_dispatcher = mcp_dispatcher
         self._runner = runner
         self._completion_registry = completion_registry
+        self._task_manager = task_manager
 
     async def evaluate(
         self,

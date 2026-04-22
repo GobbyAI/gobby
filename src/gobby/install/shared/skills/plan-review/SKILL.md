@@ -136,11 +136,13 @@ Findings carry a **severity**:
 - `blocking` — the plan should not be expanded until this is fixed.
 - `nit` — worth noting, but not a blocker on its own.
 
-Escalate **only when blocking findings remain**:
+Escalate **only when context is insufficient or a true human-intervention blocker exists**.
+For routine revision rounds, reject review instead:
 
-- If ≥1 `blocking` finding after the second pass → write the findings section
-  (see Output Format below), then call
-  `escalate_task(task_id=<planning_task>, reason="planning_changes_requested: <one-line summary>")`.
+- If ≥1 `blocking` finding after the second pass → call
+  `mark_task_review_rejected(task_id=<planning_task>, rejection_notes="<formatted findings>", round=N)`.
+  Use the Output Format below for `rejection_notes`; the tool appends the
+  `## Adversary Findings — Round N` section and returns the task to `open`.
 - If only `nit` findings remain → record them in the findings section so the
   drafter can see them, but **approve** the plan with
   `mark_task_review_approved(task_id=<planning_task>, approval_notes="...")`.
@@ -152,8 +154,8 @@ Non-blocking nits never trigger escalation on their own.
 
 ## Output Format
 
-Write findings to the planning task's description under a **round-scoped**
-heading:
+When rejecting review, pass findings in `rejection_notes` so
+`mark_task_review_rejected` can append them under a **round-scoped** heading:
 
 ```text
 ## Adversary Findings — Round N
@@ -166,9 +168,9 @@ in the prompt — use that exact number. First round is `Round 1`, second is
 
 ### Preserve prior rounds
 
-**Do not overwrite or delete previous rounds' sections.** Append the new
-`## Adversary Findings — Round N` section below any prior ones. Previous rounds
-stay in the description for audit.
+**Do not overwrite or delete previous rounds' sections.** The rejection tool
+appends the new `## Adversary Findings — Round N` section below any prior ones.
+Previous rounds stay in the description for audit.
 
 ### Finding schema
 
@@ -210,7 +212,7 @@ canonical form is `## Phase 3: Wire-up`. Update for consistency.
 ## Halt Conditions
 
 Stop and **escalate with `needs_requirements: <concrete missing questions>`**
-(not `planning_changes_requested:`) when:
+when:
 
 - The plan artifact file is missing or empty.
 - The plan has no `## Phase` sections.

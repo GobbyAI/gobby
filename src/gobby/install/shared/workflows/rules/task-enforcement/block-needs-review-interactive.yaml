@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
   block-needs-review-interactive:
-    description: "Block mark_task_needs_review and mark_task_review_approved for interactive sessions"
+    description: "Block review lifecycle tools for interactive sessions"
     event: before_tool
     enabled: true
     priority: 32
@@ -12,9 +12,10 @@ rules:
         mcp_tools:
           - "gobby-tasks:mark_task_needs_review"
           - "gobby-tasks:mark_task_review_approved"
+          - "gobby-tasks:mark_task_review_rejected"
         reason: |
           Interactive sessions should use close_task directly — the user is already present.
-          Review status transitions (needs_review, review_approved) are for spawned/pipeline
+          Review status transitions (needs_review, review_approved, review_rejected) are for spawned/pipeline
           agents where a separate QA step reviews. Interactive agents can: open, claim,
           escalate, de_escalate, reopen, close, and delete tasks when the user explicitly
           wants that lifecycle transition.

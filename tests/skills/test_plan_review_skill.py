@@ -5,11 +5,12 @@ gobby plan document. It is consumed from two places:
   - the interactive /gobby plan skill's adversarial loop (Step 7),
   - the autonomous plan-adversary.yaml agent (load_skill step before reviewing).
 
-These tests guard content drift: the escalation contract matches planner.yaml's
-expectations, the round-scoped heading matches what the interactive planner
-extracts from the task description, and the attitude-vs-quota guidance is
-deliberately the opposite of BMAD's "at least 10 findings" instruction so
-adversary approval is a valid outcome on clean plans.
+These tests guard content drift: the review-rejection contract matches
+plan-adversary.yaml/front-half expectations, the round-scoped heading matches
+what the interactive planner extracts from the task description, and the
+attitude-vs-quota guidance is deliberately the opposite of BMAD's "at least
+10 findings" instruction so adversary approval is a valid outcome on clean
+plans.
 """
 
 from pathlib import Path
@@ -106,11 +107,11 @@ class TestPlanReviewContent:
 
     # --- escalation ---------------------------------------------------------
 
-    def test_escalation_uses_planning_changes_requested(self, body: str) -> None:
-        """Contract with planner.yaml and _front_half.py state machine:
-        revision round is signaled by escalation_reason starting with this
-        exact prefix."""
-        assert "planning_changes_requested:" in body
+    def test_blocking_findings_use_review_rejection(self, body: str) -> None:
+        """Routine revision rounds should use mark_task_review_rejected and
+        return the planning task to open."""
+        assert "mark_task_review_rejected" in body
+        assert "returns the task to `open`" in body
 
     def test_halt_condition_uses_needs_requirements_prefix(self, body: str) -> None:
         """Insufficient-context halt uses the same prefix the autonomous
@@ -140,7 +141,7 @@ class TestPlanReviewContent:
     def test_preserves_prior_rounds(self, body: str) -> None:
         """Must not overwrite prior rounds' findings — audit trail."""
         lowered = body.lower()
-        assert "overwrite" in lowered or "prior" in lowered or "preserve" in lowered
+        assert "overwrite" in lowered or "prior" in lowered or "append" in lowered
 
     def test_severity_and_category_fields(self, body: str) -> None:
         """The finding schema the interactive planner parses."""

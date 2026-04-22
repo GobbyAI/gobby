@@ -853,6 +853,7 @@ class TestInjectTransitionSkill:
         assert "reopen_task" in (body.when or "")
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
+        assert "mark_task_review_rejected" in (body.when or "")
 
     def test_records_task_transitions_in_injected_skills(self, db, manager) -> None:
         """The rule should persist task-transitions in the unified injected_skills ledger."""

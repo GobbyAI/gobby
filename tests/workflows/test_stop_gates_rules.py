@@ -180,7 +180,7 @@ class TestRequireErrorTriage:
         assert "block" in effect_types
 
     def test_blocks_all_status_transitions(self, db, manager) -> None:
-        """Should block close_task, mark_task_needs_review, and mark_task_review_approved."""
+        """Should block close_task and all review lifecycle transitions."""
         _sync_bundled(db)
 
         row = _get_rule(manager, "require-error-triage-before-status")
@@ -191,6 +191,7 @@ class TestRequireErrorTriage:
         assert "gobby-tasks:de_escalate_task" in mcp_tools
         assert "gobby-tasks:mark_task_needs_review" in mcp_tools
         assert "gobby-tasks:mark_task_review_approved" in mcp_tools
+        assert "gobby-tasks:mark_task_review_rejected" in mcp_tools
 
     def test_when_checks_triage_flag(self, db, manager) -> None:
         """Should check errors_resolved."""

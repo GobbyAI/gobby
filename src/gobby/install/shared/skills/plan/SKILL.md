@@ -23,7 +23,7 @@ The **review methodology** for the adversarial loop lives in the `plan-review` s
 | # | Name | Notes |
 |---|------|-------|
 | 0 | Enter Plan Mode | Required prelude; native `EnterPlanMode` boundary. |
-| 1 | Mode & Parent Task | A/P menu; attach guard; session-owned lock. |
+| 1 | Mode & Parent Task | I/D/P menu; attach guard; session-owned lock. |
 | 2 | Requirements Gathering | Elicit goal, constraints, risks. |
 | 3 | Draft Plan Structure | Load `plan-draft` skill; structure the plan. |
 | 4 | Write Plan Document | Write the artifact per `plan-draft` template. |
@@ -51,26 +51,43 @@ Before creating any plan, enter Claude Code's plan mode so exploration happens w
 
 ### 1a. Mode menu
 
-Present the user:
+If `plan_review_mode` is already set to one of `"adversarial"`, `"delegated"`,
+or `"plain"`, skip the menu and honor the existing value.
+
+Otherwise present the user:
 
 ```text
 How would you like to review this plan?
-  A) Adversarial — spawn plan-adversary each round, iterate until approved
+  I) Interactive — spawn plan-adversary each round, per-round approval via ExitPlanMode
      (recommended; bundled in this skill)
+  D) Delegated — spawn plan-adversary each round, no per-round approval; wake you only at
+     terminal state (approval, escalation, or round budget exhausted)
   P) Plain — draft, approve, hand off to /gobby expand manually
-Choice [A]:
+Choice [I]:
 ```
 
-- `A` → adversarial loop. Ask for `max_rounds` (default **3**, any positive integer).
+- `I` → interactive adversarial loop. Ask for `max_rounds` (default **3**, any positive integer).
+- `D` → delegated adversarial loop. Ask for `max_rounds` (default **3**, any positive integer).
 - `P` → existing manual handoff.
 
 **Always** record the choice:
 
 ```python
-set_variable(name="plan_review_mode", value="adversarial" | "plain", session_id="#<self>")
+set_variable(
+    name="plan_review_mode",
+    value="adversarial" | "delegated" | "plain",
+    session_id="#<self>",
+)
 ```
 
-Never omit this. `plan_review_mode` is persistent across `ExitPlanMode`; a stale adversarial value from a previous run could otherwise steer a fresh plain run into the wrong branch.
+Mode mapping is explicit:
+
+- `I` → `"adversarial"` (existing value; the user-facing "Interactive" label maps here)
+- `D` → `"delegated"`
+- `P` → `"plain"`
+
+Never omit this. `plan_review_mode` is persistent across `ExitPlanMode`; a stale
+value from a previous run could otherwise steer a fresh run into the wrong branch.
 
 Do **not** overload `plan_mode` — that is an existing boolean referenced by a dozen rules and `ExitPlanMode` resets it to `false`.
 
@@ -170,7 +187,7 @@ if existing_task_id:
         # resume path
 ```
 
-If a prior planning task is still live, present **resume / abort / restart** instead of the A/P menu:
+If a prior planning task is still live, present **resume / abort / restart** instead of the I/D/P menu:
 
 - **Resume** — read `planning_task_id`, `artifact_path`, `current_round` from vars; jump to Step 7.4.
 - **Abort** — close the planning task with reason "User aborted resumed planning"; run terminal cleanup.
@@ -235,11 +252,23 @@ Present the plan to the user and route the decision through the real native **`E
 On approval, read `plan_review_mode` and branch:
 
 - `"plain"` → tell the user to run `/gobby expand <artifact_path>`; run **terminal cleanup**; skill exits.
-- `"adversarial"` → proceed to Step 7.
+- `"adversarial"` / `"delegated"` → proceed to Step 7.
 
 ---
 
-## Step 7: Adversarial Review Loop (NEW, adversarial mode only)
+## Step 7: Review Loop (NEW, adversarial/delegated modes only)
+
+### 7.0. Artifact precondition
+
+Before entering Step 7, verify `artifact_path` is still present:
+
+```python
+artifact_path = get_variable(name="artifact_path", session_id="#<self>")
+if not artifact_path:
+    error("artifact_path is missing; aborting before review loop enters a fail-closed write gate.")
+```
+
+If the variable is absent, abort with a clear message instead of proceeding.
 
 ### 7.1. Create the planning epic (once per attempt)
 
@@ -306,22 +335,33 @@ This is push-based via `asyncio.Event` (`events/completion_registry.py:101-120`)
 `get_task(planning_task_id)` and branch on status:
 
 - **`review_approved`** → go to Step 8.
-- **`escalated`** with `escalation_reason` starting `planning_changes_requested:`
+- **`open`** after `mark_task_review_rejected`
   1. Extract the section `## Adversary Findings — Round {current_round + 1}` from the planning task description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
-  2. Present it verbatim to the user.
-  3. Bump the round label: `update_task(planning_task_id, labels=["interactive:planning", f"planning-round:{current_round + 1}"])`.
-  4. `de_escalate_task(task_id=planning_task_id, reason="Adversary requested changes; starting next revision round", target_status="open")` — all three args spelled out; signature per `_lifecycle_status.py:461-476`.
-  5. If `current_round + 1 >= max_rounds` → go to Step 9.
-  6. Otherwise **re-enter plan mode** (call `EnterPlanMode`), revise the plan file with the user, route the revised plan through the real `ExitPlanMode` approval boundary again, then loop back to 7.4.
+  2. If `plan_review_mode == "adversarial"`, present it verbatim to the user.
+  3. If `current_round + 1 >= max_rounds` → go to Step 9.
+  4. If `plan_review_mode == "adversarial"`:
+     Re-enter plan mode, revise the plan file with the user, route the revised
+     plan through the real `ExitPlanMode` approval boundary again, then loop
+     back to 7.4.
+  5. If `plan_review_mode == "delegated"`:
+     Revise the plan file in place using the adversary findings, run the same
+     verification checklist from Step 5, keep edits scoped to `artifact_path`
+     only, and loop back to 7.4 without re-entering plan mode. Do not interrupt
+     the user for non-terminal review rejections.
 
 - **`escalated`** with `escalation_reason` starting `needs_requirements:`
   1. Surface the questions to the user.
-  2. `de_escalate_task(task_id=planning_task_id, reason="User providing clarifications", target_status="open")`.
-  3. Re-enter plan mode, gather clarifications, revise the plan, route through `ExitPlanMode`, loop to 7.4.
+  2. This is terminal for delegated mode and an interrupt for interactive mode.
+  3. Go to Step 9.
 
 - **Any other terminal state** → treat as adversary crash. Surface the state + raw `wait_for_completion` result. Go to Step 9.
 
-**Why re-enter plan mode each round:** the user's native approval boundary — the whole point of pair-programming around a spec — runs through `ExitPlanMode` / `provide_plan_decision` (`chat_session_permissions.py:117`), which is only active while `plan_mode=true`. Pure file edits outside plan mode would silently skip the approval gate. Rounds 2+ must also go through the boundary, so every revision round re-enters plan mode. `ExitPlanMode` clears `plan_mode` and `plan_skill_loaded` only — our `plan_review_mode` and other session vars survive.
+**Why only interactive mode re-enters plan mode each round:** the user's native
+approval boundary runs through `ExitPlanMode` / `provide_plan_decision`
+(`chat_session_permissions.py:117`), which is only active while
+`plan_mode=true`. Interactive mode uses that boundary every round by design.
+Delegated mode intentionally skips per-round approval and relies on the
+artifact-scoped write gate instead; only terminal states interrupt the user.
 
 Chat-session plan-state reset also clears UI plan-artifact vars like `_plan_file_path` on mode changes (`chat_session_permissions.py:362`); we re-write `artifact_path` and the plan file on each re-entry so that is harmless.
 
@@ -360,9 +400,10 @@ Do **not** advance into the test-architecture stage. That is the autonomous fron
 
 ---
 
-## Step 9: Round-budget Exhausted / Abort (NEW)
+## Step 9: Terminal Interrupt / Abort (NEW)
 
-Entered when `current_round + 1 >= max_rounds` or the adversary crashed.
+Entered when `current_round + 1 >= max_rounds`, the adversary escalates for
+requirements/human help, or the adversary crashes.
 
 Present the final `## Adversary Findings` and any escalation reasons to the user. Offer three choices; **each one runs terminal cleanup** before the skill exits so the planning epic is disposed of and the parent lock is released.
 
@@ -372,7 +413,10 @@ Present the final `## Adversary Findings` and any escalation reasons to the user
 | **Abort** | `close_task(planning_task_id, reason="User aborted adversarial planning")` | Terminal cleanup. |
 | **Restart** | `close_task(planning_task_id, reason="Restart: planning round budget exhausted, beginning a new attempt")` | Terminal cleanup (releases the lock); re-enter Step 1 fresh. |
 
-Restart is a full re-seed — the user gets the A/P menu again, re-confirms `max_rounds`, and the guard re-runs against current parent state. We deliberately do not carry "same attempt" state across restart; doing so would require owner semantics deeper than we want to add for this feature.
+Restart is a full re-seed — the user gets the I/D/P menu again, re-confirms
+`max_rounds`, and the guard re-runs against current parent state. We deliberately
+do not carry "same attempt" state across restart; doing so would require owner
+semantics deeper than we want to add for this feature.
 
 ---
 

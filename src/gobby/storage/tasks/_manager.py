@@ -101,6 +101,9 @@ from gobby.storage.tasks._transitions import (
     mark_task_review_approved as _mark_task_review_approved,
 )
 from gobby.storage.tasks._transitions import (
+    mark_task_review_rejected as _mark_task_review_rejected,
+)
+from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
@@ -348,8 +351,9 @@ class LocalTaskManager:
             raise ValueError(
                 "LocalTaskManager.update_task does not allow lifecycle or ownership fields. "
                 "Use claim_task, release_task_claim, mark_task_needs_review, "
-                "mark_task_review_approved, escalate_task, de_escalate_task, close_task, "
-                f"or reopen_task instead. Blocked fields: {blocked_display}"
+                "mark_task_review_approved, mark_task_review_rejected, escalate_task, "
+                f"de_escalate_task, close_task, or reopen_task instead. "
+                f"Blocked fields: {blocked_display}"
             )
 
         parent_changed = _update_task(
@@ -559,6 +563,22 @@ class LocalTaskManager:
             self.db,
             task_id=task_id,
             approval_notes=approval_notes,
+        )
+        self._notify_listeners()
+        return task
+
+    def mark_task_review_rejected(
+        self,
+        task_id: str,
+        rejection_notes: str | None = None,
+        round: int | None = None,
+    ) -> Task:
+        """Reject a task after review and return it to open status."""
+        task = _mark_task_review_rejected(
+            self.db,
+            task_id=task_id,
+            rejection_notes=rejection_notes,
+            round=round,
         )
         self._notify_listeners()
         return task

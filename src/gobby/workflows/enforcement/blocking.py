@@ -194,6 +194,36 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
     return any(seg in normalised for seg in _CLI_DIR_SEGMENTS)
 
 
+def is_current_plan_artifact(
+    file_path: str,
+    artifact_path: str | None,
+    project_path: str | None = None,
+) -> bool:
+    """Return whether ``file_path`` points at the current canonical plan artifact."""
+    if not file_path or not artifact_path:
+        return False
+
+    normalized_artifact = os.path.normpath(artifact_path.strip()).replace("\\", "/")
+    if not normalized_artifact or os.path.isabs(normalized_artifact):
+        return False
+
+    normalized_file = os.path.normpath(file_path.strip())
+    if project_path:
+        normalized_project = os.path.normpath(project_path)
+        if os.path.isabs(normalized_file):
+            try:
+                if os.path.commonpath([normalized_project, normalized_file]) != normalized_project:
+                    return False
+            except ValueError:
+                return False
+            normalized_file = os.path.relpath(normalized_file, normalized_project)
+
+    if os.path.isabs(normalized_file):
+        return False
+
+    return normalized_file.replace("\\", "/") == normalized_artifact
+
+
 def _extract_change_path(change: Any) -> str | None:
     """Extract a touched file path from a file-change dict."""
     if not isinstance(change, dict):

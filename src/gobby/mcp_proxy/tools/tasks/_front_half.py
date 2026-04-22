@@ -33,7 +33,6 @@ STAGE_LABEL_PREFIX = "conductor-stage:"
 PLANNING_ROUND_LABEL_PREFIX = "planning-round:"
 
 NEEDS_REQUIREMENTS_PREFIX = "needs_requirements:"
-PLANNING_CHANGES_REQUESTED_PREFIX = "planning_changes_requested:"
 
 _STAGE_LABELS = {
     "requirements": f"{STAGE_LABEL_PREFIX}requirements",
@@ -132,37 +131,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         if planning_task.status == "escalated":
             escalation_reason = planning_task.escalation_reason or ""
-            if escalation_reason.startswith(PLANNING_CHANGES_REQUESTED_PREFIX):
-                next_round = planning_round + 1
-                if next_round >= max_planning_rounds:
-                    stage_tasks = _stage_task_payload(
-                        requirements_task=requirements_task,
-                        planning_task=planning_task,
-                    )
-                    return _response(
-                        parent_task,
-                        current_stage="planning",
-                        next_action="front_half_failed",
-                        message=(
-                            "Planning failed to converge within the configured round budget. "
-                            "Human escalation is required."
-                        ),
-                        artifacts=artifacts,
-                        stage_tasks=stage_tasks,
-                        planning_round=planning_round,
-                        max_planning_rounds=max_planning_rounds,
-                        front_half_complete=False,
-                    )
-
-                planning_task = ctx.task_manager.de_escalate_task(
-                    planning_task.id,
-                    reason="Adversary requested changes; planner is resuming the next round.",
-                    target_status="open",
-                )
-                planning_task = _set_planning_round(ctx, planning_task, next_round)
-                planning_round = next_round
-
-            elif escalation_reason.startswith(NEEDS_REQUIREMENTS_PREFIX):
+            if escalation_reason.startswith(NEEDS_REQUIREMENTS_PREFIX):
                 stage_tasks = _stage_task_payload(
                     requirements_task=requirements_task,
                     planning_task=planning_task,
@@ -200,6 +169,21 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             planning_task=planning_task,
         )
         if planning_task.status in ("open", "in_progress"):
+            if planning_task.status == "open" and planning_round >= max_planning_rounds:
+                return _response(
+                    parent_task,
+                    current_stage="planning",
+                    next_action="front_half_failed",
+                    message=(
+                        "Planning failed to converge within the configured round budget. "
+                        "Human escalation is required."
+                    ),
+                    artifacts=artifacts,
+                    stage_tasks=stage_tasks,
+                    planning_round=planning_round,
+                    max_planning_rounds=max_planning_rounds,
+                    front_half_complete=False,
+                )
             if get_claimed_session_id(planning_task):
                 return _response(
                     parent_task,
@@ -263,6 +247,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         parent_task,
                         planning_task,
                         plan_file=artifacts["plan_file"],
+                        planning_round=planning_round,
                     ),
                 ),
                 front_half_complete=False,
@@ -646,8 +631,9 @@ def _planning_stage_description(parent_task: Task, plan_file: str) -> str:
         f"Parent task: {_task_ref(parent_task)}\n\n"
         f"If requirements are insufficient, escalate with a reason starting "
         f"'{NEEDS_REQUIREMENTS_PREFIX}'.\n"
-        f"If adversarial review requests changes, the review agent escalates with "
-        f"a reason starting '{PLANNING_CHANGES_REQUESTED_PREFIX}'."
+        "If adversarial review requests changes, the review agent calls "
+        "`mark_task_review_rejected` with the next planning round and returns "
+        "the task to open."
     )
 
 
@@ -892,19 +878,22 @@ def _planner_prompt(
     )
 
 
-def _adversary_prompt(parent_task: Task, planning_task: Task, *, plan_file: str) -> str:
+def _adversary_prompt(
+    parent_task: Task, planning_task: Task, *, plan_file: str, planning_round: int
+) -> str:
     return (
         f"Adversarially review the plan for parent task {_task_ref(parent_task)}: "
         f"{parent_task.title}.\n\n"
         f"Assigned planning task: {_task_ref(planning_task)}\n"
         f"Plan artifact path: {plan_file}\n\n"
+        f"Display round: {planning_round + 1}\n\n"
         "Focus on missing requirements, bad sequencing, unhandled risks, weak testability, "
         "and gaps between the task and the plan. Do not manufacture findings if the plan "
         "is sound.\n\n"
         "If blocking issues remain, append a concise 'Adversary Findings' section to the "
-        "planning task description with structured findings, then escalate the planning task "
-        f"with a reason starting '{PLANNING_CHANGES_REQUESTED_PREFIX}'. If the plan is sound, "
-        "approve the planning task with mark_task_review_approved."
+        "planning task description with structured findings, then call "
+        f"mark_task_review_rejected(..., round={planning_round + 1}). "
+        "If the plan is sound, approve the planning task with mark_task_review_approved."
     )
 
 

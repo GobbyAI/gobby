@@ -476,6 +476,7 @@ class HookManagerFactory:
             mcp_dispatcher=inline_dispatcher,
             runner=agent_runner,
             completion_registry=completion_registry,
+            task_manager=storage.task,
         )
 
         pipeline_executor = None

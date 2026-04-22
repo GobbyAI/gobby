@@ -43,6 +43,7 @@ def _sync_bundled(db):
 
 
 PLAN_MODE_RULES = {
+    "block-writes-outside-plan-artifact",
     "handle-plan-mode-entry",
     "handle-plan-mode-exit",
     "reset-plan-mode-on-session-start",
@@ -80,7 +81,7 @@ class TestPlanModeSync:
             if row.name in PLAN_MODE_RULES:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 for effect in body.resolved_effects:
-                    assert effect.type in {"set_variable", "load_skill"}
+                    assert effect.type in {"block", "set_variable", "load_skill"}
 
     def test_inject_plan_skill_rule_deleted(self, db, manager) -> None:
         """inject-plan-skill (redundant duplicate) should not exist after sync."""

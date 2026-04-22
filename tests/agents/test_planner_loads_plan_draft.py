@@ -35,9 +35,7 @@ def agent() -> AgentDefinitionBody:
 
 
 class TestPlannerSkillLoading:
-    def test_has_load_skill_step_between_claim_and_plan(
-        self, agent: AgentDefinitionBody
-    ) -> None:
+    def test_has_load_skill_step_between_claim_and_plan(self, agent: AgentDefinitionBody) -> None:
         """Ordering is load-bearing: skill must be in context before drafting."""
         names = [s.name for s in (agent.steps or [])]
         assert names == ["claim", "load_skill", "plan", "terminate"]
@@ -80,9 +78,7 @@ class TestPlannerSkillLoading:
     def test_transition_gates_on_skill_loaded(self, agent: AgentDefinitionBody) -> None:
         load_step = next(s for s in (agent.steps or []) if s.name == "load_skill")
         transitions = load_step.transitions or []
-        assert any(
-            t.to == "plan" and t.when and "skill_loaded" in t.when for t in transitions
-        )
+        assert any(t.to == "plan" and t.when and "skill_loaded" in t.when for t in transitions)
 
 
 class TestPlannerInstructionsPreserveContracts:
@@ -93,9 +89,7 @@ class TestPlannerInstructionsPreserveContracts:
         assert "plan-draft" in instructions
         assert "get_skill" in instructions
 
-    def test_needs_requirements_escalation_preserved(
-        self, agent: AgentDefinitionBody
-    ) -> None:
+    def test_needs_requirements_escalation_preserved(self, agent: AgentDefinitionBody) -> None:
         """Contract with _front_half.py state machine: when context is
         insufficient, escalate with this exact prefix."""
         instructions = agent.instructions or ""
@@ -108,6 +102,7 @@ class TestPlannerInstructionsPreserveContracts:
             "close_task",
             "reopen_task",
             "mark_task_review_approved",
+            "mark_task_review_rejected",
             "spawn",
             "kill_agent",
             "uv run",
