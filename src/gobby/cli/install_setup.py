@@ -18,6 +18,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from shutil import copy2
@@ -1019,15 +1020,21 @@ def _install_gcode(force: bool = False) -> dict[str, Any]:
 
 # ── ghook (hook manager) ────────────────────────────────────────────
 
-_GHOOK_RELEASE_TAG_PREFIX = "gobby-hooks-v"
+_GHOOK_RELEASE_TAG_PREFIX = "ghook-v"
 _GHOOK_CRATES_API = "https://crates.io/api/v1/crates/gobby-hooks"
 _GHOOK_VERSION_STAMP = ".ghook-version"
+_GHOOK_INSTALL_SIDECAR = ".ghook-install.json"
 _GHOOK_COMPATIBILITY_STAMP = ".ghook-compatibility"
 _GHOOK_BIN_NAME = "ghook.exe" if sys.platform == "win32" else "ghook"
 _GHOOK_TARGETS = _PLATFORM_TARGETS
 _GHOOK_INSTALL_VERSION_ENV = "GOBBY_INSTALL_GHOOK_VERSION"
 _GHOOK_INSTALL_METHOD_ENV = "GOBBY_INSTALL_GHOOK_METHOD"
 _GHOOK_ALLOWED_METHODS = {"auto", "github", "cargo-binstall", "cargo-install"}
+_GHOOK_PUBLIC_INSTALL_METHODS = {
+    "github": "github-release",
+    "cargo-binstall": "crates-binstall",
+    "cargo-install": "cargo-install",
+}
 
 
 def _get_latest_ghook_version() -> str | None:
@@ -1068,6 +1075,67 @@ def _write_ghook_version_stamp(bin_dir: Path, version: str) -> None:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
+
+
+def _ghook_installed_at_utc() -> str:
+    """Return current UTC timestamp with second precision and trailing Z."""
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _ghook_install_source_url(
+    method: str,
+    *,
+    target: str,
+    version: str | None,
+) -> str | None:
+    """Return public install source URL for ghook provenance."""
+    if method == "github":
+        if not version:
+            return None
+        return _build_release_download_url(
+            "ghook",
+            target,
+            version=version,
+            tag_prefix=_GHOOK_RELEASE_TAG_PREFIX,
+        )
+    if method == "cargo-binstall":
+        if version and version != "unknown":
+            return f"https://crates.io/crates/gobby-hooks/{version}"
+        return "https://crates.io/crates/gobby-hooks"
+    return None
+
+
+def _write_ghook_install_sidecar(
+    bin_dir: Path,
+    *,
+    install_method: str,
+    install_source_url: str | None,
+    installed_version: str,
+    installed_at: str,
+) -> None:
+    """Best-effort provenance sidecar for ghook installs."""
+    sidecar = bin_dir / _GHOOK_INSTALL_SIDECAR
+    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".ghook-install-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "install_method": install_method,
+                    "install_source_url": install_source_url,
+                    "installed_version": installed_version,
+                    "installed_at": installed_at,
+                },
+                f,
+            )
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, sidecar)
+        os.chmod(sidecar, 0o644)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        logger.warning("ghook: failed writing install sidecar %s: %s", sidecar, e)
 
 
 def _install_ghook_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
@@ -1230,6 +1298,18 @@ def _install_ghook(force: bool = False) -> dict[str, Any]:
 
     resolved_version = _probe_ghook_version(ghook_path) or target_version or "unknown"
     _write_ghook_version_stamp(bin_dir, resolved_version)
+    sidecar_version = resolved_version if resolved_version != "unknown" else target_version
+    _write_ghook_install_sidecar(
+        bin_dir,
+        install_method=_GHOOK_PUBLIC_INSTALL_METHODS[method],
+        install_source_url=_ghook_install_source_url(
+            method,
+            target=target,
+            version=sidecar_version,
+        ),
+        installed_version=resolved_version,
+        installed_at=_ghook_installed_at_utc(),
+    )
 
     path_result = _ensure_gobby_bin_on_path()
     if path_result.get("added"):
