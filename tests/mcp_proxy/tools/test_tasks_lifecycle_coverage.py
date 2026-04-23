@@ -516,7 +516,6 @@ class TestCloseTaskTool:
 # =============================================================================
 
 
-
 class TestReopenTaskTool:
     """Tests for reopen_task MCP tool."""
 
@@ -604,7 +603,6 @@ class TestReopenTaskTool:
 # =============================================================================
 # delete_task Tool Tests
 # =============================================================================
-
 
 
 class TestSessionVariableMirroring:

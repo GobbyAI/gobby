@@ -1,4 +1,3 @@
-
 """Shared fixtures for spawn_agent tool tests."""
 
 from __future__ import annotations

@@ -1,6 +1,5 @@
 """Focused coverage tests for task MCP tools."""
 
-
 import pytest
 
 pytestmark = pytest.mark.unit

@@ -1,6 +1,5 @@
 """Spawn-agent execution and pre-registration tests."""
 
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,8 +13,6 @@ pytestmark = pytest.mark.unit
 
 class TestSpawnAgentIsolation:
     """Tests for spawn_agent isolation parameter."""
-
-
 
     @pytest.mark.asyncio
     async def test_spawn_agent_current_uses_current_handler(self, mock_runner, agent_body) -> None:
@@ -201,8 +198,6 @@ class TestSpawnAgentIsolation:
 
 class TestSpawnAgentPreRegistration:
     """Tests for agent registry pre-registration before execute_spawn."""
-
-
 
     @pytest.mark.asyncio
     async def test_agent_db_record_created_during_spawn(self, mock_runner, agent_body):

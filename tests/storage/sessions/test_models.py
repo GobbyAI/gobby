@@ -1,6 +1,5 @@
 """Focused tests for session storage behavior."""
 
-
 import pytest
 
 from gobby.storage.session_models import Session
@@ -126,8 +125,6 @@ class TestSession:
 
         assert session.has_terminal_liveness is False
         assert session.can_proxy_attach is False
-
-
 
 
 class TestSessionManagerModelFields:

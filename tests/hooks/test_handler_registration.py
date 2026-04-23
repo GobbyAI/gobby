@@ -1,4 +1,3 @@
-
 """Handler registration and EventHandlers initialization tests."""
 
 from __future__ import annotations

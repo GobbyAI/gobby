@@ -1,6 +1,5 @@
 """Focused tests for session storage behavior."""
 
-
 import pytest
 
 from gobby.storage.session_models import Session
@@ -56,7 +55,6 @@ class TestSessionManagerReferenceResolution:
 
         assert found is not None
         assert found.id == session.id
-
 
 
 class TestProjectScopedSeqNum:
@@ -164,8 +162,6 @@ class TestProjectScopedSeqNum:
         """Test ValueError raised when session not found."""
         with pytest.raises(ValueError, match="not found"):
             session_manager.resolve_session_reference("#999", project_id=sample_project["id"])
-
-
 
 
 class TestResolveReferenceExternalId:

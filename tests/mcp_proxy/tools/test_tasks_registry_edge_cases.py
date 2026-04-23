@@ -30,7 +30,6 @@ class TestSkipReasons:
 # =============================================================================
 
 
-
 class TestSessionIntegrationTools:
     """Tests for session integration MCP tools."""
 
@@ -162,7 +161,6 @@ class TestSessionIntegrationTools:
 # =============================================================================
 # Registry Integration Tests
 # =============================================================================
-
 
 
 class TestRegistryIntegration:

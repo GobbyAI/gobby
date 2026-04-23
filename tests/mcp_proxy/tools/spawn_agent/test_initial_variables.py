@@ -1,6 +1,5 @@
 """Spawn-agent initial-variable and dispatch-batch tests."""
 
-
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -14,7 +13,6 @@ pytestmark = pytest.mark.unit
 
 class TestSpawnAgentPipelineInjection:
     """Tests for _assigned_pipeline injection when workflow resolves to PipelineDefinition."""
-
 
     @pytest.mark.asyncio
     async def test_assigned_pipeline_set_for_pipeline_workflow(self, mock_runner) -> None:
@@ -126,7 +124,6 @@ class TestSpawnAgentPipelineInjection:
 class TestSpawnAgentStepVariables:
     """Tests for initial_variables (_agent_type, _agent_rules) from agent definition."""
 
-
     @pytest.mark.asyncio
     async def test_agent_type_set_in_initial_variables(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -176,8 +173,6 @@ class TestSpawnAgentStepVariables:
 
 class TestDispatchBatchIsolationParity:
     """Tests that dispatch_batch forwards clone/isolation params to spawn_agent."""
-
-
 
     @pytest.mark.asyncio
     async def test_dispatch_batch_forwards_clone_params(self, mock_runner, agent_body) -> None:

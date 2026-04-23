@@ -1,6 +1,5 @@
 """Focused tests for session storage behavior."""
 
-
 import pytest
 
 from gobby.storage.sessions import SessionManager

@@ -1,4 +1,3 @@
-
 """Transcript path derivation tests for event handlers."""
 
 from __future__ import annotations

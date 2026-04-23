@@ -181,7 +181,6 @@ class TestGetTaskTool:
 # =============================================================================
 
 
-
 class TestUpdateTaskTool:
     """Tests for update_task MCP tool."""
 
@@ -356,7 +355,6 @@ class TestUpdateTaskTool:
 # =============================================================================
 
 
-
 class TestLabelTools:
     """Tests for add_label and remove_label MCP tools."""
 
@@ -424,7 +422,6 @@ class TestLabelTools:
 # =============================================================================
 # close_task Tool Tests
 # =============================================================================
-
 
 
 class TestDeleteTaskTool:
@@ -514,7 +511,6 @@ class TestDeleteTaskTool:
 # =============================================================================
 # list_tasks Tool Tests
 # =============================================================================
-
 
 
 class TestListTasksTool:

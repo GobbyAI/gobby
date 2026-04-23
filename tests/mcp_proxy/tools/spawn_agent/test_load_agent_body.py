@@ -1,6 +1,5 @@
 """Tests for loading spawn-agent definitions from workflow_definitions."""
 
-
 from __future__ import annotations
 
 import json

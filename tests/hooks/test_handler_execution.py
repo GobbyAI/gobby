@@ -1,4 +1,3 @@
-
 """Handler execution, return value, and dependency isolation tests."""
 
 from __future__ import annotations

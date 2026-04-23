@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.tasks.session_tasks import SessionTaskManager
 
-    from .rule_engine import RuleEngine
+    from .engine import RuleEngine
 
 logger = logging.getLogger(__name__)
 

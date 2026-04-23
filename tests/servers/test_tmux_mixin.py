@@ -318,7 +318,9 @@ class TestTmuxKillSession:
                 new_callable=AsyncMock,
                 return_value=True,
             ),
-            patch.object(server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}),
+            patch.object(
+                server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}
+            ),
         ):
             await server._handle_tmux_kill_session(
                 ws,
@@ -368,7 +370,9 @@ class TestTmuxKillSession:
                 new_callable=AsyncMock,
                 return_value=True,
             ),
-            patch.object(server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}),
+            patch.object(
+                server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}
+            ),
         ):
             await server._handle_tmux_kill_session(
                 ws,

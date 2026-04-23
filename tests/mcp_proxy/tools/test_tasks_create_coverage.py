@@ -678,7 +678,6 @@ class TestCreateTaskTool:
 # =============================================================================
 
 
-
 class TestCreateTaskCrossProjectClaimBlocking:
     """Tests for cross-project claim blocking in create_task."""
 

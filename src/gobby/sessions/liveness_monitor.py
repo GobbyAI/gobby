@@ -174,8 +174,7 @@ class SessionLivenessMonitor:
                         self._session_manager.touch(record.session_id)
                     except Exception:
                         logger.warning(
-                            "SessionLivenessMonitor: failed to touch session "
-                            f"{record.session_id}",
+                            f"SessionLivenessMonitor: failed to touch session {record.session_id}",
                             exc_info=True,
                         )
                     continue

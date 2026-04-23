@@ -1,4 +1,3 @@
-
 """Shared helpers for event handler tests."""
 
 from __future__ import annotations

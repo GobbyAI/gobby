@@ -1,4 +1,3 @@
-
 """Tool handler and Skill-tool interception tests."""
 
 from __future__ import annotations

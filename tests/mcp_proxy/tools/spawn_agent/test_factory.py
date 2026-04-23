@@ -1,6 +1,5 @@
 """Factory-level spawn_agent tool tests."""
 
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,7 +34,6 @@ class TestCreateSpawnAgentRegistry:
 
 class TestSpawnAgentDefaults:
     """Tests for spawn_agent with default values."""
-
 
     @pytest.mark.asyncio
     async def test_spawn_agent_defaults_to_default_agent(self, mock_runner) -> None:
@@ -86,7 +84,6 @@ class TestSpawnAgentDefaults:
 
 class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""
-
 
     @pytest.mark.asyncio
     async def test_tool_params_override_agent_definition(self, mock_runner) -> None:
@@ -145,8 +142,6 @@ class TestSpawnAgentParamOverrides:
 
 class TestSpawnAgentTaskResolution:
     """Tests for task_id resolution formats."""
-
-
 
     @pytest.mark.asyncio
     async def test_task_id_supports_hash_n_format(self, mock_runner, agent_body) -> None:
@@ -218,8 +213,6 @@ class TestSpawnAgentTaskResolution:
 
 class TestSpawnAgentSandbox:
     """Tests for daemon-owned agent sandbox defaults."""
-
-
 
     @pytest.mark.asyncio
     async def test_agent_sandbox_defaults_come_from_daemon_config(
@@ -307,7 +300,6 @@ class TestSpawnAgentSandbox:
 class TestSpawnAgentNotFound:
     """Tests for agent not found behavior."""
 
-
     @pytest.mark.asyncio
     async def test_returns_error_for_missing_non_default_agent(self, mock_runner) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -333,7 +325,6 @@ class TestSpawnAgentNotFound:
 
 class TestSpawnAgentPromptPreamble:
     """Tests for prompt handling — preamble is injected via hooks, not prompt."""
-
 
     @pytest.mark.asyncio
     async def test_prompt_passed_without_preamble(self, mock_runner) -> None:
