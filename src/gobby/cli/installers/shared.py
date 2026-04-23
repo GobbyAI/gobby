@@ -66,7 +66,6 @@ def install_global_hooks() -> list[str]:
 
     hook_files = {
         "validate_settings.py": True,  # Make executable
-        "statusline_handler.py": True,  # Make executable
     }
 
     for filename, make_executable in hook_files.items():

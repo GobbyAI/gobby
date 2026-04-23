@@ -509,7 +509,7 @@ def uninstall(
         global_hooks_dir = Path(
             os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks"))
         )
-        for fname in ("hook_dispatcher.py", "validate_settings.py", "statusline_handler.py"):
+        for fname in ("hook_dispatcher.py", "validate_settings.py"):
             fpath = global_hooks_dir / fname
             if fpath.exists():
                 try:

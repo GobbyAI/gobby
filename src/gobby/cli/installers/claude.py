@@ -8,9 +8,7 @@ and workflows for Claude Code CLI.
 import json
 import logging
 import os
-import re
 import shlex
-import subprocess  # nosec B404
 import tempfile
 import time
 from pathlib import Path
@@ -19,7 +17,7 @@ from typing import Any
 
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.cli.utils import get_install_dir
-from gobby.utils.native_bin import resolve_native_bin
+from gobby.utils.native_bin import resolve_native_bin_or_default
 
 from .hook_commands import rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
@@ -37,54 +35,12 @@ logger = logging.getLogger(__name__)
 _GOBBY_HOOK_TYPES = list(CLAUDE_PASCAL_HOOK_NAMES)
 
 
-_STATUSLINE_LEGACY_MARKER = "statusline_handler.py"
 _STATUSLINE_GHOOK_MARKER = "--gobby-owned --cli=claude --type=statusline"
-_STATUSLINE_MIN_GHOOK_VERSION = (0, 3, 1)
-
-
-def _parse_semver(version_text: str | None) -> tuple[int, int, int] | None:
-    """Parse a semver-like version from ghook output."""
-    if not version_text:
-        return None
-    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version_text)
-    if not match:
-        return None
-    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
-
-
-def _probe_ghook_version(ghook_bin: str) -> str | None:
-    """Return the installed ghook version, or None when probing fails."""
-    try:
-        result = subprocess.run(  # nosec B603
-            [ghook_bin, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-    if result.returncode != 0:
-        return None
-    return (result.stdout or result.stderr).strip() or None
-
-
-def _resolve_statusline_ghook() -> str | None:
-    """Resolve a ghook binary that is new enough to support statusline."""
-    ghook_bin = resolve_native_bin("ghook")
-    if not ghook_bin:
-        return None
-
-    parsed_version = _parse_semver(_probe_ghook_version(ghook_bin))
-    if parsed_version is None or parsed_version < _STATUSLINE_MIN_GHOOK_VERSION:
-        return None
-    return ghook_bin
 
 
 def _is_gobby_statusline_command(command: str) -> bool:
     """Return whether a statusLine command belongs to Gobby."""
-    return _STATUSLINE_LEGACY_MARKER in command or _STATUSLINE_GHOOK_MARKER in command
+    return _STATUSLINE_GHOOK_MARKER in command
 
 
 def _with_statusline_downstream(command: str, downstream: str | None) -> str:
@@ -95,13 +51,10 @@ def _with_statusline_downstream(command: str, downstream: str | None) -> str:
     return f"GOBBY_STATUSLINE_DOWNSTREAM={quoted_downstream} {command}"
 
 
-def _build_statusline_command(handler_path: str, downstream: str | None) -> str:
-    """Build the preferred Phase 2 statusLine command."""
-    ghook_bin = _resolve_statusline_ghook()
-    if ghook_bin:
-        command = f"{shlex.quote(ghook_bin)} {_STATUSLINE_GHOOK_MARKER}"
-    else:
-        command = f"python3 {shlex.quote(handler_path)}"
+def _build_statusline_command(downstream: str | None) -> str:
+    """Build the ghook statusLine command."""
+    ghook_bin = resolve_native_bin_or_default("ghook")
+    command = f"{shlex.quote(ghook_bin)} {_STATUSLINE_GHOOK_MARKER}"
     return _with_statusline_downstream(command, downstream)
 
 
@@ -111,7 +64,6 @@ def _configure_statusline(settings: dict[str, Any], hooks_dir: Path) -> None:
     If statusLine already points to our handler, re-wrap to update paths.
     If it points to something else, wrap it as GOBBY_STATUSLINE_DOWNSTREAM.
     """
-    handler_path = str((hooks_dir / _STATUSLINE_LEGACY_MARKER).resolve())
     existing = settings.get("statusLine")
 
     downstream: str | None = None
@@ -132,7 +84,7 @@ def _configure_statusline(settings: dict[str, Any], hooks_dir: Path) -> None:
 
     settings["statusLine"] = {
         "type": "command",
-        "command": _build_statusline_command(handler_path, downstream),
+        "command": _build_statusline_command(downstream),
     }
 
 
