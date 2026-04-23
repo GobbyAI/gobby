@@ -918,7 +918,7 @@ class TestCheckExpiredAgents:
         sample_session: dict,
         temp_db: LocalDatabase,
     ) -> None:
-        """Expired agent is killed and marked as failed."""
+        """Expired agent is killed and marked as timed out."""
         run = agent_run_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
@@ -948,8 +948,93 @@ class TestCheckExpiredAgents:
         assert cleaned == 1
         updated = agent_run_manager.get(run.id)
         assert updated is not None
-        assert updated.status == "error"
+        assert updated.status == "timeout"
         assert "timeout" in (updated.error or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_expired_agent_expires_child_session(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+    ) -> None:
+        """Timed-out agent runs expire their child session."""
+        child_session = session_manager.register(
+            external_id="child-sess-timeout",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-expire-child",
+            timeout_seconds=300,
+            child_session_id=child_session.id,
+        )
+        agent_run_manager.start(run.id)
+        agent_run_manager.update_runtime(
+            run.id,
+            tmux_session_name="gobby-expire-child",
+        )
+        past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = ? WHERE id = ?",
+            (past, run.id),
+        )
+
+        with (
+            patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+            patch("gobby.agents.lifecycle_monitor.kill_agent", new_callable=AsyncMock),
+        ):
+            cleaned = await monitor.check_unhealthy_agents()
+
+        assert cleaned == 1
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "timeout"
+        assert session_manager.get(child_session.id).status == "expired"
+
+    @pytest.mark.asyncio
+    async def test_terminal_completed_run_expires_child_session(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+        session_manager: SessionManager,
+    ) -> None:
+        """Already-terminal agent runs expire sessions even if their panes remain alive."""
+        child_session = session_manager.register(
+            external_id="child-sess-completed-run",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session.get("project_id"),
+        )
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="test",
+            run_id="run-terminal-completed",
+            child_session_id=child_session.id,
+        )
+        completed_at = datetime.now(UTC).isoformat()
+        temp_db.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'success', completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (completed_at, completed_at, run.id),
+        )
+
+        expired = await monitor.expire_terminal_run_sessions()
+
+        assert expired == 1
+        assert session_manager.get(child_session.id).status == "expired"
 
     @pytest.mark.asyncio
     async def test_expired_agent_releases_worktrees(

@@ -225,6 +225,7 @@ class AgentLifecycleMonitor:
                 await self.check_trust_prompts()  # Fast unblock before other checks
                 await self.check_loop_prompts()  # Dismiss loop detection prompts
                 await self.check_unhealthy_agents()
+                await self.expire_terminal_run_sessions()
                 await self.check_initialization_timeout()
                 await self.check_idle_agents()
                 await self.check_provider_stalls()
@@ -254,6 +255,13 @@ class AgentLifecycleMonitor:
         """Get active terminal agent runs with tmux sessions from DB."""
         runs = self._agent_run_manager.list_active()
         return [r for r in runs if r.tmux_session_name]
+
+    async def expire_terminal_run_sessions(self) -> int:
+        """Expire sessions whose agent run is already in a terminal state."""
+        expired = await asyncio.to_thread(self._agent_run_manager.expire_sessions_for_terminal_runs)
+        if expired:
+            logger.info("Expired %s session(s) for terminal agent runs", expired)
+        return expired
 
     async def check_trust_prompts(self) -> int:
         """Check for folder trust prompts and auto-dismiss them.
@@ -338,6 +346,7 @@ class AgentLifecycleMonitor:
         run: AgentRun,
         error: str,
         is_success: bool = False,
+        is_timeout: bool = False,
     ) -> None:
         """Full cleanup chain for an agent that needs cleanup.
 
@@ -349,6 +358,7 @@ class AgentLifecycleMonitor:
             run: The agent run DB record.
             error: Error message or completion reason.
             is_success: If True, mark as completed (not failed) and skip task recovery.
+            is_timeout: If True, mark as timed out instead of failed.
         """
         session_id = run.child_session_id or run.parent_session_id
 
@@ -360,6 +370,13 @@ class AgentLifecycleMonitor:
                     run.id,
                     result=error,  # "error" is really "reason" for success case
                 )
+            elif is_timeout:
+                await asyncio.to_thread(
+                    self._agent_run_manager.timeout,
+                    run.id,
+                    error=error,
+                )
+                logger.info(f"Marked agent run {run.id} as timed out: {error}")
             else:
                 await asyncio.to_thread(
                     self._agent_run_manager.fail,
@@ -445,6 +462,7 @@ class AgentLifecycleMonitor:
                 # --- Detection ---
                 reason: str | None = None
                 is_success = False
+                is_timeout = False
 
                 # Check timeout first (applies to all agent types)
                 if run.timeout_seconds and run.started_at:
@@ -452,6 +470,7 @@ class AgentLifecycleMonitor:
                     age = (now - started).total_seconds()
                     if age > run.timeout_seconds:
                         reason = f"Agent exceeded {run.timeout_seconds}s timeout"
+                        is_timeout = True
                         logger.info(
                             f"Agent {run.id} exceeded timeout ({age:.1f}s > {run.timeout_seconds}s)"
                         )
@@ -513,7 +532,12 @@ class AgentLifecycleMonitor:
                     error_msg += f"\n\n--- Last terminal output ---\n{pane_snapshot[-2000:]}"
 
                 # --- Full cleanup chain ---
-                await self._cleanup_agent(run, error=error_msg, is_success=is_success)
+                await self._cleanup_agent(
+                    run,
+                    error=error_msg,
+                    is_success=is_success,
+                    is_timeout=is_timeout,
+                )
                 cleaned += 1
 
             except Exception as e:

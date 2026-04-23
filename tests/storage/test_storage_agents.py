@@ -363,6 +363,33 @@ class TestLocalAgentRunManager:
         assert completed.tool_calls_count == 0
         assert completed.turns_used == 0
 
+    def test_complete_expires_child_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Completing an agent run expires its child session."""
+        child_session = session_manager.register(
+            external_id="agent-child-complete",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Complete child session test",
+            child_session_id=child_session.id,
+        )
+        agent_manager.start(agent_run.id)
+
+        agent_manager.complete(agent_run.id, result="Done")
+
+        updated_session = session_manager.get(child_session.id)
+        assert updated_session is not None
+        assert updated_session.status == "expired"
+
     def test_complete_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test completing nonexistent run returns None."""
         result = agent_manager.complete("nonexistent-id", result="test")
@@ -455,6 +482,37 @@ class TestLocalAgentRunManager:
         timed_out = agent_manager.timeout(agent_run.id)
 
         assert timed_out.turns_used == 0
+
+    def test_timeout_expires_child_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Timing out an agent run expires its child session."""
+        child_session = session_manager.register(
+            external_id="agent-child-timeout",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Timeout child session test",
+            child_session_id=child_session.id,
+        )
+        agent_manager.start(agent_run.id)
+
+        agent_manager.timeout(agent_run.id, error="Exceeded test timeout")
+
+        updated_run = agent_manager.get(agent_run.id)
+        assert updated_run is not None
+        assert updated_run.status == "timeout"
+        assert updated_run.error == "Exceeded test timeout"
+        updated_session = session_manager.get(child_session.id)
+        assert updated_session is not None
+        assert updated_session.status == "expired"
 
     def test_timeout_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test timing out nonexistent run returns None."""
