@@ -15,7 +15,7 @@ from gobby.agents.sandbox import SandboxConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session import ChatSession
-from gobby.servers.websocket.chat.provider_backends import (
+from gobby.servers.websocket.chat.backends import (
     CodexManagedChatSession,
     CodexWebChatBackend,
     GeminiManagedChatSession,
@@ -94,7 +94,7 @@ class TestWebChatRuntimeManager:
 
 class TestGeminiBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
+        with patch("gobby.servers.websocket.chat.backends.gemini.GeminiACPClient") as mock_client:
             GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
         kwargs = mock_client.call_args.kwargs
@@ -205,7 +205,7 @@ class TestGeminiBackend:
 
 class TestQwenBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
+        with patch("gobby.servers.websocket.chat.backends.qwen.GeminiACPClient") as mock_client:
             QwenWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
         kwargs = mock_client.call_args.kwargs
@@ -250,7 +250,7 @@ class TestQwenBackend:
         session._model = "qwen3.6-35b-a3b-q8-local(openai)"
 
         with patch(
-            "gobby.servers.websocket.chat.provider_backends.ensure_qwen_local_openai_model_ready",
+            "gobby.servers.websocket.chat.backends.qwen.ensure_qwen_local_openai_model_ready",
             new=AsyncMock(),
         ) as mock_warmup:
             await backend.attach_session(session)
@@ -444,10 +444,10 @@ class TestCodexBackend:
         sleep = AsyncMock()
         with (
             patch(
-                "gobby.servers.websocket.chat.provider_backends.CodexTranscriptParser.parse_lines",
+                "gobby.servers.websocket.chat.backends.codex.CodexTranscriptParser.parse_lines",
                 side_effect=parsed_batches,
             ),
-            patch("gobby.servers.websocket.chat.provider_backends.asyncio.sleep", sleep),
+            patch("gobby.servers.websocket.chat.backends.codex.asyncio.sleep", sleep),
         ):
             assistant_text = await session._get_transcript_assistant_text_since(0)
 
@@ -471,11 +471,11 @@ class TestCodexBackend:
                 return_value=("Write", {"file_path": "notes.md"}),
             ),
             patch(
-                "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+                "gobby.servers.websocket.chat.backends.codex.find_out_of_repo_write_path",
                 return_value=None,
             ),
             patch(
-                "gobby.servers.websocket.chat.provider_backends.is_tool_auto_allowed",
+                "gobby.servers.websocket.chat.backends.codex.is_tool_auto_allowed",
                 return_value=False,
             ),
         ):
@@ -505,7 +505,7 @@ class TestCodexBackend:
                 ),
             ),
             patch(
-                "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+                "gobby.servers.websocket.chat.backends.codex.find_out_of_repo_write_path",
                 return_value=None,
             ),
         ):
@@ -820,7 +820,7 @@ class TestCodexBackend:
 
         [event async for event in backend.send_message(session, "first turn")]
         with patch(
-            "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+            "gobby.servers.websocket.chat.backends.codex.find_out_of_repo_write_path",
             return_value=None,
         ):
             approval_result = await backend.handle_approval_request(

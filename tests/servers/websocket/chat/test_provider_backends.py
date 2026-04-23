@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.servers.websocket.chat.provider_backends import CodexManagedChatSession
+from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
 
 pytestmark = pytest.mark.unit
 
