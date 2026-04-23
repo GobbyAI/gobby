@@ -5,14 +5,16 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
 
-from .tool_proxy_arguments import (
+from .argument_validation import (
     check_arguments,
     classify_error,
     is_argument_error,
     prepare_arguments,
 )
-from .tool_proxy_constants import PROXY_NAMESPACE, SERVER_SUGGESTIONS
-from .tool_proxy_events import (
+from .resource_operations import (
+    read_resource as read_resource_impl,
+)
+from .result_handling import (
     apply_before_tool_enforcement,
     build_after_tool_event,
     build_before_tool_event,
@@ -22,34 +24,19 @@ from .tool_proxy_events import (
     emit_synthetic_proxy_after_tool,
     should_emit_synthetic_after_tool,
 )
-from .tool_proxy_operations import (
-    call_tool as call_tool_impl,
-)
-from .tool_proxy_operations import (
-    call_tool_by_name as call_tool_by_name_impl,
-)
-from .tool_proxy_operations import (
+from .server_resolution import (
     find_tool_server as find_tool_server_impl,
 )
-from .tool_proxy_operations import (
-    get_tool_schema as get_tool_schema_impl,
-)
-from .tool_proxy_operations import (
-    list_servers as list_servers_impl,
-)
-from .tool_proxy_operations import (
-    list_tools as list_tools_impl,
-)
-from .tool_proxy_operations import (
-    read_resource as read_resource_impl,
-)
-from .tool_proxy_server_resolution import (
+from .server_resolution import (
     get_server_suggestion,
     is_proxy_namespace,
     resolve_server_for_tool,
     resolve_server_name,
 )
-from .tool_proxy_session_context import (
+from .server_resolution import (
+    list_servers as list_servers_impl,
+)
+from .session_context import (
     get_effective_session_id,
     get_requested_session_id,
     record_discovery_state,
@@ -57,6 +44,19 @@ from .tool_proxy_session_context import (
     resolve_platform_session_id,
     resolve_tool_event_context,
 )
+from .tool_execution import (
+    call_tool as call_tool_impl,
+)
+from .tool_execution import (
+    call_tool_by_name as call_tool_by_name_impl,
+)
+from .tool_execution import (
+    get_tool_schema as get_tool_schema_impl,
+)
+from .tool_execution import (
+    list_tools as list_tools_impl,
+)
+from .tool_proxy_constants import PROXY_NAMESPACE, SERVER_SUGGESTIONS
 from .tool_proxy_utils import safe_truncate
 
 if TYPE_CHECKING:

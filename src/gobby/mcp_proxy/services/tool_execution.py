@@ -1,10 +1,8 @@
-"""Tool, schema, server, and resource operations for the tool proxy service."""
+"""Tool and schema execution operations for the tool proxy service."""
 
-import fnmatch
 import logging
 from typing import Any, cast
 
-from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 
@@ -295,11 +293,6 @@ async def call_tool(
         return response
 
 
-async def read_resource(service: Any, server_name: str, uri: str) -> Any:
-    """Read a resource."""
-    return await service._mcp_manager.read_resource(server_name, uri)
-
-
 async def get_tool_schema(
     service: Any,
     server_name: str,
@@ -355,60 +348,6 @@ async def get_tool_schema(
         raise MCPError(f"Failed to get schema for {tool_name} on {server_name}: {e}") from e
 
 
-def find_tool_server(service: Any, tool_name: str) -> str | None:
-    """Find which server owns a tool by searching all available servers."""
-    if service._internal_manager:
-        server = cast("str | None", service._internal_manager.find_tool_server(tool_name))
-        if server:
-            return server
-
-    for server_name, config in service._mcp_manager._configs.items():
-        if config.tools:
-            for tool in config.tools:
-                tool_name_in_config = (
-                    tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
-                )
-                if tool_name_in_config == tool_name:
-                    return cast("str", server_name)
-
-    return None
-
-
-async def list_servers(service: Any, name_filter: str | None = None) -> dict[str, Any]:
-    """List all available MCP servers (internal + external)."""
-    server_list: list[dict[str, Any]] = []
-    connected = 0
-    if service._internal_manager:
-        for reg in service._internal_manager.get_all_registries():
-            server_list.append({"name": reg.name, "state": "connected", "transport": "internal"})
-            connected += 1
-    for config in service._mcp_manager.server_configs:
-        health = service._mcp_manager.health.get(config.name)
-        state = health.state.value if health else "unknown"
-        is_conn = config.name in service._mcp_manager.connections
-        if is_conn:
-            connected += 1
-        entry: dict[str, Any] = {
-            "name": config.name,
-            "state": state,
-            "transport": config.transport,
-        }
-        if not config.enabled:
-            entry["enabled"] = False
-        server_list.append(entry)
-
-    if name_filter:
-        server_list = [s for s in server_list if fnmatch.fnmatch(s["name"], name_filter)]
-        connected = sum(1 for s in server_list if s.get("state") == "connected")
-
-    return {
-        "success": True,
-        "servers": server_list,
-        "total": len(server_list),
-        "connected": connected,
-    }
-
-
 async def call_tool_by_name(
     service: Any,
     tool_name: str,
@@ -431,12 +370,8 @@ async def call_tool_by_name(
 
 
 __all__ = [
-    "MCPClientManager",
     "call_tool",
     "call_tool_by_name",
-    "find_tool_server",
     "get_tool_schema",
-    "list_servers",
     "list_tools",
-    "read_resource",
 ]
