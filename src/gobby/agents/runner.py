@@ -20,7 +20,7 @@ __all__ = ["AgentRunner"]
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ class AgentRunner:
     def __init__(
         self,
         db: DatabaseProtocol,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         max_agent_depth: int = 1,
     ):
         """
@@ -51,7 +51,7 @@ class AgentRunner:
             max_agent_depth: Maximum nesting depth for agents.
         """
         self.db = db
-        self._session_storage = session_storage
+        self._session_manager = session_storage
         self._child_session_manager = ChildSessionManager(
             session_storage,
             max_agent_depth=max_agent_depth,

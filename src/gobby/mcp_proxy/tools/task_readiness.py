@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
@@ -199,7 +199,7 @@ def _compute_proximity_boost(
 
 def _resolve_ready_tasks(
     task_manager: "LocalTaskManager",
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     session_var_manager: SessionVariableManager,
     task_type: str | None = None,
     parent_task_id: str | None = None,
@@ -390,7 +390,7 @@ def create_readiness_registry(
 
     # Create session variable manager for session_task scoping
     session_var_manager = SessionVariableManager(task_manager.db)
-    session_manager = LocalSessionManager(task_manager.db)
+    session_manager = SessionManager(task_manager.db)
 
     # --- list_ready_tasks ---
 

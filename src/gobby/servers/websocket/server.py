@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
     from gobby.storage.inter_session_messages import InterSessionMessageManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 
@@ -70,7 +70,7 @@ class WebSocketServer(
         mcp_manager: MCPClientManager,
         auth_callback: Callable[[str], Coroutine[Any, Any, str | None]] | None = None,
         stop_registry: Any = None,
-        session_manager: "LocalSessionManager | None" = None,
+        session_manager: "SessionManager | None" = None,
         daemon_config: Any = None,
         internal_manager: Any = None,
         # Deprecated: kept for backwards-compat callers, ignored
@@ -85,7 +85,7 @@ class WebSocketServer(
             auth_callback: Optional async function that validates token and returns user_id.
                           If None, all connections are accepted (local-first mode).
             stop_registry: Optional StopRegistry for handling stop requests from clients.
-            session_manager: Optional LocalSessionManager for persisting web-chat sessions.
+            session_manager: Optional SessionManager for persisting web-chat sessions.
             message_manager: Deprecated, ignored. Kept for backwards compatibility.
             daemon_config: Optional DaemonConfig for voice and other features.
             internal_manager: Optional InternalRegistryManager for routing to internal MCP servers.
@@ -127,6 +127,9 @@ class WebSocketServer(
 
         # Pending provider overrides queued before session creation
         self._pending_providers: dict[str, str] = {}
+
+        # Hidden context to inject on the first post-resume user turn
+        self._pending_inject_contexts: dict[str, str] = {}
 
         # Dispatch table for message routing (lazily populated in _handle_message)
         self._dispatch_table: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {}

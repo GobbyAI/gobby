@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.inter_session_messages import InterSessionMessageManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 
 def register_handoff_tools(
     registry: InternalToolRegistry,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
@@ -25,7 +25,7 @@ def register_handoff_tools(
 
     Args:
         registry: The InternalToolRegistry to register tools with
-        session_manager: LocalSessionManager instance for session operations
+        session_manager: SessionManager instance for session operations
         llm_service: LLM service for generating full summaries (optional)
         transcript_processor: Transcript processor for parsing transcripts (optional)
         inter_session_message_manager: For sending P2P messages between sessions (optional)

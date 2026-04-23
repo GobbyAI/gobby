@@ -34,6 +34,7 @@ from .setup import setup
 from .skills import skills
 from .sync import sync
 from .tasks import tasks
+from .tokens import tokens
 from .ui import ui
 from .workflows import workflows
 from .worktrees import worktrees
@@ -65,6 +66,7 @@ cli.add_command(setup)
 cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(tasks)
+cli.add_command(tokens)
 cli.add_command(memory)
 cli.add_command(sessions)
 cli.add_command(skills)

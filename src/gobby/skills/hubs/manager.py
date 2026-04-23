@@ -16,11 +16,33 @@ from gobby.skills.hubs.base import HubProvider
 if TYPE_CHECKING:
     from gobby.config.skills import HubConfig
     from gobby.llm.service import LLMService
+    from gobby.storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
 
 # Type alias for provider factory functions
 ProviderFactory = type[HubProvider]
+
+
+def resolve_hub_api_keys(
+    configs: dict[str, HubConfig],
+    store: SecretStore,
+) -> dict[str, str]:
+    """Resolve hub auth keys from SecretStore.
+
+    Keys are stored under their ``auth_key_name`` (the identifier is kept for
+    backwards compatibility with legacy env-var names). Hubs without
+    ``auth_key_name`` are skipped. Env vars are never consulted — SecretStore
+    is the single source of truth for hub auth.
+    """
+    api_keys: dict[str, str] = {}
+    for hub_config in configs.values():
+        if not hub_config.auth_key_name:
+            continue
+        value = store.get(hub_config.auth_key_name)
+        if value:
+            api_keys[hub_config.auth_key_name] = value
+    return api_keys
 
 
 class HubManager:
@@ -121,6 +143,42 @@ class HubManager:
             raise KeyError(f"Unknown hub: {hub_name}")
         return self._configs[hub_name]
 
+    def auth_status(self, hub_name: str) -> dict[str, Any]:
+        """Report whether a hub's required auth is configured.
+
+        Returns a dict with ``auth_required``, ``auth_configured``, and
+        ``auth_key_name`` (when auth is required). Hubs without an
+        ``auth_key_name`` are reported as not requiring auth.
+        """
+        config = self.get_config(hub_name)
+        if not config.auth_key_name:
+            return {"auth_required": False, "auth_configured": True}
+        return {
+            "auth_required": True,
+            "auth_key_name": config.auth_key_name,
+            "auth_configured": bool(self._api_keys.get(config.auth_key_name)),
+        }
+
+    def warn_missing_auth(self) -> None:
+        """Emit one WARNING per configured hub whose required auth is missing.
+
+        Intended to be called once during daemon startup, after factories and
+        configs are fully registered. Directs the user to ``gobby install``
+        (auth lives in SecretStore, never env).
+        """
+        for hub_name, config in self._configs.items():
+            if not config.auth_key_name:
+                continue
+            if self._api_keys.get(config.auth_key_name):
+                continue
+            logger.warning(
+                "Skill hub '%s' is missing required auth (%s). "
+                "Run 'gobby install' or 'gobby secrets set %s' to configure.",
+                hub_name,
+                config.auth_key_name,
+                config.auth_key_name,
+            )
+
     def _create_provider(self, hub_name: str) -> HubProvider:
         """Create a provider instance for a hub.
 
@@ -152,7 +210,7 @@ class HubManager:
         if config.auth_key_name:
             auth_token = self._api_keys.get(config.auth_key_name)
             if auth_token is None:
-                logger.warning(
+                logger.debug(
                     f"Auth key '{config.auth_key_name}' not found in api_keys for hub '{hub_name}'"
                 )
 

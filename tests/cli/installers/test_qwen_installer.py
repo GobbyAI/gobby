@@ -42,7 +42,11 @@ class TestInstallQwen:
         shared_scripts.mkdir(parents=True)
         (shared_scripts / "agent_shutdown.sh").write_text("#!/usr/bin/env bash\necho shutdown\n")
 
-        return install_dir
+        with patch(
+            "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+            return_value="/usr/local/bin/ghook",
+        ):
+            yield install_dir
 
     def test_install_qwen_success(
         self, project_path: Path, mock_install_dir: Path, temp_dir: Path
@@ -65,7 +69,6 @@ class TestInstallQwen:
                 "gobby.cli.installers.qwen.configure_mcp_server_json",
                 return_value={"success": True, "added": True},
             ),
-            patch("gobby.cli.installers.qwen.which", return_value="/usr/local/bin/uv"),
             patch.object(Path, "home", return_value=temp_dir),
         ):
             result = install_qwen(project_path, mode="project")
@@ -111,7 +114,6 @@ class TestInstallQwen:
                 "gobby.cli.installers.qwen.configure_mcp_server_json",
                 return_value={"success": True, "added": True},
             ),
-            patch("gobby.cli.installers.qwen.which", return_value="/usr/local/bin/uv"),
             patch.object(Path, "home", return_value=temp_dir),
         ):
             result = install_qwen(project_path, mode="project")

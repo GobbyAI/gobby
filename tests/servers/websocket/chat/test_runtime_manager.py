@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.app import DaemonConfig
-from gobby.llm.claude_models import DoneEvent, TextChunk
+from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session import ChatSession
-from gobby.servers.websocket.chat.provider_backends import (
+from gobby.servers.websocket.chat.backends import (
     CodexManagedChatSession,
     CodexWebChatBackend,
     GeminiManagedChatSession,
@@ -23,8 +24,15 @@ from gobby.servers.websocket.chat.provider_backends import (
     QwenWebChatBackend,
 )
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+from gobby.sessions.transcripts.base import ParsedMessage
 
 pytestmark = pytest.mark.unit
+
+PYTHON_SKILL_DIRECTIVE = 'Call get_skill(name="python") on gobby-skills, then continue.'
+CODE_INDEX_SKILL_DIRECTIVE = 'Call get_skill(name="code-index") on gobby-skills, then continue.'
+TASK_TRANSITIONS_SKILL_DIRECTIVE = (
+    'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
+)
 
 
 def _async_stream(*items: Any):
@@ -92,7 +100,7 @@ class TestWebChatRuntimeManager:
 
 class TestGeminiBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
+        with patch("gobby.servers.websocket.chat.backends.gemini.GeminiACPClient") as mock_client:
             GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
         kwargs = mock_client.call_args.kwargs
@@ -147,10 +155,61 @@ class TestGeminiBackend:
         assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Gemini"]
         assert isinstance(events[-1], DoneEvent)
 
+    @pytest.mark.asyncio
+    async def test_managed_session_defers_tool_lifecycle_context_to_next_turn(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            side_effect=[
+                _async_stream(
+                    StreamEvent(
+                        event_type="tool_call",
+                        data={
+                            "tool_name": "Write",
+                            "tool_input": {"file_path": "/tmp/example.py"},
+                            "call_id": "call-1",
+                        },
+                    ),
+                    StreamEvent(
+                        event_type="tool_result",
+                        data={"call_id": "call-1", "success": True, "result": "ok"},
+                    ),
+                    StreamEvent(event_type="result", data={}),
+                ),
+                _async_stream(StreamEvent(event_type="result", data={})),
+            ]
+        )
+        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session._connected = True
+        session.sdk_session_id = "sess-1"
+        session._on_pre_tool = AsyncMock(return_value={"context": PYTHON_SKILL_DIRECTIVE})
+        session._on_post_tool = AsyncMock(
+            return_value={"context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+        )
+
+        first_events = [event async for event in session.send_message("first")]
+        second_events = [event async for event in session.send_message("second")]
+
+        assert any(isinstance(event, ToolCallEvent) for event in first_events)
+        assert any(isinstance(event, ToolResultEvent) for event in first_events)
+        session._on_pre_tool.assert_awaited_once_with(
+            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/example.py"}}
+        )
+        session._on_post_tool.assert_awaited_once_with(
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/tmp/example.py"},
+                "tool_response": "ok",
+            }
+        )
+        assert isinstance(second_events[-1], DoneEvent)
+        assert PYTHON_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
+        assert TASK_TRANSITIONS_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
+
 
 class TestQwenBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch("gobby.servers.websocket.chat.provider_backends.GeminiACPClient") as mock_client:
+        with patch("gobby.servers.websocket.chat.backends.qwen.GeminiACPClient") as mock_client:
             QwenWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
         kwargs = mock_client.call_args.kwargs
@@ -159,6 +218,56 @@ class TestQwenBackend:
         assert kwargs["prompt_timeout_env"] == "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
+
+    def test_managed_session_logs_upstream_error_context(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+        session.db_session_id = "db-qwen"
+        session.sdk_session_id = "sdk-qwen"
+        session._model = "qwen3-coder"
+
+        with caplog.at_level("WARNING"):
+            event = session._translate_event(
+                StreamEvent(
+                    event_type="error",
+                    data={"message": "Internal error", "code": "upstream_internal"},
+                )
+            )
+
+        assert isinstance(event, TextChunk)
+        assert event.content == "Error: Internal error"
+        assert any("Managed qwen upstream error" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_attach_session_warms_local_openai_models(self) -> None:
+        client = MagicMock()
+        client.is_started = True
+        client.create_session = AsyncMock(return_value={"sessionId": "sess-qwen"})
+
+        backend = QwenWebChatBackend(client=client)
+        backend._health.available = True
+        backend.start = AsyncMock()
+
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+        session.project_path = "/tmp/project"
+        session._model = "qwen3.6-35b-a3b-q8-local(openai)"
+
+        with patch(
+            "gobby.servers.websocket.chat.backends.qwen.ensure_qwen_local_openai_model_ready",
+            new=AsyncMock(),
+        ) as mock_warmup:
+            await backend.attach_session(session)
+
+        mock_warmup.assert_awaited_once_with(
+            "qwen3.6-35b-a3b-q8-local(openai)",
+            project_path="/tmp/project",
+        )
+        client.create_session.assert_awaited_once_with(
+            model="qwen3.6-35b-a3b-q8-local(openai)",
+            cwd="/tmp/project",
+            reasoning_effort=None,
+        )
 
 
 class TestCodexBackend:
@@ -182,7 +291,7 @@ class TestCodexBackend:
         client.start_thread.assert_awaited_once_with(
             cwd="/tmp/project",
             model="gpt-5.4",
-            approval_policy="unlessTrusted",
+            approval_policy="on-request",
             sandbox=None,
         )
         assert session.sdk_session_id == "thread-1"
@@ -212,7 +321,7 @@ class TestCodexBackend:
         client.start_thread.assert_awaited_once_with(
             cwd="/tmp/project",
             model="gpt-5.4",
-            approval_policy="unlessTrusted",
+            approval_policy="on-request",
             sandbox="read-only",
         )
 
@@ -320,18 +429,29 @@ class TestCodexBackend:
             _transcript_retry_delay_seconds=0.25,
         )
 
+        recovered = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="Recovered from transcript",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(UTC),
+            raw_json={},
+        )
         parsed_batches = [
             [],
-            [SimpleNamespace(role="assistant", content="Recovered from transcript")],
+            [recovered],
         ]
 
         sleep = AsyncMock()
         with (
             patch(
-                "gobby.servers.websocket.chat.provider_backends.CodexTranscriptParser.parse_lines",
+                "gobby.servers.websocket.chat.backends.codex.CodexTranscriptParser.parse_lines",
                 side_effect=parsed_batches,
             ),
-            patch("gobby.servers.websocket.chat.provider_backends.asyncio.sleep", sleep),
+            patch("gobby.servers.websocket.chat.backends.codex.asyncio.sleep", sleep),
         ):
             assistant_text = await session._get_transcript_assistant_text_since(0)
 
@@ -355,14 +475,379 @@ class TestCodexBackend:
                 return_value=("Write", {"file_path": "notes.md"}),
             ),
             patch(
-                "gobby.servers.websocket.chat.provider_backends.find_out_of_repo_write_path",
+                "gobby.servers.websocket.chat.backends.codex.find_out_of_repo_write_path",
                 return_value=None,
             ),
             patch(
-                "gobby.servers.websocket.chat.provider_backends.is_tool_auto_allowed",
+                "gobby.servers.websocket.chat.backends.codex.is_tool_auto_allowed",
                 return_value=False,
             ),
         ):
             result = await backend.handle_approval_request("tools/call", {"threadId": "thread-1"})
 
         assert result == backend._accept_response("tools/call")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_respects_managed_pre_tool_block(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "accept_edits"
+        session._thread_id = "thread-1"
+        session._on_pre_tool = AsyncMock(
+            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+        )
+        backend._sessions_by_thread["thread-1"] = session
+
+        with (
+            patch.object(
+                backend,
+                "_translate_approval_request",
+                return_value=(
+                    "mcp__gobby__call_tool",
+                    {"server_name": "gobby-tasks", "tool_name": "close_task"},
+                ),
+            ),
+            patch(
+                "gobby.servers.websocket.chat.backends.codex.find_out_of_repo_write_path",
+                return_value=None,
+            ),
+        ):
+            result = await backend.handle_approval_request(
+                "mcpServer/elicitation/request",
+                {"threadId": "thread-1"},
+            )
+
+        assert result == backend._decline_response("mcpServer/elicitation/request")
+        session._on_pre_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {"server_name": "gobby-tasks", "tool_name": "close_task"},
+            }
+        )
+        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+
+    @pytest.mark.asyncio
+    async def test_send_message_replays_deferred_context_prefix(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            return_value=_async_stream(DoneEvent(tool_calls_count=0, sdk_session_id="thread-1"))
+        )
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._deferred_contexts.append(CODE_INDEX_SKILL_DIRECTIVE)
+
+        events = [event async for event in session.send_message("hello")]
+
+        assert isinstance(events[-1], DoneEvent)
+        assert backend.send_message.call_args.kwargs["context_prefix"] is not None
+        assert CODE_INDEX_SKILL_DIRECTIVE in backend.send_message.call_args.kwargs["context_prefix"]
+
+    @pytest.mark.asyncio
+    async def test_send_message_applies_post_tool_lifecycle_for_completed_items(self) -> None:
+        handlers: dict[str, list[Any]] = {}
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            for handler in handlers.get("item/completed", []):
+                handler(
+                    "item/completed",
+                    {
+                        "threadId": "thread-1",
+                        "item": {
+                            "type": "mcpToolCall",
+                            "server": "gobby-tasks",
+                            "tool": "close_task",
+                            "arguments": {"task_id": "#42"},
+                            "result": {"success": True},
+                        },
+                    },
+                )
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id="turn-1")
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._on_post_tool = AsyncMock(
+            return_value={"context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+        )
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+
+        events = [event async for event in backend.send_message(session, "hello")]
+
+        assert isinstance(events[-1], DoneEvent)
+        session._on_post_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby-tasks__close_task",
+                "tool_input": {"task_id": "#42"},
+                "tool_response": {"success": True},
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "close_task",
+            }
+        )
+        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+
+    @pytest.mark.asyncio
+    async def test_send_message_normalizes_realistic_completed_mcp_items(self) -> None:
+        handlers: dict[str, list[Any]] = {}
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            completed_events = [
+                {
+                    "threadId": "thread-other",
+                    "item": {
+                        "id": "item-other",
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "mcpToolCall": {
+                            "server": "gobby-tasks",
+                            "tool": "close_task",
+                            "arguments": '{"task_id":"#7"}',
+                        },
+                        "result": {"success": True},
+                    },
+                },
+                {
+                    "threadId": "thread-1",
+                    "item": {
+                        "id": "item-compact-1",
+                        "type": ">>>contextCompaction<<<",
+                        "status": "completed",
+                    },
+                },
+                {
+                    "threadId": "thread-1",
+                    "item": {
+                        "id": "item-msg-1",
+                        "type": "assistantMessage",
+                        "status": "completed",
+                        "assistantMessage": {"content": [{"type": "output_text", "text": "hello"}]},
+                    },
+                },
+                {
+                    "threadId": "thread-1",
+                    "item": {
+                        "id": "item-mcp-1",
+                        "type": "mcpToolCall",
+                        "status": "completed",
+                        "mcpToolCall": {
+                            "server": "gobby-tasks",
+                            "tool": "close_task",
+                            "arguments": '{"task_id":"#42","changes_summary":"done"}',
+                        },
+                        "result": {"success": True, "task_id": "#42"},
+                    },
+                },
+            ]
+            for params in completed_events:
+                for handler in handlers.get("item/completed", []):
+                    handler("item/completed", params)
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": "turn-1"},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id="turn-1")
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session._on_post_tool = AsyncMock()
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+
+        events = [event async for event in backend.send_message(session, "close the task")]
+
+        assert isinstance(events[-1], DoneEvent)
+        session._on_post_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby-tasks__close_task",
+                "tool_input": {"task_id": "#42", "changes_summary": "done"},
+                "tool_response": {"success": True, "task_id": "#42"},
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "close_task",
+            }
+        )
+
+    def test_translate_approval_request_parses_json_string_arguments_for_mcp_tool_call(
+        self,
+    ) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+
+        tool_name, input_data = backend._translate_approval_request(
+            "item/mcpToolCall/requestApproval",
+            {
+                "threadId": "thread-1",
+                "itemId": "item-mcp-1",
+                "serverName": "gobby-tasks",
+                "name": "close_task",
+                "arguments": '{"task_id":"#42","changes_summary":"done"}',
+            },
+        )
+
+        assert tool_name == "mcp__gobby__call_tool"
+        assert input_data == {
+            "task_id": "#42",
+            "changes_summary": "done",
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+
+    @pytest.mark.asyncio
+    async def test_send_message_dispatches_pre_tool_once_per_item_and_resets_each_turn(
+        self,
+    ) -> None:
+        handlers: dict[str, list[Any]] = {}
+        turn_count = 0
+
+        def add_handler(method: str, handler: Any) -> None:
+            handlers.setdefault(method, []).append(handler)
+
+        async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            nonlocal turn_count
+            turn_count += 1
+            turn_id = f"turn-{turn_count}"
+            for handler in handlers.get("turn/started", []):
+                handler("turn/started", {"threadId": "thread-1", "turn": {"id": turn_id}})
+            for handler in handlers.get("item/started", []):
+                handler(
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": turn_id,
+                        "itemId": "item-mcp-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "close_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                        },
+                    },
+                )
+                handler(
+                    "item/started",
+                    {
+                        "threadId": "thread-1",
+                        "turnId": turn_id,
+                        "itemId": "item-mcp-1",
+                        "item": {
+                            "id": "item-mcp-1",
+                            "type": "mcpToolCall",
+                            "mcpToolCall": {
+                                "server": "gobby-tasks",
+                                "tool": "close_task",
+                                "arguments": '{"task_id":"#42"}',
+                            },
+                        },
+                    },
+                )
+            for handler in handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thread-1",
+                        "turn": {"id": turn_id},
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                )
+            return SimpleNamespace(id=turn_id)
+
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.add_notification_handler = MagicMock(side_effect=add_handler)
+        client.remove_notification_handler = MagicMock()
+        client.start_turn = AsyncMock(side_effect=start_turn)
+
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "thread-1"
+        session.chat_mode = "bypass"
+        session._on_pre_tool = AsyncMock()
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+        backend._sessions_by_thread["thread-1"] = session
+
+        [event async for event in backend.send_message(session, "first turn")]
+        with patch(
+            "gobby.servers.websocket.chat.backends.codex.find_out_of_repo_write_path",
+            return_value=None,
+        ):
+            approval_result = await backend.handle_approval_request(
+                "item/mcpToolCall/requestApproval",
+                {
+                    "threadId": "thread-1",
+                    "itemId": "item-mcp-1",
+                    "serverName": "gobby-tasks",
+                    "name": "close_task",
+                    "arguments": '{"task_id":"#42"}',
+                },
+            )
+        [event async for event in backend.send_message(session, "second turn")]
+
+        assert approval_result == backend._accept_response("item/mcpToolCall/requestApproval")
+        assert session._on_pre_tool.await_args_list == [
+            call(
+                {
+                    "tool_name": "mcp__gobby-tasks__close_task",
+                    "tool_input": {"task_id": "#42"},
+                }
+            ),
+            call(
+                {
+                    "tool_name": "mcp__gobby-tasks__close_task",
+                    "tool_input": {"task_id": "#42"},
+                }
+            ),
+        ]

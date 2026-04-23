@@ -19,6 +19,7 @@ def test_build_hook_command_prefers_local_ghook(temp_dir: Path) -> None:
     ghook_bin = temp_dir / ".gobby" / "bin" / "ghook"
     ghook_bin.parent.mkdir(parents=True)
     ghook_bin.write_text("")
+    ghook_bin.chmod(0o755)
 
     with patch.object(Path, "home", return_value=temp_dir):
         command = build_hook_command("codex", "SessionStart", temp_dir / ".gobby" / "hooks")
@@ -28,21 +29,20 @@ def test_build_hook_command_prefers_local_ghook(temp_dir: Path) -> None:
     assert "--cli=codex --type=SessionStart" in command
 
 
-def test_build_hook_command_falls_back_to_dispatcher(temp_dir: Path, tmp_path: Path) -> None:
+def test_build_hook_command_falls_back_to_bare_ghook(temp_dir: Path, tmp_path: Path) -> None:
     hooks_dir = tmp_path / "hooks"
     hooks_dir.mkdir()
-    with patch.object(Path, "home", return_value=temp_dir):
-        command = build_hook_command(
-            "gemini",
-            "SessionStart",
-            hooks_dir,
-            uv_bin="/usr/local/bin/uv",
-        )
 
-    assert command == (
-        f"/usr/local/bin/uv run {hooks_dir.joinpath('hook_dispatcher.py').resolve()} "
-        "--cli=gemini --type=SessionStart"
-    )
+    with (
+        patch.object(Path, "home", return_value=temp_dir),
+        patch(
+            "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+            return_value="ghook",
+        ),
+    ):
+        command = build_hook_command("gemini", "SessionStart", hooks_dir)
+
+    assert command == "ghook --gobby-owned --cli=gemini --type=SessionStart"
 
 
 def test_rewrite_hook_template_commands_updates_nested_entries() -> None:
@@ -71,6 +71,13 @@ def test_gobby_hook_detection_accepts_ghook_marker() -> None:
     assert is_gobby_hook_command("/Users/test/.gobby/bin/ghook --gobby-owned --cli=codex")
     assert config_contains_gobby_hook(
         {"hooks": [{"type": "command", "command": "ghook --gobby-owned --cli=gemini"}]}
+    )
+
+
+def test_gobby_hook_detection_rejects_legacy_dispatcher_commands() -> None:
+    assert not is_gobby_hook_command("uv run /tmp/hooks/hook_dispatcher.py --cli=codex")
+    assert not config_contains_gobby_hook(
+        {"hooks": [{"type": "command", "command": "hook_dispatcher.py --cli=gemini"}]}
     )
 
 

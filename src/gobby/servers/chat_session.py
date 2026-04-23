@@ -115,6 +115,10 @@ class ChatSession(ChatSessionPermissionsMixin):
     _plan_feedback: str | None = field(default=None, repr=False)
     _plan_approval_completed: bool = field(default=False, repr=False)
     _plan_file_path: str | None = field(default=None, repr=False)
+    _last_plan_content: str | None = field(default=None, repr=False)
+    _pending_plan_content: str | None = field(default=None, repr=False)
+    _pending_plan_allowed_prompts: list[str] | None = field(default=None, repr=False)
+    _pending_post_plan_mode: str | None = field(default=None, repr=False)
     _pending_plan_event: asyncio.Event | None = field(default=None, repr=False)
     _pending_plan_decision: str | None = field(default=None, repr=False)
     _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None = field(
@@ -170,7 +174,16 @@ class ChatSession(ChatSessionPermissionsMixin):
     @property
     def _default_model(self) -> str | None:
         """Resolve default model from config."""
-        if self._config and hasattr(self._config, "llm_providers"):
+        if not self._config:
+            return None
+
+        chat_cfg = getattr(self._config, "chat", None)
+        chat_provider: str | None = getattr(chat_cfg, "provider", None)
+        chat_model: str | None = getattr(chat_cfg, "model", None)
+        if chat_model and (not chat_provider or chat_provider == self.provider):
+            return chat_model
+
+        if hasattr(self._config, "llm_providers"):
             model: str | None = self._config.llm_providers.default_model
             return model
         return None
@@ -307,7 +320,7 @@ class ChatSession(ChatSessionPermissionsMixin):
             hooks=cast(Any, sdk_hooks) if sdk_hooks else None,
             # Prevent user/project settings from merging in — the programmatic
             # hooks above are sufficient. Without this, SDK 0.1.56+ merges
-            # ~/.claude/settings.json hooks which fire hook_dispatcher.py,
+            # ~/.claude/settings.json hooks which fire Gobby-managed hook commands,
             # creating ghost claude_sdk sessions on every hook call.
             # Note: [""] not [] — empty list is falsy, SDK skips the flag.
             # [""] produces --setting-sources "" which CLI parses as no sources.
@@ -482,6 +495,11 @@ class ChatSession(ChatSessionPermissionsMixin):
                     if _PLAN_FILE_PATTERN.match(file_path):
                         plan_content = self._read_plan_file()
                         if plan_content and self._on_plan_ready:
+                            self._remember_plan_artifact(
+                                file_path=file_path,
+                                content=plan_content,
+                                allowed_prompts=tool_input.get("allowedPrompts"),
+                            )
                             await self._on_plan_ready(plan_content, tool_input)
                             logger.info(
                                 f"Plan file {('read' if tool_name == 'Read' else 'written')}, broadcast plan_pending_approval for {self.conversation_id[:8]}",

@@ -2,7 +2,7 @@ tags: [skill-discovery, context, gobby, default]
 
 rules:
   reset-skill-injection:
-    description: "Clear skill injection tracking on context loss"
+    description: "Clear skill loading tracking on context loss"
     event: session_start
     enabled: true
     priority: 80
@@ -12,8 +12,8 @@ rules:
         variable: suggested_skill_names
         value: []
       - type: set_variable
-        variable: code_index_loaded
-        value: false
+        variable: loaded_skills
+        value: []
       - type: set_variable
         variable: injected_skills
         value: []

@@ -3,13 +3,19 @@
 import asyncio
 import logging
 import shlex
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
 
 async def execute_mcp_step(
-    rendered_step: Any, context: dict[str, Any], tool_proxy_getter: Any | None
+    rendered_step: Any,
+    context: dict[str, Any],
+    tool_proxy_getter: Any | None,
+    session_manager: "SessionManager | None" = None,
 ) -> Any:
     """Execute an MCP tool call step."""
     mcp_config = rendered_step.mcp
@@ -25,43 +31,32 @@ async def execute_mcp_step(
     if not tool_proxy:
         raise RuntimeError("tool_proxy_getter returned None")
 
-    # Set project + session context for pipeline MCP steps.
-    # Previously missing — tools called by pipelines got None from
-    # get_project_context() and had no session ContextVar.
+    # Set project + session context for pipeline MCP steps via the shared
+    # helper. Resolves external_id refs to the platform UUID and propagates
+    # it to tool_proxy — otherwise the proxy would prefer the raw ref over
+    # the ContextVar and re-poison workflow checks and tool filters.
     from gobby.utils.session_context import (
-        SessionContext,
-        reset_session_context,
-        set_session_context,
+        reset_seeded_contexts,
+        resolve_and_seed_contexts,
     )
 
-    session_token = None
-    project_token = None
     pipeline_session_id = context.get("session_id")
+    tokens = resolve_and_seed_contexts(
+        session_ref=pipeline_session_id,
+        session_manager=session_manager,
+        project_ref=None,
+        db=(session_manager.db if session_manager else None),
+    )
+    effective_session_id = tokens.resolved_session_id
     try:
         if pipeline_session_id:
-            session_token = set_session_context(SessionContext(session_id=pipeline_session_id))
-            # Set project context from session
-            if hasattr(tool_proxy, "_mcp_manager"):
-                mgr = tool_proxy._mcp_manager
-                if hasattr(mgr, "session_manager") and mgr.session_manager:
-                    try:
-                        from gobby.utils.project_context import set_project_context_from_session
-
-                        project_token = set_project_context_from_session(
-                            pipeline_session_id, mgr.session_manager, mgr.session_manager.db
-                        )
-                    except Exception as ctx_err:
-                        logger.debug(
-                            f"Failed to set project context for pipeline MCP step: {ctx_err}"
-                        )
-
             # Internal pipeline execution still needs to satisfy progressive
             # discovery rules before calling the tool.
             try:
                 await tool_proxy.get_tool_schema(
                     mcp_config.server,
                     mcp_config.tool,
-                    session_id=pipeline_session_id,
+                    session_id=effective_session_id,
                 )
             except Exception as schema_err:
                 logger.debug(
@@ -75,15 +70,10 @@ async def execute_mcp_step(
             mcp_config.server,
             mcp_config.tool,
             mcp_config.arguments or {},
-            session_id=pipeline_session_id,
+            session_id=effective_session_id,
         )
     finally:
-        if session_token is not None:
-            reset_session_context(session_token)
-        if project_token is not None:
-            from gobby.utils.project_context import reset_project_context
-
-            reset_project_context(project_token)
+        reset_seeded_contexts(tokens)
 
     # Convert MCP SDK CallToolResult to a serializable dict
     if hasattr(result, "content") and hasattr(result, "isError"):

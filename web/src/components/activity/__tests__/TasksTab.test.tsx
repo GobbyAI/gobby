@@ -13,6 +13,7 @@ import {
   screen,
   waitFor,
   act,
+  within,
 } from "@testing-library/react";
 import { TasksTab } from "../TasksTab";
 import {
@@ -191,6 +192,291 @@ describe("TasksTab", () => {
     });
   });
 
+  it("orders task roots and siblings by priority then seq_num", async () => {
+    mockFetch.resetRoutes();
+    const orderedTasks = [
+      {
+        id: "root-medium",
+        ref: "#701",
+        title: "Root medium",
+        status: "open",
+        priority: 2,
+        task_type: "task",
+        parent_task_id: null,
+        created_at: "2026-04-05T00:00:00Z",
+        updated_at: "2026-04-05T00:00:00Z",
+        seq_num: 701,
+        path_cache: "701",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+      {
+        id: "root-high-late",
+        ref: "#702",
+        title: "Root high late",
+        status: "open",
+        priority: 1,
+        task_type: "task",
+        parent_task_id: null,
+        created_at: "2026-04-04T00:00:00Z",
+        updated_at: "2026-04-04T00:00:00Z",
+        seq_num: 702,
+        path_cache: "702",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+      {
+        id: "root-high-early",
+        ref: "#703",
+        title: "Root high early",
+        status: "open",
+        priority: 1,
+        task_type: "task",
+        parent_task_id: null,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        seq_num: 703,
+        path_cache: "703",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+      {
+        id: "parent-root",
+        ref: "#704",
+        title: "Parent root",
+        status: "open",
+        priority: 2,
+        task_type: "epic",
+        parent_task_id: null,
+        created_at: "2026-04-02T00:00:00Z",
+        updated_at: "2026-04-02T00:00:00Z",
+        seq_num: 704,
+        path_cache: "704",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+      {
+        id: "child-medium-new",
+        ref: "#705",
+        title: "Child medium new",
+        status: "open",
+        priority: 2,
+        task_type: "task",
+        parent_task_id: "parent-root",
+        created_at: "2026-04-06T00:00:00Z",
+        updated_at: "2026-04-06T00:00:00Z",
+        seq_num: 705,
+        path_cache: "704/705",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+      {
+        id: "child-critical",
+        ref: "#706",
+        title: "Child critical",
+        status: "open",
+        priority: 0,
+        task_type: "bug",
+        parent_task_id: "parent-root",
+        created_at: "2026-04-07T00:00:00Z",
+        updated_at: "2026-04-07T00:00:00Z",
+        seq_num: 706,
+        path_cache: "704/706",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+      {
+        id: "child-medium-old",
+        ref: "#707",
+        title: "Child medium old",
+        status: "open",
+        priority: 2,
+        task_type: "task",
+        parent_task_id: "parent-root",
+        created_at: "2026-04-03T00:00:00Z",
+        updated_at: "2026-04-03T00:00:00Z",
+        seq_num: 707,
+        path_cache: "704/707",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+      },
+    ];
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: orderedTasks });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+      task: {
+        ...orderedTasks[0],
+        description: null,
+        category: null,
+        validation_criteria: null,
+        closed_at: null,
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Child medium new")).toBeTruthy();
+    });
+
+    const titles = screen.getAllByRole("treeitem").map((node) => {
+      const titleNode = node.querySelector(".activity-task-row-title");
+      return titleNode?.textContent ?? node.textContent;
+    });
+
+    expect(titles).toEqual([
+      "Root high late",
+      "Root high early",
+      "Root medium",
+      "Parent root",
+      "Child critical",
+      "Child medium new",
+      "Child medium old",
+    ]);
+  });
+
+  it("uses accessible subtree toggles and preserves tree depth semantics", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      tasks: [
+        {
+          id: "parent-task",
+          ref: "#801",
+          title: "Expandable parent",
+          status: "open",
+          priority: 2,
+          task_type: "task",
+          parent_task_id: null,
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+          seq_num: 801,
+          path_cache: "801",
+          requires_user_review: false,
+          assignee: null,
+          agent_name: null,
+          sequence_order: null,
+          start_date: null,
+          due_date: null,
+          project_id: "proj-1",
+        },
+        {
+          id: "child-task",
+          ref: "#802",
+          title: "Nested child",
+          status: "open",
+          priority: 2,
+          task_type: "task",
+          parent_task_id: "parent-task",
+          created_at: "2026-04-02T00:00:00Z",
+          updated_at: "2026-04-02T00:00:00Z",
+          seq_num: 802,
+          path_cache: "801/802",
+          requires_user_review: false,
+          assignee: null,
+          agent_name: null,
+          sequence_order: null,
+          start_date: null,
+          due_date: null,
+          project_id: "proj-1",
+        },
+      ],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+      task: {
+        id: "parent-task",
+        ref: "#801",
+        title: "Expandable parent",
+        status: "open",
+        priority: 2,
+        task_type: "task",
+        parent_task_id: null,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        seq_num: 801,
+        path_cache: "801",
+        requires_user_review: false,
+        assignee: null,
+        agent_name: null,
+        sequence_order: null,
+        start_date: null,
+        due_date: null,
+        project_id: "proj-1",
+        description: null,
+        category: null,
+        validation_criteria: null,
+        closed_at: null,
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Nested child")).toBeTruthy();
+    });
+
+    const parentRow = screen
+      .getAllByText("Expandable parent")[0]
+      .closest('[role="treeitem"]');
+    const childRow = screen.getByText("Nested child").closest('[role="treeitem"]');
+    expect(parentRow).toHaveAttribute("aria-expanded", "true");
+    expect(childRow).toHaveAttribute("aria-level", "2");
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Collapse subtasks for Expandable parent",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Nested child")).toBeNull();
+    });
+
+    expect(
+      screen
+        .getAllByText("Expandable parent")[0]
+        .closest('[role="treeitem"]'),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getByRole("button", {
+        name: "Expand subtasks for Expandable parent",
+      }),
+    ).toBeTruthy();
+  });
+
   it("auto-selects the first visible task and keeps the detail pane open", async () => {
     render(<TasksTab projectId="proj-1" />);
 
@@ -255,6 +541,59 @@ describe("TasksTab", () => {
     expect(screen.getByText("Needs Review")).toBeTruthy();
     expect(screen.getByText("Merge Ready")).toBeTruthy();
     expect(screen.getByText("Closed")).toBeTruthy();
+  });
+
+  it("renders detail metadata in the lower pane without the old inline summary line", async () => {
+    mockFetch.resetRoutes();
+    const detailTask = {
+      id: "task-detail",
+      ref: "#510",
+      title: "Detail pane task",
+      status: "open",
+      priority: 2,
+      task_type: "bug",
+      parent_task_id: null,
+      created_at: "2026-04-10T10:00:00Z",
+      updated_at: "2026-04-11T11:30:00Z",
+      seq_num: 510,
+      path_cache: "510/ui",
+      requires_user_review: false,
+      assignee: "session-123",
+      agent_name: "Agent Delta",
+      sequence_order: null,
+      start_date: null,
+      due_date: null,
+      project_id: "proj-1",
+    };
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      tasks: [detailTask],
+    });
+    mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
+      task: {
+        ...detailTask,
+        description: "Detail task description",
+        category: "UI",
+        validation_criteria: "Verify the lower pane layout",
+        closed_at: null,
+      },
+    });
+
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Detail task description")).toBeTruthy();
+    });
+
+    expect(screen.getByText("Claimed by")).toBeTruthy();
+    expect(screen.getByText("State")).toBeTruthy();
+    expect(screen.getByText("Created")).toBeTruthy();
+    expect(screen.getByText("Updated")).toBeTruthy();
+    expect(screen.getByText("Category")).toBeTruthy();
+    expect(screen.getByText("Path")).toBeTruthy();
+    expect(screen.getByText("Agent Delta")).toBeTruthy();
+    expect(screen.getByText("UI")).toBeTruthy();
+    expect(screen.getByText("Validation")).toBeTruthy();
+    expect(screen.queryByText("Ready · Medium · bug")).toBeNull();
   });
 
   it("shows a filtered empty state when tasks exist but none match the default filters", async () => {
@@ -403,7 +742,14 @@ describe("TasksTab", () => {
       String(url).includes("/api/tasks?"),
     ).length;
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Task actions" })[0]);
+    const reviewTaskRow = screen
+      .getAllByText("Review approved task")[0]
+      .closest('[role="treeitem"]');
+    fireEvent.click(
+      within(reviewTaskRow as HTMLElement).getByRole("button", {
+        name: "Task actions",
+      }),
+    );
 
     const assignButton = await screen.findByRole("button", {
       name: "Assign to Main Chat",
@@ -439,7 +785,14 @@ describe("TasksTab", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Task actions" })[0]);
+    const reviewTaskRow = screen
+      .getAllByText("Review approved task")[0]
+      .closest('[role="treeitem"]');
+    fireEvent.click(
+      within(reviewTaskRow as HTMLElement).getByRole("button", {
+        name: "Task actions",
+      }),
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "Assign to Main Chat" }),
     );

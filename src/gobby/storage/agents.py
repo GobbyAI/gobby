@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -13,6 +14,12 @@ from gobby.storage.database import DatabaseProtocol
 logger = logging.getLogger(__name__)
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
+TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
+    "success",
+    "error",
+    "timeout",
+    "cancelled",
+)
 
 
 @dataclass
@@ -284,6 +291,62 @@ class LocalAgentRunManager:
         )
         return self.get(run_id)
 
+    def _expire_sessions_for_run_ids(self, run_ids: Sequence[str]) -> int:
+        """Expire active child sessions associated with terminal agent runs."""
+        filtered_run_ids = [run_id for run_id in run_ids if run_id]
+        if not filtered_run_ids:
+            return 0
+
+        placeholders = ", ".join("?" for _ in filtered_run_ids)
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            f"""
+            UPDATE sessions
+            SET status = 'expired',
+                updated_at = ?
+            WHERE status IN ('active', 'paused')
+            AND (
+                agent_run_id IN ({placeholders})
+                OR id IN (
+                    SELECT child_session_id
+                    FROM agent_runs
+                    WHERE id IN ({placeholders})
+                    AND child_session_id IS NOT NULL
+                )
+            )
+            """,
+            (now, *filtered_run_ids, *filtered_run_ids),
+        )
+        return cursor.rowcount or 0
+
+    def expire_sessions_for_terminal_runs(self) -> int:
+        """Expire active/paused child sessions whose agent run is already terminal."""
+        status_placeholders = ", ".join("?" for _ in TERMINAL_AGENT_RUN_STATUSES)
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            f"""
+            UPDATE sessions
+            SET status = 'expired',
+                updated_at = ?
+            WHERE status IN ('active', 'paused')
+            AND (
+                agent_run_id IN (
+                    SELECT id
+                    FROM agent_runs
+                    WHERE status IN ({status_placeholders})
+                )
+                OR id IN (
+                    SELECT child_session_id
+                    FROM agent_runs
+                    WHERE status IN ({status_placeholders})
+                    AND child_session_id IS NOT NULL
+                )
+            )
+            """,
+            (now, *TERMINAL_AGENT_RUN_STATUSES, *TERMINAL_AGENT_RUN_STATUSES),
+        )
+        return cursor.rowcount or 0
+
     def complete(
         self,
         run_id: str,
@@ -317,6 +380,7 @@ class LocalAgentRunManager:
             """,
             (result, tool_calls_count, turns_used, now, now, run_id),
         )
+        self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
     def fail(
@@ -352,23 +416,30 @@ class LocalAgentRunManager:
             """,
             (error, tool_calls_count, turns_used, now, now, run_id),
         )
+        self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
-    def timeout(self, run_id: str, turns_used: int = 0) -> AgentRun | None:
+    def timeout(
+        self,
+        run_id: str,
+        turns_used: int = 0,
+        error: str = "Execution timed out",
+    ) -> AgentRun | None:
         """Mark agent run as timed out."""
         now = datetime.now(UTC).isoformat()
         self.db.execute(
             """
             UPDATE agent_runs
             SET status = 'timeout',
-                error = 'Execution timed out',
+                error = ?,
                 turns_used = ?,
                 completed_at = ?,
                 updated_at = ?
             WHERE id = ?
             """,
-            (turns_used, now, now, run_id),
+            (error, turns_used, now, now, run_id),
         )
+        self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
     def cancel(self, run_id: str) -> AgentRun | None:
@@ -382,6 +453,7 @@ class LocalAgentRunManager:
             """,
             (now, now, run_id),
         )
+        self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
     def update_sdk_session_id(self, run_id: str, sdk_session_id: str) -> AgentRun | None:
@@ -705,14 +777,23 @@ class LocalAgentRunManager:
             self.db.execute(
                 """
                 UPDATE sessions
-                SET status = 'expired', updated_at = datetime('now')
-                WHERE agent_run_id IN (
-                    SELECT id FROM agent_runs
-                    WHERE status = 'timeout' AND completed_at = ?
+                SET status = 'expired',
+                    updated_at = ?
+                WHERE status IN ('active', 'paused')
+                AND (
+                    agent_run_id IN (
+                        SELECT id FROM agent_runs
+                        WHERE status = 'timeout' AND completed_at = ?
+                    )
+                    OR id IN (
+                        SELECT child_session_id FROM agent_runs
+                        WHERE status = 'timeout'
+                        AND completed_at = ?
+                        AND child_session_id IS NOT NULL
+                    )
                 )
-                AND status IN ('active', 'paused')
                 """,
-                (now,),
+                (now, now, now),
             )
             logger.info(f"Timed out {count} stale agent runs ({count1} explicit, {count2} default)")
 

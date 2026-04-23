@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CLAUDE_MODEL_ALIASES = frozenset({"haiku", "sonnet", "opus"})
+
 
 # Type alias for feature configs that have provider/model/prompt fields
 FeatureConfig = "SessionSummaryConfig | DigestConfig | RecommendToolsConfig"
@@ -183,6 +185,13 @@ class LLMService:
         if not model:
             raise ValueError(
                 f"Feature config {type(feature_config).__name__} missing 'model' field"
+            )
+
+        if provider_name != "claude" and model.strip().lower() in _CLAUDE_MODEL_ALIASES:
+            raise ValueError(
+                f"Feature config {type(feature_config).__name__} uses Claude model alias "
+                f"'{model}' with provider '{provider_name}'. "
+                "Only provider='claude' accepts haiku/sonnet/opus aliases."
             )
 
         # Extract prompt (optional)

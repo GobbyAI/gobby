@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -13,7 +13,11 @@ from gobby.memory.context import build_memory_context
 from gobby.memory.neo4j_client import Neo4jClient
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.scoring import temporal_decay
-from gobby.memory.services.knowledge_graph import KnowledgeGraphService
+from gobby.memory.services.knowledge_graph import (
+    KnowledgeGraphResult,
+    KnowledgeGraphService,
+    KnowledgeGraphStatus,
+)
 from gobby.memory.services.maintenance import (
     export_markdown as _export_markdown,
 )
@@ -63,6 +67,9 @@ class MemoryManager:
         neo4j_url: str | None = None,
         neo4j_auth: str | None = None,
         neo4j_database: str = "neo4j",
+        neo4j_graph_search: bool = True,
+        neo4j_graph_min_score: float = 0.5,
+        neo4j_rrf_k: int = 60,
         embedding_dim: int = 768,
         collection_prefix: str = "code_symbols_",
     ):
@@ -71,6 +78,9 @@ class MemoryManager:
         self._llm_service = llm_service
         self._vector_store = vector_store
         self._embed_fn = embed_fn
+        self._neo4j_graph_search = neo4j_graph_search
+        self._neo4j_graph_min_score = neo4j_graph_min_score
+        self._neo4j_rrf_k = neo4j_rrf_k
 
         # Primary storage layer — always SQLite via LocalMemoryManager
         self.storage = LocalMemoryManager(db)
@@ -125,7 +135,7 @@ class MemoryManager:
             try:
                 from gobby.prompts.loader import PromptLoader
 
-                provider = llm_service.get_default_provider()
+                provider, model, _ = llm_service.get_provider_for_feature(config.kg)
                 prompt_loader = PromptLoader(db=self.db)
                 self._kg_service = KnowledgeGraphService(
                     neo4j_client=self._neo4j_client,
@@ -136,7 +146,7 @@ class MemoryManager:
                     code_link_min_score=config.code_link_min_score,
                     code_symbol_collection_prefix=collection_prefix,
                     embedding_dim=embedding_dim,
-                    model=config.kg_model,
+                    model=model,
                 )
                 logger.debug("KnowledgeGraphService initialized")
             except Exception as e:
@@ -464,16 +474,16 @@ class MemoryManager:
 
         # Collect direct memory IDs (ordered by entity similarity)
         direct_memory_ids: list[str] = []
-        entity_names: list[str] = []
+        entity_keys: list[str] = []
         for result in entity_results:
-            entity_names.append(result["name"])
+            entity_keys.append(result["entity_key"])
             for mid in result.get("memory_ids", []):
                 if mid not in direct_memory_ids:
                     direct_memory_ids.append(mid)
 
         # Step 2: Graph traversal for related memories
         traversed_memory_ids = await self._kg_service.find_related_memory_ids(
-            entity_names=entity_names,
+            entity_keys=entity_keys,
             max_hops=2,
             limit=limit,
             project_id=project_id,
@@ -652,13 +662,11 @@ class MemoryManager:
                 filters["project_id"] = project_id
 
             # Run Qdrant search (always) and graph search (when available) in parallel
-            use_graph = self._kg_service is not None and getattr(
-                self.config, "neo4j_graph_search", True
-            )
+            use_graph = self._kg_service is not None and self._neo4j_graph_search
 
             if use_graph:
-                graph_min_score = getattr(self.config, "neo4j_graph_min_score", 0.5)
-                rrf_k = getattr(self.config, "neo4j_rrf_k", 60)
+                graph_min_score = self._neo4j_graph_min_score
+                rrf_k = self._neo4j_rrf_k
 
                 qdrant_coro = self._vector_store.search(
                     query_embedding,
@@ -736,7 +744,7 @@ class MemoryManager:
                 )
             else:
                 # Qdrant + FTS5 path (no graph search)
-                rrf_k = getattr(self.config, "neo4j_rrf_k", 60)
+                rrf_k = self._neo4j_rrf_k
 
                 qdrant_coro = self._vector_store.search(
                     query_embedding,
@@ -930,6 +938,7 @@ class MemoryManager:
 
     async def delete_memory(self, memory_id: str) -> bool:
         """Delete a memory from SQLite, VectorStore, and Neo4j."""
+        existing_memory = self.get_memory(memory_id)
         result = self.storage.delete_memory(memory_id)
         if result and self._vector_store:
             try:
@@ -938,13 +947,17 @@ class MemoryManager:
                 logger.warning(f"VectorStore delete failed for {memory_id}: {e}")
         if result and self._kg_service:
             try:
-                await self._kg_service.remove_memory_from_graph(memory_id)
+                await self._kg_service.remove_memory_from_graph(
+                    memory_id,
+                    project_id=existing_memory.project_id if existing_memory else None,
+                )
             except Exception as e:
                 logger.warning(f"Graph delete failed for {memory_id}: {e}")
         return result
 
     async def adelete_memory(self, memory_id: str) -> bool:
         """Delete a memory (async version via backend)."""
+        existing_memory = self.get_memory(memory_id)
         result = await self._backend.delete(memory_id)
         if result and self._vector_store:
             try:
@@ -953,7 +966,10 @@ class MemoryManager:
                 logger.warning(f"VectorStore delete failed for {memory_id}: {e}")
         if result and self._kg_service:
             try:
-                await self._kg_service.remove_memory_from_graph(memory_id)
+                await self._kg_service.remove_memory_from_graph(
+                    memory_id,
+                    project_id=existing_memory.project_id if existing_memory else None,
+                )
             except Exception as e:
                 logger.warning(f"Graph delete failed for {memory_id}: {e}")
         return result
@@ -1013,7 +1029,7 @@ class MemoryManager:
                         report["neo4j"]["errors"] += len(orphaned) - deleted
 
                     # Clean orphaned entities after removing memory nodes
-                    entities_deleted = await self._kg_service.remove_orphaned_entities()
+                    entities_deleted = await self._kg_service.remove_orphaned_entities(scope="all")
                     report["neo4j"]["orphan_entities_deleted"] = entities_deleted
             except Exception as e:
                 logger.error(f"Neo4j reconciliation failed: {e}")
@@ -1245,14 +1261,7 @@ class MemoryManager:
 
         # 1. Clear Neo4j graph
         if self._kg_service:
-            if project_id:
-                report["graph_cleared"] = await self._kg_service.clear_project_graph(project_id)
-            else:
-                # TODO: add clear_all_graphs when needed; for now per-project only
-                report["graph_cleared"] = {
-                    "skipped": True,
-                    "reason": "global clear not implemented",
-                }
+            report["graph_cleared"] = await self._kg_service.clear_graph(project_id=project_id)
 
         # 2. Clear Qdrant vectors
         if self._vector_store:
@@ -1349,37 +1358,7 @@ class MemoryManager:
 
         # 4. Rebuild knowledge graph (concurrent, semaphore-limited)
         if self._kg_service:
-            kg_service = self._kg_service
-            kg_sem = asyncio.Semaphore(5)
-            kg_done = 0
-            kg_done_lock = asyncio.Lock()
-
-            async def _rebuild_kg(mem: Memory) -> bool:
-                nonlocal kg_done
-                async with kg_sem:
-                    try:
-                        await kg_service.add_to_graph(
-                            mem.content,
-                            memory_id=mem.id,
-                            project_id=mem.project_id,
-                        )
-                        success = True
-                    except Exception as e:
-                        logger.warning(f"KG extraction failed for {mem.id}: {e}")
-                        success = False
-                    async with kg_done_lock:
-                        kg_done += 1
-                        if kg_done % 50 == 0 or kg_done == total:
-                            logger.info(f"KG extraction progress: {kg_done}/{total}")
-                    return success
-
-            kg_results = await asyncio.gather(*[_rebuild_kg(m) for m in all_memories])
-            extracted = sum(1 for r in kg_results if r)
-            errors = sum(1 for r in kg_results if not r)
-            logger.info(
-                f"KG rebuild complete: {extracted} extracted, {errors} errors from {total} memories"
-            )
-            report["graph_rebuilt"] = {"extracted": extracted, "errors": errors}
+            report["graph_rebuilt"] = await self.rebuild_knowledge_graph(project_id=project_id)
 
         # 5. Reindex FTS5
         try:
@@ -1518,25 +1497,158 @@ class MemoryManager:
     # Neo4j knowledge graph (delegated to KnowledgeGraphService)
     # =========================================================================
 
-    async def get_entity_graph(self, limit: int = DEFAULT_GRAPH_LIMIT) -> dict[str, Any] | None:
+    async def clear_knowledge_graph(self, project_id: str | None = None) -> dict[str, Any]:
+        """Clear the Neo4j knowledge-graph projection and requeue affected memories."""
+        if not self._kg_service:
+            return {"success": False, "error": "KnowledgeGraphService not initialized"}
+        cleared = await self._kg_service.clear_graph(project_id=project_id)
+        pending = await asyncio.to_thread(self.storage.mark_pending_graphs, project_id)
+        return {"success": True, "memories_marked_pending": pending, **cleared}
+
+    async def rebuild_knowledge_graph(
+        self,
+        project_id: str | None = None,
+        limit: int = MAX_REINDEX_LIMIT,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> dict[str, Any]:
+        """Rebuild the Neo4j knowledge-graph projection from SQLite memories."""
+        if not self._kg_service:
+            return {"success": False, "error": "KnowledgeGraphService not initialized"}
+
+        if project_id:
+            all_memories = (await self._fetch_all_project_memories(project_id))[:limit]
+        else:
+            all_memories = await asyncio.to_thread(self.list_memories, None, None, limit)
+
+        status_counts = {status.value: 0 for status in KnowledgeGraphStatus}
+        errors = 0
+        processed = 0
+        failed_memories: list[dict[str, Any]] = []
+
+        kg_service = self._kg_service
+        kg_worker_count = 5
+        kg_done = 0
+        kg_done_lock = asyncio.Lock()
+
+        async def _emit_progress() -> None:
+            if progress_callback is None:
+                return
+            progress = {
+                "project_id": project_id,
+                "memories_total": len(all_memories),
+                "memories_completed": kg_done,
+                "memories_marked_processed": processed,
+                "status_counts": dict(status_counts),
+                "errors": errors,
+                "failed_memories": list(failed_memories),
+            }
+            maybe_awaitable = progress_callback(progress)
+            if maybe_awaitable is not None:
+                await maybe_awaitable
+
+        async def _rebuild_kg(mem: Memory) -> KnowledgeGraphResult:
+            nonlocal errors, kg_done, processed
+            result = await kg_service.add_to_graph(
+                mem.content,
+                memory_id=mem.id,
+                project_id=mem.project_id,
+            )
+            async with kg_done_lock:
+                status_counts[result.status.value] += 1
+                kg_done += 1
+                if result.status in (
+                    KnowledgeGraphStatus.SUCCESS,
+                    KnowledgeGraphStatus.NOOP_NO_ENTITIES,
+                ):
+                    await asyncio.to_thread(self.mark_graph_processed, mem.id)
+                    processed += 1
+                else:
+                    errors += 1
+                    failed_memories.append(
+                        {
+                            "memory_id": mem.id,
+                            "project_id": mem.project_id,
+                            "status": result.status.value,
+                            "errors": list(result.errors),
+                        }
+                    )
+                await _emit_progress()
+                if kg_done % 50 == 0 or kg_done == len(all_memories):
+                    logger.info(f"KG extraction progress: {kg_done}/{len(all_memories)}")
+            return result
+
+        await _emit_progress()
+        queue: asyncio.Queue[Memory | None] = asyncio.Queue()
+        for mem in all_memories:
+            queue.put_nowait(mem)
+        for _ in range(kg_worker_count):
+            queue.put_nowait(None)
+
+        async def _worker() -> None:
+            while True:
+                mem = await queue.get()
+                try:
+                    if mem is None:
+                        return
+                    await _rebuild_kg(mem)
+                finally:
+                    queue.task_done()
+
+        workers = [asyncio.create_task(_worker()) for _ in range(kg_worker_count)]
+        await queue.join()
+        kg_results = await asyncio.gather(*workers)
+        # ``kg_results`` is retained so callers/tests can rely on full task completion here.
+        _ = kg_results
+
+        logger.info(
+            "KG rebuild complete for %s: %s",
+            f"project {project_id}" if project_id else "all projects",
+            status_counts,
+        )
+        return {
+            "success": True,
+            "memories_processed": len(all_memories),
+            "memories_marked_processed": processed,
+            "status_counts": status_counts,
+            "memories_extracted": status_counts[KnowledgeGraphStatus.SUCCESS.value],
+            "noop_no_entities": status_counts[KnowledgeGraphStatus.NOOP_NO_ENTITIES.value],
+            "errors": errors,
+            "failed_memories": failed_memories,
+        }
+
+    async def get_entity_graph(
+        self,
+        limit: int = DEFAULT_GRAPH_LIMIT,
+        project_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Get the Neo4j entity graph for visualization."""
         if self._kg_service:
-            return await self._kg_service.get_entity_graph(limit=limit)
+            return await self._kg_service.get_entity_graph(limit=limit, project_id=project_id)
         if self._neo4j_client:
             try:
-                return await self._neo4j_client.get_entity_graph(limit=limit)
+                return await self._neo4j_client.get_entity_graph(limit=limit, project_id=project_id)
             except Exception as e:
                 logger.warning(f"Neo4j query failed: {e}")
                 return None
         return None
 
-    async def get_entity_neighbors(self, name: str) -> dict[str, Any] | None:
+    async def get_entity_neighbors(
+        self,
+        entity_key: str,
+        project_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Get neighbors for a single Neo4j entity."""
         if self._kg_service:
-            return await self._kg_service.get_entity_neighbors(name)
+            return await self._kg_service.get_entity_neighbors(
+                entity_key,
+                project_id=project_id,
+            )
         if self._neo4j_client:
             try:
-                return await self._neo4j_client.get_entity_neighbors(name)
+                return await self._neo4j_client.get_entity_neighbors(
+                    entity_key,
+                    project_id=project_id,
+                )
             except Exception as e:
                 logger.warning(f"Neo4j query failed: {e}")
                 return None

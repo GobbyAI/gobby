@@ -9,20 +9,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import numpy as np
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    from gobby.config.voice import VoiceConfig
-
-from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities
+from gobby.config.voice import VoiceConfig
+from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is_available
 
 logger = logging.getLogger(__name__)
+
+_WARMUP_PRIME_TEXT = "warm up"
+_WARMUP_PRIME_MAX_GENERATION_TOKENS = 8
 
 
 def _auto_device() -> str:
@@ -41,6 +37,8 @@ def _auto_device() -> str:
 
 def _coerce_conditioning_audio(value: Any) -> Any:
     """Cast Chatterbox conditioning audio to float32 for MPS compatibility."""
+    import numpy as np
+
     torch_module: Any | None = None
     try:
         import torch
@@ -68,87 +66,66 @@ def _coerce_conditioning_audio(value: Any) -> Any:
     return value
 
 
-@contextmanager
-def _float32_conditioning_tokenizer(model: Any) -> Iterator[None]:
-    """Wrap the Chatterbox tokenizer so conditioning audio stays float32 on MPS."""
-    tokenizer = getattr(getattr(model, "s3gen", None), "tokenizer", None)
-    original_forward = getattr(tokenizer, "forward", None)
-
-    if getattr(model, "device", None) != "mps" or tokenizer is None or original_forward is None:
-        yield
-        return
-
-    def _wrapped_forward(wavs: Any, *args: Any, **kwargs: Any) -> Any:
-        return original_forward(_coerce_conditioning_audio(wavs), *args, **kwargs)
-
-    tokenizer.forward = _wrapped_forward
-    try:
-        yield
-    finally:
-        tokenizer.forward = original_forward
+def _reference_availability_error(reference_audio: Path) -> str | None:
+    if not reference_audio.exists():
+        return f"Chatterbox reference audio not found: {reference_audio}"
+    if not reference_audio.is_file():
+        return f"Chatterbox reference audio is not a file: {reference_audio}"
+    return None
 
 
-@contextmanager
-def _float32_conditioning_resample(model: Any) -> Iterator[None]:
-    """Wrap librosa.resample so Chatterbox conditioning audio stays float32 on MPS."""
-    if getattr(model, "device", None) != "mps":
-        yield
-        return
-
+def _prepare_turbo_conditionals(
+    model: Any,
+    reference_audio: Path,
+    *,
+    exaggeration: float = 0.0,
+    norm_loudness: bool = True,
+) -> None:
+    """Prepare Chatterbox Turbo conditionals with float32-safe reference audio handling."""
     import librosa
+    import numpy as np
+    import torch
+    from chatterbox import tts_turbo as chatterbox_turbo
 
-    original_resample = librosa.resample
+    s3gen_sr = getattr(chatterbox_turbo, "S3GEN_SR", getattr(model, "sr", 24000))
+    s3_sr = getattr(chatterbox_turbo, "S3_SR", 16000)
 
-    def _wrapped_resample(y: Any, *args: Any, **kwargs: Any) -> Any:
-        return _coerce_conditioning_audio(original_resample(y, *args, **kwargs))
+    s3gen_ref_wav, sample_rate = librosa.load(str(reference_audio), sr=s3gen_sr)
+    s3gen_ref_wav = _coerce_conditioning_audio(s3gen_ref_wav)
 
-    librosa.resample = _wrapped_resample
-    try:
-        yield
-    finally:
-        librosa.resample = original_resample
+    if len(s3gen_ref_wav) / sample_rate <= 5.0:
+        raise ValueError("Audio prompt must be longer than 5 seconds!")
 
+    if norm_loudness:
+        s3gen_ref_wav = _coerce_conditioning_audio(model.norm_loudness(s3gen_ref_wav, sample_rate))
 
-@contextmanager
-def _float32_voice_encoder(model: Any) -> Iterator[None]:
-    """Wrap Chatterbox voice encoder entrypoints so MPS never sees float64 refs."""
-    if getattr(model, "device", None) != "mps":
-        yield
-        return
+    ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=s3gen_sr, target_sr=s3_sr)
+    ref_16k_wav = _coerce_conditioning_audio(ref_16k_wav)
+    s3gen_ref_wav = _coerce_conditioning_audio(s3gen_ref_wav[: model.DEC_COND_LEN])
 
-    voice_encoder = getattr(model, "ve", None)
-    original_embeds_from_wavs = getattr(voice_encoder, "embeds_from_wavs", None)
-    original_embeds_from_mels = getattr(voice_encoder, "embeds_from_mels", None)
-    if (
-        voice_encoder is None
-        or original_embeds_from_wavs is None
-        or original_embeds_from_mels is None
-    ):
-        yield
-        return
+    s3gen_ref_dict = model.s3gen.embed_ref(s3gen_ref_wav, s3gen_sr, device=model.device)
 
-    def _wrapped_embeds_from_wavs(wavs: Any, *args: Any, **kwargs: Any) -> Any:
-        return original_embeds_from_wavs(_coerce_conditioning_audio(wavs), *args, **kwargs)
+    t3_cond_prompt_tokens: torch.Tensor | None = None
+    if plen := model.t3.hp.speech_cond_prompt_len:
+        tokenizer = model.s3gen.tokenizer
+        t3_cond_prompt_tokens, _ = tokenizer.forward(
+            [ref_16k_wav[: model.ENC_COND_LEN]], max_len=plen
+        )
+        t3_cond_prompt_tokens = torch.as_tensor(t3_cond_prompt_tokens, device=model.device)
+        if t3_cond_prompt_tokens.ndim < 2:
+            t3_cond_prompt_tokens = t3_cond_prompt_tokens.reshape(1, -1)
 
-    def _wrapped_embeds_from_mels(mels: Any, *args: Any, **kwargs: Any) -> Any:
-        return original_embeds_from_mels(_coerce_conditioning_audio(mels), *args, **kwargs)
+    ve_embed_array = np.asarray(
+        _coerce_conditioning_audio(model.ve.embeds_from_wavs([ref_16k_wav], sample_rate=s3_sr))
+    )
+    ve_embed = torch.from_numpy(ve_embed_array).mean(dim=0, keepdim=True).to(model.device)
 
-    voice_encoder.embeds_from_wavs = _wrapped_embeds_from_wavs
-    voice_encoder.embeds_from_mels = _wrapped_embeds_from_mels
-    try:
-        yield
-    finally:
-        voice_encoder.embeds_from_wavs = original_embeds_from_wavs
-        voice_encoder.embeds_from_mels = original_embeds_from_mels
-
-
-@contextmanager
-def _float32_conditioning_workarounds(model: Any) -> Iterator[None]:
-    """Apply all Chatterbox MPS reference-audio float32 workarounds."""
-    with _float32_conditioning_resample(model):
-        with _float32_conditioning_tokenizer(model):
-            with _float32_voice_encoder(model):
-                yield
+    t3_cond = chatterbox_turbo.T3Cond(
+        speaker_emb=ve_embed,
+        cond_prompt_speech_tokens=t3_cond_prompt_tokens,
+        emotion_adv=exaggeration * torch.ones(1, 1, 1),
+    ).to(device=model.device)
+    model.conds = chatterbox_turbo.Conditionals(t3_cond, s3gen_ref_dict).to(device=model.device)
 
 
 class ChatterboxTurboProvider(BaseTTSProvider):
@@ -172,27 +149,50 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         # Initialize the lock eagerly so two coroutines arriving in
         # _ensure_model concurrently cannot create separate locks.
         self._load_lock: asyncio.Lock = asyncio.Lock()
+        self._synthesis_lock: asyncio.Lock = asyncio.Lock()
         self._sample_rate = 24000  # Chatterbox outputs 24kHz
         self._reference_audio = Path(config.tts_reference_audio).expanduser()
+        self._conditioning_ready = False
+        self._runtime_primed = False
 
     def _availability(self) -> tuple[bool, str]:
-        try:
-            import chatterbox  # noqa: F401
-
-            return True, ""
-        except ImportError:
+        if not _module_is_available("chatterbox"):
             return False, "chatterbox not installed (uv sync --extra voice)"
+
+        reference_error = _reference_availability_error(self._reference_audio)
+        if reference_error is not None:
+            return False, reference_error
+        return True, ""
 
     def _status_details(self) -> dict[str, Any]:
         return {
             "tts_reference_audio": str(self._reference_audio),
             "tts_reference_audio_exists": self._reference_audio.exists(),
+            "tts_reference_audio_conditioned": self._conditioning_ready,
+            "tts_runtime_primed": self._runtime_primed,
             "tts_device": self._config.tts_device,
+            "tts_chatterbox_max_generation_tokens": (
+                self._config.tts_chatterbox_max_generation_tokens
+            ),
         }
 
     async def warmup(self) -> None:
         """Public entry point for preloading the TTS model."""
-        await self._ensure_model()
+        model = await self._ensure_model()
+        if self._runtime_primed:
+            return
+
+        async with self._synthesis_lock:
+            if self._runtime_primed:
+                return
+            logger.info("Priming Chatterbox Turbo synthesis runtime")
+            try:
+                await asyncio.to_thread(self._prime_synthesis_runtime, model)
+            except Exception as exc:
+                self._runtime_primed = False
+                raise RuntimeError(self._format_synthesis_error(exc)) from exc
+            self._runtime_primed = True
+            logger.info("Chatterbox Turbo synthesis runtime primed successfully")
 
     def unload(self) -> None:
         """Release the model to reclaim memory.
@@ -201,32 +201,126 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         model in a local variable, so clearing ``self._model`` cannot affect
         an in-flight synthesis. Python attribute assignment is GIL-atomic.
         """
+        if self._model is not None and hasattr(self._model, "conds"):
+            self._model.conds = None
         self._model = None
+        self._conditioning_ready = False
+        self._runtime_primed = False
+
+    def _prepare_reference_conditioning(self, model: Any) -> None:
+        _prepare_turbo_conditionals(
+            model,
+            self._reference_audio,
+            exaggeration=0.0,
+            norm_loudness=True,
+        )
+
+    def _format_conditioning_error(self, exc: Exception) -> str:
+        if isinstance(exc, FileNotFoundError):
+            return f"Chatterbox reference audio not found: {self._reference_audio}"
+        if isinstance(exc, PermissionError):
+            return f"Chatterbox reference audio is not readable: {self._reference_audio}"
+        message = str(exc).strip()
+        if message:
+            return f"Chatterbox reference audio is invalid: {message}"
+        return f"Failed to prepare Chatterbox reference audio: {self._reference_audio}"
+
+    def _format_synthesis_error(self, exc: Exception) -> str:
+        message = str(exc).strip()
+        if message:
+            return f"Chatterbox TTS synthesis failed: {message}"
+        return "Chatterbox TTS synthesis failed"
+
+    def _generate_with_token_cap(
+        self,
+        model: Any,
+        text: str,
+        *,
+        max_generation_tokens: int | None = None,
+    ) -> Any:
+        turbo_decoder = getattr(model, "t3", None)
+        if turbo_decoder is None:
+            return model.generate(
+                text,
+                temperature=self._config.tts_temperature,
+            )
+
+        original_inference_turbo = getattr(turbo_decoder, "inference_turbo", None)
+        token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
+
+        if not callable(original_inference_turbo):
+            return model.generate(
+                text,
+                temperature=self._config.tts_temperature,
+            )
+
+        def _capped_inference_turbo(*args: Any, **kwargs: Any) -> Any:
+            kwargs["max_gen_len"] = token_cap
+            return original_inference_turbo(*args, **kwargs)
+
+        turbo_decoder.inference_turbo = _capped_inference_turbo
+        try:
+            return model.generate(
+                text,
+                temperature=self._config.tts_temperature,
+            )
+        finally:
+            turbo_decoder.inference_turbo = original_inference_turbo
+
+    def _prime_synthesis_runtime(self, model: Any) -> None:
+        self._generate_with_token_cap(
+            model,
+            _WARMUP_PRIME_TEXT,
+            max_generation_tokens=min(
+                self._config.tts_chatterbox_max_generation_tokens,
+                _WARMUP_PRIME_MAX_GENERATION_TOKENS,
+            ),
+        )
 
     async def _ensure_model(self) -> Any:
         """Lazy-load the Chatterbox Turbo model (thread-safe, async)."""
-        if self._model is not None:
+        if self._model is not None and self._conditioning_ready:
             return self._model
 
         async with self._load_lock:
-            if self._model is not None:
+            if self._model is not None and self._conditioning_ready:
                 return self._model
 
             device = self._config.tts_device
             if device == "auto":
                 device = _auto_device()
 
-            logger.info(f"Loading Chatterbox Turbo model (device={device})")
+            if self._model is None:
+                logger.info(f"Loading Chatterbox Turbo model (device={device})")
 
-            def _load() -> Any:
-                from chatterbox.tts_turbo import ChatterboxTurboTTS
+                def _load() -> Any:
+                    from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-                return ChatterboxTurboTTS.from_pretrained(device=device)
+                    return ChatterboxTurboTTS.from_pretrained(device=device)
 
-            self._model = await asyncio.to_thread(_load)
-            assert self._model is not None  # just loaded above
-            self._sample_rate = self._model.sr
-            logger.info("Chatterbox Turbo model loaded successfully")
+                self._model = await asyncio.to_thread(_load)
+                assert self._model is not None  # just loaded above
+                self._sample_rate = self._model.sr
+                logger.info("Chatterbox Turbo model loaded successfully")
+
+            reference_error = _reference_availability_error(self._reference_audio)
+            if reference_error is not None:
+                raise RuntimeError(reference_error)
+
+            if not self._conditioning_ready:
+                logger.info(
+                    "Preparing Chatterbox Turbo reference conditioning from %s",
+                    self._reference_audio,
+                )
+                try:
+                    await asyncio.to_thread(self._prepare_reference_conditioning, self._model)
+                except Exception as exc:
+                    if hasattr(self._model, "conds"):
+                        self._model.conds = None
+                    self._conditioning_ready = False
+                    raise RuntimeError(self._format_conditioning_error(exc)) from exc
+                self._conditioning_ready = True
+                logger.info("Chatterbox Turbo reference conditioning prepared successfully")
             return self._model
 
     async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
@@ -242,20 +336,13 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         model = await self._ensure_model()
 
         try:
-            ref_path = str(self._reference_audio) if self._reference_audio.exists() else None
-
-            def _generate() -> Any:
-                kwargs: dict[str, Any] = {
-                    "temperature": self._config.tts_temperature,
-                }
-                if ref_path:
-                    kwargs["audio_prompt_path"] = ref_path
-                with _float32_conditioning_workarounds(model):
-                    return model.generate(text, **kwargs)
-
-            wav = await asyncio.to_thread(_generate)
+            async with self._synthesis_lock:
+                wav = await asyncio.to_thread(self._generate_with_token_cap, model, text)
+                self._runtime_primed = True
 
             # Convert torch.Tensor to PCM int16 bytes
+            import numpy as np
+
             samples = wav.squeeze().cpu().numpy()
             pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
             yield pcm_int16.tobytes(), self._sample_rate
@@ -263,17 +350,9 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         except asyncio.CancelledError:
             logger.debug("Chatterbox TTS synthesis cancelled")
             raise
-        except TypeError as exc:
-            if "MPS Tensor to float64 dtype" in str(exc):
-                logger.error(
-                    "Chatterbox TTS synthesis failed on MPS while preparing reference audio. "
-                    "Conditioning audio must be float32 before it is moved to the device.",
-                    exc_info=True,
-                )
-                return
+        except Exception as exc:
             logger.error("Chatterbox TTS synthesis failed", exc_info=True)
-        except Exception:
-            logger.error("Chatterbox TTS synthesis failed", exc_info=True)
+            raise RuntimeError(self._format_synthesis_error(exc)) from exc
 
     @property
     def sample_rate(self) -> int:

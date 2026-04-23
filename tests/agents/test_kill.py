@@ -57,7 +57,7 @@ class TestValidateTerminalValue:
 
 class TestCloseTerminalWindow:
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill.LocalSessionManager")
+    @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill._run_subprocess")
     async def test_close_tmux_pane(self, mock_run, mock_sm_cls):
         mock_session = MagicMock()
@@ -76,7 +76,7 @@ class TestCloseTerminalWindow:
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.sys")
-    @patch("gobby.agents.kill.LocalSessionManager")
+    @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill._run_subprocess")
     async def test_close_taskkill_windows(self, mock_run, mock_sm_cls, mock_sys):
         mock_sys.platform = "win32"
@@ -95,7 +95,7 @@ class TestCloseTerminalWindow:
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
-    @patch("gobby.agents.kill.LocalSessionManager")
+    @patch("gobby.agents.kill.SessionManager")
     async def test_close_parent_pid_unix(self, mock_sm_cls, mock_kill):
         mock_session = MagicMock()
         mock_session.terminal_context = {"parent_pid": "456"}
@@ -148,7 +148,7 @@ class TestKillAgent:
         mock_kill.assert_called_with(999, signal.SIGTERM)
 
     @pytest.mark.asyncio
-    @patch("gobby.agents.kill.LocalSessionManager")
+    @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill.os.kill")
     async def test_kill_pid_from_terminal_context(self, mock_kill, mock_sm_cls, agent_run, mock_db):
         agent_run.pid = None

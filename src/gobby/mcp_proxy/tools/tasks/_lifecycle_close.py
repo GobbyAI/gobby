@@ -20,7 +20,6 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import LocalSessionManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
 
@@ -73,6 +72,24 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         if not task:
             return {"error": f"Task {task_id} not found"}
 
+        # close_task is the only task-lifecycle tool that persists a
+        # *_in_session_id audit column. When the ContextVar is empty, prefer
+        # the task's existing claimed_by_session_id over silently writing NULL.
+        if not session_id:
+            fallback_session_id = get_claimed_session_id(task)
+            if fallback_session_id:
+                logger.warning(
+                    "close_task: no session context; falling back to task.claimed_by_session_id=%s",
+                    fallback_session_id,
+                )
+                session_id = fallback_session_id
+            else:
+                return {
+                    "error": "no_session_context",
+                    "message": "close_task requires an active session context "
+                    "or a previously-claimed task",
+                }
+
         # Get project repo_path for git commands (needed before link_commit)
         repo_path = ctx.get_project_repo_path(task.project_id)
         cwd = repo_path or "."
@@ -123,14 +140,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except ValueError as e:
                 return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
-        # Single session manager instance for the duration of close_task
-        _session_manager = LocalSessionManager(ctx.task_manager.db)
-
         # Resolve session for edit-awareness (used by commit checks below)
         _session: Session | None = None
         if resolved_session_id:
             try:
-                _session = _session_manager.get(resolved_session_id)
+                _session = ctx.session_manager.get(resolved_session_id)
             except (KeyError, ValueError, TypeError) as e:
                 logger.debug(f"Best-effort session lookup failed: {e}")
 
@@ -189,7 +203,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             # Check if task has commits (including the one being linked right now)
             has_commits = bool(task.commits) or bool(commit_sha)
 
-            if session_had_edits and not has_commits:
+            if session_had_edits is True and not has_commits:
                 return {
                     "success": False,
                     "error": "missing_commits_for_edits",
@@ -256,7 +270,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # an explicit commit, prefer its normalized short SHA over current HEAD.
         from gobby.utils.git import normalize_commit_sha, run_git_command
 
-        requires_closed_commit_sha = bool(commit_sha or session_had_edits or task.commits)
+        requires_closed_commit_sha = bool(
+            commit_sha or task.commits or (not skip_leaf_checks and session_had_edits is True)
+        )
         current_commit_sha: str | None = None
         if requires_closed_commit_sha:
             current_commit_sha = (
@@ -349,26 +365,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # The commit accounts for this task's edits; subsequent tasks start clean
         if resolved_session_id and (bool(task.commits) or bool(commit_sha)):
             try:
-                _session_manager.clear_had_edits(resolved_session_id)
+                ctx.session_manager.clear_had_edits(resolved_session_id)
             except Exception as e:
                 logger.debug(f"Best-effort had_edits reset failed: {e}")
-
-        # Update worktree status based on closure reason (case-insensitive)
-        try:
-            reason_normalized = reason.lower()
-            wt = ctx.worktree_manager.get_by_task(resolved_id)
-            if wt:
-                if reason_normalized in (
-                    "wont_fix",
-                    "obsolete",
-                    "duplicate",
-                    "already_implemented",
-                ):
-                    ctx.worktree_manager.mark_abandoned(wt.id)
-                elif reason_normalized == "completed":
-                    ctx.worktree_manager.mark_merged(wt.id)
-        except Exception as e:
-            logger.debug(f"Best-effort worktree update failed during close: {e}")
 
         return {"success": True}
 

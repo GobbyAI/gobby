@@ -12,8 +12,8 @@ metadata:
 Create and manage tasks via `call_tool("gobby-tasks", ...)`. Fetch schemas with `get_tool_schema("gobby-tasks", "create_task")` before first use.
 
 > **Note:** TodoWrite is disabled by Gobby rules. Native task tools (TaskCreate, TaskUpdate, TaskGet, TaskList) are
-> available for sub-step tracking once a Gobby task is claimed. All task creation and lifecycle management goes through
-> **gobby-tasks** MCP — native tools are for internal progress tracking only.
+> available for sub-step tracking once a Gobby task is claimed. The gobby-task tracks the deliverable (what gets
+> committed, reviewed, and closed); native task tools track sub-steps along the way.
 
 ## Creating a Task
 
@@ -81,6 +81,7 @@ call_tool("gobby-tasks", "create_task", {
 | `code` | Implementation — requires `validation_criteria` |
 | `config` | Configuration file changes |
 | `docs` | Documentation |
+| `refactor` | Code restructuring with no behavior change (includes updating existing tests) |
 | `test` | Test writing |
 | `research` | Investigation, no code output expected |
 | `planning` | Design, architecture |

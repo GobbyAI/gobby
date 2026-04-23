@@ -24,7 +24,7 @@ class SavingsTracker:
     Savings categories:
     - code_index: symbol retrieval vs full file read
     - discovery: progressive schema loading
-    - compression: gsqz output/input compression (output=tool results, input=context injection)
+    - compression: gsqz output compression (Bash tool results only)
     """
 
     def __init__(self, db: DatabaseProtocol) -> None:

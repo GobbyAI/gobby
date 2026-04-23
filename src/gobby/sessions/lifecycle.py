@@ -12,20 +12,37 @@ import logging
 import os
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from gobby.app_context import get_app_context
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.transcript_archive import backup_transcript
+from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
+from gobby.storage.token_events import (
+    TokenEvent,
+    TokenEventStore,
+    build_token_event_payload,
+    canonicalize_event_timestamp,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _session_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    return 0
 
 
 class SessionLifecycleManager:
@@ -48,7 +65,8 @@ class SessionLifecycleManager:
     ):
         self.db = db
         self.config = config
-        self.session_manager = LocalSessionManager(db)
+        self.session_manager = SessionManager(db)
+        self.token_event_store = TokenEventStore(db)
         self.memory_manager = memory_manager
         self.llm_service = llm_service
         self.memory_sync_manager = memory_sync_manager
@@ -190,13 +208,14 @@ class SessionLifecycleManager:
         processed = 0
         for memory in pending:
             try:
-                await kg_service.add_to_graph(
+                result = await kg_service.add_to_graph(
                     memory.content,
                     memory_id=memory.id,
                     project_id=memory.project_id,
                 )
-                await asyncio.to_thread(self.memory_manager.mark_graph_processed, memory.id)
-                processed += 1
+                if result.status in ("success", "noop_no_entities"):
+                    await asyncio.to_thread(self.memory_manager.mark_graph_processed, memory.id)
+                    processed += 1
             except Exception as e:
                 logger.warning(f"KG processing failed for memory {memory.id}: {e}")
 
@@ -206,7 +225,7 @@ class SessionLifecycleManager:
         return processed
 
     async def _expire_stale_sessions(self) -> int:
-        """Pause inactive active sessions and expire stale sessions."""
+        """Run the full session expiry pipeline, including zero-message cleanup."""
         # First, pause active sessions that have been idle too long
         # This catches orphaned sessions that never got AFTER_AGENT hook
         paused = self.session_manager.pause_inactive_active_sessions(
@@ -223,10 +242,15 @@ class SessionLifecycleManager:
             timeout_hours=self.config.stale_session_timeout_hours
         )
 
+        # Zero-message sessions created by spurious SESSION_START events can be
+        # cleaned up much faster than the normal 24h stale-session sweep.
+        fast_expired = self.session_manager.expire_empty_sessions(timeout_hours=2)
+        pruned = self.session_manager.prune_empty_sessions(min_age_hours=1)
+
         # Clean up stale prompt files (run in thread to avoid blocking)
         await asyncio.to_thread(self._cleanup_prompt_files)
 
-        return paused + orphaned + expired
+        return paused + orphaned + expired + fast_expired + pruned
 
     def _cleanup_prompt_files(self, max_age_seconds: int = 3600) -> int:
         """Delete prompt files older than max_age_seconds.
@@ -432,13 +456,13 @@ class SessionLifecycleManager:
         # Choose parser based on source
         # Default to Claude for backward compatibility or safety
         # But we should rely on session.source if possible
-        parser: Any = ClaudeTranscriptParser()
+        parser: Any = ClaudeTranscriptParser(session_id=session_id)
         if session.source == "gemini":
-            parser = GeminiTranscriptParser()
+            parser = GeminiTranscriptParser(session_id=session_id)
         elif session.source == "qwen":
-            parser = QwenTranscriptParser()
+            parser = QwenTranscriptParser(session_id=session_id)
         elif session.source == "codex":
-            parser = CodexTranscriptParser()
+            parser = CodexTranscriptParser(session_id=session_id)
         # Default (claude or unknown) uses Claude transcript format
 
         # Gemini/Qwen store sessions as single JSON files, not JSONL.
@@ -453,47 +477,145 @@ class SessionLifecycleManager:
                 return
             messages = parser.parse_session_json(data)
         else:
-            messages = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+            # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
+            # records (Codex MCP tool-call lifecycle); this token-event path
+            # only consumes ParsedMessage fields (model, usage, message_id).
+            parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+            messages = [r for r in parsed_records if isinstance(r, ParsedMessage)]
 
         if not messages:
             return
 
-        # Aggregate usage
-        input_tokens = 0
-        output_tokens = 0
-        cache_creation_tokens = 0
-        cache_read_tokens = 0
+        # Replace any synthetic migration rows with real transcript events as soon as
+        # we have a parseable transcript for this session.
+        self.token_event_store.delete_session_events(session_id, origin="backfill")
+        self.token_event_store.delete_session_events(session_id, origin="transcript")
+
+        session_project_id = session.project_id if isinstance(session.project_id, str) else None
+        session_source = session.source if isinstance(session.source, str) else "unknown"
+        session_context_window = (
+            session.context_window if isinstance(session.context_window, int) else None
+        )
         last_model: str | None = None
+        running_totals = self.token_event_store.get_session_totals(session_id)
+        ws_server = None
+        app_ctx = get_app_context()
+        if app_ctx is not None:
+            ws_server = app_ctx.websocket_server
+        saw_usage = False
 
         for msg in messages:
-            if msg.model:
+            if isinstance(msg.model, str) and msg.model:
                 last_model = msg.model
-            if msg.usage:
-                input_tokens += msg.usage.input_tokens
-                output_tokens += msg.usage.output_tokens
-                cache_creation_tokens += msg.usage.cache_creation_tokens
-                cache_read_tokens += msg.usage.cache_read_tokens
 
-        # Don't overwrite existing non-zero token counts with zeros.
-        # Hook handlers (AFTER_MODEL) capture tokens during the live session;
-        # if the transcript yields no usage (e.g. Gemini JSON sessions where
-        # usage metadata isn't embedded in messages), preserve the hook values.
-        if input_tokens == 0 and output_tokens == 0:
-            existing = self.session_manager.get(session_id)
-            if existing and (existing.usage_input_tokens or existing.usage_output_tokens):
-                logger.debug(
-                    f"Transcript yielded 0 tokens for {session_id} but session already has "
-                    f"{existing.usage_input_tokens}/{existing.usage_output_tokens} — preserving"
+            usage = msg.usage
+            if usage is None:
+                continue
+
+            if not all(
+                isinstance(getattr(usage, field, 0), int)
+                for field in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_creation_tokens",
+                    "cache_read_tokens",
                 )
-                return
+            ):
+                continue
+
+            if (
+                usage.input_tokens == 0
+                and usage.output_tokens == 0
+                and usage.cache_creation_tokens == 0
+                and usage.cache_read_tokens == 0
+            ):
+                continue
+            saw_usage = True
+
+            event_timestamp = getattr(msg, "timestamp", None)
+            if not isinstance(event_timestamp, datetime):
+                event_timestamp = datetime.now(UTC)
+            message_id = getattr(msg, "message_id", None)
+            if not isinstance(message_id, str) or not message_id:
+                message_id = None
+            content_type = getattr(msg, "content_type", None)
+            metadata = {"content_type": content_type} if isinstance(content_type, str) else None
+
+            event = TokenEvent(
+                session_id=session_id,
+                project_id=session_project_id,
+                message_id=message_id,
+                source=session_source,
+                origin="transcript",
+                model=msg.model,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_creation_tokens=usage.cache_creation_tokens,
+                cache_read_tokens=usage.cache_read_tokens,
+                context_window=session_context_window,
+                event_at=canonicalize_event_timestamp(event_timestamp),
+                metadata=metadata,
+            )
+            inserted = self.token_event_store.record(event)
+            if inserted:
+                running_totals["input_tokens"] += usage.input_tokens
+                running_totals["output_tokens"] += usage.output_tokens
+                running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
+                running_totals["cache_read_tokens"] += usage.cache_read_tokens
+
+                if ws_server is not None:
+                    try:
+                        await ws_server.broadcast_token_event(
+                            build_token_event_payload(
+                                {
+                                    "session_id": session_id,
+                                    "project_id": session_project_id,
+                                    "message_id": message_id,
+                                    "source": session_source,
+                                    "origin": "transcript",
+                                    "event_at": canonicalize_event_timestamp(event_timestamp),
+                                    "model": msg.model,
+                                    "model_family": event.normalized_model_family(),
+                                    "input_tokens": usage.input_tokens,
+                                    "output_tokens": usage.output_tokens,
+                                    "cache_creation_tokens": usage.cache_creation_tokens,
+                                    "cache_read_tokens": usage.cache_read_tokens,
+                                    "context_window": session_context_window,
+                                },
+                                session_totals=running_totals,
+                            )
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to broadcast transcript token event for session %s",
+                            session_id,
+                            exc_info=True,
+                        )
+
+        if not saw_usage and (
+            _session_int(getattr(session, "usage_input_tokens", 0)) > 0
+            or _session_int(getattr(session, "usage_output_tokens", 0)) > 0
+            or _session_int(getattr(session, "usage_cache_creation_tokens", 0)) > 0
+            or _session_int(getattr(session, "usage_cache_read_tokens", 0)) > 0
+        ):
+            logger.debug(
+                "Transcript yielded no token events for %s; preserving existing session totals",
+                session_id,
+            )
+            return
+
+        totals = self.token_event_store.get_session_totals(session_id)
+        if saw_usage and not any(totals.values()) and any(running_totals.values()):
+            totals = dict(running_totals)
 
         # Update session with aggregated usage
         self.session_manager.update_usage(
             session_id=session_id,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_creation_tokens=cache_creation_tokens,
-            cache_read_tokens=cache_read_tokens,
+            input_tokens=totals["input_tokens"],
+            output_tokens=totals["output_tokens"],
+            cache_creation_tokens=totals["cache_creation_tokens"],
+            cache_read_tokens=totals["cache_read_tokens"],
+            context_window=session_context_window,
             model=last_model,
         )
 

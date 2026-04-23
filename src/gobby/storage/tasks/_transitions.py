@@ -238,6 +238,57 @@ def mark_task_review_approved(
     )
 
 
+def mark_task_review_rejected(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    rejection_notes: str | None = None,
+    round_number: int | None = None,
+) -> Task:
+    """Reject a task after review and return it to open status."""
+    task = get_task(db, task_id)
+    if task.status not in ("needs_review", "in_progress"):
+        raise ValueError(
+            f"Cannot reject review for task with status '{task.status}'. "
+            "Task must be in 'needs_review' or 'in_progress' status to reject review."
+        )
+
+    normalized_round = None
+    if round_number is not None:
+        # Tools/routes may pass an int-like value; normalize once before validation.
+        normalized_round = int(round_number)
+        if normalized_round < 1:
+            raise ValueError("round must be >= 1 when provided")
+
+    description: MaybeUnset[str | None] = UNSET
+    if rejection_notes:
+        heading = (
+            f"## Adversary Findings — Round {normalized_round}"
+            if normalized_round is not None
+            else "## Review Rejection"
+        )
+        section = f"{heading}\n\n{rejection_notes}"
+        description = f"{task.description}\n\n{section}" if task.description else section
+
+    labels = list(task.labels or [])
+    if normalized_round is not None:
+        labels = [label for label in labels if not label.startswith("planning-round:")]
+        labels.append(f"planning-round:{normalized_round}")
+
+    update_task(
+        db,
+        task_id,
+        status="open",
+        description=description,
+        labels=labels if normalized_round is not None else UNSET,
+        assignee=None,
+        claimed_by_session_id=None,
+        escalated_at=None,
+        escalation_reason=None,
+    )
+    return get_task(db, task_id)
+
+
 def close_task(
     db: DatabaseProtocol,
     task_id: str,

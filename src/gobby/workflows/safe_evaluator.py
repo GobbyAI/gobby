@@ -353,7 +353,12 @@ def build_condition_helpers(
     Returns:
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
-    from .condition_helpers import task_needs_human_review, task_tree_complete
+    from .condition_helpers import (
+        task_has_label_prefix,
+        task_needs_human_review,
+        task_status_in,
+        task_tree_complete,
+    )
 
     ctx = context or {}
     funcs: dict[str, Callable[..., Any]] = {
@@ -375,9 +380,17 @@ def build_condition_helpers(
         funcs["task_needs_human_review"] = lambda task_id: task_needs_human_review(
             task_manager, task_id
         )
+        funcs["task_has_label_prefix"] = lambda task_id, prefix: task_has_label_prefix(
+            task_manager, task_id, prefix
+        )
+        funcs["task_status_in"] = lambda task_id, *statuses: task_status_in(
+            task_manager, task_id, *statuses
+        )
     else:
         funcs["task_tree_complete"] = lambda task_id: True
         funcs["task_needs_human_review"] = lambda task_id: False
+        funcs["task_has_label_prefix"] = lambda task_id, prefix: False
+        funcs["task_status_in"] = lambda task_id, *statuses: False
 
     # --- Stop signal helper ---
 
@@ -444,10 +457,20 @@ def build_condition_helpers(
             return False
         return bool(result.get(field) == value)
 
+    def _skill_loaded(name: str) -> bool:
+        """Check canonical and legacy skill ledgers."""
+        variables = _get_variables(ctx)
+        ledgers = (
+            variables.get("loaded_skills", []),
+            variables.get("injected_skills", []),
+        )
+        return any(isinstance(ledger, list) and name in ledger for ledger in ledgers)
+
     funcs["mcp_called"] = _mcp_called
     funcs["mcp_result_is_null"] = _mcp_result_is_null
     funcs["mcp_failed"] = _mcp_failed
     funcs["mcp_result_has"] = _mcp_result_has
+    funcs["skill_loaded"] = _skill_loaded
 
     # --- Plugin conditions ---
 

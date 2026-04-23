@@ -19,6 +19,7 @@ from gobby.mcp_proxy.services.recommendation import RecommendationService, Searc
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.utils import project_context as project_context_utils
+from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -147,21 +148,6 @@ class GobbyDaemonTools:
 
     # --- Tool Proxying ---
 
-    def _resolve_and_set_project_context(self, session_id: str) -> Any:
-        """Look up session's project_id and set context var for this call."""
-        from gobby.utils.project_context import set_project_context_from_session
-
-        if not self._session_manager:
-            return None
-
-        try:
-            return set_project_context_from_session(
-                session_id, self._session_manager, self._session_manager.db
-            )
-        except Exception as e:
-            logger.debug(f"Failed to set project context for session {session_id}: {e}")
-            return None
-
     async def call_tool(
         self,
         server_name: str,
@@ -190,52 +176,40 @@ class GobbyDaemonTools:
                 operations (e.g., an agent in project A creating a task in
                 project B).
         """
-        # Set project + session context for this call.
-        # Priority: explicit project_id > session-derived project > no context.
-        # Session context (conversation tracking) is always from session_id.
-        project_token = None
-        session_token = None
-        if project_id:
-            if self._session_manager and self._session_manager.db:
-                project_token = project_context_utils.set_project_context_from_ref(
-                    project_id, self._session_manager.db
-                )
-                if project_token is None:
-                    return CallToolResult(
-                        content=[
-                            TextContent(
-                                type="text",
-                                text=f"Error: project_id '{project_id}' not found. "
-                                "Use a valid project UUID or name.",
-                            )
-                        ],
-                        isError=True,
+        # Infrastructure precondition: explicit project_id requires a DB.
+        # Distinct from "project not found" — conflating the two makes
+        # diagnosis harder.
+        if project_id and (self._session_manager is None or self._session_manager.db is None):
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text="Error: project_id provided but no database available to resolve it.",
                     )
-            else:
-                return CallToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text="Error: project_id provided but no database available "
-                            "to resolve it.",
-                        )
-                    ],
-                    isError=True,
-                )
-        elif session_id:
-            project_token = self._resolve_and_set_project_context(session_id)
+                ],
+                isError=True,
+            )
 
-        if session_id:
-            conversation_id = None
-            if self._session_manager:
-                session = self._session_manager.get(session_id)
-                if session:
-                    conversation_id = session.external_id
-            # Set session context ContextVar — tools read from this directly
-            from gobby.utils.session_context import SessionContext, set_session_context
+        db = self._session_manager.db if self._session_manager else None
+        tokens = resolve_and_seed_contexts(
+            session_ref=session_id,
+            session_manager=self._session_manager,
+            project_ref=project_id,
+            db=db,
+        )
 
-            session_token = set_session_context(
-                SessionContext(session_id=session_id, conversation_id=conversation_id)
+        # User-input error: caller passed project_id but it did not resolve.
+        if project_id and tokens.resolved_project_id is None:
+            reset_seeded_contexts(tokens)
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=f"Error: project_id '{project_id}' not found. "
+                        "Use a valid project UUID or name.",
+                    )
+                ],
+                isError=True,
             )
         # Coerce string arguments to dict (agents often stringify JSON,
         # sometimes with literal \" escapes instead of proper quotes)
@@ -244,6 +218,7 @@ class GobbyDaemonTools:
             if parsed is not None:
                 arguments = parsed
             else:
+                reset_seeded_contexts(tokens)
                 return CallToolResult(
                     content=[
                         TextContent(
@@ -263,19 +238,16 @@ class GobbyDaemonTools:
             for leaked_key in ("server_name", "tool_name", "project_id"):
                 effective_arguments.pop(leaked_key, None)
 
+        # Propagate only the resolved platform UUID. Falling back to the raw
+        # ref would re-poison workflow checks and synthetic after-tool events.
+        effective_session_id = tokens.resolved_session_id
+
         try:
             result = await self.tool_proxy.call_tool(
-                server_name, tool_name, effective_arguments, session_id
+                server_name, tool_name, effective_arguments, effective_session_id
             )
         finally:
-            if project_token is not None:
-                from gobby.utils.project_context import reset_project_context
-
-                reset_project_context(project_token)
-            if session_token is not None:
-                from gobby.utils.session_context import reset_session_context
-
-                reset_session_context(session_token)
+            reset_seeded_contexts(tokens)
 
         # Check if result indicates an error:
         # - Old pattern: {"success": False, "error": ...}

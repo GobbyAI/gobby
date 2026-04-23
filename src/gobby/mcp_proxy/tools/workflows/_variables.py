@@ -18,7 +18,7 @@ from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_task_value,
 )
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
@@ -61,7 +61,7 @@ def _coerce_value(
 
 
 def set_variable(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     db: DatabaseProtocol,
     name: str,
     value: str | int | float | bool | list[Any] | dict[str, Any] | None,
@@ -78,7 +78,7 @@ def set_variable(
     (via SessionVariableManager).
 
     Args:
-        session_manager: LocalSessionManager instance
+        session_manager: SessionManager instance
         db: LocalDatabase instance
         name: Variable name (e.g., "session_epic", "is_worktree")
         value: Variable value (string, number, boolean, or null)
@@ -138,7 +138,7 @@ def set_variable(
 
 
 def get_variable(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     db: DatabaseProtocol,
     name: str | None = None,
     session_id: str = "",
@@ -153,7 +153,7 @@ def get_variable(
     When `workflow` is not provided, reads from session-scoped shared variables.
 
     Args:
-        session_manager: LocalSessionManager instance
+        session_manager: SessionManager instance
         db: LocalDatabase instance
         name: Variable name to get (if None, returns all variables)
         session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.

@@ -1,14 +1,11 @@
 """Tests for shared SDK utilities in gobby.llm.sdk_utils."""
 
-from unittest.mock import patch
+import logging
 
 import pytest
 
 from gobby.llm.sdk_utils import (
-    _STATS_RE,
     ADDITIONAL_CONTEXT_LIMIT,
-    compress_and_truncate,
-    compress_context,
     format_exception_group,
     parse_server_name,
     sanitize_error,
@@ -82,204 +79,27 @@ class TestTruncateAdditionalContext:
         result = truncate_additional_context(text)
         assert len(result) == ADDITIONAL_CONTEXT_LIMIT
 
+    def test_over_limit_appends_marker(self) -> None:
+        text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
+        result = truncate_additional_context(text)
+        assert result.endswith("\n... [truncated]")
+
+    def test_over_limit_logs_warning_with_contributor_sizes(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
+        logger = logging.getLogger("tests.additional_context")
+
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            truncate_additional_context(
+                text,
+                contributor_sizes={"skills": 6000, "metadata": 4050},
+                logger=logger,
+            )
+
+        assert "additionalContext truncated" in caplog.text
+        assert f"aggregate_len={len(text)}" in caplog.text
+        assert "contributors={'skills': 6000, 'metadata': 4050}" in caplog.text
+
     def test_empty_string(self) -> None:
         assert truncate_additional_context("") == ""
-
-
-class TestStatsRegex:
-    """Test the regex used to parse gsqz --stats stderr output."""
-
-    def test_parses_standard_output(self) -> None:
-        line = "[gsqz] strategy=prose:standard original=5000 compressed=3000 savings=40.0%"
-        m = _STATS_RE.search(line)
-        assert m is not None
-        assert m.group("strategy") == "prose:standard"
-        assert m.group("original") == "5000"
-        assert m.group("compressed") == "3000"
-        assert m.group("savings") == "40.0"
-
-    def test_no_match_on_garbage(self) -> None:
-        assert _STATS_RE.search("some random stderr") is None
-
-
-class TestCompressContext:
-    """Tests for compress_context — gsqz input integration."""
-
-    def test_disabled_returns_original(self) -> None:
-        text = "x" * 1000
-        result, stats = compress_context(text, enabled=False)
-        assert result == text
-        assert stats is None
-
-    def test_short_text_skipped(self) -> None:
-        text = "short"
-        result, stats = compress_context(text, enabled=True)
-        assert result == text
-        assert stats is None
-
-    def test_no_binary_returns_original(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value=None):
-            result, stats = compress_context(text)
-        assert result == text
-        assert stats is None
-
-    def test_subprocess_success(self) -> None:
-        text = "The quick brown fox jumps over the lazy dog. " * 30
-        compressed = "quick brown fox jumps over lazy dog. " * 30
-        stderr = "[gsqz] strategy=prose:standard original=1350 compressed=1080 savings=20.0%"
-
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value="/usr/bin/gsqz"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                mock_run.return_value.stdout = compressed
-                mock_run.return_value.stderr = stderr
-                result, stats = compress_context(text)
-
-        assert result == compressed
-        assert stats is not None
-        assert stats["original_chars"] == 1350
-        assert stats["compressed_chars"] == 1080
-        assert stats["savings_pct"] == 20.0
-        assert stats["strategy"] == "prose:standard"
-
-        # Verify subprocess was called correctly
-        mock_run.assert_called_once()
-        args = mock_run.call_args
-        assert args[0][0] == ["/usr/bin/gsqz", "input", "--level", "standard", "--stats"]
-        assert args[1]["input"] == text
-
-    def test_subprocess_failure_returns_original(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value="/usr/bin/gsqz"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 1
-                mock_run.return_value.stdout = ""
-                mock_run.return_value.stderr = "error"
-                result, stats = compress_context(text)
-
-        assert result == text
-        assert stats is None
-
-    def test_subprocess_timeout_returns_original(self) -> None:
-        import subprocess
-
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value="/usr/bin/gsqz"):
-            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("gsqz", 5)):
-                result, stats = compress_context(text)
-
-        assert result == text
-        assert stats is None
-
-    def test_empty_stdout_returns_original(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value="/usr/bin/gsqz"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                mock_run.return_value.stdout = ""
-                mock_run.return_value.stderr = ""
-                result, stats = compress_context(text)
-
-        assert result == text
-        assert stats is None
-
-    def test_explicit_gsqz_bin_override(self) -> None:
-        text = "x" * 1000
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "compressed"
-            mock_run.return_value.stderr = ""
-            result, stats = compress_context(text, gsqz_bin="/custom/gsqz")
-
-        args = mock_run.call_args
-        assert args[0][0][0] == "/custom/gsqz"
-
-    def test_invalid_level_falls_back_to_standard(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value="/usr/bin/gsqz"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                mock_run.return_value.stdout = "compressed"
-                mock_run.return_value.stderr = ""
-                compress_context(text, level="invalid")
-
-        args = mock_run.call_args
-        assert args[0][0] == ["/usr/bin/gsqz", "input", "--level", "standard", "--stats"]
-
-    def test_no_stats_in_stderr(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._resolve_gsqz_bin", return_value="/usr/bin/gsqz"):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                mock_run.return_value.stdout = "compressed output"
-                mock_run.return_value.stderr = "some warning"
-                result, stats = compress_context(text)
-
-        assert result == "compressed output"
-        assert stats is None
-
-
-class TestCompressAndTruncate:
-    """Tests for compress_and_truncate — unified compress + truncate."""
-
-    def test_reads_config_from_app_context(self) -> None:
-        text = "x" * 1000
-        with patch(
-            "gobby.llm.sdk_utils._get_compression_config", return_value=(True, "aggressive")
-        ):
-            with patch("gobby.llm.sdk_utils.compress_context") as mock_compress:
-                mock_compress.return_value = ("compressed", None)
-                result, stats = compress_and_truncate(text)
-
-        mock_compress.assert_called_once_with(text, level="aggressive", enabled=True)
-
-    def test_falls_back_when_no_app_context(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
-            with patch("gobby.llm.sdk_utils.compress_context") as mock_compress:
-                mock_compress.return_value = ("compressed", None)
-                result, stats = compress_and_truncate(text)
-
-        mock_compress.assert_called_once_with(text, level="standard", enabled=True)
-        assert result == "compressed"
-
-    def test_truncates_after_compression(self) -> None:
-        big_text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 500)
-        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
-            with patch("gobby.llm.sdk_utils.compress_context") as mock_compress:
-                # Compression doesn't shrink enough — still over limit
-                mock_compress.return_value = (big_text, None)
-                result, stats = compress_and_truncate(big_text)
-
-        assert len(result) == ADDITIONAL_CONTEXT_LIMIT
-        assert result.endswith("[truncated]")
-
-    def test_records_savings_when_stats_present(self) -> None:
-        text = "x" * 1000
-        stats = {
-            "strategy": "prose:standard",
-            "original_chars": 1000,
-            "compressed_chars": 600,
-            "savings_pct": 40.0,
-        }
-        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
-            with patch("gobby.llm.sdk_utils.compress_context", return_value=("compressed", stats)):
-                with patch("gobby.savings.record.record_savings") as mock_record:
-                    compress_and_truncate(text)
-
-        mock_record.assert_called_once_with(
-            category="compression",
-            original_chars=1000,
-            actual_chars=600,
-            metadata={"strategy": "prose:standard"},
-        )
-
-    def test_no_savings_recorded_when_no_stats(self) -> None:
-        text = "x" * 1000
-        with patch("gobby.llm.sdk_utils._get_compression_config", return_value=(True, "standard")):
-            with patch("gobby.llm.sdk_utils.compress_context", return_value=("compressed", None)):
-                with patch("gobby.savings.record.record_savings") as mock_record:
-                    compress_and_truncate(text)
-
-        mock_record.assert_not_called()

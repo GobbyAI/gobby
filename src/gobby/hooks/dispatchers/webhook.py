@@ -11,7 +11,30 @@ import concurrent.futures
 import logging
 
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.hooks.webhooks import WebhookDispatcher, WebhookResult
+
+
+def _resolve_webhook_block_reason(
+    event: HookEvent,
+    reason: str | None,
+    logger: logging.Logger,
+) -> str:
+    """Return a non-empty webhook block reason and warn on fallback use."""
+    cleaned = (reason or "").strip()
+    if cleaned:
+        return cleaned
+    logger.warning(
+        "BLOCK fallback session=%s event=%s tool=%s source=webhook "
+        "rule=webhook-dispatch detail=blocking webhook omitted reason",
+        event.session_id,
+        event.event_type.value,
+        block_tool_name_from_event_data(event.data),
+    )
+    return (
+        f"Blocking webhook denied {event.event_type.value} without providing a reason. "
+        "Inspect webhook responses for the blocking endpoint."
+    )
 
 
 def evaluate_blocking_webhooks(
@@ -40,8 +63,17 @@ def evaluate_blocking_webhooks(
         )
         decision, reason = webhook_dispatcher.get_blocking_decision(webhook_results)
         if decision == "block":
-            logger.info(f"Webhook blocked event: {reason}")
-            return HookResponse(decision="block", reason=reason or "Blocked by webhook")
+            resolved_reason = _resolve_webhook_block_reason(event, reason, logger)
+            log_structured_block(
+                logger,
+                session_id=event.session_id,
+                event=event.event_type.value,
+                tool=block_tool_name_from_event_data(event.data),
+                source="webhook",
+                rule="webhook-dispatch",
+                reason=resolved_reason,
+            )
+            return HookResponse(decision="block", reason=resolved_reason)
     except Exception as e:
         logger.error(f"Blocking webhook dispatch failed: {e}", exc_info=True)
         # Fail-open for webhook errors

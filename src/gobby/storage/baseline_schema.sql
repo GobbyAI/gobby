@@ -223,6 +223,8 @@ CREATE INDEX idx_sessions_status ON sessions(status);
 CREATE INDEX idx_sessions_project_id ON sessions(project_id);
 CREATE INDEX idx_sessions_pending_transcript ON sessions(status, transcript_processed)
     WHERE status = 'expired' AND transcript_processed = FALSE;
+CREATE INDEX idx_sessions_prune_status_updated_at ON sessions(status, updated_at);
+CREATE INDEX idx_sessions_parent_session ON sessions(parent_session_id);
 CREATE INDEX idx_sessions_agent_depth ON sessions(agent_depth);
 CREATE INDEX idx_sessions_spawned_by ON sessions(spawned_by_agent_id);
 CREATE INDEX idx_sessions_workflow ON sessions(workflow_name);
@@ -459,6 +461,7 @@ CREATE TABLE memories (
 CREATE INDEX idx_memories_project ON memories(project_id);
 CREATE INDEX idx_memories_type ON memories(memory_type);
 CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph_processed = 0;
+CREATE INDEX idx_memories_source_session ON memories(source_session_id);
 
 CREATE TABLE session_memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -851,6 +854,32 @@ CREATE TABLE savings_ledger (
 CREATE INDEX idx_savings_ledger_created ON savings_ledger(created_at);
 CREATE INDEX idx_savings_ledger_project_cat ON savings_ledger(project_id, category);
 
+CREATE TABLE token_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id TEXT,
+    message_id TEXT,
+    source TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    model TEXT,
+    model_family TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    context_window INTEGER,
+    event_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    metadata TEXT
+);
+CREATE INDEX idx_token_events_event_at ON token_events(event_at);
+CREATE INDEX idx_token_events_session ON token_events(session_id, event_at);
+CREATE INDEX idx_token_events_project_event ON token_events(project_id, event_at);
+CREATE INDEX idx_token_events_model_family ON token_events(model_family, event_at);
+CREATE UNIQUE INDEX idx_token_events_dedup
+    ON token_events(session_id, message_id)
+    WHERE message_id IS NOT NULL;
+
 CREATE TABLE task_affected_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -907,6 +936,7 @@ CREATE TABLE code_indexed_files (
     byte_size INTEGER NOT NULL DEFAULT 0,
     graph_synced INTEGER NOT NULL DEFAULT 0,
     vectors_synced INTEGER NOT NULL DEFAULT 0,
+    graph_sync_attempted_at TEXT,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, file_path)
 );
@@ -959,12 +989,26 @@ CREATE TABLE code_calls (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL,
     caller_symbol_id TEXT NOT NULL,
+    callee_symbol_id TEXT NOT NULL DEFAULT '',
     callee_name TEXT NOT NULL,
+    callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
+    callee_external_module TEXT NOT NULL DEFAULT '',
     file_path TEXT NOT NULL,
     line INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(project_id, caller_symbol_id, callee_name, file_path, line)
+    UNIQUE(
+        project_id,
+        caller_symbol_id,
+        callee_symbol_id,
+        callee_name,
+        callee_target_kind,
+        callee_external_module,
+        file_path,
+        line
+    )
 );
 CREATE INDEX idx_cc_file ON code_calls(project_id, file_path);
+CREATE INDEX idx_cc_caller ON code_calls(project_id, caller_symbol_id);
+CREATE INDEX idx_cc_target ON code_calls(project_id, callee_target_kind, callee_symbol_id, callee_name);
 
 CREATE TABLE code_content_chunks (
     id TEXT PRIMARY KEY,

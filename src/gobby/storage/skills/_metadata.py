@@ -66,8 +66,8 @@ class SkillMetadataMixin:
             hub_slug: Optional hub slug
             hub_version: Optional hub version
             enabled: Whether skill is active
-            always_apply: Whether skill should always be injected at session start
-            injection_format: How to inject skill (summary, full, content)
+            always_apply: Whether skill should always be advertised at session start
+            injection_format: Manifest selection format (summary, full, content)
             project_id: Project scope (None for global)
             source: 'installed' or 'project' (default 'installed').
                 Auto-set to 'project' when project_id is provided.

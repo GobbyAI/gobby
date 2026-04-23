@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
+from gobby.skills.formatting import format_skill_fetch_context, skill_fetch_directive
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             if prompt_lower not in ("/clear", "/exit") and self._session_manager:
                 try:
                     self._session_manager.update_session_status(session_id, "active")
-                    if self._session_storage:
-                        self._session_storage.reset_transcript_processed(session_id)
+                    self._session_manager.reset_transcript_processed(session_id)
                 except Exception as e:
                     self.logger.warning(f"Failed to update session status: {e}")
 
@@ -91,11 +91,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 # Belt-and-suspenders: set handoff_source directly in addition to
                 # the prepare-clear-handoff rule, so session-end marks handoff_ready
                 # even if the rule engine is slow or disabled.
-                if self._session_storage:
+                if self._session_manager:
                     try:
                         from gobby.workflows.state_manager import SessionVariableManager
 
-                        sv_mgr = SessionVariableManager(self._session_storage.db)
+                        sv_mgr = SessionVariableManager(self._session_manager.db)
                         sv_mgr.set_variable(session_id, "handoff_source", prompt_lower.lstrip("/"))
                     except Exception as e:
                         self.logger.warning(f"Failed to set handoff_source: {e}")
@@ -134,22 +134,23 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def _inject_agent_instructions_if_needed(
         self, event: HookEvent, session_id: str, response: HookResponse
     ) -> None:
-        """Format and inject agent instructions on first before_agent.
+        """Format agent instructions and active-skill manifests on first before_agent.
 
         Everything needed is already in DB from SessionStart activation:
         - Agent name: _agent_type session variable
         - Active skills: _active_skill_names session variable
         - Agent definition: workflow_definitions table
         """
-        if not self._session_storage:
+        if not self._session_manager:
             return
 
         from gobby.workflows.state_manager import SessionVariableManager
 
-        sv_mgr = SessionVariableManager(self._session_storage.db)
+        sv_mgr = SessionVariableManager(self._session_manager.db)
         variables = sv_mgr.get_variables(session_id)
 
-        if variables.get("_agent_context_injected"):
+        identity_reinject = bool(variables.get("_agent_identity_reinject"))
+        if variables.get("_agent_context_injected") and not identity_reinject:
             return
 
         agent_name = variables.get("_agent_type", "default")
@@ -160,7 +161,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         # Get project_id for project-specific agent resolution
         project_id = None
         try:
-            session_row = self._session_storage.get(session_id)
+            session_row = self._session_manager.get(session_id)
             if session_row:
                 project_id = session_row.project_id
         except Exception as e:
@@ -173,20 +174,28 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         from gobby.workflows.agent_resolver import resolve_agent
 
-        agent_body = resolve_agent(agent_name, self._session_storage.db, project_id=project_id)
+        agent_body = resolve_agent(agent_name, self._session_manager.db, project_id=project_id)
         if not agent_body:
             return
 
         parts: list[str] = []
 
+        if identity_reinject:
+            if agent_body.role:
+                parts.append(f"## Role\n{agent_body.role}")
+            if agent_body.goal:
+                parts.append(f"## Goal\n{agent_body.goal}")
+            if agent_body.personality:
+                parts.append(f"## Personality\n{agent_body.personality}")
+
         if agent_body.instructions:
             parts.append(f"## Instructions\n{agent_body.instructions}")
 
-        # Format skills list
+        # Format active skill manifest
         from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
         from gobby.skills.manager import SkillManager
 
-        all_skills = SkillManager(self._session_storage.db).list_skills()
+        all_skills = SkillManager(self._session_manager.db).list_skills()
         formatted, _, _ = select_and_format_agent_skills(
             agent_body, all_skills, active_skills, cli_source
         )
@@ -200,12 +209,18 @@ class AgentEventHandlerMixin(EventHandlersBase):
             else:
                 response.context = instructions_context
 
-        sv_mgr.set_variable(session_id, "_agent_context_injected", True)
+        sv_mgr.merge_variables(
+            session_id,
+            {
+                "_agent_context_injected": True,
+                "_agent_identity_reinject": False,
+            },
+        )
 
     def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
         """Intercept /gobby and /gobby skillname commands.
 
-        Returns context string to inject, or None if not a /gobby command.
+        Returns context string to add, or None if not a /gobby command.
         Supports space syntax (/gobby expand) and legacy colon syntax.
         """
         match = _GOBBY_CMD_PATTERN.match(prompt)
@@ -239,7 +254,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not skill_name or skill_name.lower() == "help":
             return self._generate_help_content(session_id)
 
-        # /gobby skillname → resolve and inject
+        # /gobby skillname → resolve and direct the agent to fetch it on demand
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
         skill = resolved if resolved else self._skill_manager.resolve_skill_name(skill_name)
@@ -247,15 +262,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not skill:
             return self._skill_not_found_context(skill_name)
 
-        # Wrap skill content in context tags
-        parts = [f'<skill-context name="{skill.name}">']
-        parts.append(skill.content)
-        parts.append("</skill-context>")
-
-        if args:
-            parts.append(f"\nUser arguments: {args}")
-
-        return "\n".join(parts)
+        return format_skill_fetch_context(skill.name, args)
 
     def _suggest_skills(self, prompt: str) -> str | None:
         """Suggest skills based on trigger keyword matching.
@@ -275,7 +282,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return None
 
         skill, score = matches[0]
-        fallback = f'Relevant skill available: `get_skill(name="{skill.name}")` on `gobby-skills`'
+        fallback = f"Relevant skill available. {skill_fetch_directive(skill.name)}"
         return _load_agent_prompt("skill-hint", {"skill_name": skill.name}, fallback)
 
     def _generate_help_content(self, session_id: str | None = None) -> str:
@@ -284,11 +291,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
             raise RuntimeError("skill_manager not initialized")
         skills = self._skill_manager.discover_core_skills()
 
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv = sv_mgr.get_variables(session_id)
                 if sv:
                     active_names = sv.get("_active_skill_names")
@@ -298,7 +305,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             except Exception:
                 pass
 
-        # Sort alphabetically, skip always-apply skills (they're auto-injected)
+        # Sort alphabetically, skip always-apply skills (already advertised)
         user_skills = sorted(
             [s for s in skills if not s.is_always_apply()],
             key=lambda s: s.name,
@@ -454,9 +461,9 @@ class AgentEventHandlerMixin(EventHandlersBase):
         self.logger.debug(log_msg)
 
         # Track pending subagent depth for auto-registration
-        if session_id and subagent_id and self._session_storage:
+        if session_id and subagent_id and self._session_manager:
             try:
-                row = self._session_storage.db.fetchone(
+                row = self._session_manager.db.fetchone(
                     "SELECT agent_depth FROM sessions WHERE external_id = ? AND status = 'active'"
                     " ORDER BY updated_at DESC LIMIT 1",
                     (session_id,),
@@ -470,11 +477,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 self.logger.debug(f"Failed to track subagent depth: {e}")
 
         # Toggle is_subagent so rule engine unblocks native task tools
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "is_subagent", True)
                 self.logger.debug(f"Set is_subagent=True for session {session_id}")
             except (sqlite3.Error, KeyError, TypeError, ValueError) as e:
@@ -492,11 +499,11 @@ class AgentEventHandlerMixin(EventHandlersBase):
             self.logger.debug("SUBAGENT_STOP")
 
         # Clear is_subagent so rule engine re-blocks native task tools
-        if session_id and self._session_storage:
+        if session_id and self._session_manager:
             try:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "is_subagent", False)
                 self.logger.debug(f"Set is_subagent=False for session {session_id}")
             except (sqlite3.Error, KeyError, TypeError, ValueError) as e:

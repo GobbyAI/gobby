@@ -12,9 +12,9 @@ threading scenarios:
 import asyncio
 import concurrent.futures
 import json
+import logging
 import threading
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -626,7 +626,7 @@ class TestVariablePersistence:
     @pytest.fixture
     def rule_engine(self, db):
         """Create a real RuleEngine backed by the test DB."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         return RuleEngine(db=db)
 
@@ -765,7 +765,7 @@ class TestVariablePersistence:
         self, db, session_var_manager
     ) -> None:
         """Observer variable changes (e.g. task_claimed) should be persisted to DB."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
@@ -813,7 +813,7 @@ class TestVariablePersistence:
         self, db, session_var_manager
     ) -> None:
         """AFTER_AGENT should run turn-end reconciliation before rule evaluation."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         mock_task_manager.list_tasks.return_value = []
@@ -844,7 +844,7 @@ class TestVariablePersistence:
         self, db, session_var_manager
     ) -> None:
         """AFTER_AGENT should rebuild claimed review work from DB assignment state."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         review_task = MagicMock()
@@ -876,32 +876,15 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
     @pytest.mark.asyncio
-    async def test_codex_schema_lookup_rehydrates_and_injects_transition_skill(
-        self, db
-    ) -> None:
-        """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill injection."""
-        from gobby.workflows.rule_engine import RuleEngine
-        from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
+    async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(self, db) -> None:
+        """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill directive."""
+        from gobby.workflows.engine.core import RuleEngine
+        from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
         db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
-            assert server == "gobby-skills"
-            assert tool == "get_skill"
-            assert args["name"] == "task-transitions"
-            return {
-                "success": True,
-                "result": {
-                    "success": True,
-                    "skill": {
-                        "name": "task-transitions",
-                        "content": "# Task transitions",
-                    },
-                },
-            }
-
-        rule_engine = RuleEngine(db=db, mcp_dispatcher=mock_dispatcher)
+        rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(rule_engine=rule_engine)
 
         before_event = HookEvent(
@@ -944,12 +927,16 @@ class TestVariablePersistence:
 
         assert response.decision == "allow"
         assert response.context is not None
-        assert '<skill name="task-transitions">' in response.context
+        assert (
+            'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
+            in response.context
+        )
+        assert "# Task transitions" not in response.context
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
         """Both observer changes and rule set_variable effects should persist."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
@@ -1022,7 +1009,7 @@ class TestBaselineDirtyFilesSubtraction:
 
     @pytest.fixture
     def rule_engine(self, db):
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         return RuleEngine(db=db)
 
@@ -1330,7 +1317,7 @@ class TestStopFailsClosedOnVariableLoadError:
 
     @pytest.fixture
     def rule_engine(self, db):
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         return RuleEngine(db=db)
 
@@ -1512,3 +1499,58 @@ class TestCodexToolContextRehydration:
         assert "tool_input" not in after_event.data
         evaluated_event = rule_engine.evaluate.await_args_list[-1].kwargs["event"]
         assert "tool_input" not in evaluated_event.data
+
+
+class TestProjectPathResolution:
+    """Workflow hook evaluation should recover project_path when only project_id is known."""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.migrations import run_migrations
+
+        db_path = tmp_path / "test_project_path.db"
+        database = LocalDatabase(db_path)
+        run_migrations(database)
+        return database
+
+    @pytest.mark.asyncio
+    @patch("gobby.workflows.git_utils.get_dirty_files_categorized")
+    async def test_codex_after_tool_uses_project_repo_path_when_cwd_missing(
+        self, mock_get_dirty, db, caplog
+    ) -> None:
+        """Codex synthesized AFTER_TOOL events should derive project_path from project_id."""
+        from gobby.storage.projects import LocalProjectManager
+
+        project = LocalProjectManager(db).create(
+            name="repo-path-resolution",
+            repo_path="/tmp/codex-project",
+        )
+
+        rule_engine = MagicMock()
+        rule_engine.db = db
+        rule_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+
+        handler = WorkflowHookHandler(loop=None)
+        handler.rule_engine = rule_engine
+        handler._session_var_manager = MagicMock()
+        handler._session_var_manager.get_variables.return_value = {}
+
+        mock_get_dirty.return_value = DirtyFiles(set(), set())
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="external-codex-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "mcp__gobby__call_tool"},
+            project_id=project.id,
+            metadata={"_platform_session_id": "platform-codex-session"},
+        )
+
+        with caplog.at_level(logging.WARNING):
+            response = await handler._evaluate_rules(event)
+
+        assert response.decision == "allow"
+        mock_get_dirty.assert_called_once_with("/tmp/codex-project")
+        assert event.metadata["project_path"] == "/tmp/codex-project"
+        assert "no project_path resolved" not in caplog.text

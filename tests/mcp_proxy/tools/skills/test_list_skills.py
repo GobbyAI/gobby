@@ -1,9 +1,14 @@
 """Tests for list_skills MCP tool (TDD - written before implementation)."""
 
+from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.mcp_proxy.tools.skills.list_skills import register as register_list_skills
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.skills import LocalSkillManager
@@ -12,7 +17,7 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def db(tmp_path: Path):
+def db(tmp_path: Path) -> Iterator[LocalDatabase]:
     """Create a fresh database with migrations applied."""
     db_path = tmp_path / "test.db"
     database = LocalDatabase(db_path)
@@ -213,3 +218,135 @@ class TestListSkillsTool:
         for skill in result["skills"]:
             assert "id" in skill
             assert skill["id"] is not None
+
+
+@pytest.fixture
+def db_with_internal(db: LocalDatabase, storage: LocalSkillManager) -> LocalDatabase:
+    """Database with a mix of user-facing and internal-flagged skills."""
+    storage.create_skill(
+        name="public-skill",
+        description="A user-facing skill",
+        content="# Public\n\nContent",
+        metadata={"skillport": {"category": "core", "tags": ["public"]}},
+        enabled=True,
+    )
+    storage.create_skill(
+        name="methodology-one",
+        description="Shared methodology, hidden from listings",
+        content="# Methodology One\n\nContent",
+        metadata={"internal": True, "skillport": {"category": "core"}},
+        enabled=True,
+    )
+    storage.create_skill(
+        name="methodology-two",
+        description="Shared methodology via gobby namespace",
+        content="# Methodology Two\n\nContent",
+        metadata={"gobby": {"internal": True}, "skillport": {"category": "core"}},
+        enabled=True,
+    )
+    return db
+
+
+class TestListSkillsInternalFilter:
+    """Filter behavior for `internal: true` skills."""
+
+    @pytest.mark.asyncio
+    async def test_hides_internal_by_default(self, db_with_internal):
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(db_with_internal)
+        tool = registry.get_tool("list_skills")
+
+        result = await tool()
+
+        assert result["success"] is True
+        names = {s["name"] for s in result["skills"]}
+        assert names == {"public-skill"}
+
+    @pytest.mark.asyncio
+    async def test_include_internal_surfaces_them(self, db_with_internal):
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(db_with_internal)
+        tool = registry.get_tool("list_skills")
+
+        result = await tool(include_internal=True)
+
+        assert result["success"] is True
+        names = {s["name"] for s in result["skills"]}
+        assert names == {"public-skill", "methodology-one", "methodology-two"}
+
+    @pytest.mark.asyncio
+    async def test_nested_gobby_internal_is_hidden(self, db_with_internal):
+        """metadata.gobby.internal also counts as internal."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(db_with_internal)
+        tool = registry.get_tool("list_skills")
+
+        result = await tool()
+
+        names = {s["name"] for s in result["skills"]}
+        assert "methodology-two" not in names
+
+
+@pytest.mark.asyncio
+async def test_list_skills_offloads_direct_storage_calls_to_asyncio_to_thread() -> None:
+    storage = MagicMock()
+    storage.list_skills.return_value = []
+    ctx = SkillsContext(
+        db=MagicMock(),
+        storage=storage,
+        notifier=MagicMock(),
+        session_manager=MagicMock(),
+        search=MagicMock(),
+        updater=MagicMock(),
+        loader=MagicMock(),
+        project_id="proj-1",
+        hub_manager=None,
+    )
+    registry = InternalToolRegistry(name="gobby-skills")
+    register_list_skills(ctx, registry)
+    tool = registry.get_tool("list_skills")
+    assert tool is not None
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch(
+        "gobby.mcp_proxy.tools.skills.list_skills.asyncio.to_thread", new=fake_to_thread
+    ) as _:
+        result = await tool(include_internal=True)
+
+    assert result["success"] is True
+    storage.list_skills.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_list_skills_offloads_overfetch_batches_to_asyncio_to_thread() -> None:
+    storage = MagicMock()
+    storage.list_skills.side_effect = [[], []]
+    ctx = SkillsContext(
+        db=MagicMock(),
+        storage=storage,
+        notifier=MagicMock(),
+        session_manager=MagicMock(),
+        search=MagicMock(),
+        updater=MagicMock(),
+        loader=MagicMock(),
+        project_id="proj-1",
+        hub_manager=None,
+    )
+    registry = InternalToolRegistry(name="gobby-skills")
+    register_list_skills(ctx, registry)
+    tool = registry.get_tool("list_skills")
+    assert tool is not None
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch("gobby.mcp_proxy.tools.skills.list_skills.asyncio.to_thread", new=fake_to_thread):
+        result = await tool()
+
+    assert result["success"] is True
+    storage.list_skills.assert_called_once()

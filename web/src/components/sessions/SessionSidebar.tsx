@@ -1,4 +1,4 @@
-import type { GobbySession, SessionFilters, ProjectInfo } from '../../hooks/useSessions'
+import type { GobbySession, SessionFilters, ProjectInfo } from '../../types/sessions'
 import { getSessionDisplayTitle } from '../../lib/sessionTitle'
 
 interface SessionSidebarProps {

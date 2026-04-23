@@ -1,25 +1,18 @@
 import { useState, useCallback, useRef, useEffect, type KeyboardEvent, type PointerEvent } from 'react'
-import type { QueuedFile, ChatMode, ChatModeInfo, ContextUsage, ChatSendOptions } from '../../types/chat'
+import type { QueuedFile, ChatMode, ChatModeInfo, ChatSendOptions } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
+import { MicIcon, PaperclipIcon, SendIcon, SpeakerIcon, StopIcon } from './ChatInputIcons'
+import { ChatInputModelControls } from './ChatInputModelControls'
 import { ModeSelector } from './ModeSelector'
-import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
+import { useChatInputProviderSelection } from './useChatInputProviderSelection'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from './ui/Select'
-import { SourceIcon } from '../shared/SourceIcon'
 import {
   AUTO_REASONING_EFFORT,
-  getModelLabel,
-  getModelsForProvider,
-  getOrderedProviders,
-  getPreferredModelForProvider,
-  getPreferredReasoningEffort,
-  getProviderDisplayName,
-  getReasoningOptionsForModel,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
 
@@ -43,12 +36,19 @@ interface ChatInputProps {
   modeOptions?: ChatModeInfo[]
   modeDisabled?: boolean
   sttEnabled?: boolean
+  ttsEnabled?: boolean
   voiceInputMode?: VoiceInputMode
   isRecording?: boolean
+  isSpeaking?: boolean
+  voiceLoading?: boolean
+  voiceReady?: boolean
+  prepareTTSPlayback?: () => void
   startRecording?: () => Promise<void>
   stopRecording?: () => Promise<void>
   cancelRecording?: () => void
-  contextUsage?: ContextUsage
+  stopTTS?: () => void
+  onSttEnabledChange?: (enabled: boolean) => void
+  onTtsEnabledChange?: (enabled: boolean) => void
   currentBranch?: string | null
   worktreePath?: string | null
   projectId?: string | null
@@ -89,8 +89,6 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
-  onToggleActivityPanel?: () => void
-  isActivityPanelPinned?: boolean
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set(['settings', 'panel', 'gobby', 'mcp', 'skills'])
@@ -118,12 +116,19 @@ export function ChatInput({
   modeOptions,
   modeDisabled = false,
   sttEnabled = false,
+  ttsEnabled = false,
   voiceInputMode = 'ptt',
   isRecording = false,
+  isSpeaking = false,
+  voiceLoading = false,
+  voiceReady = false,
+  prepareTTSPlayback,
   startRecording,
   stopRecording,
   cancelRecording,
-  contextUsage,
+  stopTTS,
+  onSttEnabledChange,
+  onTtsEnabledChange,
   currentBranch,
   worktreePath,
   projectId,
@@ -156,13 +161,12 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
-  onToggleActivityPanel,
-  isActivityPanelPinned = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
+  const [pendingSttStart, setPendingSttStart] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
@@ -345,92 +349,34 @@ export function ChatInput({
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
-  const effectiveProvider = provider ?? 'claude'
-  const pickerProviders =
-    availableProviders.length > 0 ? availableProviders : [effectiveProvider]
-  const orderedProviders = getOrderedProviders(pickerProviders)
-  const visibleModels = getModelsForProvider(providerModelCatalog, effectiveProvider)
-  const modelOptions =
-    visibleModels.length > 0
-      ? visibleModels
-      : [{ value: currentModel || 'default', label: getModelLabel(providerModelCatalog, effectiveProvider, currentModel) }]
-  const resolvedModelValue = currentModel || modelOptions[0]?.value || 'default'
-  const reasoningOptions = getReasoningOptionsForModel(
-    providerModelCatalog,
+  const ttsWarming = ttsEnabled && voiceLoading && !voiceReady
+  const {
+    canSelectModel,
     effectiveProvider,
+    handleModelSelect,
+    handleProviderSelect,
+    handleReasoningSelect,
+    modelOptions,
+    orderedProviders,
+    reasoningOptions,
+    resolvedModelLabel,
     resolvedModelValue,
-  )
-  const resolvedReasoning =
-    currentReasoning ||
-    getPreferredReasoningEffort(
-        providerModelCatalog,
-        effectiveProvider,
-        resolvedModelValue,
-        AUTO_REASONING_EFFORT,
-      )
-  const canSelectModel = Boolean(onModelChange)
-  const selectionDisabled = disabled || Boolean(providerPickerDisabledReason)
-
-  const applySelection = useCallback(
-    (nextProvider: string, nextModel: string, nextReasoning: string) => {
-      if (onProviderSelectionChange) {
-        onProviderSelectionChange(nextProvider, nextModel, nextReasoning)
-        return
-      }
-
-      const providerChanged = nextProvider !== effectiveProvider
-      if (providerChanged) {
-        onProviderChange?.(nextProvider)
-      }
-      onModelChange?.(nextModel)
-      onReasoningChange?.(nextReasoning)
-      if (providerChanged) {
-        onSwitchProvider?.(nextProvider, {
-          model: nextModel,
-          reasoningEffort: nextReasoning,
-        })
-      }
-    },
-    [
-      effectiveProvider,
-      onModelChange,
-      onProviderChange,
-      onProviderSelectionChange,
-      onReasoningChange,
-      onSwitchProvider,
-    ],
-  )
-
-  const handleProviderSelect = (nextProvider: string) => {
-    const nextModel =
-      getPreferredModelForProvider(providerModelCatalog, nextProvider, null) ??
-      resolvedModelValue ??
-      'default'
-    const nextReasoning = getPreferredReasoningEffort(
-      providerModelCatalog,
-      nextProvider,
-      nextModel,
-      null,
-    )
-    applySelection(nextProvider, nextModel, nextReasoning)
-  }
-
-  const handleModelSelect = useCallback(
-    (nextModel: string) => {
-      const nextReasoning = getPreferredReasoningEffort(
-        providerModelCatalog,
-        effectiveProvider,
-        nextModel,
-        resolvedReasoning,
-      )
-      applySelection(effectiveProvider, nextModel, nextReasoning)
-    },
-    [applySelection, effectiveProvider, providerModelCatalog, resolvedReasoning],
-  )
-
-  const handleReasoningSelect = (nextReasoning: string) => {
-    applySelection(effectiveProvider, resolvedModelValue, nextReasoning)
-  }
+    resolvedReasoning,
+    selectionDisabled,
+  } = useChatInputProviderSelection({
+    availableProviders,
+    currentModel,
+    currentReasoning,
+    disabled,
+    onModelChange,
+    onProviderChange,
+    onProviderSelectionChange,
+    onReasoningChange,
+    onSwitchProvider,
+    provider,
+    providerModelCatalog,
+    providerPickerDisabledReason,
+  })
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 
@@ -457,6 +403,24 @@ export function ChatInput({
       resetPTTGesture()
     }
   }, [pttEnabled, resetPTTGesture])
+
+  useEffect(() => {
+    if (!sttEnabled) {
+      latchedRef.current = false
+      if (pendingSttStart) {
+        setPendingSttStart(false)
+      }
+      resetPTTGesture()
+    }
+  }, [pendingSttStart, sttEnabled, resetPTTGesture])
+
+  useEffect(() => {
+    if (!pendingSttStart) return
+    if (!sttEnabled || isRecording || !startRecording) return
+
+    setPendingSttStart(false)
+    void startRecording()
+  }, [isRecording, pendingSttStart, startRecording, sttEnabled])
 
   useEffect(() => {
     if (!isRecording || !cancelRecording) return
@@ -586,16 +550,12 @@ export function ChatInput({
       : 'Message input — unavailable')
 
   const primaryButtonClassName = cn(
-    'inline-flex h-9 w-9 items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    'inline-flex h-[52px] w-[52px] self-start items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
     primaryButtonKind === 'stop'
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',
     primaryButtonKind === 'mic-recording' && 'ring-2 ring-red-500/70 ring-offset-2 ring-offset-background animate-pulse',
   )
-
-  const activityPanelButtonLabel = isActivityPanelPinned
-    ? 'Hide activity panel'
-    : 'Show activity panel'
 
   return (
     <div
@@ -654,6 +614,31 @@ export function ChatInput({
           </div>
         )}
 
+        {queuedFiles.length > 0 && (
+          <div className="flex gap-2 mb-2 flex-wrap">
+            {queuedFiles.map((qf) => (
+              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
+                {qf.previewUrl ? (
+                  <img src={qf.previewUrl} alt={qf.file.name} className="w-16 h-16 object-cover" />
+                ) : (
+                  <div className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
+                    <PaperclipIcon />
+                    <span className="max-w-[100px] truncate">{qf.file.name}</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${qf.file.name}`}
+                  className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
+                  onClick={() => removeFile(qf.id)}
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="chat-input-meta">
           <div
             className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
@@ -700,24 +685,94 @@ export function ChatInput({
                   disabled={disabled || agentPickerDisabled}
                 />
               )}
-              {onToggleActivityPanel && (
+              {onTtsEnabledChange && (
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={onToggleActivityPanel}
-                  title={activityPanelButtonLabel}
-                  aria-label={activityPanelButtonLabel}
+                  // Permit "stop speaking" even when the composer is disabled
+                  // (e.g. viewing a read-only session) — a trailing TTS playback
+                  // from the prior turn should always be interruptible. Only
+                  // block NEW starts on disabled.
+                  disabled={disabled && !isSpeaking}
+                  onClick={() => {
+                    if (isSpeaking) {
+                      stopTTS?.()
+                      return
+                    }
+                    if (!ttsEnabled) {
+                      prepareTTSPlayback?.()
+                    }
+                    onTtsEnabledChange(!ttsEnabled)
+                  }}
+                  title={
+                    isSpeaking
+                      ? 'Stop speaking'
+                      : ttsWarming
+                        ? 'Text-to-speech warming up'
+                      : ttsEnabled
+                        ? 'Disable text-to-speech'
+                        : 'Enable text-to-speech'
+                  }
+                  aria-label={ttsWarming ? 'Text-to-speech warming up' : 'Toggle text-to-speech'}
+                  aria-pressed={ttsEnabled || isSpeaking}
+                  aria-busy={ttsWarming}
                   className={cn(
-                    'chat-input-panel-toggle',
-                    isActivityPanelPinned && 'chat-input-panel-toggle--active',
+                    'chat-input-voice-toggle',
+                    (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active',
+                    ttsWarming && 'chat-input-voice-toggle--warming',
                   )}
                 >
-                  <PanelIcon pinned={isActivityPanelPinned} />
+                  <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
+                </Button>
+              )}
+              {onSttEnabledChange && startRecording && stopRecording && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  // Stop-in-flight (ship audio + disable) is always allowed;
+                  // starting a NEW recording requires the composer to be enabled.
+                  disabled={disabled && !isRecording}
+                  onClick={async () => {
+                    try {
+                      if (isRecording) {
+                        // Click while recording → ship audio FIRST, then disable STT.
+                        setPendingSttStart(false)
+                        await stopRecording()
+                        onSttEnabledChange(false)
+                        return
+                      }
+                      if (sttEnabled) {
+                        // STT on, idle → disable STT.
+                        onSttEnabledChange(false)
+                        return
+                      }
+                      // STT off → enable and queue start.
+                      setPendingSttStart(true)
+                      onSttEnabledChange(true)
+                    } catch (err) {
+                      console.error('Mic toggle failed:', err)
+                    }
+                  }}
+                  title={
+                    isRecording
+                      ? 'Stop and disable speech-to-text'
+                      : sttEnabled
+                        ? 'Disable speech-to-text'
+                        : 'Enable speech-to-text'
+                  }
+                  aria-label="Toggle microphone"
+                  aria-pressed={isRecording || sttEnabled}
+                  className={cn(
+                    'chat-input-voice-toggle',
+                    (isRecording || sttEnabled) && 'chat-input-voice-toggle--active',
+                  )}
+                >
+                  <MicIcon muted={!sttEnabled && !isRecording} />
                 </Button>
               )}
             </div>
-            <div className="chat-input-toolbar__right">
-              {!canSelectModel && onWorktreeChange && (
+            {!canSelectModel && onWorktreeChange ? (
+              <div className="chat-input-toolbar__right">
                 <BranchIndicator
                   currentBranch={currentBranch ?? null}
                   worktreePath={worktreePath ?? null}
@@ -725,50 +780,18 @@ export function ChatInput({
                   onWorktreeChange={onWorktreeChange}
                   disabled={disabled || worktreePickerDisabled}
                 />
-              )}
-              <ContextUsageIndicator
-                totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-                outputTokens={contextUsage?.outputTokens ?? 0}
-                contextWindow={contextUsage?.contextWindow ?? null}
-                uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-                cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-                cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-              />
-            </div>
+              </div>
+            ) : null}
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
           </div>
         </div>
 
-        {/* File previews */}
-        {queuedFiles.length > 0 && (
-          <div className="flex gap-2 mb-2 flex-wrap">
-            {queuedFiles.map((qf) => (
-              <div key={qf.id} className="relative rounded-md border border-border overflow-hidden bg-muted">
-                {qf.previewUrl ? (
-                  <img src={qf.previewUrl} alt={qf.file.name} className="w-16 h-16 object-cover" />
-                ) : (
-                  <div className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground">
-                    <PaperclipIcon />
-                    <span className="max-w-[100px] truncate">{qf.file.name}</span>
-                  </div>
-                )}
-                <button
-                  className="absolute top-0 right-0 bg-black/60 rounded-bl text-foreground w-4 h-4 flex items-center justify-center text-xs"
-                  onClick={() => removeFile(qf.id)}
-                >
-                  &times;
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Input row */}
         <div className="chat-input-shell">
-          <div className="flex items-end gap-2">
+          <div className="flex items-start gap-2">
             <textarea
               ref={textareaRef}
-              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
+              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[52px]"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -787,7 +810,7 @@ export function ChatInput({
                     : 'Message input'
               }
               disabled={disabled}
-              rows={1}
+              rows={2}
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
@@ -798,7 +821,7 @@ export function ChatInput({
               data-1p-ignore
             />
 
-            <div className="flex gap-1 shrink-0">
+            <div className="shrink-0 self-start">
               <button
                 ref={primaryButtonRef}
                 type="button"
@@ -819,112 +842,26 @@ export function ChatInput({
           </div>
 
           {canSelectModel && (
-            <div className="chat-input-controls">
-              <div className="chat-input-model-controls">
-                <Select
-                  value={effectiveProvider}
-                  onValueChange={handleProviderSelect}
-                  disabled={selectionDisabled}
-                >
-                  <SelectTrigger
-                    className="chat-input-select chat-input-select--provider !w-auto"
-                    aria-label="Select provider and model"
-                    title={providerPickerDisabledReason ?? 'Select provider'}
-                  >
-                    <div className="chat-input-select__value">
-                      <SourceIcon source={effectiveProvider} size={14} />
-                      <span className="chat-input-select__text">
-                        {getProviderDisplayName(effectiveProvider)}
-                      </span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent side="top" className="chat-input-select__content">
-                    <SelectGroup>
-                      <SelectLabel className="chat-input-select__label">Provider</SelectLabel>
-                      {orderedProviders.map((candidateProvider) => (
-                        <SelectItem key={candidateProvider} value={candidateProvider}>
-                          <span className="chat-input-select__item">
-                            <SourceIcon source={candidateProvider} size={14} />
-                            <span>{getProviderDisplayName(candidateProvider)}</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={resolvedModelValue}
-                  onValueChange={handleModelSelect}
-                  disabled={selectionDisabled}
-                >
-                  <SelectTrigger
-                    className="chat-input-select chat-input-select--model !w-auto"
-                    aria-label="Select model"
-                    title={providerPickerDisabledReason ?? 'Select model'}
-                  >
-                    <div className="chat-input-select__value">
-                      <span className="chat-input-select__text">
-                        {getModelLabel(providerModelCatalog, effectiveProvider, resolvedModelValue)}
-                      </span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent side="top" className="chat-input-select__content">
-                    <SelectGroup>
-                      <SelectLabel className="chat-input-select__label">Model</SelectLabel>
-                      {modelOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={resolvedReasoning}
-                  onValueChange={handleReasoningSelect}
-                  disabled={
-                    selectionDisabled ||
-                    (reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled))
-                  }
-                >
-                  <SelectTrigger
-                    className="chat-input-select chat-input-select--reasoning !w-auto"
-                    aria-label="Select reasoning effort"
-                    title={providerPickerDisabledReason ?? 'Select reasoning effort'}
-                  >
-                    <div className="chat-input-select__value">
-                      <BrainIcon />
-                      <span className="chat-input-select__text">
-                        {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
-                      </span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent side="top" className="chat-input-select__content">
-                    <SelectGroup>
-                      <SelectLabel className="chat-input-select__label">Effort</SelectLabel>
-                      {reasoningOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-
-                      {onWorktreeChange && (
-                        <BranchIndicator
-                          currentBranch={currentBranch ?? null}
-                          worktreePath={worktreePath ?? null}
-                          projectId={projectId ?? null}
-                          onWorktreeChange={onWorktreeChange}
-                          disabled={disabled || worktreePickerDisabled}
-                          variant="select"
-                        />
-                      )}
-              </div>
-            </div>
+            <ChatInputModelControls
+              currentBranch={currentBranch}
+              disabled={disabled}
+              effectiveProvider={effectiveProvider}
+              modelOptions={modelOptions}
+              onModelSelect={handleModelSelect}
+              onProviderSelect={handleProviderSelect}
+              onReasoningSelect={handleReasoningSelect}
+              onWorktreeChange={onWorktreeChange}
+              orderedProviders={orderedProviders}
+              projectId={projectId}
+              providerPickerDisabledReason={providerPickerDisabledReason}
+              reasoningOptions={reasoningOptions}
+              resolvedModelLabel={resolvedModelLabel}
+              resolvedModelValue={resolvedModelValue}
+              resolvedReasoning={resolvedReasoning}
+              selectionDisabled={selectionDisabled}
+              worktreePath={worktreePath}
+              worktreePickerDisabled={worktreePickerDisabled}
+            />
           )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">
@@ -940,64 +877,5 @@ export function ChatInput({
         </div>
       </div>
     </div>
-  )
-}
-
-function SendIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="22" y1="2" x2="11" y2="13" />
-      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-    </svg>
-  )
-}
-
-function StopIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-      <rect x="3" y="3" width="10" height="10" rx="1" />
-    </svg>
-  )
-}
-
-function MicIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" y1="19" x2="12" y2="23" />
-      <line x1="8" y1="23" x2="16" y2="23" />
-    </svg>
-  )
-}
-
-function PaperclipIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  )
-}
-
-function PanelIcon({ pinned }: { pinned: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <line x1="15" y1="3" x2="15" y2="21" />
-      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
-    </svg>
-  )
-}
-
-function BrainIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9.5 2A3.5 3.5 0 0 0 6 5.5v1A2.5 2.5 0 0 0 3.5 9v1.5A2.5 2.5 0 0 0 6 13v3a4 4 0 0 0 4 4" />
-      <path d="M14.5 2A3.5 3.5 0 0 1 18 5.5v1A2.5 2.5 0 0 1 20.5 9v1.5A2.5 2.5 0 0 1 18 13v3a4 4 0 0 1-4 4" />
-      <path d="M9 8h1" />
-      <path d="M14 8h1" />
-      <path d="M9 12h6" />
-      <path d="M12 13v5" />
-    </svg>
   )
 }

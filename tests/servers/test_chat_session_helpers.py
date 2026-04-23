@@ -121,6 +121,22 @@ class TestHookResponseConverters:
         assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert res["reason"] == "No"
 
+        # Block responses surface a denial reason, never a rewrite payload.
+        res = _response_to_pre_tool_output(
+            {
+                "decision": "block",
+                "reason": (
+                    "Rule enforced by Gobby: [require-uv]\n"
+                    "Bare python/pip is not permitted in this repo. Use uv instead."
+                ),
+                "modified_input": {"command": "uv run python script.py"},
+                "auto_approve": True,
+            }
+        )
+        assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "updatedInput" not in res["hookSpecificOutput"]
+        assert res["reason"].startswith("Rule enforced by Gobby: [require-uv]")
+
         # Modified input
         res = _response_to_pre_tool_output(
             {"modified_input": {"a": 1}, "auto_approve": True, "context": "ctx"}

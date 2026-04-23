@@ -36,6 +36,14 @@ class HookTranscriptAssembler:
         self._message_indices[session_id] = idx + 1
         return idx
 
+    def _message_id(self, session_id: str, index: int, raw_data: dict[str, Any]) -> str:
+        """Return a stable hook-derived message identifier."""
+        for key in ("message_id", "messageId", "id"):
+            value = raw_data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return f"{session_id}:hook:{index}"
+
     def process_event(self, session_id: str, event: HookEvent) -> list[ParsedMessage]:
         """Process a hook event, returning any messages to store.
 
@@ -173,8 +181,9 @@ class HookTranscriptAssembler:
         """Build a ParsedMessage with auto-incrementing index."""
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=UTC)
+        index = self._next_index(session_id)
         return ParsedMessage(
-            index=self._next_index(session_id),
+            index=index,
             role=role,
             content=content,
             content_type=content_type,
@@ -183,6 +192,7 @@ class HookTranscriptAssembler:
             tool_result=tool_result,
             timestamp=timestamp,
             raw_json=raw_data,
+            message_id=self._message_id(session_id, index, raw_data),
         )
 
 

@@ -34,7 +34,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.migrations import run_migrations
 from gobby.storage.session_tasks import SessionTaskManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemorySyncManager
@@ -222,7 +222,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     except Exception as e:
         logger.warning(f"Failed to populate model metadata: {e}")
 
-    runner.session_manager = LocalSessionManager(runner.database)
+    runner.session_manager = SessionManager(runner.database)
     runner.task_manager = LocalTaskManager(runner.database)
     runner.session_task_manager = SessionTaskManager(runner.database)
 
@@ -348,6 +348,7 @@ def init_services(runner: GobbyRunner) -> None:
                 embed_fn = partial(
                     generate_embedding,
                     **_mem_embed_kwargs,
+                    expected_dim=emb_cfg.dim,
                 )
 
             runner.memory_manager = MemoryManager(
@@ -359,6 +360,9 @@ def init_services(runner: GobbyRunner) -> None:
                 neo4j_url=db_cfg.neo4j.url,
                 neo4j_auth=db_cfg.neo4j.auth,
                 neo4j_database=db_cfg.neo4j.database,
+                neo4j_graph_search=db_cfg.neo4j.graph_search,
+                neo4j_graph_min_score=db_cfg.neo4j.graph_min_score,
+                neo4j_rrf_k=db_cfg.neo4j.rrf_k,
                 embedding_dim=emb_cfg.dim,
                 collection_prefix=db_cfg.qdrant.collection_prefix,
             )
@@ -466,12 +470,16 @@ def init_services(runner: GobbyRunner) -> None:
                 logger.error(f"Failed to initialize MemorySyncManager: {e}")
 
     # Session Message Processor (Phase 6)
-    # Created here and passed to HTTPServer which injects it into HookManager
+    # Created here and passed to HTTPServer which injects it into HookManager.
+    # session_manager is required for the Codex rollout-tail synthesis path
+    # to resolve the (external_id, machine_id, project_id) composite key that
+    # HookManager.session_lookup uses to attribute rule effects.
     runner.message_processor = None
     if getattr(runner.config, "message_tracking", None) and runner.config.message_tracking.enabled:
         runner.message_processor = SessionMessageProcessor(
             db=runner.database,
             poll_interval=runner.config.message_tracking.poll_interval,
+            session_manager=runner.session_manager,
         )
 
     # Initialize Task Validator (Phase 7.1)
@@ -855,7 +863,7 @@ def init_servers(runner: GobbyRunner) -> None:
     # Create shared web-chat backends. Startup is handled in HTTP lifespan so
     # backend failures are non-fatal to daemon boot.
     codex_client = None
-    from gobby.adapters.codex_impl.adapter import CodexAdapter
+    from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 
     if CodexAdapter.is_codex_available():
         from gobby.adapters.codex_impl.client import CodexAppServerClient

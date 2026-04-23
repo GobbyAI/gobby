@@ -67,8 +67,8 @@ class TestSessionManagerWslIntegration:
 
     @patch("gobby.agents.tmux.wsl_compat.platform.system", return_value="Windows")
     def test_base_args_with_wsl_distribution(self, _mock: object) -> None:
-        from gobby.agents.tmux.config import TmuxConfig
         from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.config.tmux import TmuxConfig
 
         config = TmuxConfig(wsl_distribution="Ubuntu")
         mgr = TmuxSessionManager(config)

@@ -11,7 +11,7 @@ from gobby.servers.http import HTTPServer
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -62,8 +62,8 @@ def _make_run(**overrides: object) -> CronRun:
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
-    return LocalSessionManager(temp_db)
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def cron_scheduler() -> MagicMock:
 
 @pytest.fixture
 def http_server(
-    session_storage: LocalSessionManager,
+    session_storage: SessionManager,
     cron_storage: MagicMock,
     cron_scheduler: MagicMock,
 ) -> HTTPServer:

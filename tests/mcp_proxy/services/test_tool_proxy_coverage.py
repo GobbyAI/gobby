@@ -1117,3 +1117,39 @@ class TestServerSuggestions:
     def test_no_suggestion_for_unknown_server(self, proxy_service: ToolProxyService) -> None:
         """Test that completely unknown names return no suggestion."""
         assert proxy_service._get_server_suggestion("nonexistent") is None
+
+
+class TestResolvePlatformSessionId:
+    """Tests for _resolve_platform_session_id silent-catch narrowing (Change 3)."""
+
+    def _make_proxy(self, session_manager) -> ToolProxyService:
+        hook_manager = MagicMock()
+        hook_manager._session_manager = session_manager
+        return ToolProxyService(
+            mcp_manager=MagicMock(),
+            internal_manager=MagicMock(),
+            hook_manager_resolver=lambda: hook_manager,
+        )
+
+    def test_resolve_platform_session_id_returns_none_on_valueerror(self, caplog) -> None:
+        """ValueError from resolver → warning logged and unresolved ref is rejected."""
+        import logging as _logging
+
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = ValueError("Session not found")
+        proxy = self._make_proxy(session_manager)
+
+        caplog.set_level(_logging.WARNING, logger="gobby.mcp.server")
+        result = proxy._resolve_platform_session_id("bogus-session-ref")
+
+        assert result is None
+        assert any("Could not resolve session reference" in rec.message for rec in caplog.records)
+
+    def test_resolve_platform_session_id_propagates_non_valueerror(self) -> None:
+        """DB or config error propagates instead of being swallowed."""
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = RuntimeError("DB unreachable")
+        proxy = self._make_proxy(session_manager)
+
+        with pytest.raises(RuntimeError, match="DB unreachable"):
+            proxy._resolve_platform_session_id("session-ref")

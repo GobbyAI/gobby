@@ -64,6 +64,7 @@ def _db_skill_to_parsed(skill: Any) -> ParsedSkill:
         injection_format=skill.injection_format,
         triggers=triggers if triggers else None,
         audience_config=audience_config,
+        internal=skill.is_internal(),
     )
 
 

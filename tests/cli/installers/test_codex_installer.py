@@ -38,6 +38,10 @@ class TestInstallCodex:
         with (
             patch.object(Path, "home", return_value=temp_dir),
             patch.dict(os.environ, {"GOBBY_HOOKS_DIR": hooks_dir}),
+            patch(
+                "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+                return_value="/Users/test/.gobby/bin/ghook",
+            ),
         ):
             yield temp_dir
 
@@ -161,7 +165,7 @@ class TestInstallCodex:
         # Verify $HOOKS_DIR was substituted
         hooks_str = hooks_path.read_text()
         assert "$HOOKS_DIR" not in hooks_str
-        assert "hook_dispatcher.py" in hooks_str
+        assert "--gobby-owned" in hooks_str
 
         # Verify config.toml has feature flag
         config_path = mock_home / ".codex" / "config.toml"
@@ -581,7 +585,10 @@ class TestUninstallCodex:
                 "SessionStart": [
                     {
                         "hooks": [
-                            {"type": "command", "command": "uv run hook_dispatcher.py --cli=codex"}
+                            {
+                                "type": "command",
+                                "command": "ghook --gobby-owned --cli=codex --type=SessionStart",
+                            }
                         ]
                     }
                 ],
@@ -589,7 +596,10 @@ class TestUninstallCodex:
                     {
                         "matcher": ".*",
                         "hooks": [
-                            {"type": "command", "command": "uv run hook_dispatcher.py --cli=codex"}
+                            {
+                                "type": "command",
+                                "command": "ghook --gobby-owned --cli=codex --type=PreToolUse",
+                            }
                         ],
                     }
                 ],
@@ -628,7 +638,14 @@ class TestUninstallCodex:
         hooks_config = {
             "hooks": {
                 "SessionStart": [
-                    {"hooks": [{"type": "command", "command": "hook_dispatcher.py --cli=codex"}]}
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "ghook --gobby-owned --cli=codex --type=SessionStart",
+                            }
+                        ]
+                    }
                 ],
                 "CustomEvent": [{"hooks": [{"type": "command", "command": "echo custom"}]}],
             }
@@ -878,7 +895,7 @@ class TestHooksTemplateFormat:
         hooks_content = hooks_path.read_text()
 
         assert "$HOOKS_DIR" not in hooks_content
-        assert str(mock_home) in hooks_content
+        assert "--gobby-owned" in hooks_content
 
     def test_hooks_use_codex_cli_flag(
         self,

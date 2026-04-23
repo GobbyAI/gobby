@@ -1,6 +1,6 @@
-"""Agent-type-aware skill injection.
+"""Agent-type-aware skill selection.
 
-Resolves which skills to inject and in what format based on agent context
+Resolves which skills to advertise and in what format based on agent context
 (depth, workflow step, task category, agent type). Backward compatible —
 skills without audience_config fall back to legacy always_apply behavior.
 """

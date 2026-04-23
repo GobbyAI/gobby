@@ -1,6 +1,6 @@
 ---
 name: context7
-description: Instructions for using context7 MCP to look up library documentation before writing code. Auto-injected on first code file write/edit.
+description: Instructions for using context7 MCP to look up library documentation before writing code. Loaded on demand on first code file write/edit.
 category: core
 metadata:
   gobby:

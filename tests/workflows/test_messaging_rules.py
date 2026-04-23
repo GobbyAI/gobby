@@ -22,8 +22,8 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.enforcement.blocking import is_message_delivery_tool
-from gobby.workflows.rule_engine import RuleEngine
-from gobby.workflows.sync import get_bundled_rules_path
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import get_bundled_rules_path
 
 pytestmark = pytest.mark.unit
 

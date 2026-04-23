@@ -167,7 +167,9 @@ class TestRunDaemonSetup:
         def _fake_install_ghook():
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "ghook").write_text("#!/bin/sh\n")
+            ghook = bin_dir / "ghook"
+            ghook.write_text("#!/bin/sh\n")
+            ghook.chmod(0o755)
             return {"installed": True, "version": "0.1.1", "method": "github"}
 
         mock_ghook.side_effect = _fake_install_ghook

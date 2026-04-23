@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from gobby.config.communications import CommunicationsConfig
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class CommunicationsManager:
         config: CommunicationsConfig,
         store: LocalCommunicationsStore,
         secret_store: SecretStore,
-        session_store: LocalSessionManager,
+        session_store: SessionManager,
     ) -> None:
         """Initialize the communications manager.
 

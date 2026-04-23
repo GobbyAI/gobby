@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HOOKS_DIR = REPO_ROOT / "src" / "gobby" / "install" / "shared" / "hooks"
-SCHEMA_PATH = REPO_ROOT / "schemas" / "diagnose-output.v1.schema.json"
+SCHEMA_PATH = REPO_ROOT / "schemas" / "diagnose-output.v2.schema.json"
 
 
 @dataclass(frozen=True)
@@ -179,7 +179,7 @@ class SandboxRunner:
     def assert_matches_spec(self, result: DiagnoseRunResult) -> None:
         """Assert the live diagnose payload matches the expected CLI contract."""
         payload = result.payload
-        assert payload["schema_version"] == 1
+        assert payload["schema_version"] == 2
         assert payload["cli"] == self.spec.cli_name
         assert payload["hook_type"] == self.spec.hook_type
         assert payload["source"] == self.spec.cli_name

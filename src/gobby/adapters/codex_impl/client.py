@@ -96,6 +96,7 @@ class CodexAppServerClient:
 
         # Thread tracking for session management
         self._threads: dict[str, CodexThread] = {}
+        self._thread_cwds: dict[str, str] = {}
         self._pending_turn_prompts_by_thread: dict[str, str] = {}
         self._turn_prompts: dict[str, str] = {}
 
@@ -309,6 +310,9 @@ class CodexAppServerClient:
         )
 
         self._threads[thread.id] = thread
+        result_cwd = result.get("cwd") or thread_data.get("cwd") or cwd
+        if isinstance(result_cwd, str) and result_cwd:
+            self._thread_cwds[thread.id] = result_cwd
         logger.debug(f"Started Codex thread: {thread.id}")
         return thread
 
@@ -334,6 +338,9 @@ class CodexAppServerClient:
         )
 
         self._threads[thread.id] = thread
+        result_cwd = result.get("cwd") or thread_data.get("cwd")
+        if isinstance(result_cwd, str) and result_cwd:
+            self._thread_cwds[thread.id] = result_cwd
         logger.debug(f"Resumed Codex thread: {thread.id}")
         return thread
 
@@ -358,14 +365,18 @@ class CodexAppServerClient:
 
         threads = []
         for item in result.get("data", []):
-            threads.append(
-                CodexThread(
-                    id=item.get("id", ""),
-                    preview=item.get("preview", ""),
-                    model_provider=item.get("modelProvider", "openai"),
-                    created_at=item.get("createdAt", 0),
-                )
+            thread = CodexThread(
+                id=item.get("id", ""),
+                preview=item.get("preview", ""),
+                model_provider=item.get("modelProvider", "openai"),
+                created_at=item.get("createdAt", 0),
             )
+            threads.append(thread)
+            if thread.id:
+                self._threads[thread.id] = thread
+            item_cwd = item.get("cwd")
+            if isinstance(item_cwd, str) and item_cwd:
+                self._thread_cwds[thread.id] = item_cwd
 
         next_cursor = result.get("nextCursor")
         return threads, next_cursor
@@ -379,6 +390,7 @@ class CodexAppServerClient:
         """
         await self._send_request("thread/archive", {"threadId": thread_id})
         self._threads.pop(thread_id, None)
+        self._thread_cwds.pop(thread_id, None)
         logger.debug(f"Archived Codex thread: {thread_id}")
 
     async def list_models(
@@ -491,6 +503,22 @@ class CodexAppServerClient:
 
     def _enrich_notification(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Attach best-effort client-side context to app-server notifications."""
+        thread = params.get("thread")
+        thread_id = params.get("threadId")
+        if not isinstance(thread_id, str) or not thread_id:
+            thread_id = thread.get("id") if isinstance(thread, dict) else None
+
+        cwd = params.get("cwd")
+        if isinstance(thread_id, str) and thread_id:
+            if isinstance(cwd, str) and cwd:
+                self._thread_cwds[thread_id] = cwd
+            else:
+                cached_cwd = self._thread_cwds.get(thread_id)
+                if cached_cwd:
+                    enriched = dict(params)
+                    enriched["cwd"] = cached_cwd
+                    params = enriched
+
         if method == "turn/started":
             prompt = params.get("prompt")
             if not isinstance(prompt, str) or not prompt:
@@ -520,6 +548,13 @@ class CodexAppServerClient:
             if isinstance(turn_id, str) and turn_id:
                 self._turn_prompts.pop(turn_id, None)
             return params
+
+        if (
+            method in ("thread/archive", "thread/closed")
+            and isinstance(thread_id, str)
+            and thread_id
+        ):
+            self._thread_cwds.pop(thread_id, None)
 
         return params
 

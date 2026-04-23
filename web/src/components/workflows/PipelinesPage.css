@@ -82,6 +82,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+.pipeline-detail-header {
+  height: 40px;
+  background: var(--bg-secondary);
+}
+
 /* Light theme overrides */
 [data-theme="light"] .pipeline-badge--completed {
   background: rgba(34, 197, 94, 0.12);

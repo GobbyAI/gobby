@@ -262,7 +262,7 @@ class TestSessionLifecycleTransitions:
         assert count == 1
 
     def test_reregister_resets_agent_context_injected(self) -> None:
-        """Test re-registration resets _agent_context_injected so instructions re-inject."""
+        """Test re-registration resets deferred persona injection flags."""
         mock_session_storage = MagicMock()
         mock_session_storage.list.side_effect = lambda status, limit: {
             "active": [
@@ -289,8 +289,12 @@ class TestSessionLifecycleTransitions:
 
         assert count == 1
         MockSVMgr.assert_called_once_with(mock_session_storage.db)
-        mock_sv_instance.set_variable.assert_called_once_with(
-            "session-1", "_agent_context_injected", False
+        mock_sv_instance.merge_variables.assert_called_once_with(
+            "session-1",
+            {
+                "_agent_context_injected": False,
+                "_agent_identity_reinject": False,
+            },
         )
 
 
@@ -381,7 +385,6 @@ class TestAgentRunCompletion:
 
         coordinator.complete_agent_run(mock_session)
 
-        # Should call fail, not complete
         mock_agent_run_manager.fail.assert_called_once()
         fail_kwargs = mock_agent_run_manager.fail.call_args[1]
         assert fail_kwargs["run_id"] == "run-ghost"
@@ -409,6 +412,59 @@ class TestAgentRunCompletion:
         call_kwargs = mock_agent_run_manager.complete.call_args[1]
         assert call_kwargs["tool_calls_count"] == 10
         assert call_kwargs["turns_used"] == 5
+
+
+class TestStartAgentRunIdempotency:
+    """Pin SessionCoordinator.start_agent_run's pending-gate behavior.
+
+    spawn_agent_impl flips status to 'running' at spawn time. The child
+    session's SessionStart hook later calls start_agent_run too — it must
+    be a safe no-op in that case. If this guard regressed to unconditionally
+    calling manager.start(), we'd double-bump started_at and risk clobbering
+    a run that's already progressed (e.g. completed).
+    """
+
+    def test_start_agent_run_transitions_pending_to_running(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="pending")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-abc") is True
+        mock_agent_run_manager.start.assert_called_once_with("run-abc")
+
+    def test_start_agent_run_is_noop_when_already_running(self) -> None:
+        """Second call (e.g. from SessionStart hook after spawn_agent_impl
+        already flipped status) must not re-invoke manager.start()."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run = MagicMock(status="running")
+        mock_agent_run_manager.get.return_value = mock_agent_run
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-abc") is False
+        mock_agent_run_manager.start.assert_not_called()
+
+    @pytest.mark.parametrize("terminal", ("success", "failed", "cancelled", "timeout", "error"))
+    def test_start_agent_run_is_noop_for_terminal_states(self, terminal: str) -> None:
+        """Runs that already completed/failed/cancelled must not be restarted
+        by a late hook fire."""
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run_manager.get.return_value = MagicMock(status=terminal)
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-abc") is False, terminal
+        mock_agent_run_manager.start.assert_not_called()
+
+    def test_start_agent_run_returns_false_for_unknown_run(self) -> None:
+        mock_agent_run_manager = MagicMock()
+        mock_agent_run_manager.get.return_value = None
+
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
+
+        assert coordinator.start_agent_run("run-missing") is False
+        mock_agent_run_manager.start.assert_not_called()
 
 
 class TestWorktreeRelease:
@@ -551,7 +607,7 @@ class TestSessionCoordinatorInitialization:
             logger=logger,
         )
 
-        assert coordinator._session_storage is mock_session_storage
+        assert coordinator._session_manager is mock_session_storage
         assert coordinator._message_processor is mock_message_processor
         assert coordinator._agent_run_manager is mock_agent_run_manager
         assert coordinator._worktree_manager is mock_worktree_manager
@@ -561,7 +617,7 @@ class TestSessionCoordinatorInitialization:
         """Test initialization without dependencies (graceful degradation)."""
         coordinator = SessionCoordinator()
 
-        assert coordinator._session_storage is None
+        assert coordinator._session_manager is None
         assert coordinator._message_processor is None
         assert coordinator._agent_run_manager is None
         assert coordinator._worktree_manager is None

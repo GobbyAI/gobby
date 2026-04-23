@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.memory.identity import entity_key
 from gobby.memory.neo4j_client import Neo4jConnectionError
 from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphService,
@@ -68,7 +69,7 @@ class TestEntityLabelAndMemoryLinkage:
         mock_neo4j: AsyncMock,
         mock_llm: AsyncMock,
     ) -> None:
-        """add_to_graph adds _Entity label via SET after merge."""
+        """add_to_graph applies the _Entity label during merge_node."""
         mock_llm.generate_json = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
@@ -79,11 +80,9 @@ class TestEntityLabelAndMemoryLinkage:
 
         await service.add_to_graph("Josh is a developer")
 
-        # Check that SET n:_Entity query was called
-        entity_label_calls = [
-            c for c in mock_neo4j.query.call_args_list if "SET n:_Entity" in str(c)
-        ]
-        assert len(entity_label_calls) >= 1
+        merge_call = mock_neo4j.merge_node.call_args
+        assert merge_call is not None
+        assert "_Entity" in merge_call.kwargs["labels"]
 
     async def test_add_to_graph_creates_mentioned_in_links(
         self,
@@ -149,14 +148,22 @@ class TestSearchEntitiesByVector:
         """search_entities_by_vector returns entities with linked memory IDs."""
         mock_neo4j.vector_search = AsyncMock(
             return_value=[
-                {"name": "Python", "labels": ["Tool", "_Entity"], "score": 0.9, "props": {}},
+                {
+                    "entity_key": entity_key(None, "Python"),
+                    "name": "Python",
+                    "entity_type": "tool",
+                    "project_id": None,
+                    "labels": ["Tool", "_Entity"],
+                    "score": 0.9,
+                    "props": {},
+                },
             ]
         )
         # Batch memory lookup via UNWIND (ensure_vector_index is directly mocked, not via query)
         mock_neo4j.query = AsyncMock(
             return_value=[
-                {"entity_name": "Python", "memory_id": "mem-001"},
-                {"entity_name": "Python", "memory_id": "mem-002"},
+                {"entity_key": entity_key(None, "Python"), "memory_id": "mem-001"},
+                {"entity_key": entity_key(None, "Python"), "memory_id": "mem-002"},
             ],
         )
 
@@ -233,7 +240,7 @@ class TestFindRelatedMemoryIds:
         )
 
         result = await service.find_related_memory_ids(
-            entity_names=["Python", "FastAPI"],
+            entity_keys=[entity_key(None, "Python"), entity_key(None, "FastAPI")],
             max_hops=2,
             limit=20,
         )
@@ -245,7 +252,7 @@ class TestFindRelatedMemoryIds:
         service: KnowledgeGraphService,
     ) -> None:
         """find_related_memory_ids returns empty for empty entity names."""
-        result = await service.find_related_memory_ids(entity_names=[])
+        result = await service.find_related_memory_ids(entity_keys=[])
         assert result == []
 
     async def test_clamps_max_hops(
@@ -257,13 +264,13 @@ class TestFindRelatedMemoryIds:
         mock_neo4j.query = AsyncMock(return_value=[])
 
         # Upper bound: 10 → 3
-        await service.find_related_memory_ids(entity_names=["A"], max_hops=10)
+        await service.find_related_memory_ids(entity_keys=[entity_key(None, "A")], max_hops=10)
         call_args = mock_neo4j.query.call_args
         assert "*1..3" in call_args[0][0]
 
         # Lower bound: 0 → 1
         mock_neo4j.query.reset_mock()
-        await service.find_related_memory_ids(entity_names=["A"], max_hops=0)
+        await service.find_related_memory_ids(entity_keys=[entity_key(None, "A")], max_hops=0)
         call_args = mock_neo4j.query.call_args
         assert "*1..1" in call_args[0][0]
 
@@ -275,7 +282,7 @@ class TestFindRelatedMemoryIds:
         """find_related_memory_ids returns empty on connection error."""
         mock_neo4j.query = AsyncMock(side_effect=Neo4jConnectionError("refused"))
 
-        result = await service.find_related_memory_ids(entity_names=["Python"])
+        result = await service.find_related_memory_ids(entity_keys=[entity_key(None, "Python")])
 
         assert result == []
 
@@ -292,7 +299,15 @@ class TestSearchGraphUpgraded:
         """search_graph tries vector search before substring."""
         mock_neo4j.vector_search = AsyncMock(
             return_value=[
-                {"name": "Python", "labels": ["Tool"], "score": 0.9, "props": {}},
+                {
+                    "entity_key": entity_key(None, "Python"),
+                    "name": "Python",
+                    "entity_type": "tool",
+                    "project_id": None,
+                    "labels": ["Tool"],
+                    "score": 0.9,
+                    "props": {},
+                },
             ]
         )
         # Memory lookup returns empty (no MENTIONED_IN links)

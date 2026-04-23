@@ -86,6 +86,21 @@ const catalog: ProviderModelEntry[] = [
       },
     ],
   },
+  {
+    provider: "qwen",
+    available: true,
+    source: "live",
+    models: [
+      {
+        value: "coder-model(qwen-oauth)",
+        label: "coder-model (qwen-oauth)",
+      },
+      {
+        value: "gpt-5(openai)",
+        label: "gpt-5 (openai)",
+      },
+    ],
+  },
 ];
 
 describe("providerModels", () => {
@@ -180,6 +195,17 @@ describe("providerModels", () => {
     ).toEqual(["GPT 5.4", "GPT 5.4 Mini", "GPT 5.3 Codex Spark"]);
     expect(getModelLabel(catalog, "codex", "gpt-5.4-mini")).toBe(
       "GPT 5.4 Mini",
+    );
+  });
+
+  it("strips Qwen transport suffixes from live catalog labels", () => {
+    expect(getModelsForProvider(catalog, "qwen").map((model) => model.label)).toEqual([
+      "GPT 5",
+      "Coder Model",
+    ]);
+    expect(getModelLabel(catalog, "qwen", "gpt-5(openai)")).toBe("GPT 5");
+    expect(getModelLabel(catalog, "qwen", "coder-model(qwen-oauth)")).toBe(
+      "Coder Model",
     );
   });
 

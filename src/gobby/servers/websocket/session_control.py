@@ -42,6 +42,7 @@ class SessionControlMixin:
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
     _pending_providers: dict[str, str]
+    _pending_inject_contexts: dict[str, str]
 
     # Provided by ChatMixin / HandlerMixin – declared for type checking only.
     if TYPE_CHECKING:
@@ -99,12 +100,35 @@ class SessionControlMixin:
         import json as _json
 
         manager = getattr(self, "_pending_interaction_manager", None)
-        if not manager:
-            return
 
         for conv_id in conversation_ids:
             session = self._chat_sessions.get(conv_id)
-            if not session or not session.db_session_id:
+            if not session:
+                continue
+
+            pending_plan_content = getattr(session, "_pending_plan_content", None)
+            if isinstance(pending_plan_content, str) and pending_plan_content:
+                try:
+                    await websocket.send(
+                        _json.dumps(
+                            {
+                                "type": "plan_pending_approval",
+                                "conversation_id": conv_id,
+                                "plan_content": pending_plan_content,
+                                "allowed_prompts": getattr(
+                                    session, "_pending_plan_allowed_prompts", None
+                                ),
+                            }
+                        )
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to rebroadcast pending plan for %s", conv_id, exc_info=True
+                    )
+
+            if not session.db_session_id:
+                continue
+            if not manager:
                 continue
             try:
                 pending = await manager.rebroadcast(session.db_session_id)

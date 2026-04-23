@@ -13,8 +13,12 @@ from __future__ import annotations
 import contextvars
 import logging
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +79,7 @@ def resolve_session_ref(
     Shared utility replacing duplicated closures in cross-session tools.
 
     Args:
-        session_manager: LocalSessionManager instance
+        session_manager: SessionManager instance
         ref: Session reference string
 
     Returns:
@@ -111,3 +115,237 @@ def session_context_for_test(
         yield ctx
     finally:
         reset_session_context(token)
+
+
+@dataclass
+class SeededContextTokens:
+    """Tokens + resolved refs returned by ``resolve_and_seed_contexts``.
+
+    Dispatchers propagate ``resolved_session_id`` (never the raw input ref) to
+    ``tool_proxy.call_tool`` / ``get_tool_schema``. ``ToolProxyService`` prefers
+    the explicit session_id arg over the ContextVar, so passing the raw ref
+    would re-poison workflow checks, tool filters, and synthetic after-tool
+    events even after the ContextVar is clean.
+    """
+
+    session_token: contextvars.Token[SessionContext | None] | None = None
+    project_token: contextvars.Token[dict[str, Any] | None] | None = field(default=None)
+    resolved_session_id: str | None = None
+    resolved_project_id: str | None = None
+
+
+def _canonicalize_project_ref(
+    project_ref: str | None,
+    db: DatabaseProtocol | None,
+) -> str | None:
+    """Resolve a project UUID-or-name to its canonical UUID.
+
+    When ``db`` is ``None`` we cannot consult ``LocalProjectManager``; accept
+    the caller-supplied ref as-is so the minimal-fallback path at the end of
+    ``resolve_and_seed_contexts`` can still emit a ``{"id": ref}`` project
+    context for HTTP-header bootstrap.
+
+    Raises:
+        Any non-``LookupError`` raised by ``LocalProjectManager`` (DB / config
+        failures) propagates — callers should not silently downgrade those to
+        "not found". Returns ``None`` only when ``resolve_ref`` itself returns
+        ``None`` (ref genuinely does not exist).
+    """
+    if not project_ref:
+        return None
+    if db is None:
+        return project_ref
+    from gobby.storage.projects import LocalProjectManager
+
+    pm = LocalProjectManager(db)
+    project = pm.resolve_ref(project_ref)
+    return project.id if project else None
+
+
+def _ref_requires_project_scope(session_ref: str) -> bool:
+    """``#N`` / numeric refs need a project to resolve; UUIDs and prefixes do not.
+
+    An external_id UUID must resolve authoritatively across projects — the
+    caller-supplied or header-derived project_ref is a *context* hint, not a
+    constraint on which project the referenced session belongs to. Scoping the
+    session lookup by that hint would break cross-project tool calls and HTTP
+    header bootstrap for UUID-shaped refs.
+    """
+    stripped = session_ref[1:] if session_ref.startswith("#") else session_ref
+    return stripped.isdigit()
+
+
+def resolve_and_seed_contexts(
+    session_ref: str | None,
+    session_manager: SessionManager | None,
+    *,
+    project_ref: str | None = None,
+    project_ref_is_fallback: bool = False,
+    db: DatabaseProtocol | None = None,
+) -> SeededContextTokens:
+    """Resolve session and project refs, seed both ContextVars, return tokens.
+
+    Session-scoping rule: ``project_ref`` is passed to the resolver only when
+    the session_ref is ``#N`` / numeric (which requires a project scope by
+    definition). For UUID or prefix refs, the resolver is called with
+    ``project_id=None`` — an ``external_id`` UUID is authoritative across
+    projects and must not be constrained by a project *context* override.
+
+    The mode flag affects project *context* precedence when a session resolves:
+
+    * override mode (default, ``project_ref_is_fallback=False``) — explicit
+      caller intent: project_ref > session-derived project. Use when the caller
+      passed an explicit ``project_id`` param to override (e.g. server.py's
+      cross-project tool calls).
+    * fallback mode (``project_ref_is_fallback=True``) — bootstrap hint only:
+      session-derived > project_ref. Use when project_ref is a bootstrap hint,
+      not an override (e.g. execution.py's ``x-gobby-project-id`` header —
+      preserves the current "session's own project wins" contract).
+
+    Both modes fall through to ``project_ref`` when session resolution fails.
+    On ``db is None`` with a ``project_ref`` that cannot be enriched, emit a
+    minimal project context of ``{"id": project_ref}``.
+
+    On ``project_ref`` unresolvable: ``resolved_project_id`` is ``None`` —
+    callers decide whether that's a hard error.
+
+    On ``session_ref`` unresolvable: ``SessionContext`` is not set; project
+    context is set per the precedence rules above.
+
+    Unexpected errors (DB failures, config errors) from project canonicalization
+    or session resolution propagate. Only ``ValueError`` from the session
+    resolver is logged-and-swallowed as a normal not-found / ambiguous path.
+    """
+    from gobby.utils.project_context import (
+        set_project_context,
+        set_project_context_from_ref,
+        set_project_context_from_session,
+    )
+
+    tokens = SeededContextTokens()
+    canonical_project_id = _canonicalize_project_ref(project_ref, db)
+    tokens.resolved_project_id = canonical_project_id
+
+    resolved_session_id: str | None = None
+    if session_ref and session_manager is not None:
+        # UUID / prefix refs resolve globally; only #N needs project scope.
+        session_scope = canonical_project_id if _ref_requires_project_scope(session_ref) else None
+        try:
+            resolved_session_id = str(
+                session_manager.resolve_session_reference(session_ref, session_scope)
+            )
+        except ValueError as exc:
+            logger.warning(
+                "resolve_and_seed_contexts: could not resolve session ref %r (project_id=%s): %s",
+                session_ref,
+                session_scope,
+                exc,
+            )
+
+    if resolved_session_id:
+        conversation_id: str | None = None
+        try:
+            session = session_manager.get(resolved_session_id) if session_manager else None
+            if session is not None:
+                conversation_id = session.external_id
+        except Exception as exc:
+            logger.debug(
+                "Failed to load session %s for SessionContext: %s",
+                resolved_session_id,
+                exc,
+            )
+        tokens.session_token = set_session_context(
+            SessionContext(session_id=resolved_session_id, conversation_id=conversation_id)
+        )
+        tokens.resolved_session_id = resolved_session_id
+
+    def _minimal_project_token() -> contextvars.Token[dict[str, Any] | None] | None:
+        """Last-resort project context when enrichment fails or db is missing."""
+        if not canonical_project_id:
+            return None
+        return set_project_context({"id": canonical_project_id})
+
+    project_token: contextvars.Token[dict[str, Any] | None] | None = None
+    if resolved_session_id:
+        if project_ref_is_fallback:
+            # HTTP header semantics: session-derived wins; header is the fallback.
+            if db is not None and session_manager is not None:
+                try:
+                    project_token = set_project_context_from_session(
+                        resolved_session_id, session_manager, db
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "set_project_context_from_session failed for %s: %s",
+                        resolved_session_id,
+                        exc,
+                    )
+            if project_token is None and canonical_project_id:
+                if db is not None:
+                    try:
+                        project_token = set_project_context_from_ref(canonical_project_id, db)
+                    except Exception as exc:
+                        logger.debug(
+                            "set_project_context_from_ref failed for %s: %s",
+                            canonical_project_id,
+                            exc,
+                        )
+                if project_token is None:
+                    project_token = _minimal_project_token()
+        else:
+            # Override mode: explicit project_ref beats session-derived.
+            if canonical_project_id:
+                if db is not None:
+                    try:
+                        project_token = set_project_context_from_ref(canonical_project_id, db)
+                    except Exception as exc:
+                        logger.debug(
+                            "set_project_context_from_ref failed for %s: %s",
+                            canonical_project_id,
+                            exc,
+                        )
+                if project_token is None:
+                    # Honor the override intent even without db enrichment.
+                    project_token = _minimal_project_token()
+            elif db is not None and session_manager is not None:
+                try:
+                    project_token = set_project_context_from_session(
+                        resolved_session_id, session_manager, db
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "set_project_context_from_session failed for %s: %s",
+                        resolved_session_id,
+                        exc,
+                    )
+    elif canonical_project_id:
+        if db is not None:
+            try:
+                project_token = set_project_context_from_ref(canonical_project_id, db)
+            except Exception as exc:
+                logger.debug(
+                    "set_project_context_from_ref failed for %s: %s",
+                    canonical_project_id,
+                    exc,
+                )
+        if project_token is None:
+            project_token = _minimal_project_token()
+
+    tokens.project_token = project_token
+    return tokens
+
+
+def reset_seeded_contexts(tokens: SeededContextTokens) -> None:
+    """Reset any ContextVar tokens that were set. Safe on empty/partial tokens."""
+    from gobby.utils.project_context import reset_project_context
+
+    if tokens.session_token is not None:
+        try:
+            reset_session_context(tokens.session_token)
+        except Exception as exc:
+            logger.debug("reset_session_context failed: %s", exc)
+    if tokens.project_token is not None:
+        try:
+            reset_project_context(tokens.project_token)
+        except Exception as exc:
+            logger.debug("reset_project_context failed: %s", exc)

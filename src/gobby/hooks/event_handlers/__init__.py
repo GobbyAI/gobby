@@ -20,6 +20,7 @@ from gobby.hooks.event_handlers._misc import MiscEventHandlerMixin
 from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.event_handlers._tool import EDIT_TOOLS, ToolEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
     from gobby.code_index.trigger import CodeIndexTrigger
@@ -27,10 +28,9 @@ if TYPE_CHECKING:
     from gobby.config.tasks import WorkflowConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.hooks.skill_manager import HookSkillManager
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.session_tasks import SessionTaskManager
-    from gobby.storage.sessions import LocalSessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.workflows.hooks import WorkflowHookHandler
 
 
@@ -51,12 +51,13 @@ class EventHandlers(
 
     def __init__(
         self,
-        session_manager: SessionManager | None = None,
+        session_manager: HookSessionManager | None = None,
         workflow_handler: WorkflowHookHandler | None = None,
-        session_storage: LocalSessionManager | None = None,
+        session_storage: HookSessionManager | None = None,
         session_task_manager: SessionTaskManager | None = None,
         message_processor: Any | None = None,
         task_manager: LocalTaskManager | None = None,
+        worktree_manager: LocalWorktreeManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
         skill_manager: HookSkillManager | None = None,
         skills_config: SkillsConfig | None = None,
@@ -73,25 +74,35 @@ class EventHandlers(
         Args:
             session_manager: SessionManager for session operations
             workflow_handler: WorkflowHookHandler for lifecycle workflows
-            session_storage: LocalSessionManager for session storage
+            session_storage: Compatibility alias for session_manager
             session_task_manager: SessionTaskManager for session-task links
             message_processor: SessionMessageProcessor for message handling
             task_manager: LocalTaskManager for task operations
             session_coordinator: SessionCoordinator for session tracking
             skill_manager: HookSkillManager for skill discovery
-            skills_config: SkillsConfig for skill injection settings
+            skills_config: SkillsConfig for skill discovery/manifest settings
             workflow_config: WorkflowConfig for workflow settings (debug_echo_context)
             get_machine_id: Function to get machine ID
             resolve_project_id: Function to resolve project ID from cwd
             code_index_trigger: Optional trigger for code indexing on file changes.
             logger: Optional logger instance
         """
-        self._session_manager = session_manager
+        if (
+            session_manager is not None
+            and session_storage is not None
+            and session_manager is not session_storage
+        ):
+            raise ValueError(
+                "session_manager and session_storage must reference the same object "
+                "when both are provided"
+            )
+        manager = session_manager if session_manager is not None else session_storage
+        self._session_manager = manager
         self._workflow_handler = workflow_handler
-        self._session_storage = session_storage
         self._session_task_manager = session_task_manager
         self._message_processor = message_processor
         self._task_manager = task_manager
+        self._worktree_manager = worktree_manager
         self._session_coordinator = session_coordinator
         self._skill_manager = skill_manager
         self._skills_config = skills_config
@@ -115,6 +126,7 @@ class EventHandlers(
             HookEventType.BEFORE_TOOL: self.handle_before_tool,
             HookEventType.AFTER_TOOL: self.handle_after_tool,
             HookEventType.PRE_COMPACT: self.handle_pre_compact,
+            HookEventType.POST_COMPACT: self.handle_post_compact,
             HookEventType.SUBAGENT_START: self.handle_subagent_start,
             HookEventType.SUBAGENT_STOP: self.handle_subagent_stop,
             HookEventType.NOTIFICATION: self.handle_notification,
@@ -122,7 +134,20 @@ class EventHandlers(
             HookEventType.BEFORE_MODEL: self.handle_before_model,
             HookEventType.AFTER_MODEL: self.handle_after_model,
             HookEventType.PERMISSION_REQUEST: self.handle_permission_request,
+            HookEventType.PERMISSION_DENIED: self.handle_permission_denied,
             HookEventType.STOP: self.handle_stop,
+            HookEventType.STOP_FAILURE: self.handle_stop_failure,
+            HookEventType.TASK_CREATED: self.handle_task_created,
+            HookEventType.TASK_COMPLETED: self.handle_task_completed,
+            HookEventType.TEAMMATE_IDLE: self.handle_teammate_idle,
+            HookEventType.INSTRUCTIONS_LOADED: self.handle_instructions_loaded,
+            HookEventType.CONFIG_CHANGE: self.handle_config_change,
+            HookEventType.CWD_CHANGED: self.handle_cwd_changed,
+            HookEventType.FILE_CHANGED: self.handle_file_changed,
+            HookEventType.WORKTREE_CREATE: self.handle_worktree_create,
+            HookEventType.WORKTREE_REMOVE: self.handle_worktree_remove,
+            HookEventType.ELICITATION: self.handle_elicitation,
+            HookEventType.ELICITATION_RESULT: self.handle_elicitation_result,
         }
 
     def get_handler(

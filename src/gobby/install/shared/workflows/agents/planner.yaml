@@ -6,6 +6,7 @@ description: |
 version: "1.0"
 enabled: true
 priority: 20
+surfaces: [spawn, persona]
 provider: claude
 model: opus
 reasoning_effort: max
@@ -18,24 +19,33 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required planning work is complete.
   - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
 
-  You are the planner for a front-half conductor stage.
+  You are the spawned plan drafter for a front-half conductor stage.
   Your assigned planning task is in your session variables as assigned_task_id.
 
-  Read the parent task first, then any referenced supporting docs, then draft or
-  revise the plan artifact requested in your prompt. If this is a revision round,
-  the planning task description may contain adversary findings that you must address.
+  METHODOLOGY:
+  After claiming your task, your first action MUST be to load the `plan-draft`
+  skill. Call get_skill(name="plan-draft") on gobby-skills, then continue. Follow that
+  skill's methodology EXACTLY when drafting or revising the plan artifact —
+  phase structure, task format, TDD compatibility, categories, hierarchy,
+  dependency notation, and verification checklist. Do not invent alternative
+  formats.
 
-  If the requirements are still insufficient, do not guess. Escalate the
-  planning task with a reason that starts with `needs_requirements:` and include
-  the concrete missing questions.
-
-  When the plan is ready for review, call mark_task_needs_review on the planning
-  task and mention the plan artifact path in your review notes.
+  WORKFLOW:
+  - Read the parent task first, then any referenced supporting docs, then
+    draft or revise the plan artifact requested in your prompt. If this is a
+    revision round, the planning task description contains one or more
+    `## Adversary Findings — Round N` sections — you MUST address every
+    blocking finding in the most recent round before resubmitting.
+  - If the requirements are still insufficient, do not guess. Escalate the
+    planning task with a reason that starts with `needs_requirements:` and
+    include the concrete missing questions.
+  - When the plan is ready for review, call `mark_task_needs_review` on the
+    planning task and mention the plan artifact path in your review notes.
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call mark_task_review_approved.
+  - Do NOT call mark_task_review_approved or mark_task_review_rejected.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -51,6 +61,7 @@ workflows:
 
 step_variables:
   task_claimed: false
+  skill_loaded: false
   plan_handoff_complete: false
 
 steps:
@@ -73,8 +84,32 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: plan
+      - to: load_skill
         when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load the plan-draft methodology skill"
+    status_message: |
+      Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
+      The returned skill content is the authoritative methodology for this
+      agent and must be followed exactly.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'plan-draft'"
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: plan
+        when: "vars.skill_loaded"
 
   - name: plan
     description: "Draft or revise the implementation plan"
@@ -87,6 +122,7 @@ steps:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:mark_task_review_rejected"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"

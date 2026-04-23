@@ -6,7 +6,7 @@ rules:
     event: before_tool
     enabled: true
     priority: 22
-    when: "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') and variables.get('enforce_tool_schema_check') and not is_discovery_tool(tool_input.get('tool_name')) and not is_tool_unlocked(tool_input)"
+    when: "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') and variables.get('enforce_tool_schema_check') and not is_discovery_tool(tool_input.get('tool_name')) and not is_tool_unlocked(tool_input) and source != 'pipeline'"
     effects:
       - type: block
         reason: >-

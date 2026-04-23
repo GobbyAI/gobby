@@ -207,6 +207,23 @@ class TestAgentsSpawnCommand:
         assert result.exit_code == 2
         assert "Missing option" in result.output or "required" in result.output.lower()
 
+    def test_spawn_rejects_reasoning_required_without_effort(self, runner: CliRunner) -> None:
+        """Test spawn validates reasoning-required against missing effort."""
+        result = runner.invoke(
+            cli,
+            [
+                "agents",
+                "spawn",
+                "Test prompt",
+                "--session",
+                "sess-parent123",
+                "--reasoning-required",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "--reasoning-required requires --reasoning-effort" in result.output
+
     @patch("gobby.cli.agents.resolve_session_id")
     @patch("gobby.cli.agents.httpx.post")
     @patch("gobby.cli.agents.get_daemon_url")

@@ -23,6 +23,7 @@ _STASH_BEFORE = [
     _make_git_result(0, stdout="stash@{0}"),  # stash list (after) — different = stash created
 ]
 _STASH_POP = [_make_git_result(0)]  # stash pop
+_MERGE_BASE_SUCCESS = [_make_git_result(0)]  # merge-base --is-ancestor
 
 
 def _make_registry_context(
@@ -51,6 +52,7 @@ async def test_merge_worktree_success_returns_worktree_path():
         _make_git_result(0),  # fetch
         *_STASH_BEFORE,
         _make_git_result(0),  # merge succeeds
+        *_MERGE_BASE_SUCCESS,
         *_STASH_POP,
     ]
 
@@ -65,6 +67,7 @@ async def test_merge_worktree_success_returns_worktree_path():
 
     assert result["success"] is True
     assert result["worktree_path"] == "/tmp/wt"
+    assert result["merged"] is True
 
 
 @pytest.mark.asyncio
@@ -118,6 +121,7 @@ async def test_merge_worktree_auto_resolves_trivial_conflicts():
         _make_git_result(1, stderr="CONFLICT"),  # merge fails
         _make_git_result(0, stdout=".gobby/tasks.jsonl\n"),  # diff --name-only
         _make_git_result(0),  # commit --no-edit
+        *_MERGE_BASE_SUCCESS,
         *_STASH_POP,
     ]
 
@@ -141,6 +145,7 @@ async def test_merge_worktree_auto_resolves_trivial_conflicts():
     assert "auto-resolved" in result["message"]
     assert result["worktree_path"] == "/tmp/wt"
     assert result["auto_resolved"] == [".gobby/tasks.jsonl"]
+    assert result["merged"] is True
 
 
 @pytest.mark.asyncio
@@ -212,6 +217,7 @@ async def test_merge_worktree_stash_restores_on_success():
         _make_git_result(0),  # fetch
         *_STASH_BEFORE,
         _make_git_result(0),  # merge succeeds
+        *_MERGE_BASE_SUCCESS,
         *_STASH_POP,
     ]
 

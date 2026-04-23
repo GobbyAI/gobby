@@ -21,10 +21,14 @@ def run_manager(temp_db):
 
 @pytest.fixture
 def service(task_manager, run_manager):
-    return ExpansionService(task_manager=task_manager, llm_service=MagicMock(), run_manager=run_manager)
+    return ExpansionService(
+        task_manager=task_manager, llm_service=MagicMock(), run_manager=run_manager
+    )
 
 
-def test_apply_run_rolls_back_partial_writes_on_failure(service, task_manager, run_manager, sample_project):
+def test_apply_run_rolls_back_partial_writes_on_failure(
+    service, task_manager, run_manager, sample_project
+):
     parent = task_manager.create_task(project_id=sample_project["id"], title="Parent expansion")
     listener_calls: list[str] = []
     task_manager.add_change_listener(lambda: listener_calls.append("changed"))

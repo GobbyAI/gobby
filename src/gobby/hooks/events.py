@@ -45,6 +45,7 @@ class HookEventType(str, Enum):
 
     # Context management
     PRE_COMPACT = "pre_compact"  # Claude: PreCompact, Gemini: PreCompress
+    POST_COMPACT = "post_compact"  # Claude only
 
     # Subagent lifecycle (Claude Code only)
     SUBAGENT_START = "subagent_start"
@@ -52,7 +53,22 @@ class HookEventType(str, Enum):
 
     # Permissions & notifications
     PERMISSION_REQUEST = "permission_request"  # Claude Code only
+    PERMISSION_DENIED = "permission_denied"  # Claude Code only
     NOTIFICATION = "notification"
+
+    # Claude-specific lifecycle and observability events
+    STOP_FAILURE = "stop_failure"
+    TASK_CREATED = "task_created"
+    TASK_COMPLETED = "task_completed"
+    TEAMMATE_IDLE = "teammate_idle"
+    INSTRUCTIONS_LOADED = "instructions_loaded"
+    CONFIG_CHANGE = "config_change"
+    CWD_CHANGED = "cwd_changed"
+    FILE_CHANGED = "file_changed"
+    WORKTREE_CREATE = "worktree_create"
+    WORKTREE_REMOVE = "worktree_remove"
+    ELICITATION = "elicitation"
+    ELICITATION_RESULT = "elicitation_result"
 
 
 class SessionSource(str, Enum):
@@ -131,9 +147,19 @@ class HookResponse:
     system_message: str | None = None  # User-visible message (e.g., handoff notification)
     reason: str | None = None  # Explanation for decision
 
-    # Input rewriting (PreToolUse rewrite_input effect)
+    # Input rewriting (PreToolUse / PermissionRequest)
     modified_input: dict[str, Any] | None = None
     auto_approve: bool = False
+    permission_decision: Literal["allow", "deny"] | None = None
+    updated_permissions: list[dict[str, Any]] | None = None
+
+    # Event-specific Claude outputs
+    retry: bool = False
+    watch_paths: list[str] | None = None
+    worktree_path: str | None = None
+    elicitation_action: Literal["accept", "decline", "cancel"] | None = None
+    elicitation_content: dict[str, Any] | None = None
+    elicitation_error: str | None = None
 
     # Future extensibility
     modify_args: dict[str, Any] | None = None
@@ -210,6 +236,12 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "qwen": "PreCompress",
         "codex": "contextCompaction",
     },
+    HookEventType.POST_COMPACT: {
+        "claude": "PostCompact",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
         "gemini": None,
@@ -228,10 +260,88 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "qwen": None,
         "codex": None,
     },
+    HookEventType.PERMISSION_DENIED: {
+        "claude": "PermissionDenied",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
     HookEventType.NOTIFICATION: {
         "claude": "Notification",
         "gemini": "Notification",
         "qwen": "Notification",
+        "codex": None,
+    },
+    HookEventType.STOP_FAILURE: {
+        "claude": "StopFailure",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.TASK_CREATED: {
+        "claude": "TaskCreated",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.TASK_COMPLETED: {
+        "claude": "TaskCompleted",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.TEAMMATE_IDLE: {
+        "claude": "TeammateIdle",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.INSTRUCTIONS_LOADED: {
+        "claude": "InstructionsLoaded",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.CONFIG_CHANGE: {
+        "claude": "ConfigChange",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.CWD_CHANGED: {
+        "claude": "CwdChanged",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.FILE_CHANGED: {
+        "claude": "FileChanged",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.WORKTREE_CREATE: {
+        "claude": "WorktreeCreate",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.WORKTREE_REMOVE: {
+        "claude": "WorktreeRemove",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.ELICITATION: {
+        "claude": "Elicitation",
+        "gemini": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.ELICITATION_RESULT: {
+        "claude": "ElicitationResult",
+        "gemini": None,
+        "qwen": None,
         "codex": None,
     },
 }

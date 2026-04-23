@@ -16,7 +16,7 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -42,7 +42,7 @@ def _sync_bundled(db):
     rules to evaluate, so we coerce source to 'installed' to simulate activation
     via install_from_template().
     """
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
@@ -109,19 +109,16 @@ class TestInjectPythonSkillStructure:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
 
-    def test_has_block_mcp_call_and_set_variable_effects(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-python-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        assert len(body.effects) == 3
+        assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[1].type == "mcp_call"
-        assert body.effects[1].server == "gobby-skills"
-        assert body.effects[1].tool == "get_skill"
-        assert body.effects[1].inject_result is True
-        assert body.effects[2].type == "set_variable"
-        assert body.effects[2].variable == "injected_skills"
+        assert 'Call get_skill(name="python") on gobby-skills, then continue.' in (
+            body.effects[0].reason or ""
+        )
 
 
 # --- inject-python-skill condition evaluation ---
@@ -131,26 +128,31 @@ class TestInjectPythonSkillCondition:
     """Test the inject-python-skill condition evaluates correctly."""
 
     CONDITION = (
-        "'python' not in variables.get('injected_skills', []) "
-        "and event.data.get('tool_name') in ('Write', 'Edit') "
-        "and tool_input.get('file_path', '').endswith('.py')"
+        "not skill_loaded('python') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and event.data.get('canonical_file_path', '').endswith('.py')"
     )
 
     def _eval(
         self,
         file_path: str,
         *,
-        tool_name: str = "Write",
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
         context = {
-            "variables": {"injected_skills": injected_skills or []},
+            "variables": {
+                "loaded_skills": loaded_skills or [],
+                "injected_skills": injected_skills or [],
+            },
             "event": SimpleNamespace(
                 data={
-                    "tool_name": tool_name,
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
                 }
             ),
-            "tool_input": {"file_path": file_path},
+            "tool_input": {},
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
@@ -160,7 +162,7 @@ class TestInjectPythonSkillCondition:
         assert self._eval("/project/src/main.py") is True
 
     def test_matches_python_edit(self) -> None:
-        assert self._eval("/project/src/gobby/deep/module.py", tool_name="Edit") is True
+        assert self._eval("/project/src/gobby/deep/module.py") is True
 
     def test_skips_non_python_file(self) -> None:
         assert self._eval("/project/config.yaml") is False
@@ -168,14 +170,17 @@ class TestInjectPythonSkillCondition:
     def test_skips_rust_file(self) -> None:
         assert self._eval("/project/src/main.rs") is False
 
-    def test_skips_when_already_injected(self) -> None:
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main.py", loaded_skills=["python"]) is False
+
+    def test_skips_when_legacy_injected(self) -> None:
         assert self._eval("/project/src/main.py", injected_skills=["python"]) is False
 
     def test_skips_non_edit_write_tool(self) -> None:
-        assert self._eval("/project/src/main.py", tool_name="Read") is False
+        assert self._eval("/project/src/main.py", canonical_tool_kind="read") is False
 
     def test_skips_other_tool(self) -> None:
-        assert self._eval("/project/src/main.py", tool_name="Bash") is False
+        assert self._eval("/project/src/main.py", canonical_tool_kind="execute") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
@@ -195,19 +200,16 @@ class TestInjectRustSkillStructure:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
 
-    def test_has_block_mcp_call_and_set_variable_effects(self, db, manager) -> None:
+    def test_has_block_effect_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("inject-rust-skill")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        assert len(body.effects) == 3
+        assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[1].type == "mcp_call"
-        assert body.effects[1].server == "gobby-skills"
-        assert body.effects[1].tool == "get_skill"
-        assert body.effects[1].inject_result is True
-        assert body.effects[2].type == "set_variable"
-        assert body.effects[2].variable == "injected_skills"
+        assert 'Call get_skill(name="rust") on gobby-skills, then continue.' in (
+            body.effects[0].reason or ""
+        )
 
 
 # --- inject-rust-skill condition evaluation ---
@@ -217,26 +219,31 @@ class TestInjectRustSkillCondition:
     """Test the inject-rust-skill condition evaluates correctly."""
 
     CONDITION = (
-        "'rust' not in variables.get('injected_skills', []) "
-        "and event.data.get('tool_name') in ('Write', 'Edit') "
-        "and tool_input.get('file_path', '').endswith('.rs')"
+        "not skill_loaded('rust') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and event.data.get('canonical_file_path', '').endswith('.rs')"
     )
 
     def _eval(
         self,
         file_path: str,
         *,
-        tool_name: str = "Write",
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
     ) -> bool:
         context = {
-            "variables": {"injected_skills": injected_skills or []},
+            "variables": {
+                "loaded_skills": loaded_skills or [],
+                "injected_skills": injected_skills or [],
+            },
             "event": SimpleNamespace(
                 data={
-                    "tool_name": tool_name,
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
                 }
             ),
-            "tool_input": {"file_path": file_path},
+            "tool_input": {},
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
@@ -246,7 +253,7 @@ class TestInjectRustSkillCondition:
         assert self._eval("/project/src/main.rs") is True
 
     def test_matches_rust_edit(self) -> None:
-        assert self._eval("/project/src/deep/lib.rs", tool_name="Edit") is True
+        assert self._eval("/project/src/deep/lib.rs") is True
 
     def test_skips_non_rust_file(self) -> None:
         assert self._eval("/project/config.yaml") is False
@@ -254,11 +261,14 @@ class TestInjectRustSkillCondition:
     def test_skips_python_file(self) -> None:
         assert self._eval("/project/src/main.py") is False
 
-    def test_skips_when_already_injected(self) -> None:
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main.rs", loaded_skills=["rust"]) is False
+
+    def test_skips_when_legacy_injected(self) -> None:
         assert self._eval("/project/src/main.rs", injected_skills=["rust"]) is False
 
     def test_skips_non_edit_write_tool(self) -> None:
-        assert self._eval("/project/src/main.rs", tool_name="Read") is False
+        assert self._eval("/project/src/main.rs", canonical_tool_kind="read") is False
 
     def test_skips_empty_file_path(self) -> None:
         assert self._eval("") is False
@@ -268,7 +278,7 @@ class TestCodeIndexRuleCondition:
     """Test the code-index onboarding rule against canonical tool metadata."""
 
     CONDITION = (
-        "not variables.get('code_index_loaded') and ("
+        "not skill_loaded('code-index') and ("
         "(event.data.get('canonical_tool_kind') == 'read' "
         "and event.data.get('canonical_file_path', '').rpartition('.')[2] "
         "in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb', "
@@ -281,10 +291,14 @@ class TestCodeIndexRuleCondition:
         *,
         canonical_tool_kind: str,
         canonical_file_path: str = "",
-        code_index_loaded: bool = False,
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
     ) -> bool:
         context = {
-            "variables": {"code_index_loaded": code_index_loaded},
+            "variables": {
+                "loaded_skills": loaded_skills or [],
+                "injected_skills": injected_skills or [],
+            },
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
@@ -309,4 +323,62 @@ class TestCodeIndexRuleCondition:
         )
 
     def test_skips_when_already_loaded(self) -> None:
-        assert self._eval(canonical_tool_kind="search", code_index_loaded=True) is False
+        assert self._eval(canonical_tool_kind="search", loaded_skills=["code-index"]) is False
+
+    def test_skips_when_legacy_injected(self) -> None:
+        assert self._eval(canonical_tool_kind="search", injected_skills=["code-index"]) is False
+
+
+class TestContext7RuleCondition:
+    """Test the context7 onboarding rule against canonical write metadata."""
+
+    CONDITION = (
+        "variables.get('context7_available', true) "
+        "and not skill_loaded('context7') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and event.data.get('canonical_file_path', '').rpartition('.')[2] "
+        "in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb', "
+        "'c', 'cpp', 'h', 'hpp', 'cs', 'kt', 'swift', 'scala')"
+    )
+
+    def _eval(
+        self,
+        canonical_file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+        context7_available: bool = True,
+    ) -> bool:
+        context = {
+            "variables": {
+                "loaded_skills": loaded_skills or [],
+                "injected_skills": injected_skills or [],
+                "context7_available": context7_available,
+            },
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": canonical_file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    def test_matches_supported_write(self) -> None:
+        assert self._eval("/project/src/main.ts") is True
+
+    def test_skips_non_write(self) -> None:
+        assert self._eval("/project/src/main.ts", canonical_tool_kind="read") is False
+
+    def test_skips_when_already_loaded(self) -> None:
+        assert self._eval("/project/src/main.ts", loaded_skills=["context7"]) is False
+
+    def test_skips_when_legacy_injected(self) -> None:
+        assert self._eval("/project/src/main.ts", injected_skills=["context7"]) is False
+
+    def test_skips_when_context7_unavailable(self) -> None:
+        assert self._eval("/project/src/main.ts", context7_available=False) is False

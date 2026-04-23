@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools.task_readiness import (
     _get_ancestry_chain,
     create_readiness_registry,
 )
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -148,7 +148,7 @@ class TestComputeProximityBoost:
 
 
 def _claim_task(task_manager: LocalTaskManager, project_id: str, task_id: str) -> None:
-    session_manager = LocalSessionManager(task_manager.db)
+    session_manager = SessionManager(task_manager.db)
     session = session_manager.register(
         external_id="readiness-ext",
         machine_id="test-machine",

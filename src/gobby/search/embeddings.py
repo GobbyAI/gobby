@@ -9,10 +9,22 @@ OpenAI-compatible endpoint: OpenAI cloud, Ollama, LM Studio, etc.
 | LM Studio  | nomic-embed-text              | api_base=http://localhost:1234/v1         |
 | OpenAI     | text-embedding-3-small        | OPENAI_API_KEY                            |
 
-Example usage:
-    from gobby.search.embeddings import generate_embeddings, is_embedding_available
+Availability helpers come in two flavors:
 
-    if is_embedding_available("nomic-embed-text", api_base="http://localhost:1234/v1"):
+- ``is_embedding_configured`` — cheap, synchronous; answers "do we have
+  enough config to *try*?". Does **not** probe the endpoint.
+- ``is_embedding_reachable`` — async; actually hits the endpoint's
+  ``/models`` route with a short timeout and a cached result. Use this
+  before code paths that hard-fail on unavailability.
+
+Example usage:
+    from gobby.search.embeddings import (
+        generate_embeddings,
+        is_embedding_configured,
+        is_embedding_reachable,
+    )
+
+    if await is_embedding_reachable("nomic-embed-text", api_base="http://localhost:1234/v1"):
         embeddings = await generate_embeddings(
             texts=["hello world", "foo bar"],
             model="nomic-embed-text",
@@ -29,6 +41,11 @@ import os
 import random
 import time
 from dataclasses import dataclass
+from threading import RLock
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -55,19 +72,16 @@ class _CacheEntry:
 
 
 _cache: dict[str, _CacheEntry] = {}
-_cache_lock: asyncio.Lock | None = None
+# Initialize at module import: Python's import machinery is serialized, so two
+# concurrent _get_lock() callers cannot race to create distinct RLock objects.
+# The previous lazy-init pattern had exactly that race — two threads arriving
+# with _cache_lock=None would each call RLock() and one would overwrite the
+# other, leaving concurrent cache writers synchronized on different locks.
+_cache_lock: RLock = RLock()
 
 
-def _get_lock() -> asyncio.Lock:
-    """Lazy-init the asyncio lock.
-
-    Safe because asyncio is single-threaded: concurrent coroutines in the
-    same event loop cannot interleave during this synchronous function body,
-    so at most one Lock instance is ever created.
-    """
-    global _cache_lock  # noqa: PLW0603
-    if _cache_lock is None:
-        _cache_lock = asyncio.Lock()
+def _get_lock() -> RLock:
+    """Return the shared cache lock. Preserved as a function for call-site stability."""
     return _cache_lock
 
 
@@ -98,7 +112,8 @@ def _enforce_max_size() -> None:
 
 def clear_cache() -> None:
     """Clear the embedding cache. Useful for testing."""
-    _cache.clear()
+    with _get_lock():
+        _cache.clear()
 
 
 def _needs_nomic_prefix(model: str) -> bool:
@@ -128,6 +143,7 @@ async def generate_embeddings(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     base_delay: float = _DEFAULT_BASE_DELAY,
     is_query: bool = False,
+    expected_dim: int | None = None,
 ) -> list[list[float]]:
     """Generate embeddings using an OpenAI-compatible API with exponential backoff.
 
@@ -146,6 +162,7 @@ async def generate_embeddings(
         max_retries: Maximum retry attempts for rate limit errors (default: 5)
         base_delay: Initial backoff delay in seconds (default: 1.0)
         is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
+        expected_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
         List of embedding vectors (one per input text). Returns an empty
@@ -164,7 +181,7 @@ async def generate_embeddings(
     lock = _get_lock()
 
     # --- Phase 1: Check cache for each text ---
-    async with lock:
+    with lock:
         _evict_expired()
         results: list[list[float] | None] = []
         miss_indices: list[int] = []
@@ -174,6 +191,13 @@ async def generate_embeddings(
         for i, text in enumerate(prefixed_texts):
             key = _cache_key(text, model, api_base)
             entry = _cache.get(key)
+            if (
+                entry is not None
+                and expected_dim is not None
+                and len(entry.embedding) != expected_dim
+            ):
+                del _cache[key]
+                entry = None
             if entry is not None:
                 results.append(entry.embedding)
             elif key in seen_in_batch:
@@ -195,10 +219,11 @@ async def generate_embeddings(
             api_key=api_key,
             max_retries=max_retries,
             base_delay=base_delay,
+            expected_dim=expected_dim,
         )
 
         # --- Phase 3: Store results in cache ---
-        async with lock:
+        with lock:
             now = time.monotonic()
             expires_at = now + _CACHE_TTL
 
@@ -239,6 +264,76 @@ async def _try_reload_model(model: str, api_base: str) -> bool:
     return await try_autoload_embedding_model(model, api_base)
 
 
+def _get_api_error_message(error: Exception) -> str:
+    """Extract the provider error message from OpenAI-compatible SDK exceptions."""
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        message = body.get("message")
+        if isinstance(message, str):
+            return message
+        nested = body.get("error")
+        if isinstance(nested, dict):
+            nested_message = nested.get("message")
+            if isinstance(nested_message, str):
+                return nested_message
+        if isinstance(nested, str):
+            return nested
+    return str(error)
+
+
+def _is_ollama_endpoint(api_base: str | None) -> bool:
+    """Check if api_base points to an Ollama endpoint (port 11434)."""
+    if not api_base:
+        return False
+    try:
+        return urlparse(api_base).port == 11434
+    except (ValueError, AttributeError):
+        return False
+
+
+async def _retry_embeddings_after_reload(
+    client: Any,
+    texts: list[str],
+    model: str,
+    expected_dim: int | None,
+    api_base: str | None,
+) -> list[list[float]]:
+    """Retry a single embeddings request after the local model is reloaded."""
+    response = await client.embeddings.create(model=model, input=texts)
+    embeddings = [item.embedding for item in response.data]
+    _validate_embeddings_dim(
+        embeddings,
+        expected_dim=expected_dim,
+        model=model,
+        api_base=api_base,
+    )
+    logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
+    return embeddings
+
+
+def _validate_embeddings_dim(
+    embeddings: list[list[float]],
+    *,
+    expected_dim: int | None,
+    model: str,
+    api_base: str | None,
+) -> None:
+    """Fail fast when provider output does not match the configured dimension."""
+    if expected_dim is None or not embeddings:
+        return
+
+    for index, vector in enumerate(embeddings):
+        actual_dim = len(vector)
+        if actual_dim == expected_dim:
+            continue
+
+        raise RuntimeError(
+            "Embedding dimension mismatch: "
+            f"model={model}, api_base={api_base}, expected_dim={expected_dim}, "
+            f"index={index}, actual_dim={actual_dim}"
+        )
+
+
 async def _fetch_embeddings(
     texts: list[str],
     model: str,
@@ -246,6 +341,7 @@ async def _fetch_embeddings(
     api_key: str | None,
     max_retries: int,
     base_delay: float,
+    expected_dim: int | None,
 ) -> list[list[float]]:
     """Raw API call to generate embeddings (no caching)."""
     from openai import (
@@ -265,28 +361,59 @@ async def _fetch_embeddings(
         try:
             response = await client.embeddings.create(model=model, input=texts)
             embeddings: list[list[float]] = [item.embedding for item in response.data]
+            _validate_embeddings_dim(
+                embeddings,
+                expected_dim=expected_dim,
+                model=model,
+                api_base=api_base,
+            )
             logger.debug(f"Generated {len(embeddings)} embeddings ({model})")
             return embeddings
         except AuthenticationError as e:
             logger.error(f"Embedding authentication failed: {e}")
             raise RuntimeError(f"Authentication failed: {e}") from e
         except NotFoundError as e:
-            logger.error(f"Embedding model not found: {e}")
-            raise RuntimeError(f"Model not found: {e}") from e
+            error_message = _get_api_error_message(e).lower()
+            if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):
+                logger.error(f"Embedding model not found: {e}")
+                raise RuntimeError(f"Model not found: {e}") from e
+            assert api_base is not None  # guaranteed: _is_ollama_endpoint(api_base) was True above
+            reloaded = await _try_reload_model(model, api_base)
+            if not reloaded:
+                raise RuntimeError(f"Model not found: {e}") from e
+            try:
+                return await _retry_embeddings_after_reload(
+                    client,
+                    texts,
+                    model,
+                    expected_dim,
+                    api_base,
+                )
+            except RuntimeError:
+                raise
+            except Exception as retry_err:
+                raise RuntimeError(
+                    f"Embedding failed after model reload: {retry_err}"
+                ) from retry_err
         except BadRequestError as e:
-            if "no models loaded" not in str(e).lower() or not api_base:
+            error_message = _get_api_error_message(e).lower()
+            if "no models loaded" not in error_message or not api_base:
                 logger.error(f"Failed to generate embeddings: {e}")
                 raise RuntimeError(f"Embedding generation failed: {e}") from e
             # Model was evicted from local inference server — try to reload
             reloaded = await _try_reload_model(model, api_base)
             if not reloaded:
                 raise RuntimeError(f"Embedding generation failed: {e}") from e
-            # Retry once after successful reload
             try:
-                response = await client.embeddings.create(model=model, input=texts)
-                embeddings = [item.embedding for item in response.data]
-                logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
-                return embeddings
+                return await _retry_embeddings_after_reload(
+                    client,
+                    texts,
+                    model,
+                    expected_dim,
+                    api_base,
+                )
+            except RuntimeError:
+                raise
             except Exception as retry_err:
                 raise RuntimeError(
                     f"Embedding failed after model reload: {retry_err}"
@@ -300,6 +427,8 @@ async def _fetch_embeddings(
                 f"Rate limited (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s"
             )
             await asyncio.sleep(delay)
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to generate embeddings: {e}")
             raise RuntimeError(f"Embedding generation failed: {e}") from e
@@ -318,6 +447,7 @@ async def generate_embedding(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     base_delay: float = _DEFAULT_BASE_DELAY,
     is_query: bool = False,
+    expected_dim: int | None = None,
 ) -> list[float]:
     """Generate embedding for a single text.
 
@@ -331,6 +461,7 @@ async def generate_embedding(
         max_retries: Maximum retry attempts for rate limit errors
         base_delay: Initial backoff delay in seconds
         is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
+        expected_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
         Embedding vector as list of floats
@@ -346,6 +477,7 @@ async def generate_embedding(
         max_retries=max_retries,
         base_delay=base_delay,
         is_query=is_query,
+        expected_dim=expected_dim,
     )
     if not embeddings:
         raise RuntimeError(
@@ -355,28 +487,160 @@ async def generate_embedding(
     return embeddings[0]
 
 
-def is_embedding_available(
+def is_embedding_configured(
     model: str = "nomic-embed-text",
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> bool:
-    """Check if embedding is available for the given model.
+    """Check whether embedding *configuration* is present.
 
-    If api_base is set (LM Studio, Ollama, custom endpoints), assumes available.
-    Otherwise, requires an API key.
+    This is a pure configuration check — it does **not** probe the endpoint.
+    Returns True if a local ``api_base`` is set (Ollama, LM Studio, custom)
+    or an OpenAI-style API key is resolvable from args or the environment.
+
+    A True return only means "we have something to try"; it does not mean
+    the endpoint is reachable or the model is loaded. Callers that need a
+    real health signal should use :func:`is_embedding_reachable` instead.
 
     Args:
-        model: Model name
+        model: Model name (unused for the config check today, kept for
+            symmetry with ``is_embedding_reachable``)
         api_key: Optional explicit API key
         api_base: Optional API base URL
 
     Returns:
-        True if embeddings can be generated, False otherwise
+        True if embedding config is present, False otherwise.
     """
-    # Local endpoints (Ollama, LM Studio) are assumed available
+    del model  # reserved for future per-model gating
     if api_base:
         return True
 
-    # Cloud models need an API key
     effective_key = api_key or os.environ.get("OPENAI_API_KEY")
     return effective_key is not None and len(effective_key) > 0
+
+
+# ---------------------------------------------------------------------------
+# Reachability probe
+# ---------------------------------------------------------------------------
+
+# Short TTL so stale failures don't keep callers wedged in fallback mode,
+# but long enough that a batch of searches probes once, not N times.
+_REACHABILITY_TTL = 30.0  # seconds
+_PROBE_TIMEOUT = 3.0  # seconds
+_REACHABILITY_CACHE_MAX_SIZE = 64
+
+
+@dataclass(slots=True)
+class _ReachabilityEntry:
+    reachable: bool
+    checked_at: float
+
+
+_reachability_cache: dict[tuple[str, bool], _ReachabilityEntry] = {}
+
+
+def _clear_reachability_cache() -> None:
+    """Clear the reachability probe cache. Exposed for tests."""
+    with _get_lock():
+        _reachability_cache.clear()
+
+
+def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, bool]:
+    """Key reachability results by endpoint + whether an auth key was used."""
+    return (api_base or "openai-default", has_key)
+
+
+def _prune_reachability_cache(now: float, cache_ttl: float, *, incoming: int = 0) -> None:
+    """Drop stale entries and bound the cache size while holding the lock."""
+    stale_keys = [
+        key for key, entry in _reachability_cache.items() if (now - entry.checked_at) >= cache_ttl
+    ]
+    for key in stale_keys:
+        del _reachability_cache[key]
+
+    overflow = len(_reachability_cache) + incoming - _REACHABILITY_CACHE_MAX_SIZE
+    if overflow <= 0:
+        return
+
+    oldest_first = sorted(_reachability_cache.items(), key=lambda item: item[1].checked_at)
+    for key, _entry in oldest_first[:overflow]:
+        del _reachability_cache[key]
+
+
+async def is_embedding_reachable(
+    model: str = "nomic-embed-text",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    timeout: float = _PROBE_TIMEOUT,
+    cache_ttl: float = _REACHABILITY_TTL,
+) -> bool:
+    """Probe the embedding endpoint for actual reachability.
+
+    Short-circuits to False if :func:`is_embedding_configured` is False
+    (no config, no probe). Otherwise performs a ``GET {base}/models``
+    request with a short timeout. Results are cached per ``(api_base,
+    has_key)`` for ``cache_ttl`` seconds to avoid hammering local
+    inference servers across a batch of searches.
+
+    The ``/models`` route is part of the OpenAI-compatible surface that
+    Ollama, LM Studio, and OpenAI cloud all implement, making it the
+    cheapest universal reachability check.
+
+    Args:
+        model: Model name (reserved; the probe does not currently filter
+            by model since ``/models`` returns the full list)
+        api_key: Optional explicit API key
+        api_base: Optional API base URL. When omitted, probes OpenAI
+            cloud at ``https://api.openai.com/v1``.
+        timeout: Per-request timeout in seconds
+        cache_ttl: How long to trust a cached probe result
+
+    Returns:
+        True if the endpoint answered with a 2xx within the timeout,
+        False otherwise (including all exceptions).
+    """
+    del model  # reserved for future per-model probing
+
+    if not is_embedding_configured(api_key=api_key, api_base=api_base):
+        return False
+
+    effective_key = api_key or os.environ.get("OPENAI_API_KEY")
+    has_key = bool(effective_key)
+    cache_key = _reachability_cache_key(api_base, has_key)
+    lock = _get_lock()
+
+    now = time.monotonic()
+    with lock:
+        cached = _reachability_cache.get(cache_key)
+        if cached is not None and (now - cached.checked_at) < cache_ttl:
+            return cached.reachable
+
+    base = (api_base or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base}/models"
+    headers: dict[str, str] = {}
+    if effective_key:
+        headers["Authorization"] = f"Bearer {effective_key}"
+
+    reachable = False
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers=headers)
+            reachable = 200 <= resp.status_code < 300
+            if not reachable:
+                logger.debug(
+                    "Embedding probe non-2xx: url=%s status=%s",
+                    url,
+                    resp.status_code,
+                )
+    except Exception as exc:
+        logger.debug("Embedding probe failed: url=%s err=%r", url, exc)
+        reachable = False
+
+    checked_at = time.monotonic()
+    with lock:
+        _prune_reachability_cache(checked_at, cache_ttl, incoming=1)
+        _reachability_cache[cache_key] = _ReachabilityEntry(
+            reachable=reachable,
+            checked_at=checked_at,
+        )
+    return reachable

@@ -17,8 +17,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.rule_engine import RuleEngine
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +38,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 def _sync_bundled(db):
     """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
@@ -50,7 +50,11 @@ TASK_ENFORCEMENT_RULES = {
     "block-native-task-tools-unclaimed",
     "block-native-todo-write",
     "block-reopen-task",
+    "block-front-half-on-interactive-lock",
+    "inject-task-creation-on-schema",
     "inject-transition-skill",
+    "require-task-creation-skill-loaded",
+    "require-task-transitions-skill-loaded",
     "require-task-before-edit",
     "require-commit-before-status",
     "require-clean-tree-before-status",
@@ -699,6 +703,7 @@ class TestBlockReopenTask:
         claimed_variables = {
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#1"},
+            "loaded_skills": ["task-transitions"],
         }
         claimed_response = await engine.evaluate(
             claimed_event,
@@ -730,17 +735,119 @@ class TestBlockReopenTask:
             variables={
                 "task_claimed": True,
                 "claimed_tasks": {"uuid-1": "#1"},
+                "loaded_skills": ["task-transitions"],
             },
         )
 
         assert response.decision == "allow"
 
 
+class TestBlockFrontHalfOnInteractiveLock:
+    """Verify block-front-half-on-interactive-lock is the mutex between the
+    interactive plan-adversary loop and the autonomous front-half orchestrator.
+    """
+
+    def test_rule_syncs(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        assert row is not None
+
+    def test_blocks_front_half_tick(self, db, manager) -> None:
+        """Rule targets the gobby-tasks-ops front_half_tick MCP call with a block effect."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.effects[0].type == "block"
+        assert "front_half_tick" in (body.when or "")
+        assert "gobby-tasks-ops" in (body.when or "")
+
+    def test_uses_task_has_label_prefix_helper(self, db, manager) -> None:
+        """The condition must call task_has_label_prefix on the target task with the
+        interactive-planning-in-progress: prefix — that's what makes it detect any
+        session's lock without caring about ownership."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert "task_has_label_prefix" in (body.when or "")
+        assert "interactive:planning-in-progress:" in (body.when or "")
+
+    def test_reason_explains_recovery(self, db, manager) -> None:
+        """The block reason must tell the operator how to clear the lock."""
+        _sync_bundled(db)
+        row = manager.get_by_name("block-front-half-on-interactive-lock")
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        reason = body.effects[0].reason or ""
+        assert "interactive plan-adversary" in reason
+        assert "lock" in reason
+
+    def test_when_condition_blocks_locked_parent_and_allows_unlocked(self) -> None:
+        """End-to-end: the when-expression evaluates True when the parent carries
+        ANY interactive:planning-in-progress:* label, and False otherwise."""
+        from gobby.workflows.safe_evaluator import (
+            SafeExpressionEvaluator,
+            build_condition_helpers,
+        )
+
+        class _FakeTask:
+            def __init__(self, labels: list[str] | None) -> None:
+                self.labels = labels
+
+        class _FakeTaskManager:
+            def __init__(self, labels: list[str] | None) -> None:
+                self._t = _FakeTask(labels)
+
+            def get_task(self, _task_id: str) -> _FakeTask:
+                return self._t
+
+        condition = (
+            "event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool') "
+            "and tool_input.get('server_name') == 'gobby-tasks-ops' "
+            "and tool_input.get('tool_name') == 'front_half_tick' "
+            "and task_has_label_prefix("
+            "  (tool_input.get('arguments') or {}).get('task_id'),"
+            "  'interactive:planning-in-progress:')"
+        )
+
+        event = type("E", (), {"data": {"tool_name": "mcp__gobby__call_tool"}})()
+        tool_input = {
+            "server_name": "gobby-tasks-ops",
+            "tool_name": "front_half_tick",
+            "arguments": {"task_id": "#42"},
+        }
+        ctx = {"event": event, "tool_input": tool_input}
+
+        # Locked parent → blocks
+        locked_funcs = build_condition_helpers(
+            task_manager=_FakeTaskManager(
+                ["planning-round:1", "interactive:planning-in-progress:sess-a"]
+            ),
+            context=ctx,
+        )
+        assert SafeExpressionEvaluator(ctx, locked_funcs).evaluate(condition) is True
+
+        # No lock → does not block
+        unlocked_funcs = build_condition_helpers(
+            task_manager=_FakeTaskManager(["planning-round:1"]),
+            context=ctx,
+        )
+        assert SafeExpressionEvaluator(ctx, unlocked_funcs).evaluate(condition) is False
+
+        # Different MCP call → does not block
+        tool_input_other = {
+            "server_name": "gobby-tasks-ops",
+            "tool_name": "something_else",
+            "arguments": {"task_id": "#42"},
+        }
+        ctx_other = {"event": event, "tool_input": tool_input_other}
+        assert SafeExpressionEvaluator(ctx_other, locked_funcs).evaluate(condition) is False
+
+
 class TestInjectTransitionSkill:
-    """Verify lifecycle schemas trigger the task-transitions skill injection."""
+    """Verify lifecycle schemas prompt for the task-transitions skill."""
 
     def test_when_mentions_extended_lifecycle_tools(self, db, manager) -> None:
-        """reopen/escalate/de_escalate should all trigger the skill injection."""
+        """reopen/escalate/de_escalate should all trigger the skill directive."""
         _sync_bundled(db)
 
         row = manager.get_by_name("inject-transition-skill")
@@ -751,6 +858,110 @@ class TestInjectTransitionSkill:
         assert "reopen_task" in (body.when or "")
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
+        assert "mark_task_review_rejected" in (body.when or "")
+
+    def test_emits_task_transitions_directive(self, db, manager) -> None:
+        """The rule should emit a directive without writing skill ledgers."""
+        _sync_bundled(db)
+
+        row = manager.get_by_name("inject-transition-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        inject_effects = [effect for effect in body.effects if effect.type == "inject_context"]
+        set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
+
+        assert len(inject_effects) == 1
+        assert (
+            inject_effects[0].template
+            == 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
+        )
+        assert set_effects == []
+
+
+class TestTaskLifecycleSkillGates:
+    """Verify lifecycle calls require agent-loaded task skills."""
+
+    def test_creation_gate_blocks_without_loaded_skill(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-creation-skill-loaded")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert "skill_loaded('task-creation')" in (body.when or "")
+        assert 'Call get_skill(name="task-creation") on gobby-skills, then continue.' in (
+            body.effects[0].reason or ""
+        )
+
+    def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-task-transitions-skill-loaded")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert "reopen_task" in (body.when or "")
+        assert "skill_loaded('task-transitions')" in (body.when or "")
+        assert 'Call get_skill(name="task-transitions") on gobby-skills, then continue.' in (
+            body.effects[0].reason or ""
+        )
+
+    @pytest.mark.asyncio
+    async def test_creation_gate_blocks_normalized_call_until_loaded(self, db, manager) -> None:
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "mcp_server": "gobby-tasks",
+                "mcp_tool": "create_task",
+                "tool_name": "mcp__gobby-tasks__create_task",
+                "tool_input": {"title": "Work"},
+            },
+        )
+
+        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["task-creation"]},
+        )
+
+        assert blocked.decision == "block"
+        assert "task-creation" in (blocked.reason or "")
+        assert allowed.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_transition_gate_blocks_raw_call_until_loaded(self, db, manager) -> None:
+        _sync_bundled(db)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="test-session",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "#42"},
+                },
+            },
+        )
+
+        blocked = await RuleEngine(db).evaluate(event, session_id="sid", variables={})
+        allowed = await RuleEngine(db).evaluate(
+            event,
+            session_id="sid",
+            variables={"loaded_skills": ["task-transitions"]},
+        )
+
+        assert blocked.decision == "block"
+        assert "task-transitions" in (blocked.reason or "")
+        assert allowed.decision == "allow"
 
 
 def _make_reopen_event(task_id: str) -> HookEvent:

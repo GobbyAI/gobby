@@ -39,14 +39,16 @@ export interface GobbyMemory {
 }
 
 export interface KnowledgeEntity {
+  entity_key: string
   name: string
-  type: string
+  entity_type: string
+  project_id: string | null
   properties: Record<string, unknown>
 }
 
 export interface KnowledgeRelationship {
-  source: string
-  target: string
+  source_key: string
+  target_key: string
   type: string
   properties: Record<string, unknown>
 }
@@ -275,6 +277,7 @@ export function useMemory(projectId?: string | null) {
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams({ limit: String(limit) })
+      if (filters.projectId) params.set('project_id', filters.projectId)
       const response = await fetch(`${baseUrl}/api/memories/graph/entities?${params}`)
       if (response.ok) {
         return await response.json()
@@ -283,12 +286,16 @@ export function useMemory(projectId?: string | null) {
       console.error('Failed to fetch knowledge graph:', e)
     }
     return null
-  }, [])
+  }, [filters.projectId])
 
-  const fetchEntityNeighbors = useCallback(async (name: string): Promise<KnowledgeGraphData | null> => {
+  const fetchEntityNeighbors = useCallback(async (entityKey: string): Promise<KnowledgeGraphData | null> => {
     try {
       const baseUrl = getBaseUrl()
-      const response = await fetch(`${baseUrl}/api/memories/graph/entities/${encodeURIComponent(name)}/neighbors`)
+      const params = new URLSearchParams()
+      if (filters.projectId) params.set('project_id', filters.projectId)
+      const response = await fetch(
+        `${baseUrl}/api/memories/graph/entities/${encodeURIComponent(entityKey)}/neighbors?${params}`
+      )
       if (response.ok) {
         return await response.json()
       }
@@ -296,7 +303,7 @@ export function useMemory(projectId?: string | null) {
       console.error('Failed to fetch entity neighbors:', e)
     }
     return null
-  }, [])
+  }, [filters.projectId])
 
   const fetchGraphData = useCallback(async (memoryLimit?: number): Promise<MemoryGraphData | null> => {
     try {

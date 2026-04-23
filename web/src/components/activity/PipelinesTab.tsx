@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
+import { memo, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
@@ -176,6 +176,29 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     }
   }, [detailExec, executions, fetchDetail])
 
+  const {
+    steps: detailSteps,
+    total: detailStepCount,
+    passed: passedStepCount,
+    failed: failedStepCount,
+  } = useMemo(() => {
+    const steps: StepData[] = detailExec?.steps ?? []
+    const counts = steps.reduce(
+      (acc, step) => {
+        acc.total += 1
+        if (step.status === 'completed' || step.status === 'success') {
+          acc.passed += 1
+        }
+        if (step.status === 'failed' || step.status === 'error') {
+          acc.failed += 1
+        }
+        return acc
+      },
+      { total: 0, passed: 0, failed: 0 },
+    )
+    return { steps, ...counts }
+  }, [detailExec?.steps])
+
   if (loading && executions.length === 0) {
     return <div className="activity-tab-empty"><p>Loading pipelines...</p></div>
   }
@@ -262,7 +285,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {/* Detail pane */}
       {selectedId && detailExec && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/30">
+          <div className="pipeline-detail-header flex items-center justify-between gap-3 px-3 border-b border-border">
             <div className="flex items-center gap-2 min-w-0">
               <PipelineStatusDot status={detailExec.status} />
               <span className="text-xs font-medium text-foreground truncate">{detailExec.pipeline_name}</span>
@@ -272,13 +295,27 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                 </span>
               )}
             </div>
+            {detailStepCount > 0 && (
+              <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
+                <span>{detailStepCount} step{detailStepCount !== 1 ? 's' : ''}</span>
+                {passedStepCount > 0 && (
+                  <span className="text-green-400">
+                    {passedStepCount} passed
+                  </span>
+                )}
+                {failedStepCount > 0 && (
+                  <span className="text-red-400">
+                    {failedStepCount} failed
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto">
-            {detailExec.steps && detailExec.steps.length > 0 ? (
+            {detailStepCount > 0 ? (
               <>
-                <StepSummaryBar steps={detailExec.steps} />
                 <div className="pipeline-steps-timeline">
-                  {detailExec.steps.map((step, i) => (
+                  {detailSteps.map((step, i) => (
                     <StepDisplay key={step.step_id ?? i} step={step} index={i} />
                   ))}
                 </div>
@@ -292,18 +329,6 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     </div>
   )
 })
-
-function StepSummaryBar({ steps }: { steps: StepData[] }) {
-  const completed = steps.filter((s) => s.status === 'completed' || s.status === 'success').length
-  const failed = steps.filter((s) => s.status === 'failed' || s.status === 'error').length
-  return (
-    <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-muted-foreground border-b border-border">
-      <span>{steps.length} step{steps.length !== 1 ? 's' : ''}</span>
-      {completed > 0 && <span className="text-green-400">{completed} passed</span>}
-      {failed > 0 && <span className="text-red-400">{failed} failed</span>}
-    </div>
-  )
-}
 
 function ExecutionStatusIcon({ status }: { status: string }) {
   if (status === 'completed' || status === 'success') {

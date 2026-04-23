@@ -16,11 +16,9 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def mock_llm_service() -> MagicMock:
     svc = MagicMock()
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(
+    svc.call_feature = AsyncMock(
         return_value='```json\n{"recommendations": [{"server": "s", "tool": "t", "reason": "r"}]}\n```'
     )
-    svc.get_default_provider.return_value = provider
     return svc
 
 
@@ -94,16 +92,14 @@ async def test_recommend_llm(service: RecommendationService) -> None:
 
 @pytest.mark.asyncio
 async def test_recommend_llm_error(service: RecommendationService) -> None:
-    service._llm_service.get_default_provider.side_effect = RuntimeError("no provider")
+    service._llm_service.call_feature.side_effect = RuntimeError("no provider")
     result = await service.recommend_tools("test")
     assert result["success"] is False
 
 
 @pytest.mark.asyncio
 async def test_recommend_llm_bad_json(service: RecommendationService) -> None:
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value="not json at all")
-    service._llm_service.get_default_provider.return_value = provider
+    service._llm_service.call_feature = AsyncMock(return_value="not json at all")
 
     result = await service.recommend_tools("test")
     assert result["success"] is True
@@ -112,9 +108,7 @@ async def test_recommend_llm_bad_json(service: RecommendationService) -> None:
 
 @pytest.mark.asyncio
 async def test_recommend_llm_json_no_backticks(service: RecommendationService) -> None:
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(return_value='{"recommendations": [{"t": 1}]}')
-    service._llm_service.get_default_provider.return_value = provider
+    service._llm_service.call_feature = AsyncMock(return_value='{"recommendations": [{"t": 1}]}')
 
     result = await service.recommend_tools("test")
     assert result["success"] is True
@@ -185,9 +179,9 @@ async def test_recommend_hybrid_semantic_fails(service: RecommendationService) -
 async def test_recommend_hybrid_llm_rerank_fails(
     service_with_semantic: RecommendationService,
 ) -> None:
-    provider = MagicMock()
-    provider.generate_text = AsyncMock(side_effect=RuntimeError("LLM down"))
-    service_with_semantic._llm_service.get_default_provider.return_value = provider
+    service_with_semantic._llm_service.call_feature = AsyncMock(
+        side_effect=RuntimeError("LLM down")
+    )
 
     result = await service_with_semantic.recommend_tools("test", search_mode="hybrid")
     assert result["success"] is True

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _POST_KILL_SETTLE_SECONDS = 0.5
+_VALID_FALLBACK_CONTEXTS = {"auto", "summary", "digest", "none"}
 
 
 def _is_terminal_session(session: Any) -> bool:
@@ -144,13 +145,38 @@ async def _resolve_agent_name_for_session(
     return workflow_name
 
 
+def _resolve_requested_fallback_context(data: dict[str, Any]) -> str:
+    """Return the requested fallback context mode, defaulting to auto."""
+    requested = _as_str(data.get("fallback_context")) or _as_str(data.get("fallbackContext"))
+    if requested in _VALID_FALLBACK_CONTEXTS:
+        return requested
+    return "auto"
+
+
+def _resolve_fallback_inject_context(source_session: Any, requested_mode: str) -> str | None:
+    """Choose hidden resume context based on the requested fallback mode."""
+    if requested_mode == "none" or not source_session:
+        return None
+
+    summary_markdown = _as_str(getattr(source_session, "summary_markdown", None))
+    digest_markdown = _as_str(getattr(source_session, "digest_markdown", None))
+
+    if requested_mode == "summary":
+        return summary_markdown
+    if requested_mode == "digest":
+        return digest_markdown
+
+    return summary_markdown or digest_markdown
+
+
 async def handle_continue_in_chat(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
     """Handle continue_in_chat message to resume a CLI session in the web chat UI.
 
     Attempts SDK native resume first (picks up exact conversation state).
-    Falls back to history injection if no SDK session ID is available.
+    Falls back to hidden summary/digest context injection when native resume
+    is unavailable and fallback context is configured.
 
     If the source session has a running agent (terminal or autonomous),
     kills it first so the CLI process releases the session.
@@ -169,12 +195,14 @@ async def handle_continue_in_chat(
         await mixin._send_error(websocket, "continue_in_chat requires source_session_id")
         return
 
-    conversation_id = data.get("conversation_id") or str(uuid4())
+    requested_conversation_id = data.get("conversation_id") or str(uuid4())
+    conversation_id = requested_conversation_id
     project_id = data.get("project_id")
     target_provider = data.get("provider")
     target_model = data.get("model")
     target_reasoning_effort = _as_str(data.get("reasoning_effort"))
     target_chat_mode = _as_str(data.get("chat_mode"))
+    requested_fallback_context = _resolve_requested_fallback_context(data)
 
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
@@ -218,6 +246,7 @@ async def handle_continue_in_chat(
     source_provider = _as_str(getattr(source_session, "source", None)) if source_session else None
     effective_provider = target_provider or source_provider
     source_title = _as_str(getattr(source_session, "title", None)) if source_session else None
+    fallback_source_session = source_session
     source_chat_mode = (
         _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
     )
@@ -273,7 +302,7 @@ async def handle_continue_in_chat(
                 )
                 if not restored:
                     logger.warning(
-                        f"Transcript restore failed for {source_session_id[:8]}; falling back to history injection",
+                        f"Transcript restore failed for {source_session_id[:8]}; falling back to hidden context injection",
                     )
                     sdk_resume_id = None
 
@@ -372,7 +401,18 @@ async def handle_continue_in_chat(
     if effective_chat_mode:
         session.chat_mode = effective_chat_mode
 
-    # History injection via message_manager removed (session_messages table dropped)
+    pending_inject_contexts = getattr(mixin, "_pending_inject_contexts", {})
+    pending_inject_contexts.pop(requested_conversation_id, None)
+    pending_inject_contexts.pop(conversation_id, None)
+
+    pending_inject_context: str | None = None
+    if not sdk_resume_id:
+        pending_inject_context = _resolve_fallback_inject_context(
+            fallback_source_session,
+            requested_fallback_context,
+        )
+        if pending_inject_context:
+            pending_inject_contexts[conversation_id] = pending_inject_context
 
     # Set parent_session_id on the DB record for lineage tracking
     if session.db_session_id and session_manager and session.db_session_id != source_session_id:
@@ -406,7 +446,12 @@ async def handle_continue_in_chat(
             }
         )
     )
-    resume_mode = "SDK resume" if sdk_resume_id else "history injection"
+    if sdk_resume_id:
+        resume_mode = "SDK resume"
+    elif pending_inject_context:
+        resume_mode = "hidden context injection"
+    else:
+        resume_mode = "fresh web chat"
     logger.info(
         f"Session continued ({resume_mode}): {source_session_id[:8]} -> "
         f"{conversation_id[:8]} (db={session.db_session_id})"

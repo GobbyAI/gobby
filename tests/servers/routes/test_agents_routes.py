@@ -33,6 +33,7 @@ def _create_agent_row(
     description: str | None = None,
     provider: str = "claude",
     mode: str = "autonomous",
+    surfaces: list[str] | None = None,
     project_id: str | None = None,
     source: str = "template",
     enabled: bool = True,
@@ -43,6 +44,7 @@ def _create_agent_row(
         description=description or f"Agent {name}",
         provider=provider,
         mode=mode,
+        surfaces=surfaces or ["spawn"],
         enabled=enabled,
     )
     return manager.create(
@@ -133,6 +135,20 @@ class TestListDefinitions:
         ):
             response = client.get("/api/agents/definitions")
         assert response.status_code == 500
+
+    def test_list_with_surface_filter(
+        self, client: TestClient, agent_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _create_agent_row(agent_manager, "spawn-agent", surfaces=["spawn"])
+        _create_agent_row(agent_manager, "persona-agent", surfaces=["spawn", "persona"])
+
+        response = client.get("/api/agents/definitions?surface_filter=persona")
+
+        assert response.status_code == 200
+        data = response.json()
+        names = [d["definition"]["name"] for d in data["definitions"]]
+        assert "persona-agent" in names
+        assert "spawn-agent" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +254,7 @@ class TestCreateDefinition:
             json={
                 "name": "full-agent",
                 "description": "Full test",
+                "surfaces": ["spawn", "persona"],
                 "role": "tester",
                 "goal": "test things",
                 "provider": "gemini",
@@ -253,6 +270,8 @@ class TestCreateDefinition:
         defn = response.json()["definition"]
         assert defn["name"] == "full-agent"
         assert defn["description"] == "Full test"
+        body = AgentDefinitionBody.model_validate_json(defn["definition_json"])
+        assert body.surfaces == ["spawn", "persona"]
 
     def test_create_with_project_id(self, client: TestClient, project_manager) -> None:
         project = project_manager.create(name="test-proj", repo_path="/tmp/test-proj")
@@ -314,9 +333,15 @@ class TestUpdateDefinition:
         ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
-            json={"model": "opus", "timeout": 600.0},
+            json={"model": "opus", "timeout": 600.0, "surfaces": ["spawn", "persona"]},
         )
         assert response.status_code == 200
+        definition = AgentDefinitionBody.model_validate_json(
+            response.json()["definition"]["definition_json"]
+        )
+        assert definition.model == "opus"
+        assert definition.timeout == 600.0
+        assert definition.surfaces == ["spawn", "persona"]
 
 
 # ---------------------------------------------------------------------------

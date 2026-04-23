@@ -52,7 +52,7 @@ def select_and_format_agent_skills(
 ) -> tuple[str | None, int, list[str]]:
     """Audience-aware skill selection and formatting for agent activation.
 
-    Shared between session activation and web chat skill injection.
+    Shared between session activation and web chat skill manifest building.
 
     Args:
         agent_body: Resolved agent definition body
@@ -195,14 +195,31 @@ class SessionStartMixin(EventHandlersBase):
             if isinstance(input_data.get("terminal_context"), dict)
             else None
         )
+
+        # Daemon-spawned ACP subprocesses (gemini --acp, qwen --acp) set
+        # GOBBY_ACP_CHILD=1 and GOBBY_HOOKS_DISABLED=1 in their environment.
+        # A current ghook short-circuits on GOBBY_HOOKS_DISABLED before ever
+        # calling the daemon; this branch catches the stale-ghook case where
+        # the binary isn't rebuilt yet but carries the GOBBY_ACP_CHILD marker
+        # in terminal_context.
+        if terminal_context and terminal_context.get("gobby_acp_child") == "1":
+            self.logger.info(
+                "Skipping session registration for ACP child process",
+                extra={
+                    "cli": cli_source,
+                    "external_id": external_id,
+                    "gobby_acp_child": terminal_context.get("gobby_acp_child"),
+                },
+            )
+            return HookResponse()
         gobby_session_id_from_env = (
             terminal_context.get("gobby_session_id") if terminal_context else None
         )
 
-        if self._session_storage:
+        if self._session_manager:
             try:
                 # Try to find by internal ID first (Claude case - external_id IS internal_id)
-                existing_session = self._session_storage.get(external_id)
+                existing_session = self._session_manager.get(external_id)
                 if existing_session:
                     return self._handle_pre_created_session(
                         existing_session=existing_session,
@@ -220,7 +237,7 @@ class SessionStartMixin(EventHandlersBase):
             # GOBBY_SESSION_ID carried in terminal_context.
             if gobby_session_id_from_env and not existing_session:
                 try:
-                    existing_session = self._session_storage.get(gobby_session_id_from_env)
+                    existing_session = self._session_manager.get(gobby_session_id_from_env)
                     if existing_session:
                         self.logger.info(
                             f"Found pre-created session {gobby_session_id_from_env} via "
@@ -228,7 +245,7 @@ class SessionStartMixin(EventHandlersBase):
                         )
                         # Update the session's external_id and terminal_context
                         # terminal_context contains parent_pid needed for kill_agent
-                        self._session_storage.update(
+                        self._session_manager.update(
                             gobby_session_id_from_env,
                             external_id=external_id,
                             terminal_context=terminal_context,
@@ -261,11 +278,11 @@ class SessionStartMixin(EventHandlersBase):
 
         if (
             not parent_session_id
-            and self._session_storage
+            and self._session_manager
             and session_source in ("clear", "compact")
         ):
             try:
-                parent = self._session_storage.find_parent(
+                parent = self._session_manager.find_parent(
                     machine_id=machine_id,
                     project_id=project_id,
                     source=cli_source,
@@ -279,7 +296,7 @@ class SessionStartMixin(EventHandlersBase):
                     deadline = time.monotonic() + 5  # 5s -- session_end is fast
                     while time.monotonic() < deadline:
                         time.sleep(0.3)
-                        parent = self._session_storage.find_parent(
+                        parent = self._session_manager.find_parent(
                             machine_id=machine_id,
                             project_id=project_id,
                             source=cli_source,
@@ -302,7 +319,7 @@ class SessionStartMixin(EventHandlersBase):
                     # or preserve-context-on-compact rules
                     from gobby.workflows.state_manager import SessionVariableManager
 
-                    parent_vars = SessionVariableManager(self._session_storage.db).get_variables(
+                    parent_vars = SessionVariableManager(self._session_manager.db).get_variables(
                         parent.id
                     )
                     handoff_source = parent_vars.get("handoff_source")
@@ -364,7 +381,7 @@ class SessionStartMixin(EventHandlersBase):
         _t_activate = time.monotonic()
         # Step 2e: Deep load default agent (rules, skills, variables) for new session
         agent_result: AgentActivationResult | None = None
-        if session_id:
+        if session_id and not input_data.get("skip_default_agent_activation"):
             try:
                 agent_override = input_data.get("agent_name_override")
                 agent_result = self._activate_default_agent(
@@ -406,13 +423,13 @@ class SessionStartMixin(EventHandlersBase):
             additional_context.append(agent_result.context)
 
         # Populate handoff session variables for inject_context rule templates
-        if parent_session_id and session_id and self._session_storage:
+        if parent_session_id and session_id and self._session_manager:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            sv_mgr = SessionVariableManager(self._session_storage.db)
+            sv_mgr = SessionVariableManager(self._session_manager.db)
             current_vars = sv_mgr.get_variables(session_id)
             if current_vars.get("auto_inject_handoff", True):
-                parent = self._session_storage.get(parent_session_id)
+                parent = self._session_manager.get(parent_session_id)
                 if parent:
                     # For /clear: summary generation was kicked off by
                     # BEFORE_AGENT (fire-and-forget). Poll until it arrives.
@@ -447,7 +464,7 @@ class SessionStartMixin(EventHandlersBase):
                                     f"Timed out waiting for session summary for parent {parent_session_id} after {max_wait_s:.0f}s",
                                 )
                         # Re-read parent after generation
-                        parent = self._session_storage.get(parent_session_id)
+                        parent = self._session_manager.get(parent_session_id)
 
                     handoff_vars: dict[str, Any] = {}
                     if parent and parent.summary_markdown:
@@ -539,12 +556,12 @@ class SessionStartMixin(EventHandlersBase):
                 additional_context.append(claimed_ctx)
 
         # Populate task_context session variable for inject_context rule templates
-        if event.task_id and session_id and self._session_storage:
+        if event.task_id and session_id and self._session_manager:
             task_title = event.metadata.get("_task_title", "Unknown Task")
             task_context_str = f"You are working on task: {task_title} ({event.task_id})"
             from gobby.workflows.state_manager import SessionVariableManager
 
-            SessionVariableManager(self._session_storage.db).merge_variables(
+            SessionVariableManager(self._session_manager.db).merge_variables(
                 session_id, {"task_context": task_context_str}
             )
 
@@ -555,8 +572,8 @@ class SessionStartMixin(EventHandlersBase):
 
         # Fetch session to get seq_num for #N display
         session_obj = None
-        if session_id and self._session_storage:
-            session_obj = self._session_storage.get(session_id)
+        if session_id and self._session_manager:
+            session_obj = self._session_manager.get(session_id)
 
         # Fetch claimed task info for system_message tree display
         claimed_tasks_info = get_claimed_task_info(self, session_id, project_id)
@@ -617,8 +634,8 @@ class SessionStartMixin(EventHandlersBase):
 
         # Update the session with actual runtime info
         session_obj = existing_session
-        if self._session_storage:
-            updated = self._session_storage.update(
+        if self._session_manager:
+            updated = self._session_manager.update(
                 session_id=existing_session.id,
                 transcript_path=transcript_path,
                 status="active",
@@ -751,7 +768,7 @@ class SessionStartMixin(EventHandlersBase):
 
         Only called from _activate_default_agent after the session_storage None guard.
         """
-        if self._session_storage is None:
+        if self._session_manager is None:
             raise RuntimeError("session storage is not initialized")
         if agent_name_override:
             return agent_name_override
@@ -761,7 +778,7 @@ class SessionStartMixin(EventHandlersBase):
         # keep the agent type assigned by the parent.
         from gobby.workflows.state_manager import SessionVariableManager
 
-        sv_mgr = SessionVariableManager(self._session_storage.db)
+        sv_mgr = SessionVariableManager(self._session_manager.db)
         existing_vars = sv_mgr.get_variables(session_id)
         existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
 
@@ -770,7 +787,7 @@ class SessionStartMixin(EventHandlersBase):
 
         from gobby.storage.config_store import ConfigStore
 
-        config_store = ConfigStore(self._session_storage.db)
+        config_store = ConfigStore(self._session_manager.db)
         return config_store.get("default_agent") or "default"
 
     def _build_agent_changes(
@@ -788,18 +805,18 @@ class SessionStartMixin(EventHandlersBase):
 
         Only called from _activate_default_agent after the session_storage None guard.
         """
-        if self._session_storage is None:
+        if self._session_manager is None:
             raise RuntimeError("session storage is not initialized")
 
         from gobby.mcp_proxy.tools.apply_persona import build_persona_changes
 
-        session = self._session_storage.get(session_id)
+        session = self._session_manager.get(session_id)
         is_spawned = bool(session and session.agent_run_id)
 
         return build_persona_changes(
             agent_body=agent_body,
             session_id=session_id,
-            db=self._session_storage.db,
+            db=self._session_manager.db,
             enabled_rules=enabled_rules,
             all_skills=all_skills,
             enabled_variables=enabled_variables,
@@ -808,16 +825,16 @@ class SessionStartMixin(EventHandlersBase):
 
     def _setup_code_index(self, session_id: str | None, project_id: str | None) -> None:
         """Set code_index_available session variable if the project has an index."""
-        if not session_id or not project_id or not self._session_storage:
+        if not session_id or not project_id or not self._session_manager:
             return
         try:
             from gobby.code_index.storage import CodeIndexStorage
             from gobby.workflows.state_manager import SessionVariableManager
 
-            cis = CodeIndexStorage(self._session_storage.db)
+            cis = CodeIndexStorage(self._session_manager.db)
             stats = cis.get_project_stats(project_id)
             if stats and stats.total_symbols > 0:
-                sv_mgr = SessionVariableManager(self._session_storage.db)
+                sv_mgr = SessionVariableManager(self._session_manager.db)
                 sv_mgr.set_variable(session_id, "code_index_available", True)
         except Exception as e:
             self.logger.debug(f"Could not check code index availability: {e}")
@@ -834,7 +851,7 @@ class SessionStartMixin(EventHandlersBase):
         Orchestrates: name resolution -> agent resolution -> changes building ->
         variable persistence -> context building.
         """
-        if not self._session_manager or not self._session_storage:
+        if self._session_manager is None:
             return None
 
         _ta0 = time.monotonic()
@@ -847,7 +864,7 @@ class SessionStartMixin(EventHandlersBase):
 
         try:
             agent_body = resolve_agent(
-                default_agent_name, self._session_storage.db, project_id=project_id
+                default_agent_name, self._session_manager.db, project_id=project_id
             )
         except AgentResolutionError as e:
             self.logger.error(f"Failed to resolve default agent '{default_agent_name}': {e}")
@@ -862,10 +879,10 @@ class SessionStartMixin(EventHandlersBase):
         from gobby.skills.manager import SkillManager
         from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
-        def_manager = LocalWorkflowDefinitionManager(self._session_storage.db)
+        def_manager = LocalWorkflowDefinitionManager(self._session_manager.db)
         enabled_rules = [r for r in def_manager.list_all(workflow_type="rule") if r.enabled]
         enabled_variables = [v for v in def_manager.list_all(workflow_type="variable") if v.enabled]
-        all_skills = SkillManager(self._session_storage.db).list_skills()
+        all_skills = SkillManager(self._session_manager.db).list_skills()
 
         # Build and persist session variables
         _ta_build = time.monotonic()
@@ -875,7 +892,7 @@ class SessionStartMixin(EventHandlersBase):
 
         from gobby.workflows.state_manager import SessionVariableManager
 
-        sv_mgr = SessionVariableManager(self._session_storage.db)
+        sv_mgr = SessionVariableManager(self._session_manager.db)
 
         # Compute variables_count BEFORE the persistence filter so it reflects
         # the true number of user-facing variables for the agent, not the

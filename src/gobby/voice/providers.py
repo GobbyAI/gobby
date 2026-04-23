@@ -17,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_CLASSES: dict[str, tuple[str, str]] = {
     "chatterbox": ("gobby.voice.tts_chatterbox", "ChatterboxTurboProvider"),
-    "kokoro": ("gobby.voice.tts", "KokoroTTS"),
-    "voxcpm": ("gobby.voice.tts_voxcpm", "VoxCPMProvider"),
 }
 
 

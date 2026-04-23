@@ -29,6 +29,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.cli.installers.hook_commands import is_gobby_hook_command
 
 
@@ -50,18 +51,7 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         cli_name="Claude Code",
         settings_dir=".claude",
         settings_file="settings.json",
-        required_hooks=(
-            "SessionStart",
-            "SessionEnd",
-            "UserPromptSubmit",
-            "PreToolUse",
-            "PostToolUse",
-            "PreCompact",
-            "Notification",
-            "Stop",
-            "SubagentStart",
-            "SubagentStop",
-        ),
+        required_hooks=CLAUDE_PASCAL_HOOK_NAMES,
         nested=True,
     ),
     "gemini": ValidationConfig(
@@ -218,20 +208,9 @@ def validate(config: ValidationConfig) -> int:
             command = hook_configs[0].get("command", "")
 
         if not is_gobby_hook_command(command):
-            print(f"Warning: {hook_type} not using dispatcher pattern")
+            print(f"Warning: {hook_type} not using the gobby-managed hook command")
 
     print(f"All {len(config.required_hooks)} required hook types configured")
-
-    # 6. Validate dispatcher exists
-    dispatcher = cli_dir / "hooks" / "hook_dispatcher.py"
-    if not dispatcher.exists():
-        print(f"Dispatcher not found: {dispatcher}")
-        return 1
-
-    print("Dispatcher script exists")
-
-    if not dispatcher.stat().st_mode & 0o111:
-        print("Warning: Dispatcher is not executable")
 
     print(f"\nAll validations passed! ({config.cli_name})")
     return 0

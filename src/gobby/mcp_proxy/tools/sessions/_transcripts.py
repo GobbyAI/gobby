@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
 
 def register_transcript_tools(
     registry: InternalToolRegistry,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
 ) -> None:
     """Register transcript archive tools with a registry."""
 

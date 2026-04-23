@@ -15,10 +15,14 @@ from typing import TYPE_CHECKING, Any
 
 import uvicorn
 
+from gobby.telemetry import shutdown_telemetry
+
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
+
+_CRITICAL_STOP_HOOK_GRACE_SECONDS = 5.0
 
 # ---------------------------------------------------------------------------
 # Startup progress tracking (module-level so the admin API can read it)
@@ -64,6 +68,15 @@ class StartupTracker:
 def get_startup_tracker() -> StartupTracker | None:
     """Return the current startup tracker (used by admin API)."""
     return _startup_tracker
+
+
+async def _await_critical_stop_hook_grace_window() -> None:
+    """Keep HTTP available briefly so critical Stop hooks can still connect."""
+    logger.debug(
+        "Waiting %.1fs for critical Stop hooks before HTTP shutdown",
+        _CRITICAL_STOP_HOOK_GRACE_SECONDS,
+    )
+    await asyncio.sleep(_CRITICAL_STOP_HOOK_GRACE_SECONDS)
 
 
 async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) -> None:
@@ -229,6 +242,7 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
             model=emb_cfg.model,
             api_base=emb_cfg.api_base,
             api_key=emb_cfg.api_key,
+            expected_dim=emb_cfg.dim,
         )
         if not healthy:
             # Try to auto-load the model (lms load / ollama pull) and retry
@@ -237,6 +251,7 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                     model=emb_cfg.model,
                     api_base=emb_cfg.api_base,
                     api_key=emb_cfg.api_key,
+                    expected_dim=emb_cfg.dim,
                 )
             if not healthy:
                 logger.warning(
@@ -615,15 +630,16 @@ async def run_daemon(runner: GobbyRunner) -> None:
         except OSError as e:
             logger.warning(f"Could not write PID file {pid_file}: {e}")
 
-        # Bind HTTP server immediately so health checks pass during init
-        graceful_shutdown_timeout = 15
+        # Bind HTTP server immediately so health checks pass during init.
+        # Allow in-flight HTTP requests a short drain period during shutdown.
+        uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,
             host=runner.config.bind_host,
             port=runner.http_server.port,
             log_level="warning",
             access_log=False,
-            timeout_graceful_shutdown=graceful_shutdown_timeout,
+            timeout_graceful_shutdown=uvicorn_drain_timeout,
         )
         server = uvicorn.Server(config)
         server_task = asyncio.create_task(server.serve())
@@ -655,8 +671,13 @@ async def run_daemon(runner: GobbyRunner) -> None:
 
         # Cleanup with timeouts to prevent hanging
         # Use timeout slightly longer than uvicorn's graceful shutdown to let it finish
+        await _await_critical_stop_hook_grace_window()
         logger.debug("Shutdown requested; beginning graceful shutdown")
         server.should_exit = True
+        try:
+            await runner.http_server._terminate_streamable_http_sessions()
+        except Exception as e:
+            logger.warning(f"Failed to terminate Streamable HTTP sessions: {e}")
 
         if (
             hasattr(runner, "_subsystem_init_task")
@@ -673,16 +694,16 @@ async def run_daemon(runner: GobbyRunner) -> None:
         await _shutdown_websocket_server(runner)
 
         try:
-            logger.debug("Waiting for HTTP server lifespan shutdown")
-            await asyncio.wait_for(server_task, timeout=graceful_shutdown_timeout + 5)
-            logger.debug("HTTP server lifespan shutdown complete")
-        except TimeoutError:
-            logger.warning("HTTP server shutdown timed out")
-
-        try:
             await asyncio.wait_for(runner.lifecycle_manager.stop(), timeout=2.0)
         except TimeoutError:
             logger.warning("Lifecycle manager shutdown timed out")
+
+        try:
+            logger.debug("Waiting for HTTP server lifespan shutdown")
+            await asyncio.wait_for(server_task, timeout=uvicorn_drain_timeout + 5)
+            logger.debug("HTTP server lifespan shutdown complete")
+        except TimeoutError:
+            logger.warning("HTTP server shutdown timed out")
 
         if runner.agent_lifecycle_monitor:
             try:
@@ -884,6 +905,16 @@ async def run_daemon(runner: GobbyRunner) -> None:
             logger.warning("MCP disconnect timed out")
 
         await _reap_remaining_child_processes()
+
+        try:
+            shutdown_telemetry()
+        except Exception as e:
+            logger.warning(f"Telemetry shutdown failed: {e}")
+
+        try:
+            runner.database.close()
+        except Exception as e:
+            logger.warning(f"Database close failed: {e}")
 
         # Clean up PID file on graceful shutdown
         cleanup_pid_file()

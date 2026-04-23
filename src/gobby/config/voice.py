@@ -9,8 +9,7 @@ class VoiceConfig(BaseModel):
     """Configuration for voice chat (STT + TTS).
 
     STT uses local Whisper (faster-whisper) for privacy and low latency.
-    TTS routes through a configurable provider such as Chatterbox, Kokoro,
-    or VoxCPM.
+    TTS routes through a pluggable provider backend.
     """
 
     enabled: bool = Field(
@@ -25,10 +24,7 @@ class VoiceConfig(BaseModel):
     )
     tts_provider: str = Field(
         default="chatterbox",
-        description=(
-            "TTS provider: 'chatterbox' (voice cloning), 'kokoro' (fixed voices), "
-            "or 'voxcpm' (voice cloning with optional reference_text)."
-        ),
+        description="TTS provider id. Currently supported: 'chatterbox' (voice cloning).",
     )
     tts_reference_audio: str = Field(
         default="~/.gobby/voice/reference.wav",
@@ -47,68 +43,22 @@ class VoiceConfig(BaseModel):
         le=1.0,
         description="TTS sampling randomness (0.1–1.0, Chatterbox).",
     )
+    tts_chatterbox_max_generation_tokens: int = Field(
+        default=256,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum Turbo speech tokens to generate per utterance. Gobby "
+            "defaults to 256 to keep typical sentence-level synthesis complete "
+            "without paying the upstream 1000-token worst-case latency."
+        ),
+    )
     tts_device: str = Field(
         default="auto",
         description=(
             "Requested TTS compute device: 'auto', 'cuda', 'mps', 'cpu'. "
             "Providers may ignore explicit selection if the upstream runtime does not support it."
         ),
-    )
-    # --- Kokoro-specific settings (legacy) ---
-    tts_voice: str = Field(
-        default="af_heart",
-        description="Kokoro voice name (e.g. af_heart, af_bella, am_adam, bf_emma).",
-    )
-    tts_speed: float = Field(
-        default=1.0,
-        ge=0.5,
-        le=2.0,
-        description="TTS playback speed multiplier (0.5–2.0, Kokoro).",
-    )
-    tts_language: str = Field(
-        default="en-us",
-        description="TTS language code (en-us, en-gb, ja, zh, hi, es, pt-br, it, fr).",
-    )
-    tts_model_path: str = Field(
-        default="~/.gobby/models/kokoro-v1.0.onnx",
-        description="Path to the Kokoro ONNX model file.",
-    )
-    tts_voices_path: str = Field(
-        default="~/.gobby/models/voices-v1.0.bin",
-        description="Path to the Kokoro voices file.",
-    )
-    # --- VoxCPM-specific settings ---
-    tts_voxcpm_model: str = Field(
-        default="openbmb/VoxCPM2",
-        description="VoxCPM model id or local model directory.",
-    )
-    tts_voxcpm_cfg_value: float = Field(
-        default=2.0,
-        ge=0.1,
-        le=10.0,
-        description="VoxCPM guidance scale (recommended 1.0-3.0).",
-    )
-    tts_voxcpm_inference_timesteps: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="VoxCPM inference timesteps.",
-    )
-    tts_voxcpm_load_denoiser: bool = Field(
-        default=False,
-        description="Load VoxCPM's optional denoiser pipeline during model initialization.",
-    )
-    tts_voxcpm_denoise: bool = Field(
-        default=False,
-        description="Denoise prompt/reference audio before VoxCPM synthesis when available.",
-    )
-    tts_voxcpm_local_files_only: bool = Field(
-        default=False,
-        description="Only use local model files for VoxCPM; do not download from HuggingFace.",
-    )
-    tts_voxcpm_optimize: bool = Field(
-        default=True,
-        description="Enable VoxCPM runtime optimization/warmup behavior.",
     )
     stt_enabled: bool = Field(
         default=True,

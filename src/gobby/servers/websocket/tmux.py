@@ -10,14 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from uuid import uuid4
 
 from websockets.exceptions import ConnectionClosed
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,110 @@ class TmuxMixin:
         if socket == "gobby":
             return _GOBBY_CONFIG
         return _DEFAULT_CONFIG
+
+    @staticmethod
+    def _terminal_context_matches_socket(
+        terminal_context: Mapping[str, Any],
+        socket: str,
+    ) -> bool:
+        """Return whether stored terminal context belongs to a UI tmux socket."""
+        socket_name = terminal_context.get("tmux_socket_name")
+        if isinstance(socket_name, str) and socket_name:
+            return socket_name == socket
+
+        socket_path = terminal_context.get("tmux_socket_path")
+        if isinstance(socket_path, str) and socket_path:
+            recorded_socket = socket_path.rstrip("/").rsplit("/", 1)[-1]
+            if socket == "gobby":
+                return recorded_socket == "gobby"
+            return recorded_socket != "gobby"
+
+        # Legacy contexts without socket metadata came from the default tmux server.
+        return socket != "gobby"
+
+    async def _resolve_gobby_session_ids_for_tmux_session(
+        self,
+        session_name: str,
+        socket: str,
+        mgr: TmuxSessionManager,
+    ) -> list[str]:
+        """Resolve active/paused Gobby sessions backed by a tmux session."""
+        session_mgr = getattr(self, "session_manager", None)
+        if not session_mgr:
+            return []
+
+        try:
+            pane_ids = {
+                tmux_session.pane_id
+                for tmux_session in await mgr.list_sessions()
+                if tmux_session.name == session_name and tmux_session.pane_id
+            }
+        except Exception:
+            logger.debug("Failed to resolve tmux pane for session kill", exc_info=True)
+            return []
+
+        if not pane_ids:
+            return []
+
+        matched_session_ids: list[str] = []
+        seen: set[str] = set()
+        for status in ("active", "paused"):
+            try:
+                sessions = session_mgr.list(status=status) or []
+            except Exception:
+                logger.debug("Failed to list %s sessions for tmux kill", status, exc_info=True)
+                continue
+
+            for session in sessions:
+                terminal_context = getattr(session, "terminal_context", None)
+                if not isinstance(terminal_context, dict):
+                    continue
+                if terminal_context.get("tmux_pane") not in pane_ids:
+                    continue
+                if not self._terminal_context_matches_socket(terminal_context, socket):
+                    continue
+
+                session_id = getattr(session, "id", None)
+                if isinstance(session_id, str) and session_id not in seen:
+                    matched_session_ids.append(session_id)
+                    seen.add(session_id)
+
+        return matched_session_ids
+
+    async def _expire_gobby_sessions_for_tmux_kill(self, session_ids: list[str]) -> list[str]:
+        """Expire Gobby sessions whose backing tmux session was killed."""
+        session_mgr = getattr(self, "session_manager", None)
+        if not session_mgr or not session_ids:
+            return []
+
+        from gobby.servers.routes.sessions.statusline_activity import clear_trackers
+
+        expired_session_ids: list[str] = []
+        for session_id in session_ids:
+            try:
+                session_mgr.update_status(session_id, "expired")
+                clear_trackers(session_id)
+                expired_session_ids.append(session_id)
+            except Exception:
+                logger.warning(
+                    "Failed to expire Gobby session %s after tmux kill",
+                    session_id,
+                    exc_info=True,
+                )
+                continue
+
+            broadcast_session_event = getattr(self, "broadcast_session_event", None)
+            if broadcast_session_event:
+                try:
+                    await broadcast_session_event("session_expired", session_id)
+                except Exception:
+                    logger.debug(
+                        "Failed to broadcast session_expired for %s",
+                        session_id,
+                        exc_info=True,
+                    )
+
+        return expired_session_ids
 
     # ------------------------------------------------------------------
     # Handlers
@@ -409,6 +514,11 @@ class TmuxMixin:
 
         reader = get_pty_reader_manager()
         mgr = self._get_tmux_manager(socket)
+        gobby_session_ids = await self._resolve_gobby_session_ids_for_tmux_session(
+            session_name,
+            socket,
+            mgr,
+        )
 
         bridges = await self._tmux_bridge.list_bridges()
         for sid, bridge in list(bridges.items()):
@@ -421,13 +531,18 @@ class TmuxMixin:
 
         try:
             success = await mgr.kill_session(session_name)
+            expired_session_ids: list[str] = []
             if success:
+                expired_session_ids = await self._expire_gobby_sessions_for_tmux_kill(
+                    gobby_session_ids
+                )
                 await self._broadcast_tmux_event("session_killed", session_name, socket)
 
             response: dict[str, Any] = {
                 "type": "tmux_kill_result",
                 "success": success,
                 "session_name": session_name,
+                "expired_session_ids": expired_session_ids,
             }
             if request_id:
                 response["request_id"] = request_id

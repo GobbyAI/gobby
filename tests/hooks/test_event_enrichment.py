@@ -56,12 +56,12 @@ def _make_msg(
 
 def _make_enricher(
     msgs: list | None = None,
-    session_storage: MagicMock | None = None,
+    session_manager: MagicMock | None = None,
 ) -> EventEnricher:
     mgr = MagicMock()
     mgr.get_undelivered_messages.return_value = msgs or []
     return EventEnricher(
-        session_storage=session_storage,
+        session_manager=session_manager,
         injected_sessions=set(),
         inter_session_msg_manager=mgr,
     )
@@ -116,13 +116,13 @@ class TestMessageGrouping:
 
     def test_p2p_messages_show_sender_ref(self) -> None:
         """P2P messages should show sender session ref and P2P header."""
-        session_storage = MagicMock()
+        session_manager = MagicMock()
         session_obj = MagicMock()
         session_obj.seq_num = 42
-        session_storage.get.return_value = session_obj
+        session_manager.get.return_value = session_obj
 
         msg = _make_msg(content="Subtask done", message_type="message")
-        enricher = _make_enricher(msgs=[msg], session_storage=session_storage)
+        enricher = _make_enricher(msgs=[msg], session_manager=session_manager)
         event = _make_event(HookEventType.BEFORE_TOOL)
         response = HookResponse()
 
@@ -204,13 +204,13 @@ class TestSenderResolution:
 
     def test_sender_lookup_success(self) -> None:
         """Session storage lookup should produce 'Session #N:' label."""
-        session_storage = MagicMock()
+        session_manager = MagicMock()
         session_obj = MagicMock()
         session_obj.seq_num = 7
-        session_storage.get.return_value = session_obj
+        session_manager.get.return_value = session_obj
 
         msg = _make_msg(content="msg", from_session="aaaa-bbbb")
-        enricher = _make_enricher(msgs=[msg], session_storage=session_storage)
+        enricher = _make_enricher(msgs=[msg], session_manager=session_manager)
         event = _make_event(HookEventType.BEFORE_TOOL)
         response = HookResponse()
 
@@ -220,11 +220,11 @@ class TestSenderResolution:
 
     def test_sender_lookup_failure_falls_back(self) -> None:
         """When session storage raises, fall back to truncated UUID."""
-        session_storage = MagicMock()
-        session_storage.get.side_effect = RuntimeError("DB closed")
+        session_manager = MagicMock()
+        session_manager.get.side_effect = RuntimeError("DB closed")
 
         msg = _make_msg(content="msg", from_session="abcd1234-rest-of-uuid")
-        enricher = _make_enricher(msgs=[msg], session_storage=session_storage)
+        enricher = _make_enricher(msgs=[msg], session_manager=session_manager)
         event = _make_event(HookEventType.BEFORE_TOOL)
         response = HookResponse()
 
@@ -235,7 +235,7 @@ class TestSenderResolution:
     def test_sender_no_session_storage(self) -> None:
         """Without session storage, fall back to truncated UUID."""
         msg = _make_msg(content="msg", from_session="deadbeef-rest-of-uuid")
-        enricher = _make_enricher(msgs=[msg], session_storage=None)
+        enricher = _make_enricher(msgs=[msg], session_manager=None)
         event = _make_event(HookEventType.BEFORE_TOOL)
         response = HookResponse()
 

@@ -17,7 +17,7 @@ from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -28,9 +28,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[s
 
 @pytest.fixture
 def http_server(
-    session_storage: LocalSessionManager,
+    session_storage: SessionManager,
     temp_dir: Path,
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
@@ -175,7 +175,7 @@ class TestRegisterSessionEdgeCases:
 
     def test_register_session_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
         temp_dir: Path,
     ) -> None:
@@ -235,7 +235,7 @@ class TestListSessionsEdgeCases:
 
     def test_list_sessions_without_message_counts(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that sessions list works without message counts."""
@@ -264,7 +264,7 @@ class TestListSessionsEdgeCases:
 
     def test_list_sessions_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test that internal errors during list return 500."""
         server = create_http_server(
@@ -290,7 +290,7 @@ class TestGetSessionEdgeCases:
 
     def test_get_session_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test that internal errors during get return 500."""
         server = create_http_server(
@@ -329,7 +329,7 @@ class TestGetMessagesEdgeCases:
 
     def test_get_messages_with_all_parameters(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test get_messages with all optional parameters."""
@@ -373,7 +373,7 @@ class TestGetMessagesEdgeCases:
 
     def test_get_messages_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that internal errors during get_messages return 500."""
@@ -432,7 +432,7 @@ class TestFindCurrentSessionEdgeCases:
 
     def test_find_current_session_missing_project_id(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test find_current without project_id or cwd returns 400."""
         server = create_http_server(
@@ -455,7 +455,7 @@ class TestFindCurrentSessionEdgeCases:
 
     def test_find_current_session_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test that internal errors during find_by_external_id return 500."""
         server = create_http_server(
@@ -512,7 +512,7 @@ class TestFindParentSessionEdgeCases:
     def test_find_parent_machine_id_fallback(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test find_parent falls back to machine_id when not provided."""
@@ -561,7 +561,7 @@ class TestFindParentSessionEdgeCases:
 
     def test_find_parent_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that internal errors during find_parent return 500."""
@@ -616,7 +616,7 @@ class TestUpdateStatusEdgeCases:
 
     def test_update_status_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that internal errors during update_status return 500."""
@@ -677,7 +677,7 @@ class TestUpdateSummaryEdgeCases:
 
     def test_update_summary_internal_error(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that internal errors during update_summary return 500."""
@@ -767,7 +767,7 @@ class TestStopSignalEdgeCases:
     @pytest.fixture
     def server_with_stop_registry(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> HTTPServer:
         """Create HTTP server with mock stop registry."""
         server = create_http_server(
@@ -833,7 +833,7 @@ class TestStopSignalEdgeCases:
 
     def test_get_stop_signal_without_hook_manager(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test GET stop signal when hook manager not available."""
         server = create_http_server(
@@ -851,7 +851,7 @@ class TestStopSignalEdgeCases:
 
     def test_delete_stop_signal_without_hook_manager(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test DELETE stop signal when hook manager not available."""
         server = create_http_server(
@@ -869,7 +869,7 @@ class TestStopSignalEdgeCases:
 
     def test_get_stop_signal_without_stop_registry(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test GET stop signal when stop registry not available."""
         server = create_http_server(
@@ -889,7 +889,7 @@ class TestStopSignalEdgeCases:
 
     def test_delete_stop_signal_without_stop_registry(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
     ) -> None:
         """Test DELETE stop signal when stop registry not available."""
         server = create_http_server(
@@ -960,7 +960,7 @@ class TestRequestValidation:
     def test_list_sessions_valid_limit_bounds(
         self,
         client: TestClient,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test list_sessions with valid limit bounds."""

@@ -242,13 +242,15 @@ class CodeIndexStorage:
             conn.execute(
                 """INSERT INTO code_indexed_files (
                     id, project_id, file_path, language, content_hash,
-                    symbol_count, byte_size, graph_synced, vectors_synced, indexed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    symbol_count, byte_size, graph_synced, vectors_synced,
+                    graph_sync_attempted_at, indexed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content_hash=excluded.content_hash,
                     symbol_count=excluded.symbol_count,
                     byte_size=excluded.byte_size,
                     graph_synced=0,
+                    graph_sync_attempted_at=NULL,
                     vectors_synced=0,
                     indexed_at=excluded.indexed_at
                 """,
@@ -262,6 +264,7 @@ class CodeIndexStorage:
                     file.byte_size,
                     file.graph_synced,
                     file.vectors_synced,
+                    file.graph_sync_attempted_at,
                     file.indexed_at,
                 ),
             )
@@ -398,12 +401,38 @@ class CodeIndexStorage:
 
     def mark_graph_synced(self, file_id: str) -> bool:
         """Mark a file's graph edges as synced. Returns True if updated."""
+        now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_indexed_files SET graph_synced = 1 WHERE id = ?",
-                (file_id,),
+                """UPDATE code_indexed_files
+                   SET graph_synced = 1, graph_sync_attempted_at = ?
+                   WHERE id = ?""",
+                (now, file_id),
             )
             return cursor.rowcount > 0
+
+    def mark_graph_sync_attempted(self, file_id: str) -> bool:
+        """Mark that a graph sync was attempted, even if it later fails."""
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE code_indexed_files
+                   SET graph_synced = 0, graph_sync_attempted_at = ?
+                   WHERE id = ?""",
+                (now, file_id),
+            )
+            return cursor.rowcount > 0
+
+    def reset_graph_sync_for_project(self, project_id: str) -> int:
+        """Mark every file in a project as needing graph rebuild."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE code_indexed_files
+                   SET graph_synced = 0, graph_sync_attempted_at = NULL
+                   WHERE project_id = ?""",
+                (project_id,),
+            )
+            return cursor.rowcount
 
     # ── Imports & Calls ─────────────────────────────────────────────
 
@@ -445,10 +474,24 @@ class CodeIndexStorage:
                 return 0
             conn.executemany(
                 """INSERT OR IGNORE INTO code_calls
-                   (project_id, caller_symbol_id, callee_name, file_path, line)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   (
+                       project_id, caller_symbol_id, callee_symbol_id, callee_name,
+                       callee_target_kind, callee_external_module, file_path, line
+                   )
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
-                    (project_id, c.caller_symbol_id, c.callee_name, c.file_path, c.line)
+                    (
+                        project_id,
+                        c.caller_symbol_id,
+                        # SQLite stores optional callee_* fields as empty strings;
+                        # the read path normalizes those empty strings back to None.
+                        c.callee_symbol_id or "",
+                        c.callee_name,
+                        c.callee_target_kind,
+                        c.callee_external_module or "",
+                        c.file_path,
+                        c.line,
+                    )
                     for c in calls
                 ],
             )
@@ -468,14 +511,19 @@ class CodeIndexStorage:
     def get_calls_for_file(self, project_id: str, file_path: str) -> list[dict[str, Any]]:
         """Get call relations for a file (for graph sync)."""
         rows = self.db.fetchall(
-            """SELECT caller_symbol_id, callee_name, file_path, line FROM code_calls
+            """SELECT caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
+                      callee_external_module, file_path, line
+               FROM code_calls
                WHERE project_id = ? AND file_path = ?""",
             (project_id, file_path),
         )
         return [
             {
                 "caller_symbol_id": r["caller_symbol_id"],
+                "callee_symbol_id": r["callee_symbol_id"] or None,
                 "callee_name": r["callee_name"],
+                "callee_target_kind": r["callee_target_kind"],
+                "callee_external_module": r["callee_external_module"] or None,
                 "file_path": r["file_path"],
                 "line": r["line"],
             }

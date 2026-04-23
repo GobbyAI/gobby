@@ -9,7 +9,7 @@ These tests verify the full task ID generation system:
 
 import pytest
 
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 
@@ -31,7 +31,7 @@ class TestCompleteIDGenerationFlow:
 
     def test_full_task_lifecycle(self, task_manager, project_id, temp_db) -> None:
         """Test complete lifecycle: create -> verify ID/seq/path -> update -> close."""
-        session = LocalSessionManager(temp_db).register(
+        session = SessionManager(temp_db).register(
             external_id="id-flow-ext",
             machine_id="test-machine",
             source="codex",

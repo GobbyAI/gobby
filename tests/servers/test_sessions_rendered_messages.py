@@ -9,16 +9,16 @@ from fastapi.testclient import TestClient
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ class TestGetMessagesRendered:
 
     def test_get_messages_rendered_default(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that format=rendered is the default."""
@@ -87,7 +87,7 @@ class TestGetMessagesRendered:
 
     def test_get_messages_legacy_format(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test that format=legacy uses transcript_reader."""
@@ -126,7 +126,7 @@ class TestGetMessagesRendered:
 
     def test_get_messages_rendered_unavailable(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Test 503 if transcript_reader is None but format=rendered requested."""
@@ -152,7 +152,7 @@ class TestGetMessagesRendered:
 
     def test_transcript_status_uses_reader(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
         """Transcript status should delegate to TranscriptReader when available."""

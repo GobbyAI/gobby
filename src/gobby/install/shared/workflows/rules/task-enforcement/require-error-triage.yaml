@@ -17,6 +17,7 @@ rules:
           - "gobby-tasks:de_escalate_task"
           - "gobby-tasks:mark_task_needs_review"
           - "gobby-tasks:mark_task_review_approved"
+          - "gobby-tasks:mark_task_review_rejected"
         reason: |
           Before changing task status, run lint and tests on files you touched
           and fix ALL errors, warnings, and failures you find — including

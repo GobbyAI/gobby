@@ -30,15 +30,9 @@ _TTS_DEPS: dict[str, list[tuple[str, str]]] = {
     "chatterbox": [
         ("chatterbox-tts", "chatterbox"),
     ],
-    "kokoro": [
-        ("kokoro-onnx", "kokoro_onnx"),
-    ],
-    "voxcpm": [
-        ("voxcpm", "voxcpm"),
-    ],
 }
 
-_AUTO_INSTALL_TTS_PROVIDERS = {"chatterbox", "kokoro"}
+_AUTO_INSTALL_TTS_PROVIDERS = {"chatterbox"}
 
 # Guard against concurrent install attempts
 _install_lock = asyncio.Lock()

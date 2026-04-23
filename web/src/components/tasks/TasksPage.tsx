@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import './tasks-page.css'
 import './task-views.css'
 import { useTasks } from '../../hooks/useTasks'
-import type { GobbyTask, GobbyTaskDetail } from '../../hooks/useTasks'
+import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge, TaskStateBadges } from './TaskBadges'
 import { TaskDetail } from './TaskDetail'
 import { TaskCreateForm } from './TaskCreateForm'
@@ -10,7 +10,6 @@ import type { TaskCreateDefaults } from './TaskCreateForm'
 import { KanbanBoard } from './KanbanBoard'
 import { TaskTree } from './TaskTree'
 import { PriorityBoard } from './PriorityBoard'
-import { TaskOverview } from './TaskOverview'
 import { AuditLog } from './AuditLog'
 import { GanttChart } from './GanttChart'
 import { DigestView } from './DigestView'
@@ -246,8 +245,10 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   const {
     allTasks,
     tasks,
-    total,
     stats,
+    hasMore,
+    isLoadingMore,
+    loadMore,
     isLoading,
     filters,
     setFilters,
@@ -362,19 +363,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     return defaults
   }, [filters.taskType, filters.priority, selectedTaskId, allTasks, cloneDefaults])
 
-  const handleClone = useCallback((task: GobbyTaskDetail) => {
-    setCloneDefaults({
-      title: `[Clone] ${task.title}`,
-      description: task.description || undefined,
-      taskType: task.task_type,
-      priority: task.priority,
-      validationCriteria: task.validation_criteria || undefined,
-      labels: task.labels || undefined,
-      parentTaskId: task.parent_task_id || undefined,
-    })
-    setShowCreateForm(true)
-  }, [])
-
   const promptForSessionId = useCallback((ownerSessionId?: string | null): string | null => {
     if (ownerSessionId?.trim()) return ownerSessionId
     const value = window.prompt('Enter the session ID that should own this task')
@@ -461,7 +449,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
       <div className="tasks-toolbar">
         <div className="tasks-toolbar-left">
           <h2 className="tasks-title">Tasks</h2>
-          <span className="tasks-count">{total} total</span>
           <div className="task-group-tabs">
             <button className={`task-group-tab ${groupBy === 'all' ? 'active' : ''}`} onClick={() => setGroupBy('all')}>All Tasks</button>
             <button className={`task-group-tab ${groupBy === 'agent' ? 'active' : ''}`} onClick={() => setGroupBy('agent')}>By Agent</button>
@@ -498,13 +485,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           </button>
         </div>
       </div>
-
-      {/* Overview cards */}
-      <TaskOverview
-        stats={stats}
-        activeFilter={filters.status}
-        onFilterStatus={status => setFilters(f => ({ ...f, status }))}
-      />
 
       {/* Filter bar */}
       <div className="tasks-filter-bar">
@@ -691,6 +671,18 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               </tbody>
             </table>
           )}
+          {hasMore && groupBy !== 'agent' && (
+            <div className="tasks-load-more">
+              <button
+                type="button"
+                className="tasks-load-more-btn"
+                onClick={() => { void loadMore() }}
+                disabled={isLoadingMore}
+              >
+                {isLoadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -718,7 +710,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         }}
         onSelectTask={setSelectedTaskId}
         onClose={() => setSelectedTaskId(null)}
-        onClone={handleClone}
       />
 
       <TaskCreateForm

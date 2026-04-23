@@ -355,7 +355,11 @@ def create_stdio_mcp_server() -> FastMCP:
     memory_manager = None
 
     # Setup internal registries using extracted function
-    _ = setup_internal_registries(config, session_manager, memory_manager)
+    _ = setup_internal_registries(
+        _config=config,
+        session_manager=session_manager,
+        memory_manager=memory_manager,
+    )
 
     # Initialize MCP server and daemon proxy
     mcp = FastMCP("gobby", instructions=build_gobby_instructions())

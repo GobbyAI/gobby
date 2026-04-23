@@ -1,7 +1,7 @@
 """
 Skills configuration for Gobby daemon.
 
-Provides configuration for skill injection and discovery.
+Provides configuration for skill discovery and active-skill manifest formatting.
 """
 
 from __future__ import annotations
@@ -43,20 +43,20 @@ class HubConfig(BaseModel):
 
     auth_key_name: str | None = Field(
         default=None,
-        description="Environment variable name for auth key",
+        description="Secret name in SecretStore for the hub's auth key",
     )
 
 
 class SkillsConfig(BaseModel):
     """
-    Configuration for skill injection and discovery.
+    Configuration for skill discovery and active-skill manifests.
 
-    Controls whether and how skills are injected into session context.
+    Controls whether and how skills are advertised for on-demand loading.
     """
 
     inject_core_skills: bool = Field(
         default=True,
-        description="Whether to inject core skills into session context",
+        description="Whether to advertise core skills in session context",
     )
 
     core_skills_path: str | None = Field(
@@ -66,7 +66,7 @@ class SkillsConfig(BaseModel):
 
     injection_format: Literal["summary", "full", "none"] = Field(
         default="summary",
-        description="Format for skill injection: 'summary' (names only), 'full' (with content), 'none' (disabled)",
+        description="Format selector for skill manifests: 'summary', 'full', or 'none'",
     )
 
     hubs: dict[str, HubConfig] = Field(

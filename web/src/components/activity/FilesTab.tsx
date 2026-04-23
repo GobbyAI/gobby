@@ -1,5 +1,6 @@
-import { memo, useState, useEffect, useCallback, useRef } from 'react'
+import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import ReactMarkdown from 'react-markdown'
@@ -11,6 +12,25 @@ import { codeTheme } from '../shared/codeTheme'
 interface FilesTabProps {
   projectId?: string | null
   onAddToChat?: (filePath: string) => void
+  layout?: 'stack' | 'responsive-split'
+}
+
+const FILES_TAB_LEFT_WIDTH_KEY = 'gobby:files-tab:left-width'
+const FILES_TAB_LEFT_WIDTH_DEFAULT = 320
+const FILES_TAB_LEFT_WIDTH_MIN = 200
+const FILES_TAB_LEFT_WIDTH_MAX = 600
+
+function readPersistedLeftWidth(): number {
+  if (typeof window === 'undefined') return FILES_TAB_LEFT_WIDTH_DEFAULT
+  try {
+    const stored = window.localStorage.getItem(FILES_TAB_LEFT_WIDTH_KEY)
+    if (!stored) return FILES_TAB_LEFT_WIDTH_DEFAULT
+    const parsed = Number.parseInt(stored, 10)
+    if (Number.isNaN(parsed)) return FILES_TAB_LEFT_WIDTH_DEFAULT
+    return Math.max(FILES_TAB_LEFT_WIDTH_MIN, Math.min(FILES_TAB_LEFT_WIDTH_MAX, parsed))
+  } catch {
+    return FILES_TAB_LEFT_WIDTH_DEFAULT
+  }
 }
 
 interface FileEntry {
@@ -86,13 +106,28 @@ function FileIconSvg({ extension }: { extension: string }) {
   )
 }
 
-export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: FilesTabProps) {
+export const FilesTab = memo(function FilesTab({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
+  const isMobile = useIsMobile()
+  const useHorizontal = layout === 'responsive-split' && !isMobile
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [childrenMap, setChildrenMap] = useState<Map<string, FileEntry[]>>(new Map())
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [topHeight, setTopHeight] = useState(40)
+  const [leftWidth, setLeftWidth] = useState<number>(() =>
+    layout === 'responsive-split' ? readPersistedLeftWidth() : FILES_TAB_LEFT_WIDTH_DEFAULT,
+  )
+
+  useEffect(() => {
+    if (layout !== 'responsive-split') return
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(FILES_TAB_LEFT_WIDTH_KEY, String(leftWidth))
+    } catch {
+      // Ignore storage write failures (quota, private mode, etc.)
+    }
+  }, [layout, leftWidth])
   const [fileContent, setFileContent] = useState<string | null>(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -300,6 +335,16 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
     return () => window.removeEventListener('click', handler)
   }, [ctxMenu])
 
+  // Hooks must be declared before any early returns (rules-of-hooks).
+  const treePaneStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!selectedFile) {
+      return undefined
+    }
+    return useHorizontal
+      ? { flex: 'none', width: `${leftWidth}px` }
+      : { flex: 'none', height: `${topHeight}%` }
+  }, [selectedFile, useHorizontal, leftWidth, topHeight])
+
   if (loading) return <div className="activity-tab-empty"><p>Loading files...</p></div>
   if (!projectId) return <div className="activity-tab-empty"><p>No project selected</p></div>
 
@@ -395,9 +440,16 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
   const language = selectedFile ? detectLanguage(selectedFile) : 'text'
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={`flex h-full ${useHorizontal ? 'flex-row' : 'flex-col'}`}>
       {/* File tree */}
-      <div className={`overflow-y-auto ${selectedFile ? 'border-b border-border' : 'flex-1'}`} style={selectedFile ? { height: `${topHeight}%` } : undefined}>
+      <div
+        className={`overflow-y-auto ${
+          selectedFile
+            ? useHorizontal ? 'border-r border-border' : 'border-b border-border'
+            : 'flex-1'
+        }`}
+        style={treePaneStyle}
+      >
         {rootEntries.length === 0 ? (
           <div className="activity-tab-empty"><p>No files</p></div>
         ) : (
@@ -407,12 +459,14 @@ export const FilesTab = memo(function FilesTab({ projectId, onAddToChat }: Files
 
       {/* Resize handle */}
       {selectedFile && (
-        <ResizeHandle direction="vertical" onResize={setTopHeight} panelHeight={topHeight} minHeight={15} maxHeight={80} />
+        useHorizontal
+          ? <ResizeHandle direction="horizontal" horizontalAnchor="left" onResize={setLeftWidth} panelWidth={leftWidth} minWidth={FILES_TAB_LEFT_WIDTH_MIN} maxWidth={FILES_TAB_LEFT_WIDTH_MAX} />
+          : <ResizeHandle direction="vertical" onResize={setTopHeight} panelHeight={topHeight} minHeight={15} maxHeight={80} />
       )}
 
       {/* File viewer */}
       {selectedFile && (
-        <div className="flex-1 flex flex-col min-h-0">
+        <div className={`flex-1 ${useHorizontal ? 'min-w-0' : ''} flex flex-col min-h-0`}>
           <div className="file-viewer-toolbar">
             <span className="file-viewer-path">{selectedFile}</span>
             <div className="file-viewer-actions">

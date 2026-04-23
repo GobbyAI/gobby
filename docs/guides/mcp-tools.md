@@ -283,7 +283,7 @@ Internal tools are accessed via `call_tool(server_name="gobby-*", ...)`.
 | `gobby-clones` | Clone isolation lifecycle |
 | `gobby-merge` | Merge conflict resolution |
 | `gobby-skills` | Skill discovery and loading |
-| `gobby-metrics` | Metrics and budget tracking |
+| `gobby-metrics` | Metrics and usage reporting |
 | `gobby-hub` | Cross-project queries |
 | `gobby-cron` | Scheduled triggers |
 
@@ -665,7 +665,7 @@ call_tool("gobby-agents", "send_command", {
 
 ## Worktree Management (`gobby-worktrees`)
 
-14 tools for git worktree parallel development.
+16 tools for git worktree parallel development.
 
 | Tool | Description |
 | :--- | :--- |
@@ -677,7 +677,10 @@ call_tool("gobby-agents", "send_command", {
 | `release_worktree` | Release ownership |
 | `delete_worktree` | Delete worktree (git + DB) |
 | `sync_worktree` | Sync with main branch |
-| `mark_worktree_merged` | Mark as merged (ready for cleanup) |
+| `merge_worktree` | Merge a worktree branch |
+| `mark_worktree_merged` | Verify git ancestry and mark as merged |
+| `abandon_worktree` | Mark as abandoned |
+| `reactivate_worktree` | Reactivate and clear merge cleanup scheduling |
 | `detect_stale_worktrees` | Find inactive worktrees |
 | `cleanup_stale_worktrees` | Delete stale worktrees |
 | `get_worktree_stats` | Get project worktree statistics |
@@ -757,7 +760,7 @@ call_tool("gobby-merge", "merge_apply", {})
 
 ## Metrics (`gobby-metrics`)
 
-10 tools for tool usage and budget tracking.
+9 tools for tool usage and metrics reporting.
 
 | Tool | Description |
 | :--- | :--- |
@@ -770,8 +773,7 @@ call_tool("gobby-merge", "merge_apply", {})
 | `reset_tool_metrics` | Admin reset for specific tool |
 | `cleanup_old_metrics` | Delete metrics older than retention |
 | `get_retention_stats` | Metrics retention statistics |
-| `get_usage_report` | Token and cost usage report |
-| `get_budget_status` | Daily budget status |
+| `get_usage_report` | Token usage report |
 
 ---
 

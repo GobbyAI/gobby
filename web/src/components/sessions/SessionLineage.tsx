@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { GobbySession } from '../../hooks/useSessions'
+import type { GobbySession } from '../../types/sessions'
 import { SourceIcon } from '../shared/SourceIcon'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionDisplayTitle } from '../../lib/sessionTitle'

@@ -101,7 +101,12 @@ def install_embedding(
     dim = cfg["dim"]
 
     # Health check before persisting
-    health_ok = _health_check_embedding(model=model, api_base=api_base, api_key=openai_api_key)
+    health_ok = _health_check_embedding(
+        model=model,
+        api_base=api_base,
+        api_key=openai_api_key,
+        expected_dim=dim,
+    )
     if not health_ok:
         return {
             "success": False,
@@ -326,6 +331,7 @@ def _health_check_embedding(
     model: str,
     api_base: str | None,
     api_key: str | None = None,
+    expected_dim: int | None = None,
 ) -> bool:
     """Fire a single test embedding. Returns True on success."""
     from gobby.search.embeddings import generate_embedding
@@ -338,6 +344,7 @@ def _health_check_embedding(
                 api_base=api_base,
                 api_key=api_key,
                 max_retries=1,
+                expected_dim=expected_dim,
             )
             return len(result) > 0
         except Exception as e:

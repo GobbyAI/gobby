@@ -13,14 +13,14 @@ from gobby.workflows.git_utils import get_dirty_files
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
 
 def register_action_tools(
     registry: InternalToolRegistry,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
     config: Any | None = None,
@@ -31,7 +31,7 @@ def register_action_tools(
 
     Args:
         registry: The session tool registry
-        session_manager: LocalSessionManager for session lookups
+        session_manager: SessionManager for session lookups
         llm_service: LLM service for handoff generation
         transcript_processor: Transcript processor for handoff generation
         config: DaemonConfig for settings

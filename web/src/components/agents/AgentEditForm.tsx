@@ -18,6 +18,7 @@ import {
 export interface AgentFormData {
   name: string
   description: string
+  surfaces: string[]
   role: string
   goal: string
   personality: string
@@ -39,6 +40,7 @@ export interface AgentItemForPanel {
   definition: {
     name: string
     description: string | null
+    surfaces?: string[] | null
     role: string | null
     goal: string | null
     personality: string | null
@@ -214,6 +216,13 @@ export function AgentEditForm({
 
   const set = <K extends keyof AgentFormData>(key: K, value: AgentFormData[K]) =>
     onChange({ ...form, [key]: value })
+
+  const toggleSurface = (surface: string) => {
+    const next = form.surfaces.includes(surface)
+      ? form.surfaces.filter(item => item !== surface)
+      : [...form.surfaces, surface]
+    onChange({ ...form, surfaces: next.length > 0 ? next : ['spawn'] })
+  }
 
   const rd = agentItem?.definition
   const wfMeta = ['rules', 'variables', 'pipeline', 'rule_selectors']
@@ -622,6 +631,27 @@ export function AgentEditForm({
                 <option value="embedded">Embedded</option>
                 <option value="headless">Headless</option>
               </select>
+            </MetaRow>
+
+            <MetaRow label="Surfaces">
+              <div className="agent-edit-checkbox-group">
+                <label className="agent-edit-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.surfaces.includes('spawn')}
+                    onChange={() => toggleSurface('spawn')}
+                  />
+                  <span>Spawn</span>
+                </label>
+                <label className="agent-edit-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.surfaces.includes('persona')}
+                    onChange={() => toggleSurface('persona')}
+                  />
+                  <span>Persona</span>
+                </label>
+              </div>
             </MetaRow>
 
             <MetaRow label="Isolation">

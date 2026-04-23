@@ -31,7 +31,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class AgentSpawnRequest(BaseModel):
+class ReasoningEffortMixin(BaseModel):
+    """Shared reasoning-effort normalization for spawn-related request models."""
+
+    @field_validator("reasoning_effort", mode="before", check_fields=False)
+    @classmethod
+    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return normalize_reasoning_effort(str(value))
+
+
+class AgentSpawnRequest(ReasoningEffortMixin):
     """Request body for spawning an agent on a task."""
 
     task_id: str
@@ -48,13 +59,6 @@ class AgentSpawnRequest(BaseModel):
     base_branch: str | None = None
     timeout: float | None = None
     max_turns: int | None = None
-
-    @field_validator("reasoning_effort", mode="before")
-    @classmethod
-    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return normalize_reasoning_effort(str(value))
 
 
 class AgentSpawnResponse(BaseModel):
@@ -86,7 +90,7 @@ class BatchSpawnResponse(BaseModel):
     failed: int
 
 
-class LaunchDefaultsRequest(BaseModel):
+class LaunchDefaultsRequest(ReasoningEffortMixin):
     """Request body for saving per-category launch defaults."""
 
     project_id: str
@@ -97,13 +101,6 @@ class LaunchDefaultsRequest(BaseModel):
     model: str | None = None
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
-
-    @field_validator("reasoning_effort", mode="before")
-    @classmethod
-    def _normalize_reasoning_effort(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        return normalize_reasoning_effort(str(value))
 
 
 # ---------------------------------------------------------------------------

@@ -104,7 +104,7 @@ class TestSummarizeTools:
 
         # Mock the summarization function to return a fallback
         with patch(
-            "gobby.tools.summarizer._summarize_description_with_claude",
+            "gobby.tools.summarizer._summarize_description_with_llm",
             new_callable=AsyncMock,
             return_value="Shortened description",
         ) as mock_summarize:
@@ -134,7 +134,7 @@ class TestMaxDescriptionLength:
         tool.inputSchema = {}
 
         with patch(
-            "gobby.tools.summarizer._summarize_description_with_claude",
+            "gobby.tools.summarizer._summarize_description_with_llm",
             new_callable=AsyncMock,
         ) as mock_summarize:
             result = await summarize_tools([tool])
@@ -154,7 +154,7 @@ class TestMaxDescriptionLength:
         tool.inputSchema = {}
 
         with patch(
-            "gobby.tools.summarizer._summarize_description_with_claude",
+            "gobby.tools.summarizer._summarize_description_with_llm",
             new_callable=AsyncMock,
             return_value="Short",
         ) as mock_summarize:
@@ -165,23 +165,20 @@ class TestMaxDescriptionLength:
 
 
 class TestSummarizeDescriptionWithClaude:
-    """Tests for _summarize_description_with_claude function."""
+    """Tests for _summarize_description_with_llm function."""
 
     @pytest.mark.asyncio
     async def test_summarize_description_success(self):
-        """Test successful summarization via Claude provider."""
-        from gobby.tools.summarizer import _summarize_description_with_claude
+        """Test successful summarization via configured provider."""
+        from gobby.tools.summarizer import _summarize_description_with_llm
 
         mock_config = MagicMock()
         mock_config.prompt_path = "features/tool_summary"
         mock_config.system_prompt_path = "features/tool_summary_system"
         mock_config.model = "claude-3-haiku-20240307"
 
-        mock_provider = AsyncMock()
-        mock_provider.generate_text = AsyncMock(return_value="Summarized text")
-
         mock_llm_service = MagicMock()
-        mock_llm_service.get_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="Summarized text")
 
         mock_loader = MagicMock()
         mock_loader.render.return_value = "Long description " * 10
@@ -191,21 +188,21 @@ class TestSummarizeDescriptionWithClaude:
             patch("gobby.tools.summarizer._loader", mock_loader),
             patch("gobby.tools.summarizer._llm_service", mock_llm_service),
         ):
-            result = await _summarize_description_with_claude("Long description " * 10)
+            result = await _summarize_description_with_llm("Long description " * 10)
             assert result == "Summarized text"
-            mock_provider.generate_text.assert_called_once()
+            mock_llm_service.call_feature.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_summarize_description_failure_fallback(self):
         """Test fallback when summarization fails."""
-        from gobby.tools.summarizer import _summarize_description_with_claude
+        from gobby.tools.summarizer import _summarize_description_with_llm
 
         with (
             patch("gobby.tools.summarizer._get_config"),
             patch("gobby.tools.summarizer._llm_service", None),
         ):
             long_desc = "A" * 250
-            result = await _summarize_description_with_claude(long_desc)
+            result = await _summarize_description_with_llm(long_desc)
 
             # Should truncate
             assert len(result) == 200
@@ -228,11 +225,8 @@ class TestGenerateServerDescription:
         mock_config.server_description_system_prompt_path = "features/server_description_system"
         mock_config.model = "model"
 
-        mock_provider = AsyncMock()
-        mock_provider.generate_text = AsyncMock(return_value="Server does things.")
-
         mock_llm_service = MagicMock()
-        mock_llm_service.get_provider.return_value = mock_provider
+        mock_llm_service.call_feature = AsyncMock(return_value="Server does things.")
 
         mock_loader = MagicMock()
         mock_loader.render.return_value = "Describe server1"

@@ -12,8 +12,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
-from gobby.workflows.rule_engine import RuleEngine
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -33,7 +33,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 def _sync_bundled(db):
     """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     return sync_bundled_rules(db, get_bundled_rules_path())
 
@@ -97,11 +97,15 @@ class TestBlockEscapedQuotesRule:
         assert "escaped quotes" in body.effects[0].reason.lower()
 
 
-class TestRequireUvRule:
-    """Verify require-uv rule rewrites naked python/pip to use uv."""
+REQUIRE_UV_REASON = "Bare python/pip is not permitted in this repo. Use uv instead."
+REQUIRE_UV_COMMAND_PATTERN = r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
 
-    def test_uses_rewrite_input(self, db, manager) -> None:
-        """require-uv should use rewrite_input + inject_context effects."""
+
+class TestRequireUvRule:
+    """Verify require-uv blocks naked python/pip commands."""
+
+    def test_uses_single_block_effect(self, db, manager) -> None:
+        """require-uv should only block matching Bash commands."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv")
@@ -109,21 +113,25 @@ class TestRequireUvRule:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
-        effect_types = {e.type for e in body.resolved_effects}
-        assert "rewrite_input" in effect_types
-        assert "inject_context" in effect_types
+        assert row.description == "Block bare python/pip; require uv"
+        assert len(body.resolved_effects) == 1
 
-    def test_rewrite_has_regex_replace(self, db, manager) -> None:
-        """rewrite_input should use regex_replace to transform commands."""
+        effect = body.resolved_effects[0]
+        assert effect.type == "block"
+        assert effect.tools == ["Bash"]
+        assert effect.command_pattern == REQUIRE_UV_COMMAND_PATTERN
+        assert effect.reason == REQUIRE_UV_REASON
+
+    def test_has_no_rewrite_or_context_effects(self, db, manager) -> None:
+        """require-uv should not return modified_input through rewrite effects."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-uv")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
-        rewrite_effects = [e for e in body.resolved_effects if e.type == "rewrite_input"]
-        assert len(rewrite_effects) == 1
-        assert "command" in rewrite_effects[0].input_updates
-        assert "regex_replace" in rewrite_effects[0].input_updates["command"]
+        effect_types = {e.type for e in body.resolved_effects}
+        assert "rewrite_input" not in effect_types
+        assert "inject_context" not in effect_types
 
     def test_has_when_condition(self, db, manager) -> None:
         """require-uv should only fire when require_uv variable is set."""
@@ -137,7 +145,7 @@ class TestRequireUvRule:
 
     @pytest.mark.asyncio
     async def test_bundled_rule_skips_already_compliant_uv_python(self, db, manager) -> None:
-        """Compliant uv commands should not emit modified_input."""
+        """Compliant uv commands should not block or emit modified_input."""
         _sync_bundled(db)
 
         event = _make_bash_event(
@@ -150,6 +158,23 @@ class TestRequireUvRule:
 
         assert response.decision == "allow"
         assert response.modified_input is None
+
+    @pytest.mark.asyncio
+    async def test_bundled_rule_blocks_bare_python_without_modified_input(
+        self, db, manager
+    ) -> None:
+        """Bare python should block directly without rewrite retry payloads."""
+        _sync_bundled(db)
+
+        event = _make_bash_event("python script.py", source=SessionSource.CODEX)
+        engine = RuleEngine(db)
+
+        response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
+
+        assert response.decision == "block"
+        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.modified_input is None
+        assert response.auto_approve is False
 
 
 class TestTrackPendingMemoryReview:
@@ -214,9 +239,8 @@ def _require_uv_effect() -> RuleEffect:
     return RuleEffect(
         type="block",
         tools=["Bash"],
-        command_pattern=r"(?:^|[;&|])\s*(?:sudo\s+)?(?:python(?:3(?:\.\d+)?)?|pip3?)\b",
-        command_not_pattern=r"(?:^|[;&|])\s*(?:sudo\s+)?uv\s+",
-        reason="Use `uv run` or `uv pip` instead of running python/pip directly.",
+        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
+        reason=REQUIRE_UV_REASON,
     )
 
 
@@ -265,6 +289,11 @@ class TestRequireUvShouldBlock:
     def test_blocks_python_after_chain(self, db) -> None:
         engine = RuleEngine(db)
         event = _make_bash_event("cd /tmp && python test.py")
+        assert engine._should_block(_require_uv_effect(), event) is True
+
+    def test_blocks_pip_after_chain(self, db) -> None:
+        engine = RuleEngine(db)
+        event = _make_bash_event("cd /tmp && pip install x")
         assert engine._should_block(_require_uv_effect(), event) is True
 
     def test_allows_uv_run_python_after_chain(self, db) -> None:

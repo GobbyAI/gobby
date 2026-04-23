@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.servers.chat_session import ChatSession
     from gobby.storage.cron_models import CronJob
     from gobby.storage.pipelines import LocalPipelineExecutionManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +30,13 @@ that keeps development moving forward.
 ## On Each Tick
 1. Check task state: use `list_tasks` and `suggest_next_task` to find ready work
 2. Check pipeline state: use `get_pipeline_status` to find stalled or waiting pipelines
-3. Check budget: use `get_budget_status` to verify token budget limits
-4. Dispatch agents: use `spawn_agent` or `dispatch_batch` for ready tasks
+3. Dispatch agents: use `spawn_agent` or `dispatch_batch` for ready tasks
+4. Review completed pipeline executions when useful
 5. Report: briefly summarize what you did or found
 
 ## Rules
 - Be concise. You are a daemon, not a conversationalist.
-- Only dispatch work when tasks are ready and budget allows.
+- Only dispatch work when tasks are ready and there is no conflicting active work.
 - If nothing needs attention, say "No action needed" and stop.
 - Use progressive tool discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 - Never dispatch agents for tasks that already have active agents.
@@ -54,10 +54,14 @@ class ConductorManager:
         self,
         project_id: str,
         project_path: str | None,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         config: ConductorConfig,
         execution_manager: LocalPipelineExecutionManager | None = None,
     ) -> None:
+        if config.provider != "claude":
+            raise RuntimeError(
+                f"Conductor provider '{config.provider}' is not supported. Use provider='claude'."
+            )
         self._project_id = project_id
         self._project_path = project_path
         self._session_manager = session_manager
@@ -82,7 +86,7 @@ class ConductorManager:
             self._last_activity = datetime.now(UTC)
             tick_msg = (
                 f"Conductor tick at {datetime.now(UTC).isoformat()}. "
-                "Check tasks, pipelines, and budget. Dispatch agents if needed."
+                "Check tasks and pipelines. Dispatch agents if needed."
             )
             from gobby.llm.claude_models import DoneEvent, TextChunk
 
@@ -241,6 +245,7 @@ class ConductorManager:
 
         session = ChatSession(
             conversation_id=self._conversation_id,
+            provider=self._config.provider,
             project_id=self._project_id,
             project_path=self._project_path,
         )

@@ -283,8 +283,6 @@ class TestBundledTemplates:
             "features/tool_summary_system",
             "features/server_description",
             "features/server_description_system",
-            "features/task_description",
-            "features/task_description_system",
             "features/recommend_tools",
             "features/recommend_hybrid",
             "features/recommend_llm",

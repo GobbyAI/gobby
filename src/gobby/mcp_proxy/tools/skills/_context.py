@@ -9,7 +9,7 @@ from gobby.skills.hubs.manager import HubManager
 from gobby.skills.loader import SkillLoader
 from gobby.skills.search import SkillSearch
 from gobby.skills.updater import SkillUpdater
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ class SkillsContext:
     db: DatabaseProtocol
     storage: LocalSkillManager
     notifier: SkillChangeNotifier
-    session_manager: LocalSessionManager
+    session_manager: SessionManager
     search: SkillSearch
     updater: SkillUpdater
     loader: SkillLoader

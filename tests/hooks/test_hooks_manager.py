@@ -372,7 +372,12 @@ class TestHookManagerSessionEnd:
 
         with (
             patch.object(
-                hook_manager_with_mocks._session_storage, "get", return_value=mock_session
+                hook_manager_with_mocks._session_manager,
+                "get_session_id",
+                return_value="test-session-id",
+            ),
+            patch.object(
+                hook_manager_with_mocks._session_manager, "get", return_value=mock_session
             ),
             patch(
                 "gobby.tasks.commits.auto_link_commits", return_value=mock_result
@@ -880,6 +885,42 @@ class TestHookManagerBroadcasting:
 class TestHookManagerSessionLookup:
     """Tests for session lookup and auto-registration."""
 
+    def test_session_start_precreated_session_skips_auto_registration(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        """Pre-created SESSION_START rows must bind in-place without a stray auto-register."""
+        manager = hook_manager_with_mocks
+        project_meta = (temp_dir / ".gobby" / "project.json").read_text()
+        project_id = json.loads(project_meta)["id"]
+        precreated = manager._session_manager.create_web_chat_session(
+            machine_id="test-machine-id",
+            project_id=project_id,
+            source="codex",
+            model="gpt-5.4",
+            sandbox_enabled=False,
+            sandbox_policy_hash="policy-hash",
+        )
+
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=precreated.id,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"cwd": str(temp_dir), "source": "startup"},
+            machine_id="test-machine-id",
+        )
+
+        with patch.object(
+            manager._session_manager,
+            "register_session",
+            wraps=manager._session_manager.register_session,
+        ) as mock_register:
+            response = manager.handle(event)
+
+        assert response.decision == "allow"
+        mock_register.assert_not_called()
+        assert event.metadata["_platform_session_id"] == precreated.id
+
     def test_handle_looks_up_session_from_database(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
@@ -938,6 +979,40 @@ class TestHookManagerSessionLookup:
         assert mock_register.called
         assert response.decision == "allow"
 
+    def test_handle_does_not_auto_register_unknown_session_end(
+        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+    ) -> None:
+        """Unknown SESSION_END hooks should not create placeholder session rows."""
+        manager = hook_manager_with_mocks
+
+        event = HookEvent(
+            event_type=HookEventType.SESSION_END,
+            session_id="orphaned-session-end",
+            source=SessionSource.QWEN,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "transcript_path": str(temp_dir / "missing-transcript.jsonl"),
+            },
+            machine_id="test-machine-id",
+        )
+
+        with (
+            patch.object(manager._session_manager, "get_session_id", return_value=None),
+            patch.object(manager._session_manager, "lookup_session_id", return_value=None),
+            patch.object(manager._session_manager, "recover_session", return_value=None),
+        ):
+            response = manager.handle(event)
+
+        rows = manager._session_manager.db.fetchall(
+            "SELECT id FROM sessions WHERE external_id = ?",
+            ("orphaned-session-end",),
+        )
+
+        assert response.decision == "allow"
+        assert event.metadata.get("_platform_session_id") is None
+        assert rows == []
+
     def test_handle_recovers_existing_session_across_source_mismatch(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
@@ -945,7 +1020,7 @@ class TestHookManagerSessionLookup:
         manager = hook_manager_with_mocks
         project_meta = (temp_dir / ".gobby" / "project.json").read_text()
         project_id = json.loads(project_meta)["id"]
-        existing = manager._session_storage.register(
+        existing = manager._session_manager.register(
             external_id="shared-session-id",
             machine_id="test-machine-id",
             source="codex",
@@ -971,7 +1046,7 @@ class TestHookManagerSessionLookup:
             manager._session_manager.get_session_id("shared-session-id", "claude")
             == existing_session_id
         )
-        rows = manager._session_storage.db.fetchall(
+        rows = manager._session_manager.db.fetchall(
             "SELECT id FROM sessions WHERE external_id = ?",
             ("shared-session-id",),
         )
@@ -999,7 +1074,7 @@ class TestHookManagerSessionLookup:
         )
         assert session_id is not None
 
-        manager._session_storage.db.execute(
+        manager._session_manager.db.execute(
             "UPDATE sessions SET title = ?, digest_markdown = ? WHERE id = ?",
             ("Recovered Codex Title", "## digest", session_id),
         )
@@ -1021,7 +1096,7 @@ class TestHookManagerSessionLookup:
             response = manager.handle(repair_event)
 
         assert response.decision == "allow"
-        updated = manager._session_storage.get(session_id)
+        updated = manager._session_manager.get(session_id)
         assert updated is not None
         assert updated.terminal_context is not None
         assert updated.terminal_context["tmux_pane"] == "%5"

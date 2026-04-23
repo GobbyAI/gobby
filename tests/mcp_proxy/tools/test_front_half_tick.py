@@ -15,7 +15,6 @@ from gobby.mcp_proxy.tools.tasks._front_half import (
     FRONT_HALF_COMPLETE_LABEL,
     FRONT_HALF_LABEL,
     NEEDS_REQUIREMENTS_PREFIX,
-    PLANNING_CHANGES_REQUESTED_PREFIX,
     PLANNING_ROUND_LABEL_PREFIX,
     create_front_half_registry,
 )
@@ -203,9 +202,10 @@ class TestFrontHalfTick:
         assert result["current_stage"] == "planning"
         assert result["next_action"] == "spawn_plan_adversary"
         assert result["dispatch"]["agent"] == "plan-adversary"
+        assert "Display round: 1" in result["dispatch"]["prompt"]
 
     @pytest.mark.asyncio
-    async def test_planning_change_request_resumes_next_round(
+    async def test_planning_review_rejection_resumes_next_round(
         self,
         front_half_registry,
         task_manager,
@@ -222,9 +222,11 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
-        task_manager.escalate_task(
+        task_manager.mark_task_needs_review(planning_task.id, review_notes="Ready")
+        task_manager.mark_task_review_rejected(
             planning_task.id,
-            reason=f"{PLANNING_CHANGES_REQUESTED_PREFIX} sequencing is weak",
+            rejection_notes="Sequencing is weak",
+            round_number=1,
         )
 
         with session_context_for_test(test_session):
@@ -263,9 +265,11 @@ class TestFrontHalfTick:
             planning_task.id,
             labels=[FRONT_HALF_LABEL, _STAGE_LABELS["planning"], f"{PLANNING_ROUND_LABEL_PREFIX}2"],
         )
-        task_manager.escalate_task(
+        task_manager.mark_task_needs_review(planning_task.id, review_notes="Ready")
+        task_manager.mark_task_review_rejected(
             planning_task.id,
-            reason=f"{PLANNING_CHANGES_REQUESTED_PREFIX} still missing critical constraints",
+            rejection_notes="Still missing critical constraints",
+            round_number=3,
         )
 
         with session_context_for_test(test_session):
@@ -277,7 +281,8 @@ class TestFrontHalfTick:
         assert result["next_action"] == "front_half_failed"
         refreshed = task_manager.get_task(planning_task.id)
         assert refreshed is not None
-        assert refreshed.status == "escalated"
+        assert refreshed.status == "open"
+        assert f"{PLANNING_ROUND_LABEL_PREFIX}3" in (refreshed.labels or [])
 
     @pytest.mark.asyncio
     async def test_planning_approval_starts_expansion_run(

@@ -6,7 +6,10 @@ rules:
     event: after_tool
     enabled: true
     priority: 20
-    when: "event.data.get('mcp_tool') == 'get_tool_schema' or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema')"
+    when: >
+      (event.data.get('mcp_tool') == 'get_tool_schema'
+       or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
+      and (tool_input.get('server_name', '') + ':' + tool_input.get('tool_name', '')) not in variables.get('unlocked_tools', [])
     effects:
       - type: set_variable
         variable: unlocked_tools

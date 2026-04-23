@@ -27,7 +27,10 @@ from collections.abc import Callable
 from typing import Any
 
 from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
-from gobby.search.embeddings import is_embedding_available
+from gobby.search.embeddings import (
+    is_embedding_configured,
+    is_embedding_reachable,
+)
 from gobby.search.fts5 import FTS5SearchBackend
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 
@@ -84,6 +87,7 @@ class UnifiedSearcher:
         embedding_model: str = "nomic-embed-text",
         embedding_api_base: str | None = None,
         embedding_api_key: str | None = None,
+        embedding_dim: int | None = None,
     ):
         """Initialize UnifiedSearcher.
 
@@ -98,12 +102,14 @@ class UnifiedSearcher:
             embedding_model: Embedding model name (from EmbeddingsConfig)
             embedding_api_base: API base URL for embedding endpoint
             embedding_api_key: API key for embedding provider
+            embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
         """
         self._config = config or SearchConfig()
         self._event_callback = event_callback
         self._embedding_model = embedding_model
         self._embedding_api_base = embedding_api_base
         self._embedding_api_key = embedding_api_key
+        self._embedding_dim = embedding_dim
 
         # FTS5 config
         self._db = db
@@ -148,6 +154,7 @@ class UnifiedSearcher:
                 model=self._embedding_model,
                 api_base=self._embedding_api_base,
                 api_key=self._embedding_api_key,
+                dim=self._embedding_dim,
             )
         return self._embedding_backend
 
@@ -234,15 +241,29 @@ class UnifiedSearcher:
             self._fitted_mode = mode
 
         elif mode == SearchMode.EMBEDDING:
-            # Embedding only - fail if unavailable
-            if not is_embedding_available(
+            # Embedding only - fail if unavailable. Check config first so we
+            # can distinguish "not configured" from "configured but unreachable"
+            # in the error message; then actually probe the endpoint.
+            if not is_embedding_configured(
                 model=self._embedding_model,
                 api_key=self._embedding_api_key,
                 api_base=self._embedding_api_base,
             ):
                 raise RuntimeError(
-                    f"Embedding unavailable for model {self._embedding_model}. "
-                    "Set the appropriate API key or use mode='auto' for fallback."
+                    f"Embedding not configured for model {self._embedding_model}. "
+                    "Set the appropriate API key or api_base, or use mode='auto' "
+                    "for fallback."
+                )
+            if not await is_embedding_reachable(
+                model=self._embedding_model,
+                api_key=self._embedding_api_key,
+                api_base=self._embedding_api_base,
+            ):
+                endpoint = self._embedding_api_base or "OpenAI cloud"
+                raise RuntimeError(
+                    f"Embedding endpoint unreachable ({endpoint}) for model "
+                    f"{self._embedding_model}. Check that the server is running "
+                    "and the api_base is correct, or use mode='auto' for fallback."
                 )
 
             embedding = self._get_embedding_backend()
@@ -252,15 +273,17 @@ class UnifiedSearcher:
             self._fitted_mode = mode
 
         elif mode == SearchMode.AUTO:
-            # Try embedding, fallback to keyword
-            if not is_embedding_available(
+            # Try embedding, fallback to keyword. Probe the endpoint so we
+            # skip the expensive embedding call when the server is down
+            # rather than waiting for it to fail.
+            if not await is_embedding_reachable(
                 model=self._embedding_model,
                 api_key=self._embedding_api_key,
                 api_base=self._embedding_api_base,
             ):
                 # No embedding available - use keyword
                 await self._fallback_to_keyword(
-                    f"Embedding unavailable (no API key for {self._embedding_model})",
+                    f"Embedding unavailable (no reachable endpoint for {self._embedding_model})",
                     items=items,
                 )
             else:
@@ -283,7 +306,10 @@ class UnifiedSearcher:
             keyword = self._get_keyword_backend()
             await keyword.fit_async(items)
 
-            if is_embedding_available(
+            # Hybrid already tolerates runtime failures (see except below),
+            # so the cheap config-only check is sufficient here — no need
+            # to spend a probe round-trip on every fit.
+            if is_embedding_configured(
                 model=self._embedding_model,
                 api_key=self._embedding_api_key,
                 api_base=self._embedding_api_base,
@@ -301,7 +327,7 @@ class UnifiedSearcher:
                     self._active_backend = "fts5"
             else:
                 self._emit_fallback_event(
-                    f"Hybrid mode: embedding unavailable for {self._embedding_model}"
+                    f"Hybrid mode: embedding not configured for {self._embedding_model}"
                 )
                 self._active_backend = "fts5"
 

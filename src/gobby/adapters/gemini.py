@@ -20,19 +20,24 @@ Key differences from Claude Code:
 - Different tool names (RunShellCommand vs Bash)
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import (
     BaseAdapter,
     build_first_hook_session_metadata_lines,
+    normalize_adapter_response_reason,
     system_message_has_session_banner,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import compress_and_truncate
+from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiAdapter(BaseAdapter):
@@ -223,7 +228,7 @@ class GeminiAdapter(BaseAdapter):
             # ... other hook-specific fields
         }
 
-        Note: The hook_dispatcher.py wraps this in:
+        Note: Gobby's ghook-managed hook command wraps this in:
         {
             "source": "gemini",
             "hook_type": "SessionStart",
@@ -231,7 +236,7 @@ class GeminiAdapter(BaseAdapter):
         }
 
         Args:
-            native_event: Raw payload from Gemini CLI's hook_dispatcher.py
+            native_event: Raw payload from Gemini CLI's ghook-managed hook command
 
         Returns:
             Unified HookEvent with normalized fields.
@@ -321,14 +326,20 @@ class GeminiAdapter(BaseAdapter):
             Dict in Gemini CLI's expected format.
         """
         should_continue = response.decision != "deny"
+        normalized_reason = normalize_adapter_response_reason(
+            response,
+            adapter_name=self.__class__.__name__,
+            hook_type=hook_type,
+            logger=logger,
+        )
         result: dict[str, Any] = {
             "decision": response.decision,
             "continue": should_continue,
         }
 
         # Add reason if present
-        if response.reason:
-            result["reason"] = response.reason
+        if normalized_reason:
+            result["reason"] = normalized_reason
 
         hook_event_name = self._response_hook_event_name(hook_type)
         resolved_hook_type = hook_event_name or hook_type
@@ -336,17 +347,17 @@ class GeminiAdapter(BaseAdapter):
 
         # Build hookSpecificOutput based on hook type
         hook_specific: dict[str, Any] = {}
-        context_parts: list[str] = []
+        context_parts: list[tuple[str, str]] = []
 
         # Add context injection if present
         if response.context:
-            context_parts.append(response.context)
+            context_parts.append(("response.context", response.context))
 
         # SessionStart startup context should be injected once via
         # additionalContext, not duplicated into systemMessage.
         if response.system_message:
             if session_start_hook:
-                context_parts.insert(0, response.system_message)
+                context_parts.insert(0, ("system_message", response.system_message))
             else:
                 result["systemMessage"] = response.system_message
 
@@ -365,7 +376,7 @@ class GeminiAdapter(BaseAdapter):
                     ),
                 )
                 if context_lines:
-                    context_parts.append("\n".join(context_lines))
+                    context_parts.append(("metadata", "\n".join(context_lines)))
 
         if resolved_hook_type in hooks_with_context and context_parts and hook_event_name:
             hook_specific["hookEventName"] = hook_event_name
@@ -379,9 +390,11 @@ class GeminiAdapter(BaseAdapter):
             hook_specific["toolConfig"] = response.modify_args
 
         if context_parts:
-            hook_specific["additionalContext"] = compress_and_truncate("\n\n".join(context_parts))[
-                0
-            ]
+            hook_specific["additionalContext"] = truncate_additional_context(
+                "\n\n".join(part for _, part in context_parts),
+                contributor_sizes={label: len(part) for label, part in context_parts},
+                logger=logger,
+            )
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:
@@ -398,7 +411,7 @@ class GeminiAdapter(BaseAdapter):
         and returns response in Gemini's expected format.
 
         Args:
-            native_event: Raw payload from Gemini CLI's hook_dispatcher.py
+            native_event: Raw payload from Gemini CLI's ghook-managed hook command
             hook_manager: HookManager instance for processing.
 
         Returns:

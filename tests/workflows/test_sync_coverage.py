@@ -1,4 +1,4 @@
-"""Tests for workflows/sync.py — targeting uncovered lines."""
+"""Tests for split workflow sync modules — targeting uncovered lines."""
 
 from __future__ import annotations
 
@@ -8,10 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.workflows.sync import (
-    resolve_sync_placeholders,
-    sync_bundled_variables,
-)
+from gobby.workflows.sync_rules import resolve_sync_placeholders
+from gobby.workflows.sync_variables import sync_bundled_variables
 
 pytestmark = pytest.mark.unit
 

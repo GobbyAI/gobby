@@ -11,13 +11,16 @@ from typing import TYPE_CHECKING, Any
 
 import pydantic
 
+from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 from gobby.workflows.enforcement.blocking import (
     is_discovery_tool,
     is_infrastructure_tool,
+    is_operator_tool,
 )
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
@@ -32,10 +35,16 @@ class EnforcementMixin:
     definition_manager: LocalWorkflowDefinitionManager
 
     if TYPE_CHECKING:
+        from gobby.agents.runner import AgentRunner
+        from gobby.events.completion_registry import CompletionEventRegistry
+
         # Provided by TemplatingMixin at runtime via RuleEngine MRO
         def _evaluate_condition(
             self, condition: str, ctx: dict[str, Any], effect_type: str
         ) -> bool: ...
+
+        _runner: AgentRunner | None
+        _completion_registry: CompletionEventRegistry | None
 
     def _get_step_for_session(
         self, session_id: str
@@ -112,6 +121,10 @@ class EnforcementMixin:
 
                 mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
 
+                # Operator/debug MCP tools bypass agent block-lists
+                if is_operator_tool(mcp_tool_name):
+                    return None
+
                 if mcp_key and self._mcp_tool_matches(mcp_key, blocked_mcp_tools):
                     return HookResponse(
                         decision="block",
@@ -177,6 +190,12 @@ class EnforcementMixin:
                 if is_discovery_tool(mcp_tool_name):
                     return None
 
+                # Operator/debug MCP tools (e.g. send_keys) always pass so
+                # humans can drive a stuck agent regardless of its step
+                # allow-list
+                if is_operator_tool(mcp_tool_name):
+                    return None
+
                 mcp_key = f"{mcp_server}:{mcp_tool_name}" if mcp_server and mcp_tool_name else ""
 
                 if mcp_key and step.allowed_mcp_tools != "all":
@@ -213,7 +232,71 @@ class EnforcementMixin:
                 return True
         return False
 
-    def _process_step_after_tool(
+    async def _complete_agent_workflow_run(
+        self,
+        session_id: str,
+        workflow_name: str,
+    ) -> None:
+        """Complete an agent-backed run when its workflow reaches a terminal step."""
+
+        if self._runner is None:
+            return
+
+        run_storage: LocalAgentRunManager | Any | None = getattr(self._runner, "run_storage", None)
+        logger.debug(
+            "_complete_agent_workflow_run session=%s workflow=%s run_storage=%s",
+            session_id,
+            workflow_name,
+            type(run_storage).__name__ if run_storage is not None else None,
+        )
+        db_agent = None
+        get_by_session = getattr(run_storage, "get_by_session", None)
+        logger.debug(
+            "_complete_agent_workflow_run session=%s workflow=%s has_get_by_session=%s",
+            session_id,
+            workflow_name,
+            callable(get_by_session),
+        )
+        if callable(get_by_session):
+            db_agent = get_by_session(session_id)
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s db_agent=%s",
+                session_id,
+                workflow_name,
+                getattr(db_agent, "id", None),
+            )
+        fallback_run_id = None
+        if db_agent is None:
+            fallback_run_id = self._runner.get_run_id_by_session(session_id)
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s fallback_run_id=%s",
+                session_id,
+                workflow_name,
+                fallback_run_id,
+            )
+        run_id = db_agent.id if db_agent else fallback_run_id
+        if not run_id:
+            logger.debug(
+                "_complete_agent_workflow_run session=%s workflow=%s no_run_id_found",
+                session_id,
+                workflow_name,
+            )
+            return
+
+        await complete_and_notify_agent_run(
+            self._runner,
+            run_id,
+            completion_registry=self._completion_registry,
+            notify_result={
+                "status": "success",
+                "run_id": run_id,
+                "via": "workflow_terminate",
+                "workflow": workflow_name,
+            },
+            message=f"Agent {run_id} completed via workflow terminate",
+        )
+
+    async def _process_step_after_tool(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> str | None:
         """Process step workflow on_mcp_success handlers and transitions after tool completion.
@@ -263,6 +346,15 @@ class EnforcementMixin:
                     is_app_failure = True
 
         handlers = step.on_mcp_error if is_app_failure else step.on_mcp_success
+        handler_tool_input = dict(tool_input)
+        raw_handler_args = tool_input.get("arguments", tool_input.get("args"))
+        if isinstance(raw_handler_args, str):
+            try:
+                raw_handler_args = json.loads(raw_handler_args)
+            except (json.JSONDecodeError, TypeError):
+                raw_handler_args = None
+        if isinstance(raw_handler_args, dict):
+            handler_tool_input = {**raw_handler_args, **handler_tool_input}
 
         instance_mgr = self.instance_manager
         vars_changed = False
@@ -270,6 +362,20 @@ class EnforcementMixin:
         # Execute handlers (on_mcp_success or on_mcp_error based on tool output)
         for handler in handlers:
             if handler.get("server") == mcp_server and handler.get("tool") == mcp_tool_name:
+                handler_when = handler.get("when")
+                if handler_when and not self._evaluate_condition(
+                    handler_when,
+                    {
+                        # Instance variables last so workflow-local state wins
+                        # over session-wide observer/handoff state with
+                        # colliding names (e.g. task_claimed).
+                        "vars": {**variables, **instance.variables},
+                        "tool_input": handler_tool_input,
+                        "tool_output": tool_output,
+                    },
+                    str(handler.get("action") or "set_variable"),
+                ):
+                    continue
                 if handler.get("action") == "set_variable":
                     var_name = handler.get("variable")
                     var_value = handler.get("value")
@@ -284,7 +390,13 @@ class EnforcementMixin:
 
         # Evaluate transitions
         for transition in step.transitions:
-            ctx = {"vars": {**instance.variables, **variables}}
+            # Instance variables last so workflow-local state wins over
+            # session-wide observer/handoff state with colliding names.
+            # Without this precedence, a session-level task_claimed=True
+            # written by _session_start task handoff would fire the
+            # claim -> load_skill transition before the workflow's own
+            # claim_task handler ever runs (see task #12267).
+            ctx = {"vars": {**variables, **instance.variables}}
             if not transition.when or self._evaluate_condition(transition.when, ctx, "transition"):
                 old_step = instance.current_step
                 new_step = transition.to
@@ -321,6 +433,10 @@ class EnforcementMixin:
                         variables["step_workflow_complete"] = True
                         logger.info(
                             f"Exit condition met for workflow {instance.workflow_name} (session={session_id}, step={instance.current_step})",
+                        )
+                        await self._complete_agent_workflow_run(
+                            session_id,
+                            instance.workflow_name,
                         )
 
                 # Build transition notification for AfterTool additionalContext

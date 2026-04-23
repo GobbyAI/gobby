@@ -1,0 +1,434 @@
+"""Initialization and configuration tests for GobbyRunner."""
+
+from contextlib import ExitStack
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from gobby.runner import GobbyRunner
+from gobby.runner_init import resolve_embedding_api_key
+from tests.runner_helpers import create_base_patches, set_mock_default
+
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
+
+
+class TestGobbyRunnerInit:
+    """Tests for GobbyRunner initialization."""
+
+    def test_init_creates_components(self, tmp_path, mock_config_with_websocket) -> None:
+        """Test that init creates all required components."""
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("")
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mock_http_cls = mocks[-4]
+            mock_ws_cls = mocks[-1]
+
+            runner = GobbyRunner(config_path=config_file, verbose=True)
+
+            assert runner.config == mock_config_with_websocket
+            assert runner.verbose is True
+            assert runner.machine_id == "test-machine"
+            assert runner._shutdown_requested is False
+            mock_http_cls.assert_called_once()
+            mock_ws_cls.assert_called_once()
+
+
+class TestSetMockDefault:
+    def test_preserves_asyncmock_overrides(self) -> None:
+        obj = MagicMock()
+        existing = AsyncMock()
+        obj.child = existing
+
+        set_mock_default(obj, "child", False)
+
+        assert obj.child is existing
+
+    def test_init_without_websocket(self, mock_config) -> None:
+        """Test init when WebSocket is disabled."""
+        mock_config.websocket = MagicMock()
+        mock_config.websocket.enabled = False
+
+        patches = create_base_patches(mock_config)
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mock_ws_cls = mocks[-1]
+
+            runner = GobbyRunner()
+
+            assert runner.websocket_server is None
+            mock_ws_cls.assert_not_called()
+
+    def test_init_websocket_none_config(self, mock_config) -> None:
+        """Test init when websocket config is None."""
+        patches = create_base_patches(mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.websocket_server is None
+
+
+class TestGobbyRunnerInitialization:
+    """Tests for component initialization during GobbyRunner.__init__."""
+
+    def test_init_with_memory_manager(self) -> None:
+        """Test that MemoryManager is initialized when memory config exists."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+        mock_config.memory = MagicMock()
+
+        mock_memory_manager = MagicMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "MemoryManager" not in str(p)]
+        patches.append(patch("gobby.runner_init.MemoryManager", return_value=mock_memory_manager))
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.memory_manager == mock_memory_manager
+
+    def test_init_memory_manager_exception(self) -> None:
+        """Test that MemoryManager initialization exception is handled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+        mock_config.memory = MagicMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "MemoryManager" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.MemoryManager", side_effect=Exception("Memory init error"))
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            assert runner.memory_manager is None
+
+    def test_init_with_memory_sync_manager(self) -> None:
+        """Test MemorySyncManager initialization when enabled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory = MagicMock()
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = True
+
+        mock_memory_manager = MagicMock()
+        mock_memory_manager.storage = MagicMock()
+        mock_memory_sync_manager = MagicMock()
+        mock_memory_sync_manager.import_sync.return_value = 0
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "MemoryManager" not in str(p)]
+        patches = [p for p in patches if "MemorySyncManager" not in str(p)]
+        patches.append(patch("gobby.runner_init.MemoryManager", return_value=mock_memory_manager))
+        patches.append(
+            patch("gobby.runner_init.MemorySyncManager", return_value=mock_memory_sync_manager)
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.memory_sync_manager == mock_memory_sync_manager
+            mock_memory_sync_manager.import_sync.assert_called_once()
+
+    def test_init_memory_sync_manager_exception(self) -> None:
+        """Test MemorySyncManager initialization exception is handled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory = MagicMock()
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = True
+
+        mock_memory_manager = MagicMock()
+        mock_memory_manager.storage = MagicMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "MemoryManager" not in str(p)]
+        patches = [p for p in patches if "MemorySyncManager" not in str(p)]
+        patches.append(patch("gobby.runner_init.MemoryManager", return_value=mock_memory_manager))
+        patches.append(
+            patch(
+                "gobby.runner_init.MemorySyncManager", side_effect=Exception("Sync manager error")
+            )
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            assert runner.memory_sync_manager is None
+
+    def test_init_with_message_processor(self) -> None:
+        """Test SessionMessageProcessor initialization when message_tracking enabled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+        mock_config.message_tracking = MagicMock()
+        mock_config.message_tracking.enabled = True
+        mock_config.message_tracking.poll_interval = 5.0
+
+        mock_message_processor = AsyncMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "SessionMessageProcessor" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.SessionMessageProcessor", return_value=mock_message_processor)
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.message_processor == mock_message_processor
+
+    def test_init_with_task_validator(self) -> None:
+        """Test TaskValidator initialization when LLM service and validation enabled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+        mock_config.gobby_tasks = MagicMock()
+        mock_config.gobby_tasks.expansion = MagicMock()
+        mock_config.gobby_tasks.expansion.enabled = False
+        mock_config.gobby_tasks.validation = MagicMock()
+        mock_config.gobby_tasks.validation.enabled = True
+
+        mock_llm_service = MagicMock()
+        mock_llm_service.enabled_providers = ["test"]
+        mock_task_validator = MagicMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "create_llm_service" not in str(p)]
+        patches = [p for p in patches if "TaskValidator" not in str(p)]
+        patches.append(patch("gobby.runner_init.create_llm_service", return_value=mock_llm_service))
+        patches.append(patch("gobby.runner_init.TaskValidator", return_value=mock_task_validator))
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.task_validator == mock_task_validator
+
+    def test_init_task_validator_exception(self) -> None:
+        """Test TaskValidator initialization exception is handled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+        mock_config.gobby_tasks = MagicMock()
+        mock_config.gobby_tasks.expansion = MagicMock()
+        mock_config.gobby_tasks.expansion.enabled = False
+        mock_config.gobby_tasks.validation = MagicMock()
+        mock_config.gobby_tasks.validation.enabled = True
+
+        mock_llm_service = MagicMock()
+        mock_llm_service.enabled_providers = ["test"]
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "create_llm_service" not in str(p)]
+        patches = [p for p in patches if "TaskValidator" not in str(p)]
+        patches.append(patch("gobby.runner_init.create_llm_service", return_value=mock_llm_service))
+        patches.append(
+            patch("gobby.runner_init.TaskValidator", side_effect=Exception("Validator error"))
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            assert runner.task_validator is None
+
+    def test_init_agent_runner_exception(self) -> None:
+        """Test AgentRunner initialization exception is handled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches.append(
+            patch("gobby.runner_init.AgentRunner", side_effect=Exception("Agent runner error"))
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            assert runner.agent_runner is None
+
+    def test_init_llm_service_exception(self) -> None:
+        """Test LLM service initialization exception is handled."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "create_llm_service" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.create_llm_service", side_effect=Exception("LLM init error"))
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+            assert runner.llm_service is None
+
+
+class TestResolveEmbeddingApiKey:
+    """Tests for resolve_embedding_api_key (runner_init.py)."""
+
+    @pytest.fixture
+    def mock_secret_store(self):
+        """Create a mock secret store."""
+        store = MagicMock()
+        store.get = MagicMock(
+            side_effect=lambda name: {
+                "openai_api_key": "sk-test-openai",
+                "gemini_api_key": "gemini-test-key",
+                "mistral_api_key": "mistral-test-key",
+            }.get(name)
+        )
+        return store
+
+    def test_default_model_resolves_openai(self, mock_secret_store) -> None:
+        """text-embedding-3-small (no prefix) should resolve to openai_api_key."""
+        key = resolve_embedding_api_key(mock_secret_store, "text-embedding-3-small")
+        assert key == "sk-test-openai"
+        mock_secret_store.get.assert_called_with("openai_api_key")
+
+    def test_openai_prefix_resolves_openai(self, mock_secret_store) -> None:
+        """openai/text-embedding-3-small should resolve to openai_api_key."""
+        key = resolve_embedding_api_key(mock_secret_store, "openai/text-embedding-3-small")
+        assert key == "sk-test-openai"
+        mock_secret_store.get.assert_called_with("openai_api_key")
+
+    def test_gemini_prefix_resolves_gemini(self, mock_secret_store) -> None:
+        """gemini/ prefix should resolve to gemini_api_key."""
+        key = resolve_embedding_api_key(mock_secret_store, "gemini/text-embedding-004")
+        assert key == "gemini-test-key"
+        mock_secret_store.get.assert_called_with("gemini_api_key")
+
+    def test_mistral_prefix_resolves_mistral(self, mock_secret_store) -> None:
+        """mistral/ prefix should resolve to mistral_api_key."""
+        key = resolve_embedding_api_key(mock_secret_store, "mistral/mistral-embed")
+        assert key == "mistral-test-key"
+        mock_secret_store.get.assert_called_with("mistral_api_key")
+
+    def test_local_returns_none(self, mock_secret_store) -> None:
+        """local/ models don't need an API key."""
+        key = resolve_embedding_api_key(mock_secret_store, "local/nomic-embed-text-v1.5")
+        assert key is None
+        mock_secret_store.get.assert_not_called()
+
+    def test_ollama_returns_none(self, mock_secret_store) -> None:
+        """ollama/ models don't need an API key."""
+        key = resolve_embedding_api_key(mock_secret_store, "ollama/nomic-embed-text")
+        assert key is None
+        mock_secret_store.get.assert_not_called()
+
+    def test_missing_secret_returns_none(self) -> None:
+        """Returns None when the secret doesn't exist."""
+        store = MagicMock()
+        store.get = MagicMock(return_value=None)
+        key = resolve_embedding_api_key(store, "text-embedding-3-small")
+        assert key is None
+
+
+class TestGobbyRunnerInitEdgeCases:
+    """Edge case tests for GobbyRunner initialization."""
+
+    def test_init_with_no_llm_service(self, mock_config) -> None:
+        """Test init when LLM service creation returns None."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.llm_service is None
+
+    def test_init_llm_service_exception(self, mock_config) -> None:
+        """Test init when LLM service creation raises."""
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "create_llm_service" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.create_llm_service", side_effect=Exception("LLM init error"))
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.llm_service is None
+
+    def test_init_with_verbose_false(self, mock_config) -> None:
+        """Test init with verbose=False (default)."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.verbose is False
+
+    def test_shutdown_requested_initially_false(self, mock_config) -> None:
+        """Test that _shutdown_requested is False on init."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner._shutdown_requested is False

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.storage.worktrees import LocalWorktreeManager
 
 pytestmark = pytest.mark.unit
 
@@ -46,7 +47,7 @@ def test_setup_with_all_managers_none() -> None:
         memory_manager=None,
         task_manager=None,
         sync_manager=None,
-        local_session_manager=None,
+        session_manager=None,
         metrics_manager=None,
         agent_runner=None,
         worktree_storage=None,
@@ -131,15 +132,60 @@ def test_setup_with_worktree_storage_only() -> None:
     assert "gobby-worktrees" in registry_names
 
 
-def test_setup_sessions_with_local_session_manager() -> None:
-    """Test sessions registry is created with local_session_manager."""
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_ref_kind", ["hash", "uuid"], ids=["hash-ref", "uuid-ref"])
+async def test_setup_worktrees_registry_claim_resolves_session_refs(
+    temp_db, project_manager, session_manager, session_ref_kind: str
+) -> None:
+    """Worktree registry wiring resolves shorthand and UUID session refs."""
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
-    local_session_manager = MagicMock()
+    worktree_storage = LocalWorktreeManager(temp_db)
+    project = project_manager.create(name="test-project", repo_path="/tmp/test-project")
+    session = session_manager.register(
+        machine_id="test-machine",
+        source="codex",
+        project_id=project.id,
+        external_id="ext-test-session",
+        title="Test Session",
+    )
+    worktree = worktree_storage.create(
+        project_id=project.id,
+        branch_name=f"feature/{session_ref_kind}",
+        worktree_path=f"/tmp/worktrees/{session_ref_kind}",
+    )
 
     manager = setup_internal_registries(
         _config=mock_config,
-        local_session_manager=local_session_manager,
+        session_manager=session_manager,
+        worktree_storage=worktree_storage,
+        project_id=project.id,
+    )
+
+    registry = manager.get_registry("gobby-worktrees")
+    assert registry is not None
+
+    session_ref = f"#{session.seq_num}" if session_ref_kind == "hash" else session.id
+    result = await registry.call(
+        "claim_worktree",
+        {"worktree_id": worktree.id, "session_id": session_ref},
+    )
+
+    assert result["success"] is True
+    claimed = worktree_storage.get(worktree.id)
+    assert claimed is not None
+    assert claimed.agent_session_id == session.id
+
+
+def test_setup_sessions_with_session_manager() -> None:
+    """Test sessions registry is created with session_manager."""
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+    session_manager = MagicMock()
+
+    manager = setup_internal_registries(
+        _config=mock_config,
+        session_manager=session_manager,
     )
 
     registries = manager.get_all_registries()
@@ -475,3 +521,94 @@ def test_setup_pipelines_tools_accessible_without_executor() -> None:
     tool_names = [t["name"] for t in pipelines_registry.list_tools()]
     assert "list_pipelines" in tool_names
     assert "run_pipeline" in tool_names
+
+
+class TestHubApiKeyResolution:
+    """Hub auth at the registries layer resolves from SecretStore, never env."""
+
+    def _build_skills_config(self):
+        from gobby.config.skills import HubConfig, SkillsConfig
+
+        return SkillsConfig(
+            hubs={
+                "skillsmp": HubConfig(
+                    type="skillsmp",
+                    base_url="https://skillsmp.com/api/v1",
+                    auth_key_name="SKILLSMP_API_KEY",
+                ),
+                "clawdhub": HubConfig(type="clawdhub"),  # no auth
+            }
+        )
+
+    def _run_setup_with_captured_hub_manager(self, db, skills_config):
+        """Invoke setup_internal_registries with a sentinel HubManager to capture kwargs."""
+        from unittest.mock import patch as patch_fn
+
+        from gobby.skills.hubs.manager import HubManager
+
+        captured: dict = {}
+
+        class RecordingHubManager(HubManager):
+            def __init__(self, *args, **kwargs):
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+                super().__init__(*args, **kwargs)
+
+        mock_config = MagicMock()
+        mock_config.skills = skills_config
+        mock_config.embeddings = None
+        mock_config.skill_description = None
+        mock_config.get_gobby_tasks_config.return_value.enabled = False
+        mock_config.get_search_config.return_value = None
+
+        # Patch at the source module — registries.py imports HubManager inside
+        # the function body, so it resolves via gobby.skills.hubs at call time.
+        with patch_fn("gobby.skills.hubs.HubManager", RecordingHubManager):
+            setup_internal_registries(_config=mock_config, db=db)
+
+        return captured
+
+    def test_hub_api_key_resolution_ignores_environment(self, tmp_path, monkeypatch) -> None:
+        """Env vars are never consulted for hub auth — only SecretStore."""
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.migrations import run_migrations
+
+        db_path = tmp_path / "test.db"
+        db = LocalDatabase(db_path)
+        run_migrations(db)
+        try:
+            # Env has a value but SecretStore does NOT.
+            monkeypatch.setenv("SKILLSMP_API_KEY", "env-bogus-should-be-ignored")
+
+            captured = self._run_setup_with_captured_hub_manager(db, self._build_skills_config())
+
+            api_keys = captured["kwargs"]["api_keys"]
+            assert "SKILLSMP_API_KEY" not in api_keys
+        finally:
+            db.close()
+
+    def test_hub_api_key_resolution_reads_secret_store(self, tmp_path) -> None:
+        """When a secret is stored in SecretStore, the HubManager receives it."""
+        from gobby.storage.database import LocalDatabase
+        from gobby.storage.migrations import run_migrations
+        from gobby.storage.secrets import SecretStore
+
+        db_path = tmp_path / "test.db"
+        db = LocalDatabase(db_path)
+        run_migrations(db)
+        try:
+            SecretStore(db).set(
+                name="SKILLSMP_API_KEY",
+                plaintext_value="stored-secret-value",
+                category="integration",
+                description="test",
+            )
+
+            captured = self._run_setup_with_captured_hub_manager(db, self._build_skills_config())
+
+            api_keys = captured["kwargs"]["api_keys"]
+            assert api_keys["SKILLSMP_API_KEY"] == "stored-secret-value"
+            # clawdhub has no auth_key_name so it must not leak a key in api_keys.
+            assert len(api_keys) == 1
+        finally:
+            db.close()

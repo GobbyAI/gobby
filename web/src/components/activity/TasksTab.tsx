@@ -8,29 +8,25 @@ import {
   type MouseEvent,
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
-import { Markdown } from "../chat/Markdown";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import "../tasks/task-execution.css";
 import type { GobbyTask } from "../../hooks/useTasks";
+import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskBucket,
-  getTaskStateSummary,
   TASK_BUCKET_COLORS,
   TASK_BUCKET_LABELS,
   type TaskBucket,
 } from "../../lib/taskState";
+import {
+  TasksTabDetailPanel,
+  type GobbyTaskDetail,
+} from "./TasksTabDetailPanel";
 
 interface TasksTabProps {
   projectId?: string | null;
   chatSessionId?: string | null;
-}
-
-interface GobbyTaskDetail extends GobbyTask {
-  description: string | null;
-  category: string | null;
-  validation_criteria: string | null;
-  closed_at: string | null;
 }
 
 // =============================================================================
@@ -78,14 +74,6 @@ const RECENT_CLOSED_TASK_LIMIT = 20;
 
 const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
 
-const PRIORITY_LABELS: Record<number, string> = {
-  0: "Critical",
-  1: "High",
-  2: "Medium",
-  3: "Low",
-  4: "Backlog",
-};
-
 const PRIORITY_TEXT_COLORS: Record<number, string> = {
   0: "var(--status-escalated, #ef4444)",
   1: "var(--status-escalated, #ef4444)",
@@ -96,6 +84,26 @@ const PRIORITY_TEXT_COLORS: Record<number, string> = {
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
+}
+
+function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {
+  const priorityDiff = (a.priority ?? 4) - (b.priority ?? 4);
+  if (priorityDiff !== 0) {
+    return priorityDiff;
+  }
+
+  const seqA = a.seq_num ?? Number.MAX_SAFE_INTEGER;
+  const seqB = b.seq_num ?? Number.MAX_SAFE_INTEGER;
+  if (seqA !== seqB) {
+    return seqA - seqB;
+  }
+
+  const createdAtDiff = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
+  }
+
+  return (a.updated_at ?? "").localeCompare(b.updated_at ?? "");
 }
 
 // =============================================================================
@@ -118,6 +126,13 @@ function buildTree(tasks: GobbyTask[]): TreeNode[] {
       roots.push(node);
     }
   }
+
+  for (const node of nodeMap.values()) {
+    node.children.sort((left, right) =>
+      compareTasksForDisplay(left.task, right.task),
+    );
+  }
+  roots.sort((left, right) => compareTasksForDisplay(left.task, right.task));
 
   return roots;
 }
@@ -457,10 +472,8 @@ export const TasksTab = memo(function TasksTab({
     });
   }, []);
 
-  // Client-side filter + stable re-sort by updated_at desc to match the
-  // server's sort_by=updated_at request. WebSocket task_created events
-  // append to `tasks` without preserving ordering, so we re-sort here to
-  // keep the list consistent with the server ordering.
+  // Client-side filter + display ordering. The activity Tasks tree should read
+  // like a prioritized work queue: highest priority first, then oldest first.
   const filtered = useMemo(() => {
     const matchingTasks = tasks.filter((task) =>
       matchesTaskFilter(task, statusFilters),
@@ -484,7 +497,7 @@ export const TasksTab = memo(function TasksTab({
         }
         return recentClosedIds.has(task.id);
       })
-      .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
+      .sort(compareTasksForDisplay);
   }, [tasks, statusFilters]);
 
   const treeData = useMemo(() => {
@@ -539,6 +552,16 @@ export const TasksTab = memo(function TasksTab({
       ),
     [search, searchableTreeData, collapsedTaskIds],
   );
+
+  const selectedTaskSummary = useMemo(
+    () =>
+      selectedTaskId
+        ? tasks.find((task) => task.id === selectedTaskId) ?? null
+        : null,
+    [selectedTaskId, tasks],
+  );
+  const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
+  const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
 
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId;
@@ -656,11 +679,19 @@ export const TasksTab = memo(function TasksTab({
       const isAssigning = assigningTaskId === task.id;
       const isSelected = selectedTaskId === task.id;
 
+      const taskRowClass = [
+        "activity-task-row",
+        isSelected && "activity-task-row--selected",
+        getTaskBucket(task) === "closed" && "activity-task-row--closed",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
       return (
         <div
           key={task.id}
-          style={{ paddingLeft: `${row.depth * 16 + 10}px` }}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer text-sm transition-colors border-b border-border/40 hover:bg-muted/50${isSelected ? " bg-accent/[0.06]" : ""}${getTaskBucket(task) === "closed" ? " opacity-50" : ""}`}
+          style={{ paddingLeft: `${row.depth * 1.25 + 0.75}rem` }}
+          className={taskRowClass}
           role="treeitem"
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}
@@ -672,26 +703,45 @@ export const TasksTab = memo(function TasksTab({
         >
           {row.isInternal ? (
             <button
-              className="bg-transparent border-none text-muted-foreground text-xs cursor-pointer p-0 w-4 shrink-0 text-center leading-none"
+              className="activity-task-row-toggle"
               onClick={(e) => {
                 e.stopPropagation();
                 toggleTaskOpen(task.id);
               }}
+              aria-label={`${
+                row.isOpen ? "Collapse" : "Expand"
+              } subtasks for ${task.title}`}
+              title={row.isOpen ? "Collapse subtasks" : "Expand subtasks"}
             >
-              {row.isOpen ? "▾" : "▸"}
+              <span
+                className={`activity-task-row-toggle-icon${
+                  row.isOpen ? " activity-task-row-toggle-icon--open" : ""
+                }`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="M4 2.5L8 6L4 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
             </button>
           ) : (
-            <span className="invisible w-4 shrink-0" />
+            <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
           )}
           <span
-            className="w-1.5 h-1.5 rounded-full shrink-0"
+            className="activity-task-row-dot"
             style={{ backgroundColor: dotColor }}
           />
           {ref && (
-            <span className="text-sm text-muted-foreground shrink-0">{ref}</span>
+            <span className="activity-task-row-ref">{ref}</span>
           )}
           <span
-            className="truncate min-w-0 flex-1 text-sm text-foreground"
+            className="activity-task-row-title"
             style={{ color: textColor }}
           >
             {task.title}
@@ -737,17 +787,17 @@ export const TasksTab = memo(function TasksTab({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-secondary relative">
+      <div className="activity-task-pane-bar activity-task-pane-bar--toolbar relative">
         <input
           type="text"
-          className="flex-1 min-w-0 px-2 py-0.5 border border-border rounded bg-background text-foreground text-xs outline-none focus:border-accent transition-colors placeholder:text-muted-foreground"
+          className="activity-task-search"
           placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button
           type="button"
-          className="flex items-center justify-center bg-transparent border border-border rounded text-muted-foreground cursor-pointer px-1.5 py-0.5 shrink-0 hover:text-foreground hover:border-accent transition-colors"
+          className="activity-task-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
         >
@@ -819,20 +869,28 @@ export const TasksTab = memo(function TasksTab({
 
       {/* Detail pane */}
       {selectedTaskId && (
-        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-          <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border bg-secondary">
-            <span className="flex-1 min-w-0 truncate text-sm font-medium">
-              {taskDetail ? taskDetail.title : "Loading..."}
+        <div className="activity-task-detail-shell">
+          <div className="activity-task-pane-bar activity-task-pane-bar--detail">
+            <span className="activity-task-pane-bar__title">
+              Task {headerRef ?? "—"}
+              {headerTitle ? <> – {headerTitle}</> : null}
             </span>
+            {taskDetail && (
+              <div className="activity-task-pane-bar__chips">
+                <TaskStateBadges task={taskDetail} />
+                <PriorityBadge priority={taskDetail.priority ?? 4} />
+                <TypeBadge type={taskDetail.task_type} />
+              </div>
+            )}
           </div>
           {detailLoading ? (
-            <p className="text-xs text-muted-foreground px-3 py-2">
+            <p className="activity-task-detail-loading">
               Loading...
             </p>
           ) : taskDetail ? (
-            <TaskDetail task={taskDetail} />
+            <TasksTabDetailPanel task={taskDetail} />
           ) : (
-            <p className="text-xs text-muted-foreground px-3 py-2">
+            <p className="activity-task-detail-empty">
               Task not found
             </p>
           )}
@@ -861,65 +919,3 @@ export const TasksTab = memo(function TasksTab({
     </div>
   );
 });
-
-// =============================================================================
-// Task detail panel (extracted from former accordion)
-// =============================================================================
-
-function TaskDetail({ task }: { task: GobbyTaskDetail }) {
-  const priorityLabel = PRIORITY_LABELS[task.priority ?? 4] ?? "Backlog";
-
-  return (
-    <div className="px-3 py-2 flex flex-col gap-2">
-      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
-        <span className="capitalize">{getTaskStateSummary(task)}</span>
-        <span className="opacity-40">{"\u00B7"}</span>
-        <span>{priorityLabel}</span>
-        {task.task_type !== "task" && (
-          <>
-            <span className="opacity-40">{"\u00B7"}</span>
-            <span>{task.task_type}</span>
-          </>
-        )}
-        {getCanonicalTaskState(task).owner_session_id && (
-          <>
-            <span className="opacity-40">{"\u00B7"}</span>
-            <span>{getCanonicalTaskState(task).owner_session_id}</span>
-          </>
-        )}
-      </div>
-
-      {task.description && (
-        <div className="border-t border-border pt-1.5">
-          <div className="message-content text-xs">
-            <Markdown content={task.description} id={`task-desc-${task.id}`} />
-          </div>
-        </div>
-      )}
-
-      {task.validation_criteria && (
-        <div className="border-t border-border pt-1.5">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
-            Validation
-          </div>
-          <div className="message-content text-xs">
-            <Markdown
-              content={task.validation_criteria}
-              id={`task-vc-${task.id}`}
-            />
-          </div>
-        </div>
-      )}
-
-      <div className="text-[10px] text-muted-foreground border-t border-border pt-1.5">
-        <span>Created {new Date(task.created_at).toLocaleDateString()}</span>
-        {task.closed_at && (
-          <span>
-            {" "}
-            {"\u00B7"} Closed {new Date(task.closed_at).toLocaleDateString()}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}

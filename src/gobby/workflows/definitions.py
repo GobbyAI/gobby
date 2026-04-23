@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from gobby.agents.reasoning import normalize_reasoning_effort
 
@@ -73,10 +81,24 @@ class RuleTriggerEvent(str, Enum):
     BEFORE_MODEL = "before_model"
     AFTER_MODEL = "after_model"
     PRE_COMPACT = "pre_compact"
+    POST_COMPACT = "post_compact"
     SUBAGENT_START = "subagent_start"
     SUBAGENT_STOP = "subagent_stop"
     PERMISSION_REQUEST = "permission_request"
+    PERMISSION_DENIED = "permission_denied"
     NOTIFICATION = "notification"
+    STOP_FAILURE = "stop_failure"
+    TASK_CREATED = "task_created"
+    TASK_COMPLETED = "task_completed"
+    TEAMMATE_IDLE = "teammate_idle"
+    INSTRUCTIONS_LOADED = "instructions_loaded"
+    CONFIG_CHANGE = "config_change"
+    CWD_CHANGED = "cwd_changed"
+    FILE_CHANGED = "file_changed"
+    WORKTREE_CREATE = "worktree_create"
+    WORKTREE_REMOVE = "worktree_remove"
+    ELICITATION = "elicitation"
+    ELICITATION_RESULT = "elicitation_result"
 
 
 # Backward-compatible alias for older imports. This still resolves to the
@@ -94,6 +116,11 @@ class RuleEffect(BaseModel):
         "mcp_call",
         "observe",
         "rewrite_input",
+        "set_permission_response",
+        "set_retry",
+        "set_watch_paths",
+        "set_worktree_path",
+        "set_elicitation",
         "load_skill",
     ]
 
@@ -130,8 +157,24 @@ class RuleEffect(BaseModel):
     # rewrite_input — modify tool input before execution (PreToolUse)
     input_updates: dict[str, Any] | None = None
     auto_approve: bool = False
+    permission_decision: Literal["allow", "deny"] | None = None
+    updated_permissions: list[dict[str, Any]] | None = None
 
-    # load_skill — resolve and inject a skill's content into agent context
+    # set_retry — tell Claude an auto-denied tool may be retried
+    retry: bool = False
+
+    # set_watch_paths — update dynamic FileChanged watchers
+    watch_paths: list[str] | None = None
+
+    # set_worktree_path — override the created worktree directory
+    worktree_path: str | None = None
+
+    # set_elicitation — programmatically answer or override elicitation results
+    elicitation_action: Literal["accept", "decline", "cancel"] | None = None
+    elicitation_content: dict[str, Any] | None = None
+    elicitation_error: str | None = None
+
+    # load_skill — emit an on-demand skill fetch directive into agent context
     skill: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -155,6 +198,21 @@ class RuleEffect(BaseModel):
             },
             "observe": {"category", "message", *selector_fields},
             "rewrite_input": {"input_updates", "auto_approve", *selector_fields},
+            "set_permission_response": {
+                "permission_decision",
+                "input_updates",
+                "updated_permissions",
+                *selector_fields,
+            },
+            "set_retry": {"retry", *selector_fields},
+            "set_watch_paths": {"watch_paths", *selector_fields},
+            "set_worktree_path": {"worktree_path", *selector_fields},
+            "set_elicitation": {
+                "elicitation_action",
+                "elicitation_content",
+                "elicitation_error",
+                *selector_fields,
+            },
             "load_skill": {"skill", *selector_fields},
         }
         # Fields with non-None defaults that shouldn't trigger warnings
@@ -166,6 +224,7 @@ class RuleEffect(BaseModel):
             "block_on_failure",
             "block_on_success",
             "message",
+            "retry",
         }
         relevant = _fields_by_type.get(self.type, set())
         for field_name, field_set in _fields_by_type.items():
@@ -258,11 +317,17 @@ class AgentDefinitionBody(BaseModel):
             for field, default in defaults.items():
                 if field in data and data[field] == "":
                     data[field] = default
+            if "surfaces" in data and data["surfaces"] == "":
+                data["surfaces"] = ["spawn"]
         return data
 
     name: str
     description: str | None = None
     sources: list[str] | None = None  # Session sources this agent applies to (None = all)
+    surfaces: list[Literal["spawn", "persona"]] = Field(
+        default_factory=lambda: cast(list[Literal["spawn", "persona"]], ["spawn"]),
+        description="Where this definition can be used: spawned execution, session personas, or both.",
+    )
     # Structured prompt fields (composed into preamble at spawn time)
     role: str | None = None
     goal: str | None = None
@@ -270,15 +335,15 @@ class AgentDefinitionBody(BaseModel):
     instructions: str | None = None
     # Execution
     provider: str = "inherit"
-    model: str | None = None
-    reasoning_effort: str | None = None
-    reasoning_required: bool | None = None
-    fallback_agent: str | None = None
-    api_base: str | None = Field(
+    model: StrictStr | None = None
+    reasoning_effort: StrictStr | None = None
+    reasoning_required: StrictBool | None = None
+    fallback_agent: StrictStr | None = None
+    api_base: StrictStr | None = Field(
         default=None,
         description="API base URL for the model endpoint (e.g., http://localhost:1234/v1 for LM Studio)",
     )
-    api_token: str | None = Field(
+    api_token: StrictStr | None = Field(
         default=None,
         description="Auth token for the endpoint. Supports ${ENV_VAR} pattern for env var expansion.",
     )
@@ -304,9 +369,30 @@ class AgentDefinitionBody(BaseModel):
     def _normalize_reasoning_effort(cls, value: Any) -> str | None:
         if value is None:
             return None
+        if not isinstance(value, str):
+            raise ValueError("reasoning_effort must be a string")
+        return normalize_reasoning_effort(value)
+
+    @field_validator("surfaces", mode="before")
+    @classmethod
+    def _normalize_surfaces(cls, value: Any) -> list[str]:
+        if value is None or value == "":
+            return ["spawn"]
         if isinstance(value, str):
-            return normalize_reasoning_effort(value)
-        return normalize_reasoning_effort(str(value))
+            return [value]
+        if isinstance(value, list):
+            normalized: list[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    raise ValueError("surfaces entries must be strings")
+                if item not in normalized:
+                    normalized.append(item)
+            return normalized
+        raise ValueError("surfaces must be a string or list of strings")
+
+    def supports_surface(self, surface: Literal["spawn", "persona"]) -> bool:
+        """Return True when the definition explicitly supports the requested usage surface."""
+        return surface in self.surfaces
 
     def build_prompt_preamble(self) -> str | None:
         """Build structured prompt preamble from role/goal/personality/instructions."""

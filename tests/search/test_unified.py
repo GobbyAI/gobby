@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -42,6 +43,26 @@ def _make_searcher(
         fts_content_table="skills",
         fts_weights=(10.0, 5.0, 2.0, 2.0),
     )
+
+
+def _make_openai_client(dim: int) -> AsyncMock:
+    """Create a mock AsyncOpenAI client with deterministic vector size."""
+    mock_client = AsyncMock()
+
+    @dataclass
+    class FakeItem:
+        embedding: list[float]
+
+    @dataclass
+    class FakeResponse:
+        data: list[FakeItem]
+
+    async def fake_create(model: str, input: list[str]) -> FakeResponse:
+        return FakeResponse([FakeItem([0.1] * dim) for _ in input])
+
+    create_mock: AsyncMock = AsyncMock(side_effect=fake_create)
+    mock_client.embeddings.create = create_mock
+    return mock_client
 
 
 class TestSearchConfig:
@@ -191,7 +212,8 @@ class TestUnifiedSearcher:
         )
 
         with patch(
-            "gobby.search.unified.is_embedding_available",
+            "gobby.search.unified.is_embedding_reachable",
+            new_callable=AsyncMock,
             return_value=False,
         ):
             fallback_events: list[FallbackEvent] = []
@@ -215,7 +237,11 @@ class TestUnifiedSearcher:
         mock_embeddings = [[0.1, 0.2, 0.3]] * 2
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch(
+                "gobby.search.unified.is_embedding_reachable",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -236,7 +262,11 @@ class TestUnifiedSearcher:
         config = SearchConfig(mode="auto")
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch(
+                "gobby.search.unified.is_embedding_reachable",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -256,13 +286,35 @@ class TestUnifiedSearcher:
 
     @pytest.mark.asyncio
     async def test_embedding_mode_fails_without_key(self, db) -> None:
-        """Test embedding mode raises when unavailable."""
+        """Test embedding mode raises 'not configured' when no key/base."""
         config = SearchConfig(mode="embedding")
 
-        with patch("gobby.search.unified.is_embedding_available", return_value=False):
+        with patch("gobby.search.unified.is_embedding_configured", return_value=False):
             searcher = _make_searcher(db, config)
 
-            with pytest.raises(RuntimeError, match="Embedding unavailable"):
+            with pytest.raises(RuntimeError, match="not configured"):
+                await searcher.fit_async([("id1", "test")])
+
+    @pytest.mark.asyncio
+    async def test_embedding_mode_fails_when_unreachable(self, db) -> None:
+        """Test embedding mode raises 'unreachable' when configured but down."""
+        config = SearchConfig(
+            mode="embedding",
+            embedding_model="nomic-embed-text",
+            embedding_api_base="http://127.0.0.1:1",
+        )
+
+        with (
+            patch("gobby.search.unified.is_embedding_configured", return_value=True),
+            patch(
+                "gobby.search.unified.is_embedding_reachable",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            searcher = _make_searcher(db, config)
+
+            with pytest.raises(RuntimeError, match="unreachable"):
                 await searcher.fit_async([("id1", "test")])
 
     @pytest.mark.asyncio
@@ -278,7 +330,7 @@ class TestUnifiedSearcher:
         mock_query_embedding = [0.1, 0.2, 0.3]
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch("gobby.search.unified.is_embedding_configured", return_value=True),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -359,7 +411,11 @@ class TestUnifiedSearcher:
         def callback(event: FallbackEvent) -> None:
             events.append(event)
 
-        with patch("gobby.search.unified.is_embedding_available", return_value=False):
+        with patch(
+            "gobby.search.unified.is_embedding_reachable",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
             searcher = _make_searcher(db, config, event_callback=callback)
             await searcher.fit_async([("id1", "test")])
 
@@ -372,7 +428,7 @@ class TestUnifiedSearcher:
         config = SearchConfig(mode="hybrid")
 
         with (
-            patch("gobby.search.unified.is_embedding_available", return_value=True),
+            patch("gobby.search.unified.is_embedding_configured", return_value=True),
             patch(
                 "gobby.search.embeddings.generate_embeddings",
                 new_callable=AsyncMock,
@@ -401,6 +457,7 @@ class TestEmbeddingBackend:
 
         assert backend._model == "openai/nomic-embed-text"
         assert backend._api_base == "http://localhost:11434/v1"
+        assert backend._dim == 768
 
     @pytest.mark.asyncio
     async def test_fit_and_search(self) -> None:
@@ -430,6 +487,16 @@ class TestEmbeddingBackend:
             assert len(results) == 2
             # id1 should have higher similarity (identical embedding)
             assert results[0][0] == "id1"
+
+    @pytest.mark.asyncio
+    async def test_fit_dimension_mismatch_raises(self) -> None:
+        """Backend fit should fail fast when provider output has the wrong dimension."""
+        backend = EmbeddingBackend(model="dimension-mismatch-model", dim=4)
+        mock_client = _make_openai_client(dim=3)
+
+        with patch("openai.AsyncOpenAI", return_value=mock_client):
+            with pytest.raises(RuntimeError, match="expected_dim=4"):
+                await backend.fit_async([("id1", "hello")])
 
     @pytest.mark.asyncio
     async def test_empty_fit(self) -> None:

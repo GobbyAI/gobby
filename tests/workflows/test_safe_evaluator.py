@@ -278,6 +278,26 @@ class TestMcpResultHas:
         assert ev.evaluate("mcp_result_has('gobby-tasks', 'get_task', 'status', 'closed')") is True
 
 
+# --- skill_loaded tests ---
+
+
+class TestSkillLoaded:
+    def test_returns_true_when_loaded_skill_present(self) -> None:
+        ctx: dict[str, Any] = {"variables": {"loaded_skills": ["python"]}}
+        ev = _build_evaluator(ctx)
+        assert ev.evaluate("skill_loaded('python')") is True
+
+    def test_returns_true_when_legacy_injected_skill_present(self) -> None:
+        ctx: dict[str, Any] = {"variables": {"injected_skills": ["python"]}}
+        ev = _build_evaluator(ctx)
+        assert ev.evaluate("skill_loaded('python')") is True
+
+    def test_returns_false_when_skill_missing(self) -> None:
+        ctx: dict[str, Any] = {"variables": {"loaded_skills": ["rust"]}}
+        ev = _build_evaluator(ctx)
+        assert ev.evaluate("skill_loaded('python')") is False
+
+
 # --- Plugin conditions tests ---
 
 

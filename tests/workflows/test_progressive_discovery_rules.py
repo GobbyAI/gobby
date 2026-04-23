@@ -21,8 +21,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.rule_engine import RuleEngine
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -42,7 +42,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 def _sync_bundled(db):
     """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
@@ -344,6 +344,7 @@ def _make_hook_event(
     event_type: HookEventType,
     tool_name: str = "",
     tool_input: dict | None = None,
+    source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     """Create a HookEvent for testing."""
     data = {"tool_name": tool_name}
@@ -352,7 +353,7 @@ def _make_hook_event(
     return HookEvent(
         event_type=event_type,
         session_id="test-session-ext",
-        source=SessionSource.CLAUDE,
+        source=source,
         timestamp=datetime.now(UTC),
         data=data,
         metadata={"_platform_session_id": "test-session"},
@@ -432,6 +433,19 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
+    async def test_get_tool_schema_allowed_for_pipeline_source(self, engine) -> None:
+        """Pipeline-sourced get_tool_schema should bypass discovery-order enforcement."""
+        variables = {"enforce_tool_schema_check": True, "listed_servers": []}
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            source=SessionSource.PIPELINE,
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_call_tool_blocked_when_schema_missing(self, engine) -> None:
         """call_tool should be blocked when get_tool_schema not called for tool."""
         variables = {
@@ -466,6 +480,73 @@ class TestRuleEngineIntegration:
                 "tool_name": "create_task",
                 "arguments": {"title": "test"},
             },
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_allowed_for_pipeline_source(self, engine) -> None:
+        """Pipeline-sourced call_tool should bypass schema lookup enforcement."""
+        variables = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "create_task",
+                "arguments": {"title": "test"},
+            },
+            source=SessionSource.PIPELINE,
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_allowed_when_enforce_flag_false(self, engine) -> None:
+        """call_tool should be allowed when enforce_tool_schema_check=False.
+
+        Guards #12135: pipeline sessions seed this flag to False to bypass the
+        rule independent of event-time source resolution, which races against
+        the just-written pipeline session row.  Uses source=CODEX here to
+        simulate the exact failure mode (source resolution defaulted to CODEX
+        because the session row was not yet visible).
+        """
+        variables = {
+            "enforce_tool_schema_check": False,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks-ops",
+                "tool_name": "start_expansion_run",
+                "arguments": {"task_id": "#123"},
+            },
+            source=SessionSource.CODEX,
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_get_tool_schema_allowed_when_enforce_flag_false(self, engine) -> None:
+        """get_tool_schema should also be allowed when enforce_tool_schema_check=False.
+
+        Sibling of the call_tool case above — same session-variable short-circuit
+        covers require-server-listed-for-schema too.
+        """
+        variables = {
+            "enforce_tool_schema_check": False,
+            "listed_servers": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__get_tool_schema",
+            tool_input={"server_name": "gobby-tasks-ops", "tool_name": "get_expansion_run"},
+            source=SessionSource.CODEX,
         )
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "allow"

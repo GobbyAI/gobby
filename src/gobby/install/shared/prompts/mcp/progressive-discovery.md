@@ -20,7 +20,7 @@ The proxy validates parameters on every call_tool. If params are wrong, the erro
 <skills>
 Discover skills with progressive discovery too:
 1. `list_skills()` on `gobby-skills` — Names and descriptions
-2. `get_skill(name="...")` — Full skill content (use after list_skills or search_skills)
+2. `get_skill(name="...")` on `gobby-skills` — Full skill content (use after list_skills or search_skills)
 3. `search_skills(query="...")` — Semantic search by topic (independent entry point, like list_skills)
 </skills>
 

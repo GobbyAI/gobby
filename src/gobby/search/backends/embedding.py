@@ -53,7 +53,8 @@ class EmbeddingBackend:
     Example:
         backend = EmbeddingBackend(
             model="text-embedding-3-small",
-            api_key="sk-..."
+            api_key="sk-...",
+            dim=1536,
         )
         await backend.fit_async([("id1", "hello"), ("id2", "world")])
         results = await backend.search_async("greeting", top_k=5)
@@ -64,6 +65,7 @@ class EmbeddingBackend:
         model: str = "nomic-embed-text",
         api_base: str | None = None,
         api_key: str | None = None,
+        dim: int | None = None,
     ):
         """Initialize embedding backend.
 
@@ -71,10 +73,12 @@ class EmbeddingBackend:
             model: Embedding model name exposed by the target endpoint
             api_base: Optional API base URL for custom endpoints
             api_key: Optional API key (uses env var if not set)
+            dim: Expected embedding dimension. When set, mismatches fail fast.
         """
         self._model = model
         self._api_base = api_base
         self._api_key = api_key
+        self._dim = dim
 
         # Item storage
         self._item_ids: list[str] = []
@@ -96,6 +100,7 @@ class EmbeddingBackend:
             model=config.model,
             api_base=config.api_base,
             api_key=config.api_key,
+            dim=config.dim,
         )
 
     async def fit_async(self, items: list[tuple[str, str]]) -> None:
@@ -131,6 +136,7 @@ class EmbeddingBackend:
                 model=self._model,
                 api_base=self._api_base,
                 api_key=self._api_key,
+                expected_dim=self._dim,
             )
             self._fitted = True
             logger.info(f"Embedding index built with {len(items)} items")
@@ -177,6 +183,7 @@ class EmbeddingBackend:
                 api_base=self._api_base,
                 api_key=self._api_key,
                 is_query=True,
+                expected_dim=self._dim,
             )
         except Exception as e:
             logger.error(f"Failed to embed query: {e}")

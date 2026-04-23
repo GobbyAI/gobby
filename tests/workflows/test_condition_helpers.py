@@ -17,6 +17,7 @@ import pytest
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
     is_task_complete,
+    task_has_label_prefix,
     task_needs_human_review,
     task_tree_complete,
 )
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.unit
 class FakeTask:
     id: str
     status: str = "open"
+    labels: list[str] | None = None
 
 
 class FakeTaskManager:
@@ -256,3 +258,74 @@ class TestTaskNeedsHumanReview:
 
     def test_no_manager_returns_false(self) -> None:
         assert task_needs_human_review(None, "#100") is False
+
+
+# ---------------------------------------------------------------------------
+# task_has_label_prefix — interactive-lock mutex helper
+# ---------------------------------------------------------------------------
+
+
+class TestTaskHasLabelPrefix:
+    """Covers the helper consumed by block-front-half-on-interactive-lock."""
+
+    def test_matching_label_returns_true(self) -> None:
+        mgr = FakeTaskManager()
+        mgr.add(
+            FakeTask(
+                id="#42",
+                labels=["planning-round:1", "interactive:planning-in-progress:sess-abc"],
+            )
+        )
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True
+
+    def test_non_matching_prefix_returns_false(self) -> None:
+        mgr = FakeTaskManager()
+        mgr.add(FakeTask(id="#42", labels=["planning-round:1"]))
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
+
+    def test_prefix_is_strict_startswith_not_substring(self) -> None:
+        """A label that *contains* the prefix mid-string must not match."""
+        mgr = FakeTaskManager()
+        mgr.add(FakeTask(id="#42", labels=["prefixed-interactive:planning-in-progress:x"]))
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is False
+
+    def test_empty_labels_returns_false(self) -> None:
+        mgr = FakeTaskManager()
+        mgr.add(FakeTask(id="#42", labels=[]))
+        assert task_has_label_prefix(mgr, "#42", "interactive:") is False
+
+    def test_none_labels_returns_false(self) -> None:
+        mgr = FakeTaskManager()
+        mgr.add(FakeTask(id="#42", labels=None))
+        assert task_has_label_prefix(mgr, "#42", "interactive:") is False
+
+    def test_missing_task_returns_false(self) -> None:
+        assert task_has_label_prefix(FakeTaskManager(), "#404", "interactive:") is False
+
+    def test_none_task_id_returns_false(self) -> None:
+        assert task_has_label_prefix(FakeTaskManager(), None, "interactive:") is False
+
+    def test_no_manager_returns_false(self) -> None:
+        assert task_has_label_prefix(None, "#42", "interactive:") is False
+
+    def test_int_task_id_normalizes(self) -> None:
+        """Numeric seq_num must be normalized to `#N` before lookup, matching the
+        convention used by the other helpers."""
+        mgr = FakeTaskManager()
+        mgr.add(FakeTask(id="#9438", labels=["interactive:planning-in-progress:s"]))
+        assert task_has_label_prefix(mgr, 9438, "interactive:planning-in-progress:") is True
+
+    def test_any_matching_label_is_enough(self) -> None:
+        """Multiple interactive locks accumulated on the same parent still match."""
+        mgr = FakeTaskManager()
+        mgr.add(
+            FakeTask(
+                id="#42",
+                labels=[
+                    "interactive:planning-in-progress:session-a",
+                    "interactive:planning-in-progress:session-b",
+                    "planning-round:2",
+                ],
+            )
+        )
+        assert task_has_label_prefix(mgr, "#42", "interactive:planning-in-progress:") is True

@@ -13,6 +13,7 @@ import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
 import type { Artifact } from "../../types/artifacts";
+import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 
 export type ActivityTab =
@@ -48,33 +49,12 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
     ),
   },
   {
-    id: "pipelines",
-    label: "Pipelines",
-    icon: (
-      <svg {...iconProps}>
-        <line x1="6" y1="3" x2="6" y2="15" />
-        <circle cx="18" cy="6" r="3" />
-        <circle cx="6" cy="18" r="3" />
-        <path d="M18 9a9 9 0 0 1-9 9" />
-      </svg>
-    ),
-  },
-  {
     id: "tasks",
     label: "Tasks",
     icon: (
       <svg {...iconProps}>
         <path d="M9 11l3 3L22 4" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-      </svg>
-    ),
-  },
-  {
-    id: "files",
-    label: "Files",
-    icon: (
-      <svg {...iconProps}>
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
     ),
   },
@@ -102,6 +82,15 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
     ),
   },
   {
+    id: "files",
+    label: "Files",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      </svg>
+    ),
+  },
+  {
     id: "canvas",
     label: "A2UI Canvas",
     icon: (
@@ -110,6 +99,18 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
         <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
         <path d="M2 2l7.586 7.586" />
         <circle cx="11" cy="11" r="2" />
+      </svg>
+    ),
+  },
+  {
+    id: "pipelines",
+    label: "Pipelines",
+    icon: (
+      <svg {...iconProps}>
+        <line x1="6" y1="3" x2="6" y2="15" />
+        <circle cx="18" cy="6" r="3" />
+        <circle cx="6" cy="18" r="3" />
+        <path d="M18 9a9 9 0 0 1-9 9" />
       </svg>
     ),
   },
@@ -155,15 +156,18 @@ interface ActivityPanelProps {
   fetchDiff?: (path: string) => Promise<string>;
   // Tasks tab
   projectId?: string | null;
+  sessions?: GobbySession[];
+  sessionsLoading?: boolean;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // Sessions tab
-  onKillAgent?: (runId: string) => void;
-  onExpireSession?: (sessionId: string) => void;
+  onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusSessionHandled?: () => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
+  onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   isMobile?: boolean;
 }
 
@@ -246,6 +250,8 @@ export function ActivityPanel({
   changedFiles = [],
   fetchDiff,
   projectId,
+  sessions = [],
+  sessionsLoading = false,
   onAddFileToChat,
   onKillAgent,
   onExpireSession,
@@ -253,6 +259,7 @@ export function ActivityPanel({
   focusSessionId,
   onFocusSessionHandled,
   onSwapSession,
+  onResumeSession,
   isMobile = false,
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
@@ -312,14 +319,15 @@ export function ActivityPanel({
       case "sessions":
         return (
           <SessionsTab
-            projectId={projectId}
+            sessions={sessions}
+            isLoadingSessions={sessionsLoading}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
             chatSessionId={chatSessionId ?? undefined}
             focusSessionId={focusSessionId}
             onFocusHandled={onFocusSessionHandled}
             onSwapSession={onSwapSession}
-            isMobile={useOverlay}
+            onResumeSession={onResumeSession}
           />
         );
       case "pipelines":

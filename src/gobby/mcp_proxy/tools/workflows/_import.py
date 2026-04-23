@@ -121,9 +121,9 @@ def reload_cache(
 
     if db is not None:
         sync_targets: list[tuple[str, str, str]] = [
-            ("pipelines", "gobby.workflows.sync", "sync_bundled_pipelines"),
-            ("rules", "gobby.workflows.sync", "sync_bundled_rules"),
-            ("variables", "gobby.workflows.sync", "sync_bundled_variables"),
+            ("pipelines", "gobby.workflows.sync_pipelines", "sync_bundled_pipelines"),
+            ("rules", "gobby.workflows.sync_rules", "sync_bundled_rules"),
+            ("variables", "gobby.workflows.sync_variables", "sync_bundled_variables"),
             ("agents", "gobby.agents.sync", "sync_bundled_agents"),
         ]
         total_synced = 0

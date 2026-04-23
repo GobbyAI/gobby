@@ -11,11 +11,7 @@ describe("CommandBar", () => {
         title="Viewed web chat"
         sessionSource="codex"
         onOpenPalette={vi.fn()}
-        onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}
-        onTogglePanel={vi.fn()}
-        agents={[]}
-        isPanelPinned={false}
       />,
     );
 
@@ -36,11 +32,7 @@ describe("CommandBar", () => {
         sessionRef={null}
         title={null}
         onOpenPalette={vi.fn()}
-        onOpenActiveSessions={vi.fn()}
         onNewChat={vi.fn()}
-        onTogglePanel={vi.fn()}
-        agents={[]}
-        isPanelPinned={false}
       />,
     );
 

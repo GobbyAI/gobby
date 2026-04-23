@@ -31,6 +31,16 @@ INFRASTRUCTURE_TOOLS = {
 }
 
 
+# Out-of-band operator/debug channels. Callers are typically humans driving
+# a session from the web app or CLI; they target a session whose workflow
+# they aren't bound by. These bypass step/agent allow-lists so a dev can
+# always interrogate a stuck agent (e.g. send_keys into a terminate step
+# whose allow-list only lists kill_agent).
+OPERATOR_TOOLS = {
+    "send_keys",
+}
+
+
 MESSAGE_DELIVERY_TOOLS = {"deliver_pending_messages"}
 
 
@@ -77,6 +87,23 @@ def is_discovery_tool(tool_name: str | None) -> bool:
         True if this is a discovery tool that doesn't need schema unlock
     """
     return tool_name in DISCOVERY_TOOLS if tool_name else False
+
+
+def is_operator_tool(tool_name: str | None) -> bool:
+    """Check if the tool is an out-of-band operator/debug channel.
+
+    Operator tools (e.g. send_keys) are invoked by humans from the web app
+    or CLI to inspect or poke a running session. They are not agent actions
+    and must bypass step/agent MCP allow-lists so an operator can always
+    reach a stuck agent.
+
+    Args:
+        tool_name: The MCP tool name (from tool_input.tool_name)
+
+    Returns:
+        True if this is an operator tool that bypasses enforcement
+    """
+    return tool_name in OPERATOR_TOOLS if tool_name else False
 
 
 def is_tool_unlocked(
@@ -165,6 +192,36 @@ def is_plan_file(file_path: str, source: str | None = None) -> bool:
         return False
 
     return any(seg in normalised for seg in _CLI_DIR_SEGMENTS)
+
+
+def is_current_plan_artifact(
+    file_path: str,
+    artifact_path: str | None,
+    project_path: str | None = None,
+) -> bool:
+    """Return whether ``file_path`` points at the current canonical plan artifact."""
+    if not file_path or not artifact_path:
+        return False
+
+    normalized_artifact = os.path.normpath(artifact_path.strip()).replace("\\", "/")
+    if not normalized_artifact or os.path.isabs(normalized_artifact):
+        return False
+
+    normalized_file = os.path.normpath(file_path.strip())
+    if project_path:
+        normalized_project = os.path.normpath(project_path)
+        if os.path.isabs(normalized_file):
+            try:
+                if os.path.commonpath([normalized_project, normalized_file]) != normalized_project:
+                    return False
+            except ValueError:
+                return False
+            normalized_file = os.path.relpath(normalized_file, normalized_project)
+
+    if os.path.isabs(normalized_file):
+        return False
+
+    return normalized_file.replace("\\", "/") == normalized_artifact
 
 
 def _extract_change_path(change: Any) -> str | None:

@@ -66,7 +66,7 @@ async def spawn_agent_impl(
     parent_session_id: str | None = None,
     project_path: str | None = None,
     initial_variables: dict[str, Any] | None = None,
-    session_manager: Any | None = None,  # LocalSessionManager
+    session_manager: Any | None = None,  # SessionManager
     db: Any | None = None,  # DatabaseProtocol
     daemon_config: Any | None = None,  # DaemonConfig
 ) -> dict[str, Any]:
@@ -98,7 +98,7 @@ async def spawn_agent_impl(
         parent_session_id: Parent session ID
         project_path: Project path override
         initial_variables: Pre-built initial variables from factory (merged with impl's own)
-        session_manager: LocalSessionManager for mode=self
+        session_manager: SessionManager for mode=self
         db: DatabaseProtocol for mode=self
 
     Returns:
@@ -431,10 +431,9 @@ async def spawn_agent_impl(
         timeout_seconds=effective_timeout,
     )
 
-    # NOTE: agent_runs DB record is created inside prepare_terminal_spawn()
-    # (called by execute_spawn).  Do NOT pre-create here — it causes a
-    # UNIQUE constraint violation since prepare_terminal_spawn also inserts
-    # with the same run_id.  See: agents/spawn.py:162
+    # run_id is minted above and threaded through SpawnRequest.agent_run_id.
+    # prepare_terminal_spawn (called inside execute_spawn) inserts the
+    # agent_runs row using that exact id. It is the single source of truth.
 
     spawn_result = await execute_spawn(spawn_request)
 
@@ -456,6 +455,16 @@ async def spawn_agent_impl(
             )
         except Exception as e:
             logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
+
+        # Flip agent_runs.status from 'pending' to 'running' now that we have a
+        # live PID. Don't wait for the child session's SessionStart hook —
+        # SessionCoordinator.start_agent_run stays idempotent (returns False
+        # when status is no longer 'pending') so a later hook-driven call is a
+        # safe no-op. See hooks/session_coordinator.py:313.
+        try:
+            runner.run_storage.start(run_id)
+        except Exception as e:
+            logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
 
         # Fire agent_started event for WebSocket broadcasting
         try:

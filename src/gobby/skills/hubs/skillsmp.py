@@ -24,7 +24,7 @@ class SkillsMPProvider(HubProvider):
     """Provider for SkillsMP skill marketplace using REST API.
 
     This provider connects to the SkillsMP API (skillsmp.com) to provide
-    access to 350K+ skills in the marketplace.
+    access to nearly 1M skills in the marketplace.
 
     Authentication is via Bearer token in the Authorization header.
     Rate limit: 500 requests/day.
@@ -86,8 +86,44 @@ class SkillsMPProvider(HubProvider):
             "authenticated": authenticated,
         }
         if not authenticated:
-            info["error"] = "SKILLSMP_API_KEY not set. Search and listing require authentication."
+            info["error"] = (
+                "SKILLSMP_API_KEY not configured. "
+                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
+            )
         return info
+
+    @staticmethod
+    def _unwrap_skills(result: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract the skills array from SkillsMP's response envelope.
+
+        The API wraps responses as ``{"success": bool, "data": {"skills": [...]}}``.
+        Falls back to a top-level ``skills`` key for defensive forward compat.
+        """
+        data = result.get("data")
+        if isinstance(data, dict) and "skills" in data:
+            return list(data["skills"])
+        # Defensive fallback for response shapes without the envelope.
+        return list(result.get("skills", []))
+
+    def _skill_to_info(self, skill: dict[str, Any]) -> HubSkillInfo:
+        """Map a SkillsMP skill record to HubSkillInfo.
+
+        SkillsMP uses ``stars`` as the popularity signal — surfaced as ``score``
+        so the MCP layer can rank consistently with other hubs. ``version`` is
+        not provided by the list/search endpoints.
+        """
+        stars = skill.get("stars")
+        score = (
+            float(stars) if isinstance(stars, int | float) and not isinstance(stars, bool) else None
+        )
+        return HubSkillInfo(
+            slug=skill.get("id", skill.get("name", "")),
+            display_name=skill.get("name", skill.get("id", "")),
+            description=skill.get("description", ""),
+            hub_name=self.hub_name,
+            version=skill.get("version"),
+            score=score if score is not None else skill.get("score"),
+        )
 
     async def search(
         self,
@@ -96,7 +132,8 @@ class SkillsMPProvider(HubProvider):
     ) -> list[HubSkillInfo]:
         if not self.auth_token:
             raise RuntimeError(
-                "SkillsMP API key not configured. Set the SKILLSMP_API_KEY environment variable."
+                "SkillsMP API key not configured. "
+                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
             )
 
         result = await self._make_request(
@@ -105,46 +142,37 @@ class SkillsMPProvider(HubProvider):
             params={"q": query, "limit": limit},
         )
 
-        skills = result.get("skills", [])
-        return [
-            HubSkillInfo(
-                slug=skill.get("id", skill.get("name", "")),
-                display_name=skill.get("name", skill.get("id", "")),
-                description=skill.get("description", ""),
-                hub_name=self.hub_name,
-                version=skill.get("version"),
-                score=skill.get("score"),
-            )
-            for skill in skills
-        ]
+        return [self._skill_to_info(skill) for skill in self._unwrap_skills(result)]
 
     async def list_skills(
         self,
         limit: int = 50,
         offset: int = 0,
     ) -> list[HubSkillInfo]:
+        """List skills via /skills/search with a broad match.
+
+        SkillsMP has no dedicated unfiltered-list endpoint — /skills returns
+        404. Route through /skills/search with an empty query so pagination
+        (via limit/offset) still works for callers that want a browse view.
+        """
         if not self.auth_token:
             raise RuntimeError(
-                "SkillsMP API key not configured. Set the SKILLSMP_API_KEY environment variable."
+                "SkillsMP API key not configured. "
+                "Run 'gobby install' or 'gobby secrets set SKILLSMP_API_KEY'."
             )
+        # Coerce non-positive limits to a sane browse default. Callers that pass
+        # limit=0 mean "browse mode" — the API still needs a positive limit for
+        # pagination to work, and forwarding 0 (or negative) yields a 400.
+        safe_limit = limit if limit > 0 else 50
+        page = (offset // safe_limit) + 1
 
         result = await self._make_request(
             method="GET",
-            endpoint="/skills",
-            params={"limit": limit, "offset": offset},
+            endpoint="/skills/search",
+            params={"q": "", "limit": safe_limit, "page": page},
         )
 
-        skills = result.get("skills", [])
-        return [
-            HubSkillInfo(
-                slug=skill.get("id", skill.get("name", "")),
-                display_name=skill.get("name", skill.get("id", "")),
-                description=skill.get("description", ""),
-                hub_name=self.hub_name,
-                version=skill.get("version"),
-            )
-            for skill in skills
-        ]
+        return [self._skill_to_info(skill) for skill in self._unwrap_skills(result)]
 
     async def get_skill_details(
         self,

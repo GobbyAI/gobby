@@ -71,8 +71,7 @@ class _TestHandler(SessionEventHandlerMixin):
     def __init__(self) -> None:
         self.logger = MagicMock()
         self._session_manager = MagicMock()
-        self._session_storage = MagicMock()
-        self._session_storage.update.return_value = None
+        self._session_manager.update.return_value = None
         self._session_coordinator = MagicMock()
         self._message_processor = MagicMock()
         self._task_manager = MagicMock()
@@ -200,7 +199,7 @@ class TestHandleSessionEnd:
         handler._task_manager = MagicMock()
         handler._session_coordinator.complete_agent_run.assert_called_once()
         handler._message_processor.unregister_session.assert_called_with("sess-1")
-        handler._session_storage.update_status.assert_called_with("sess-1", "expired")
+        handler._session_manager.update_status.assert_called_with("sess-1", "expired")
 
     def test_handle_session_end_handoff_ready(self) -> None:
         handler = _TestHandler()
@@ -209,11 +208,11 @@ class TestHandleSessionEnd:
 
         mock_session = MagicMock()
         mock_session.status = "expired"
-        handler._session_storage.get.return_value = mock_session
+        handler._session_manager.get.return_value = mock_session
 
         resp = handler.handle_session_end(event)
         assert resp.decision == "allow"
-        handler._session_storage.update_status.assert_called_with("sess-1", "handoff_ready")
+        handler._session_manager.update_status.assert_called_with("sess-1", "handoff_ready")
 
     def test_handle_session_end_missing_platform_session_id(self) -> None:
         handler = _TestHandler()
@@ -233,11 +232,103 @@ class TestHandleSessionEnd:
         # Setting up exceptions
         handler._session_coordinator.complete_agent_run.side_effect = Exception("test run")
         handler._message_processor.unregister_session.side_effect = Exception("test proc")
-        handler._session_storage.update_status.side_effect = Exception("test storage")
+        handler._session_manager.update_status.side_effect = Exception("test storage")
 
         with patch("gobby.tasks.commits.auto_link_commits", side_effect=Exception("test link")):
             resp = handler.handle_session_end(event)
             assert resp.decision == "allow"  # Exceptions are swallowed
+
+    def test_handle_session_end_releases_interactive_lock_labels(self) -> None:
+        """When a session ends, remove its interactive-plan lock labels across
+        all tasks. Skill's own terminal cleanup handles the common case; this
+        sweep is the safety net for sessions that die before reaching cleanup.
+        """
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END, data={"cwd": "/tmp"})
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        t1 = MagicMock()
+        t1.id = "uuid-task-1"
+        t2 = MagicMock()
+        t2.id = "uuid-task-2"
+        handler._task_manager.list_tasks.return_value = [t1, t2]
+
+        handler.handle_session_end(event)
+
+        # Every matching task has the session-specific label removed
+        expected_label = "interactive:planning-in-progress:sess-1"
+        handler._task_manager.list_tasks.assert_any_call(label=expected_label, limit=200)
+        handler._task_manager.remove_label.assert_any_call("uuid-task-1", expected_label)
+        handler._task_manager.remove_label.assert_any_call("uuid-task-2", expected_label)
+        assert handler._task_manager.remove_label.call_count == 2
+
+    def test_handle_session_end_lock_sweep_failure_does_not_fail_session_end(self) -> None:
+        """If list_tasks / remove_label raises, session-end still returns allow."""
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END)
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        handler._task_manager.list_tasks.side_effect = Exception("db down")
+
+        resp = handler.handle_session_end(event)
+        assert resp.decision == "allow"
+
+    def test_handle_session_end_sweep_is_scoped_to_current_session(self) -> None:
+        """The sweep must only remove THIS session's lock label, never another
+        session's. We verify this at the list_tasks boundary: the handler
+        queries with label=interactive:planning-in-progress:<self>, so tasks
+        carrying another session's lock are never returned and never touched.
+        """
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END)
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        # Simulate a task that belongs to a *different* session and should
+        # not surface under list_tasks(label=...for sess-1...).
+        def fake_list_tasks(label: str, limit: int = 200) -> list:
+            # Only sess-1's label returns anything
+            if label == "interactive:planning-in-progress:sess-1":
+                return []
+            return [MagicMock(id="other-session-task")]
+
+        handler._task_manager.list_tasks.side_effect = fake_list_tasks
+
+        handler.handle_session_end(event)
+
+        # Only sess-1's label was queried; never another session's
+        called_labels = [
+            call.kwargs.get("label") for call in handler._task_manager.list_tasks.call_args_list
+        ]
+        assert "interactive:planning-in-progress:sess-1" in called_labels
+        assert not any(
+            lbl
+            and lbl.startswith("interactive:planning-in-progress:")
+            and lbl != "interactive:planning-in-progress:sess-1"
+            for lbl in called_labels
+        )
+        # Nothing to remove, so remove_label is never called
+        handler._task_manager.remove_label.assert_not_called()
+
+    def test_handle_session_end_per_task_remove_failure_is_isolated(self) -> None:
+        """A failure removing a lock on one task must not prevent removing it
+        from the next task in the sweep."""
+        handler = _TestHandler()
+        event = _make_event(event_type=HookEventType.SESSION_END)
+        event.metadata["_platform_session_id"] = "sess-1"
+
+        t1 = MagicMock()
+        t1.id = "uuid-a"
+        t2 = MagicMock()
+        t2.id = "uuid-b"
+        handler._task_manager.list_tasks.return_value = [t1, t2]
+
+        # First remove fails, second succeeds
+        handler._task_manager.remove_label.side_effect = [Exception("lost row"), None]
+
+        resp = handler.handle_session_end(event)
+        assert resp.decision == "allow"
+        # Both tasks were attempted
+        assert handler._task_manager.remove_label.call_count == 2
 
 
 class TestSessionStartAndHelpers:
@@ -248,8 +339,8 @@ class TestSessionStartAndHelpers:
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
         )
-        handler._session_storage.get.return_value = None
-        handler._session_storage.find_parent.return_value = None
+        handler._session_manager.get.return_value = None
+        handler._session_manager.find_parent.return_value = None
 
         with (
             patch.object(handler, "_derive_transcript_path", return_value="/tmp/transcript.json"),
@@ -267,13 +358,34 @@ class TestSessionStartAndHelpers:
             assert event.metadata["_platform_session_id"] == "new-sess-1"
             assert resp.decision == "allow"
 
+    def test_handle_session_start_skips_acp_child(self) -> None:
+        """Sessions spawned by daemon-owned qwen --acp / gemini --acp must not
+        register — the envelope carries gobby_acp_child='1' in terminal_context.
+        """
+        handler = _TestHandler()
+        event = _make_event(
+            event_type=HookEventType.SESSION_START,
+            session_id="acp-child-external-id",
+            source=SessionSource.QWEN,
+            data={
+                "cwd": "/tmp",
+                "terminal_context": {"gobby_acp_child": "1"},
+            },
+        )
+
+        resp = handler.handle_session_start(event)
+
+        assert resp.decision == "allow"
+        handler._session_manager.register_session.assert_not_called()
+        handler._session_manager.get.assert_not_called()
+
     def test_handle_session_start_pre_created(self) -> None:
         handler = _TestHandler()
         event = _make_event(event_type=HookEventType.SESSION_START, session_id="ext-1", data={})
 
         mock_session = MagicMock()
         mock_session.id = "ext-1"
-        handler._session_storage.get.return_value = mock_session
+        handler._session_manager.get.return_value = mock_session
 
         with patch.object(handler, "_handle_pre_created_session") as mock_pre_created:
             mock_pre_created.return_value = HookResponse(decision="allow")
@@ -287,8 +399,8 @@ class TestSessionStartAndHelpers:
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
         )
-        handler._session_storage.get.return_value = None
-        handler._session_storage.find_parent.return_value = None
+        handler._session_manager.get.return_value = None
+        handler._session_manager.find_parent.return_value = None
 
         mock_stats = MagicMock()
         mock_stats.total_symbols = 42
@@ -314,8 +426,8 @@ class TestSessionStartAndHelpers:
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-1", data={"cwd": "/tmp"}
         )
-        handler._session_storage.get.return_value = None
-        handler._session_storage.find_parent.return_value = None
+        handler._session_manager.get.return_value = None
+        handler._session_manager.find_parent.return_value = None
 
         with (
             patch.object(handler, "_derive_transcript_path", return_value="/tmp/t.json"),
@@ -357,7 +469,7 @@ class TestSessionStartAndHelpers:
                 cwd="/tmp",
             )
 
-            handler._session_storage.update.assert_called_with(
+            handler._session_manager.update.assert_called_with(
                 session_id="sess-1", transcript_path="/tmp/t.json", status="active"
             )
             handler._session_manager.cache_session_mapping.assert_called_once()
@@ -517,13 +629,44 @@ class TestSessionMoreCoverage:
         )
 
         # Existing session check fails, but gobby_session_id check succeeds
-        handler._session_storage.get.side_effect = [None, MagicMock()]
+        handler._session_manager.get.side_effect = [None, MagicMock()]
 
         with patch.object(
             handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")
         ) as mock_pre:
             handler.handle_session_start(event)
-            handler._session_storage.update.assert_called_once()
+            handler._session_manager.update.assert_called_once()
+            mock_pre.assert_called_once()
+
+    def test_handle_session_start_codex_terminal(self) -> None:
+        """Codex now joins the late-link path: SessionStart fires with the native
+        Codex session_id; the handler resolves the pre-created child via
+        terminal_context.gobby_session_id and rewrites external_id.
+
+        This locks in the contract Codex depends on after the preflight removal
+        (otherwise Codex sessions would never be linked back to their Gobby
+        parent and MCP tool calls scoped by external_id would silently miss).
+        """
+        handler = _TestHandler()
+        codex_native_id = "019dadc3-07e9-7740-97f2-400c3906247e"
+        event = _make_event(
+            event_type=HookEventType.SESSION_START,
+            session_id=codex_native_id,
+            source=SessionSource.CODEX,
+            data={"terminal_context": {"gobby_session_id": "gobby-codex-1"}},
+        )
+
+        # External-id lookup misses, gobby_session_id lookup hits the pre-created child.
+        handler._session_manager.get.side_effect = [None, MagicMock()]
+
+        with patch.object(
+            handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")
+        ) as mock_pre:
+            handler.handle_session_start(event)
+            # external_id is rewritten to the Codex-native session_id from the hook.
+            handler._session_manager.update.assert_called_once()
+            update_kwargs = handler._session_manager.update.call_args.kwargs
+            assert update_kwargs.get("external_id") == codex_native_id
             mock_pre.assert_called_once()
 
     def test_handle_session_start_parent_handoff(self) -> None:
@@ -538,10 +681,10 @@ class TestSessionMoreCoverage:
         mock_parent.seq_num = 1
 
         # storage.get(external) -> None
-        handler._session_storage.get.side_effect = lambda sid: (
+        handler._session_manager.get.side_effect = lambda sid: (
             mock_parent if sid == "parent-1" else None
         )
-        handler._session_storage.find_parent.return_value = mock_parent
+        handler._session_manager.find_parent.return_value = mock_parent
 
         with (
             patch.object(handler, "_derive_transcript_path", return_value=None),
@@ -593,12 +736,12 @@ class TestSessionMoreCoverage:
         event = _make_event(
             event_type=HookEventType.SESSION_START, session_id="ext-4", data={"source": "clear"}
         )
-        handler._session_storage.get.return_value = None
+        handler._session_manager.get.return_value = None
 
         # find_parent fails once, succeeds on retry
         mock_parent = MagicMock()
         mock_parent.id = "parent-1"
-        handler._session_storage.find_parent.side_effect = [None, mock_parent, mock_parent]
+        handler._session_manager.find_parent.side_effect = [None, mock_parent, mock_parent]
 
         with (
             patch.object(handler, "_derive_transcript_path", return_value=None),
@@ -639,7 +782,7 @@ class TestComposeSessionResponse:
         handler = _TestHandler()
         session = _make_session(seq_num=42)
         parent = _make_session(session_id="parent-1", seq_num=10, summary_markdown="# S")
-        handler._session_storage.get.return_value = parent
+        handler._session_manager.get.return_value = parent
 
         result = handler._compose_session_response(
             session=session,
@@ -746,7 +889,7 @@ class TestClaimedTaskHelpers:
 
     def test_no_session_storage_returns_none(self) -> None:
         handler = _TestHandler()
-        handler._session_storage = None
+        handler._session_manager = None
         assert handler._get_claimed_task_info("sess-1", "proj-1") is None
 
     def test_no_task_manager_returns_none(self) -> None:
@@ -868,7 +1011,7 @@ class TestClaimedTaskHelpers:
     def test_session_variable_error_returns_none(self) -> None:
         """DB errors (e.g. mocked DB) are handled gracefully."""
         handler = _TestHandler()
-        # _session_storage.db is a MagicMock, so SessionVariableManager
+        # _session_manager.db is a MagicMock, so SessionVariableManager
         # will fail — our try/except should catch it
         result = handler._get_claimed_task_info("sess-1", "proj-1")
         assert result is None

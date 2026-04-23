@@ -11,22 +11,22 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.database import DatabaseProtocol
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_tmux_target(
     session_id: str,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     agent_run_manager: LocalAgentRunManager,
 ) -> tuple[str | None, TmuxSessionManager | None, str | None]:
     """Resolve a session ID to a tmux target.
@@ -65,7 +65,7 @@ def _resolve_tmux_target(
 
 def register_terminal_tools(
     registry: InternalToolRegistry,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     db: DatabaseProtocol,
 ) -> None:
     """Register send_keys and capture_output tools."""

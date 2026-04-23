@@ -34,7 +34,7 @@ call_tool("gobby-skills", "search_hub", {"query": "python best practices"})
 ### Loading and Installing
 
 ```python
-# Load an installed skill by name
+# Load an installed skill by name; do not include session_id in get_skill args
 call_tool("gobby-skills", "get_skill", {"name": "source-control"})
 
 # Install a skill from a hub result
@@ -57,4 +57,4 @@ Search proactively — don't wait to be told:
 
 **Rule of thumb:** Search local first for "how do we do X here." Search hubs for "what's the best way to do X in general."
 
-Skills load into your context when retrieved — you don't need to memorize them.
+Direct get_skill results load the skill body into your tool output; follow them before continuing.

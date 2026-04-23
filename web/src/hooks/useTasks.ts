@@ -121,6 +121,7 @@ interface UpdateTaskParams {
 // =============================================================================
 
 const REFETCH_DEBOUNCE_MS = 500
+const DEFAULT_PAGE_SIZE = 15
 
 function getBaseUrl(): string {
   return ''
@@ -130,10 +131,13 @@ function getBaseUrl(): string {
 // Hook
 // =============================================================================
 
-export function useTasks(projectId?: string | null) {
+export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_PAGE_SIZE) {
   const [allTasks, setAllTasks] = useState<GobbyTask[]>([])
+  const [serverTotal, setServerTotal] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestVersionRef = useRef(0)
   const [filters, setFilters] = useState<TaskFilters>({
     status: null,
     priority: null,
@@ -154,43 +158,95 @@ export function useTasks(projectId?: string | null) {
     })
   }, [projectId])
 
-  // Fetch tasks list
+  const buildParams = useCallback((offset: number, limit: number) => {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+    })
+    params.set('sort_by', 'updated_at')
+    params.set('sort_order', 'desc')
+    if (filters.priority !== null) params.set('priority', String(filters.priority))
+    if (filters.taskType) params.set('task_type', filters.taskType)
+    if (filters.assignee) params.set('assignee', filters.assignee)
+    if (filters.label) params.set('label', filters.label)
+    if (filters.parentTaskId) params.set('parent_task_id', filters.parentTaskId)
+    if (filters.search) params.set('search', filters.search)
+    if (filters.projectId) params.set('project_id', filters.projectId)
+    return params
+  }, [filters])
+
+  // Fetch first page (replaces accumulated tasks)
   const fetchTasks = useCallback(async () => {
+    const requestVersion = ++requestVersionRef.current
     try {
       const baseUrl = getBaseUrl()
-      const params = new URLSearchParams({ limit: '500' })
-      params.set('sort_by', 'updated_at')
-      params.set('sort_order', 'desc')
-      if (filters.priority !== null) params.set('priority', String(filters.priority))
-      if (filters.taskType) params.set('task_type', filters.taskType)
-      if (filters.assignee) params.set('assignee', filters.assignee)
-      if (filters.label) params.set('label', filters.label)
-      if (filters.parentTaskId) params.set('parent_task_id', filters.parentTaskId)
-      if (filters.search) params.set('search', filters.search)
-      if (filters.projectId) params.set('project_id', filters.projectId)
-
+      const params = buildParams(0, pageSize)
       const response = await fetch(`${baseUrl}/api/tasks?${params}`)
+      if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
         setAllTasks(data.tasks || [])
+        setServerTotal(data.total ?? (data.tasks?.length ?? 0))
         setError(null)
       } else {
         setError(`Failed to fetch tasks (${response.status})`)
       }
     } catch (e) {
+      if (requestVersionRef.current !== requestVersion) return
       console.error('Failed to fetch tasks:', e)
       setError('Failed to fetch tasks')
     } finally {
-      setIsLoading(false)
+      if (requestVersionRef.current === requestVersion) {
+        setIsLoading(false)
+      }
     }
-  }, [filters])
+  }, [buildParams, pageSize])
+
+  // Fetch the next page and append to allTasks (used for "Load more")
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore) return
+    const requestVersion = requestVersionRef.current
+    setIsLoadingMore(true)
+    try {
+      const baseUrl = getBaseUrl()
+      const params = buildParams(allTasks.length, pageSize)
+      const response = await fetch(`${baseUrl}/api/tasks?${params}`)
+      if (requestVersionRef.current !== requestVersion) return
+      if (response.ok) {
+        const data: TaskListResponse = await response.json()
+        const incoming = data.tasks || []
+        if (incoming.length > 0) {
+          setAllTasks(prev => {
+            // Avoid duplicates if the server returns overlapping rows after a refetch.
+            const seen = new Set(prev.map(t => t.id))
+            const merged = prev.slice()
+            for (const t of incoming) {
+              if (!seen.has(t.id)) merged.push(t)
+            }
+            return merged
+          })
+        }
+        setServerTotal((prev) => data.total ?? prev)
+        setError(null)
+      } else {
+        setError(`Failed to load more tasks (${response.status})`)
+      }
+    } catch (e) {
+      if (requestVersionRef.current !== requestVersion) return
+      console.error('Failed to load more tasks:', e)
+      setError('Failed to load more tasks')
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [allTasks.length, buildParams, isLoadingMore, pageSize])
 
   const tasks = useMemo(
     () => allTasks.filter(task => matchesTaskBucketFilter(task, filters.status)),
     [allTasks, filters.status]
   )
 
-  const total = tasks.length
+  const total = serverTotal
+  const hasMore = allTasks.length < serverTotal
   const stats = useMemo(() => countTasksByBucket(allTasks), [allTasks])
 
   // Get single task detail
@@ -457,6 +513,9 @@ export function useTasks(projectId?: string | null) {
     allTasks,
     tasks,
     total,
+    hasMore,
+    isLoadingMore,
+    loadMore,
     stats,
     isLoading,
     error,

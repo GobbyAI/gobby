@@ -95,9 +95,10 @@ class ParsedSkill:
         scripts: List of script file paths (relative to skill dir)
         references: List of reference file paths (relative to skill dir)
         assets: List of asset file paths (relative to skill dir)
-        always_apply: Whether skill should always be injected at session start
-        injection_format: How to inject skill (summary, full, content)
+        always_apply: Whether skill should always be advertised at session start
+        injection_format: Manifest selection format (summary, full, content)
         audience_config: Agent-type-aware audience configuration (from metadata.gobby)
+        internal: Methodology skill loaded by other skills via get_skill; hidden from listings
     """
 
     name: str
@@ -119,6 +120,7 @@ class ParsedSkill:
     injection_format: str = "summary"
     triggers: list[str] | None = None
     audience_config: SkillAudienceConfig | None = None
+    internal: bool = False
 
     def get_category(self) -> str | None:
         """Get category from top-level or metadata.skillport.category."""
@@ -161,6 +163,26 @@ class ParsedSkill:
         skillport = self.metadata.get("skillport", {})
         return bool(skillport.get("alwaysApply", False))
 
+    def is_internal(self) -> bool:
+        """Check if this is an internal methodology skill (internal=true).
+
+        Internal skills are loaded by other skills via get_skill(name=...) rather
+        than surfaced to users; they are hidden from list_skills / search_skills
+        listings by default. Supports top-level `internal` and nested
+        `metadata.gobby.internal`. Top-level takes precedence.
+        """
+        if self.internal:
+            return True
+        if not self.metadata:
+            return False
+        top_level = self.metadata.get("internal")
+        if top_level is not None:
+            return bool(top_level)
+        gobby_meta = self.metadata.get("gobby", {})
+        if isinstance(gobby_meta, dict):
+            return bool(gobby_meta.get("internal", False))
+        return False
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         result = {
@@ -181,6 +203,7 @@ class ParsedSkill:
             "always_apply": self.always_apply,
             "injection_format": self.injection_format,
             "triggers": self.triggers,
+            "internal": self.internal,
         }
         if self.audience_config:
             result["audience_config"] = {
@@ -359,8 +382,13 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
     top_level_always_apply = frontmatter.get("alwaysApply")
     top_level_category = frontmatter.get("category")
     top_level_injection_format = frontmatter.get("injectionFormat")
+    top_level_internal = frontmatter.get("internal")
 
-    if top_level_always_apply is not None or top_level_category is not None:
+    if (
+        top_level_always_apply is not None
+        or top_level_category is not None
+        or top_level_internal is not None
+    ):
         if metadata is None:
             metadata = {}
         # Store at top level of metadata (not nested in skillport)
@@ -368,6 +396,8 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
             metadata["alwaysApply"] = top_level_always_apply
         if top_level_category is not None:
             metadata["category"] = top_level_category
+        if top_level_internal is not None:
+            metadata["internal"] = top_level_internal
 
     # Version can be at top level or in metadata
     version = frontmatter.get("version")
@@ -403,6 +433,15 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
 
     audience_config = extract_audience_config(metadata)
 
+    # Resolve internal: top-level takes precedence, fall back to metadata.gobby.internal
+    internal = False
+    if top_level_internal is not None:
+        internal = bool(top_level_internal)
+    elif metadata and isinstance(metadata, dict):
+        gobby_meta = metadata.get("gobby", {})
+        if isinstance(gobby_meta, dict) and gobby_meta.get("internal") is not None:
+            internal = bool(gobby_meta["internal"])
+
     return ParsedSkill(
         name=name,
         description=description,
@@ -417,6 +456,7 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
         injection_format=injection_format,
         triggers=triggers,
         audience_config=audience_config,
+        internal=internal,
     )
 
 

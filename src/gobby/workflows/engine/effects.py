@@ -36,6 +36,24 @@ class EffectsMixin:
 
         def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]: ...
 
+    def _render_nested_value(
+        self,
+        value: Any,
+        ctx: dict[str, Any],
+        allowed_funcs: dict[str, Callable[..., Any]],
+    ) -> Any:
+        """Recursively render strings inside dict/list payloads."""
+        if isinstance(value, str):
+            return self._render_template(value, ctx, allowed_funcs)
+        if isinstance(value, dict):
+            return {
+                key: self._render_nested_value(item, ctx, allowed_funcs)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [self._render_nested_value(item, ctx, allowed_funcs) for item in value]
+        return value
+
     async def _apply_effect(
         self,
         effect: Any,
@@ -135,10 +153,11 @@ class EffectsMixin:
 
         elif effect.type == "rewrite_input":
             if effect.input_updates:
-                rendered_updates = {
-                    k: self._render_template(v, ctx, allowed_funcs) if isinstance(v, str) else v
-                    for k, v in effect.input_updates.items()
-                }
+                rendered_updates = self._render_nested_value(
+                    effect.input_updates,
+                    ctx,
+                    allowed_funcs,
+                )
                 # For MCP call_tool, nest updates inside arguments
                 # (mirrors the unwrapping in _build_eval_context)
                 event = ctx.get("event")
@@ -165,27 +184,73 @@ class EffectsMixin:
                 rewrite_meta["input_updates"] = rendered_updates
                 rewrite_meta["auto_approve"] = effect.auto_approve
 
-        elif effect.type == "load_skill":
-            if effect.skill and self._skill_manager:
-                try:
-                    skill = self._skill_manager.resolve_skill_name(effect.skill)
-                    if skill:
-                        context_parts.append(
-                            f'<skill name="{skill.name}">\n{skill.content}\n</skill>'
-                        )
-                    else:
-                        logger.warning(
-                            f"load_skill effect: skill {effect.skill!r} not found (rule {row.name})",
-                        )
-                except Exception:
-                    logger.warning(
-                        f"load_skill effect: failed to resolve skill {effect.skill!r} (rule {row.name})",
-                        exc_info=True,
-                    )
-            elif effect.skill and not self._skill_manager:
-                logger.warning(
-                    f"load_skill effect: no skill_manager available (rule {row.name})",
+        elif effect.type == "set_permission_response":
+            permission_meta = variables.setdefault("_permission_response", {})
+            if effect.permission_decision:
+                permission_meta["permission_decision"] = effect.permission_decision
+            if effect.input_updates is not None:
+                permission_meta["input_updates"] = self._render_nested_value(
+                    effect.input_updates,
+                    ctx,
+                    allowed_funcs,
                 )
+            if effect.updated_permissions is not None:
+                permission_meta["updated_permissions"] = self._render_nested_value(
+                    effect.updated_permissions,
+                    ctx,
+                    allowed_funcs,
+                )
+
+        elif effect.type == "set_retry":
+            variables["_retry"] = (
+                effect.retry if effect.retry is not None else True
+            )  # None means default to True; explicit False must stay False.
+
+        elif effect.type == "set_watch_paths":
+            if effect.watch_paths is not None:
+                variables["_watch_paths"] = self._render_nested_value(
+                    effect.watch_paths,
+                    ctx,
+                    allowed_funcs,
+                )
+
+        elif effect.type == "set_worktree_path":
+            if effect.worktree_path is not None:
+                if (
+                    isinstance(effect.worktree_path, str)
+                    and "{{" not in effect.worktree_path
+                    and "{%" not in effect.worktree_path
+                ):
+                    variables["_worktree_path"] = effect.worktree_path
+                else:
+                    variables["_worktree_path"] = self._render_nested_value(
+                        effect.worktree_path,
+                        ctx,
+                        allowed_funcs,
+                    )
+
+        elif effect.type == "set_elicitation":
+            elicitation_meta = variables.setdefault("_elicitation", {})
+            if effect.elicitation_action:
+                elicitation_meta["action"] = effect.elicitation_action
+            if effect.elicitation_content is not None:
+                elicitation_meta["content"] = self._render_nested_value(
+                    effect.elicitation_content,
+                    ctx,
+                    allowed_funcs,
+                )
+            if effect.elicitation_error is not None:
+                elicitation_meta["error"] = self._render_nested_value(
+                    effect.elicitation_error,
+                    ctx,
+                    allowed_funcs,
+                )
+
+        elif effect.type == "load_skill":
+            if effect.skill:
+                from gobby.skills.formatting import skill_fetch_directive
+
+                context_parts.append(skill_fetch_directive(effect.skill))
 
         return True
 

@@ -10,20 +10,59 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 SEVERITY_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1, "INFO": 0}
+_DEFAULT_CLAWCARE_RULESET = "default"
 
 
 @lru_cache(maxsize=1)
 def _rule_categories() -> dict[str, str]:
-    """Build a stable rule ID -> category map from ClawCare's built-in rulesets."""
+    """Build a stable rule ID -> category map from ClawCare's built-in rulesets.
+
+    ClawCare exposes public helpers to enumerate and load builtin rulesets, but
+    not per-file category metadata. We validate the builtin ruleset through the
+    public API first, then read the validated ruleset directory to retain the
+    existing category mapping by filename.
+
+    If this loader ever needs async I/O, replace this sync ``@lru_cache`` path
+    with an async-safe cache and async entrypoint instead of mixing file reads
+    into the event loop.
+    """
     import yaml
     from clawcare.scanner import rules as clawcare_rules
 
-    ruleset_dir = Path(clawcare_rules.__file__).resolve().parent.parent / "rulesets" / "default"
+    builtin_rulesets = set(clawcare_rules.list_builtin_rulesets())
+    ruleset_dir = clawcare_rules._RULESETS_DIR / _DEFAULT_CLAWCARE_RULESET
+    clawcare_source = clawcare_rules.__file__
+
+    if _DEFAULT_CLAWCARE_RULESET not in builtin_rulesets:
+        raise RuntimeError(
+            "ClawCare builtin ruleset is unavailable: "
+            f"ruleset={_DEFAULT_CLAWCARE_RULESET!r}, "
+            f"available={sorted(builtin_rulesets)!r}, "
+            f"ruleset_dir={ruleset_dir}, clawcare_rules={clawcare_source}"
+        )
+    if not ruleset_dir.is_dir():
+        raise RuntimeError(
+            "ClawCare builtin ruleset directory is missing: "
+            f"ruleset_dir={ruleset_dir}, clawcare_rules={clawcare_source}"
+        )
+    if not clawcare_rules.load_builtin_ruleset(_DEFAULT_CLAWCARE_RULESET):
+        raise RuntimeError(
+            "ClawCare builtin ruleset loaded no rules: "
+            f"ruleset_dir={ruleset_dir}, clawcare_rules={clawcare_source}"
+        )
+
+    rule_files = sorted((*ruleset_dir.glob("*.yml"), *ruleset_dir.glob("*.yaml")))
+    if not rule_files:
+        raise RuntimeError(
+            "ClawCare builtin ruleset directory contains no YAML files: "
+            f"ruleset_dir={ruleset_dir}, clawcare_rules={clawcare_source}"
+        )
+
     categories: dict[str, str] = {}
 
-    for rule_file in sorted(ruleset_dir.glob("*.yml")):
+    for rule_file in rule_files:
         category = rule_file.stem.replace("-", "_")
-        raw_rules = yaml.safe_load(rule_file.read_text())
+        raw_rules = yaml.safe_load(rule_file.read_text(encoding="utf-8"))
         if not isinstance(raw_rules, list):
             continue
 
@@ -33,6 +72,12 @@ def _rule_categories() -> dict[str, str]:
             rule_id = rule.get("id")
             if isinstance(rule_id, str):
                 categories[rule_id] = category
+
+    if not categories:
+        raise RuntimeError(
+            "ClawCare builtin ruleset did not yield any categorized rules: "
+            f"ruleset_dir={ruleset_dir}, clawcare_rules={clawcare_source}"
+        )
 
     return categories
 

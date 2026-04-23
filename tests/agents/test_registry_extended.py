@@ -194,7 +194,7 @@ class TestRunningAgentRegistryCloseTerminal:
         )
 
         # Mock session context retrieval
-        with patch("gobby.storage.sessions.LocalSessionManager.get") as mock_get_session:
+        with patch("gobby.storage.sessions.SessionManager.get") as mock_get_session:
             mock_session = MagicMock()
             mock_session.terminal_context = {"tmux_pane": "%100"}
             mock_get_session.return_value = mock_session

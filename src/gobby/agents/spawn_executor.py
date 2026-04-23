@@ -21,8 +21,6 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawn import (
     build_cli_command,
-    build_codex_command_with_resume,
-    prepare_codex_spawn_with_preflight,
     prepare_terminal_spawn,
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
@@ -58,7 +56,9 @@ class SpawnRequest:
     agent_name: str | None = None  # Agent definition name for UI/status surfaces
     agent_depth: int = 0
     max_agent_depth: int = 5
-    session_manager: Any | None = None  # Required for Gemini/Codex preflight
+    session_manager: Any | None = (
+        None  # Required for child-session creation in prepare_terminal_spawn
+    )
     machine_id: str | None = None
     model: str | None = None  # Model override (e.g., gemini-3-pro-preview)
     api_base: str | None = None  # API base URL for local model endpoints
@@ -470,60 +470,63 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
 async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     """
-    Spawn Codex agent in terminal with preflight session capture.
+    Spawn Codex agent in terminal with direct spawn (no preflight).
 
-    Codex outputs session_id in startup banner, which we parse from `codex exec "exit"`.
+    Session linkage approach (matches Gemini/Qwen):
+    1. Pre-create Gobby child session with parent linkage (no external_id yet).
+    2. Pass GOBBY_SESSION_ID and other env vars to the terminal.
+    3. Codex's hooks.json dispatcher reads env vars and includes them in SessionStart.
+    4. Daemon updates external_id when SessionStart fires with Codex's native session_id.
+
+    Replaces the prior `codex exec "exit"` preflight workaround. Codex hooks ship
+    via `gobby install --codex`; the SessionStart hook is now the source of truth
+    for the native session id.
     """
     if request.session_manager is None:
         return SpawnResult(
             success=False,
             run_id=request.run_id,
-            child_session_id=request.session_id,
+            child_session_id=None,
             status="failed",
-            error="session_manager is required for Codex preflight",
+            error="session_manager is required for Codex spawn",
         )
 
-    try:
-        # Preflight capture: gets Codex's session_id and creates linked Gobby session
-        spawn_context = await prepare_codex_spawn_with_preflight(
-            session_manager=cast("ChildSessionManager", request.session_manager),
-            parent_session_id=request.parent_session_id,
-            project_id=request.project_id,
-            machine_id=request.machine_id or "unknown",
-            workflow_name=request.workflow,
-            agent_name=request.agent_name,
-            initial_variables=request.initial_variables,
-            git_branch=request.branch_name,
-            sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
-            requested_reasoning_effort=request.requested_reasoning_effort,
-            effective_reasoning_effort=request.effective_reasoning_effort,
-            reasoning_required=request.reasoning_required,
-            reasoning_status=request.reasoning_status,
-            reasoning_message=request.reasoning_message,
-        )
-    except FileNotFoundError as e:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=request.session_id,
-            status="failed",
-            error=str(e),
-        )
-    except Exception as e:
-        logger.error(f"Codex preflight capture failed: {e}", exc_info=True)
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=request.session_id,
-            status="failed",
-            error=f"Codex preflight capture failed: {e}",
-        )
+    spawn_context = prepare_terminal_spawn(
+        session_manager=cast("ChildSessionManager", request.session_manager),
+        parent_session_id=request.parent_session_id,
+        project_id=request.project_id,
+        machine_id=request.machine_id or "unknown",
+        source="codex",
+        workflow_name=request.workflow,
+        initial_variables=request.initial_variables,
+        prompt=request.prompt,
+        max_agent_depth=request.max_agent_depth,
+        git_branch=request.branch_name,
+        agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
+        title=request.title,
+        agent_name=request.agent_name,
+        timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
+    )
 
-    # Extract IDs from prepared spawn context
     gobby_session_id = spawn_context.session_id
-    codex_session_id = spawn_context.env_vars["GOBBY_CODEX_EXTERNAL_ID"]
 
-    # Build command with session context injected into prompt
+    # Codex learns its Gobby session id via the prompt (it has no equivalent of
+    # Claude's --session-id flag). Late-link still happens via the SessionStart
+    # hook on the daemon side; the prefix is purely so Codex can call MCP tools
+    # with the right session_id.
+    prefixed_prompt = (
+        f"Your Gobby session_id is: {gobby_session_id}\n"
+        f"Use this when calling Gobby MCP tools.\n\n" + (request.prompt or "")
+    )
+
     sandbox_args: list[str] = []
     if request.sandbox_config and request.sandbox_config.enabled:
         resolver = CodexSandboxResolver()
@@ -533,22 +536,26 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         )
         sandbox_args, _ = resolver.resolve(request.sandbox_config, paths)
 
-    cmd = build_codex_command_with_resume(
-        codex_external_id=codex_session_id,
-        prompt=request.prompt,
+    cmd, _cmd_env = build_cli_command(
+        cli="codex",
+        prompt=prefixed_prompt,
         auto_approve=True,  # --full-auto for sandboxed autonomy
-        gobby_session_id=gobby_session_id,
         working_directory=request.cwd,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=sandbox_args,
+        sandbox_args=sandbox_args or None,
     )
 
-    # Spawn in terminal
+    env = spawn_context.env_vars.copy()
+
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
     terminal_spawner = TmuxSpawner()
     terminal_result = terminal_spawner.spawn(
         command=cmd,
         cwd=request.cwd,
+        env=env,
     )
 
     if not terminal_result.success:
@@ -562,10 +569,11 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     return SpawnResult(
         success=True,
-        run_id=f"codex-{codex_session_id[:8]}",
+        run_id=spawn_context.agent_run_id,
         child_session_id=gobby_session_id,
         status="pending",
         pid=terminal_result.pid,
-        codex_session_id=codex_session_id,
+        terminal_type=terminal_result.terminal_type,
+        tmux_session_name=terminal_result.tmux_session_name,
         message=f"Codex agent spawned in terminal with session {gobby_session_id}",
     )

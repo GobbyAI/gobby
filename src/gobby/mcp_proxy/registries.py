@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -18,14 +17,13 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.memory.manager import MemoryManager
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.merge_resolutions import MergeResolutionManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.tasks import TaskSyncManager
@@ -46,7 +44,7 @@ def setup_internal_registries(
     db: DatabaseProtocol | None = None,
     sync_manager: TaskSyncManager | None = None,
     task_validator: TaskValidator | None = None,
-    local_session_manager: LocalSessionManager | None = None,
+    session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
     llm_service: LLMService | None = None,
     agent_runner: AgentRunner | None = None,
@@ -81,7 +79,7 @@ def setup_internal_registries(
         db: Database connection for registries that only need storage (skills)
         sync_manager: Task sync manager for git sync
         task_validator: Task validator for validation
-        local_session_manager: Local session manager for session CRUD
+        session_manager: Session manager for session CRUD
         metrics_manager: Tool metrics manager for metrics operations
         llm_service: LLM service for AI-powered operations
         agent_runner: Agent runner for spawning subagents
@@ -146,11 +144,11 @@ def setup_internal_registries(
             logger.debug("Tasks-ops registry initialized")
 
     # Initialize sessions registry (messages + session CRUD)
-    if local_session_manager is not None:
+    if session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 
         session_messages_registry = create_session_messages_registry(
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             llm_service=llm_service,
             config=_config,
             db=db,
@@ -173,7 +171,7 @@ def setup_internal_registries(
             memory_manager=memory_manager,
             llm_service=llm_service,
             memory_sync_manager=memory_sync_manager,
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             config=_config,
         )
         manager.add_registry(memory_registry)
@@ -184,8 +182,8 @@ def setup_internal_registries(
 
     workflows_registry = create_workflows_registry(
         loader=workflow_loader,
-        session_manager=local_session_manager,
-        db=getattr(local_session_manager, "db", None) if local_session_manager else None,
+        session_manager=session_manager,
+        db=getattr(session_manager, "db", None) if session_manager else None,
         executor_getter=lambda: pipeline_executor,
         execution_manager_getter=lambda: pipeline_execution_manager,
         completion_registry=completion_registry,
@@ -204,19 +202,13 @@ def setup_internal_registries(
     if metrics_manager is not None:
         from gobby.mcp_proxy.tools.metrics import create_metrics_registry
 
-        # Get daily token budget from metrics config
-        daily_budget_tokens = 10_000_000  # Default: 10M tokens
-        if _config is not None:
-            daily_budget_tokens = _config.metrics.daily_budget_tokens
-
         metrics_registry = create_metrics_registry(
             metrics_manager=metrics_manager,
-            session_storage=local_session_manager,
-            daily_budget_tokens=daily_budget_tokens,
+            session_storage=session_manager,
             event_store=metrics_manager.event_store,
         )
         manager.add_registry(metrics_registry)
-        logger.debug("Metrics registry initialized with token tracking")
+        logger.debug("Metrics registry initialized with usage reporting")
 
     # Initialize agents registry if agent_runner is available
     if agent_runner is not None:
@@ -234,7 +226,7 @@ def setup_internal_registries(
 
         agents_registry = create_agents_registry(
             runner=agent_runner,
-            session_manager=local_session_manager,
+            session_manager=session_manager,
             task_manager=task_manager,
             worktree_storage=worktree_storage,
             git_manager=git_manager,
@@ -249,7 +241,7 @@ def setup_internal_registries(
         # Add inter-agent messaging tools if dependencies are available
         if (
             inter_session_message_manager is not None
-            and local_session_manager is not None
+            and session_manager is not None
             and db is not None
         ):
             from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
@@ -259,7 +251,7 @@ def setup_internal_registries(
             add_messaging_tools(
                 registry=agents_registry,
                 message_manager=inter_session_message_manager,
-                session_manager=local_session_manager,
+                session_manager=session_manager,
                 command_manager=AgentCommandManager(db),
                 session_var_manager=SessionVariableManager(db),
                 db=db,
@@ -277,6 +269,7 @@ def setup_internal_registries(
             worktree_storage=worktree_storage,
             git_manager=git_manager,
             project_id=project_id,
+            session_manager=session_manager,
             task_manager=task_manager,
         )
         manager.add_registry(worktrees_registry)
@@ -365,17 +358,14 @@ def setup_internal_registries(
             HubManager,
             SkillsMPProvider,
         )
+        from gobby.skills.hubs.manager import resolve_hub_api_keys
+        from gobby.storage.secrets import SecretStore
 
         # Get skills config (or use defaults)
         skills_config = _config.skills if _config and hasattr(_config, "skills") else SkillsConfig()
 
-        # Resolve hub API keys from env vars
-        api_keys: dict[str, str] = {}
-        for _hub_name, hub_config in skills_config.hubs.items():
-            if hub_config.auth_key_name:
-                value = os.environ.get(hub_config.auth_key_name)
-                if value:
-                    api_keys[hub_config.auth_key_name] = value
+        # Resolve hub API keys from SecretStore — never from env.
+        api_keys = resolve_hub_api_keys(skills_config.hubs, SecretStore(db))
 
         # Create hub manager with configured hubs
         hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
@@ -389,6 +379,9 @@ def setup_internal_registries(
             getattr(_config, "skill_description", None) if _config else None
         )
 
+        # Single-shot startup warning for hubs with missing required auth.
+        hub_manager.warn_missing_auth()
+
         _emb_cfg = _config.embeddings if _config else None
         skills_registry = create_skills_registry(
             db=db,
@@ -398,6 +391,7 @@ def setup_internal_registries(
             embedding_model=_emb_cfg.model if _emb_cfg else "nomic-embed-text",
             embedding_api_base=_emb_cfg.api_base if _emb_cfg else None,
             embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,
+            embedding_dim=_emb_cfg.dim if _emb_cfg else None,
         )
         manager.add_registry(skills_registry)
         logger.debug("Skills registry initialized")

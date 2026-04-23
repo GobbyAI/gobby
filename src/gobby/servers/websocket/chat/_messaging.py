@@ -15,6 +15,9 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat._session import _resolve_git_branch
+from gobby.servers.websocket.chat.local_openai_warmup import (
+    LocalOpenAIModelWarmupError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,7 @@ class ChatMessagingMixin:
     _pending_worktree_paths: dict[str, str]
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
+    _pending_inject_contexts: dict[str, str]
 
     if TYPE_CHECKING:
 
@@ -231,7 +235,15 @@ class ChatMessagingMixin:
         client_info["conversation_id"] = conversation_id
 
         # Extract inject_context for tool result injection into LLM conversation
-        inject_context = data.get("inject_context")
+        pending_inject_contexts = getattr(self, "_pending_inject_contexts", {})
+        pending_inject_context = pending_inject_contexts.get(conversation_id)
+        explicit_inject_context = data.get("inject_context")
+        inject_parts = [
+            value
+            for value in [pending_inject_context, explicit_inject_context]
+            if isinstance(value, str) and value.strip()
+        ]
+        inject_context = "\n\n".join(inject_parts) if inject_parts else None
 
         # Cancel any active stream for this conversation
         await self._cancel_active_chat(conversation_id)
@@ -434,11 +446,14 @@ class ChatMessagingMixin:
                         "Failed to start chat session for conversation %s",
                         conversation_id,
                     )
+                    error_message = "Failed to start chat session. Please try again."
+                    if isinstance(e, LocalOpenAIModelWarmupError):
+                        error_message = str(e)
                     error_payload = _base_msg(
                         type="chat_error",
                         message_id=assistant_message_id,
                         conversation_id=conversation_id,
-                        error="Failed to start chat session. Please try again.",
+                        error=error_message,
                     )
                     if logger.isEnabledFor(logging.DEBUG):
                         error_payload["error_detail"] = f"{type(e).__name__}: {e}"
@@ -486,6 +501,10 @@ class ChatMessagingMixin:
             # Wire tool approval callback for this request
             session._tool_approval_callback = _emit_pending_approval
 
+            pending_inject_contexts = getattr(self, "_pending_inject_contexts", None)
+            if isinstance(pending_inject_contexts, dict):
+                pending_inject_contexts.pop(conversation_id, None)
+
             # Persist user message to database
             user_text = content if isinstance(content, str) else json.dumps(content)
             await _persist_message(session, "user", user_text)
@@ -501,19 +520,19 @@ class ChatMessagingMixin:
                     except Exception:
                         logger.debug("Failed to set session status to active", exc_info=True)
 
-            # Enrich content with inject_context for SDK (invisible to chat UI)
+            # Enrich content with hook context for SDK (invisible to chat UI)
             sdk_content = content
             if inject_context and isinstance(inject_context, str):
                 if isinstance(sdk_content, str):
                     sdk_content = (
-                        f"{sdk_content}\n\n<skill-context>\n{inject_context}\n</skill-context>"
+                        f"{sdk_content}\n\n<gobby-context>\n{inject_context}\n</gobby-context>"
                     )
                 elif isinstance(sdk_content, list):
                     # For content blocks, append context as an additional text block
                     sdk_content = sdk_content + [
                         {
                             "type": "text",
-                            "text": f"\n\n<skill-context>\n{inject_context}\n</skill-context>",
+                            "text": f"\n\n<gobby-context>\n{inject_context}\n</gobby-context>",
                         }
                     ]
 

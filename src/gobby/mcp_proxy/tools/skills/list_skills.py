@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -10,19 +11,22 @@ from gobby.mcp_proxy.tools.skills._context import SkillsContext
 
 logger = logging.getLogger(__name__)
 
+_MAX_OVERFETCH_ROUNDS = 3
+
 
 def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
     """Register the list_skills tool on the registry."""
 
     @registry.tool(
         name="list_skills",
-        description="List all skills with lightweight metadata. Supports filtering by category and enabled status.",
+        description="List all skills with lightweight metadata. Supports filtering by category and enabled status. Internal methodology skills (frontmatter `internal: true`) are hidden by default; pass include_internal=true to surface them.",
     )
     async def list_skills(
         category: str | None = None,
         enabled: bool | None = None,
         limit: int = 50,
         session_id: str | None = None,
+        include_internal: bool = False,
     ) -> dict[str, Any]:
         """
         List skills with lightweight metadata.
@@ -35,6 +39,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             enabled: Optional enabled status filter (True/False/None for all)
             limit: Maximum skills to return (default 50)
             session_id: Optional session ID for filtering by active skills in the session
+            include_internal: If True, include skills flagged `internal: true` in
+                frontmatter. Default False hides them — they are shared-methodology
+                skills invoked by other skills via get_skill(name=...), not user-facing.
 
         Returns:
             Dict with success status and list of skill metadata
@@ -54,20 +61,64 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 except Exception:
                     logger.debug(f"Failed to resolve active skill names for session {session_id}")
 
-            skills = ctx.storage.list_skills(
-                project_id=ctx.project_id,
-                category=category,
-                enabled=enabled,
-                # Over-fetch by 5x when filtering by active_names, since the DB
-                # query doesn't know about the session-scoped allowlist and we
-                # need enough candidates to fill `limit` after filtering.
-                limit=limit * 5 if active_names is not None else limit,
-                include_global=True,
-            )
+            # Over-fetch when a post-query filter (active_names or include_internal=False)
+            # will trim results, so we can still fill `limit` after filtering.
+            #
+            # The fixed multiplier in the old implementation under-delivered when
+            # BOTH filters were active and aggressive (e.g. an active-skills
+            # allowlist of 5 names on a project with hundreds of internal skills).
+            # Fetch in bounded pages and stop as soon as we have enough post-filter
+            # results or the underlying storage reports EOF.
+            needs_overfetch = active_names is not None or not include_internal
+            active_set = set(active_names) if active_names is not None else None
 
-            if active_names is not None:
-                active_set = set(active_names)
-                skills = [s for s in skills if s.name in active_set][:limit]
+            def _apply_post_filters(
+                batch: list[Any],  # noqa: ANN401 — Skill domain model, imported lazily
+            ) -> list[Any]:
+                filtered = batch
+                if not include_internal:
+                    filtered = [s for s in filtered if not s.is_internal()]
+                if active_set is not None:
+                    filtered = [s for s in filtered if s.name in active_set]
+                return filtered
+
+            async def _list_skills_batch(
+                *,
+                limit_value: int,
+                offset_value: int = 0,
+            ) -> list[Any]:
+                return await asyncio.to_thread(
+                    ctx.storage.list_skills,
+                    project_id=ctx.project_id,
+                    category=category,
+                    enabled=enabled,
+                    limit=limit_value,
+                    offset=offset_value,
+                    include_global=True,
+                )
+
+            skills: list[Any] = []
+            if not needs_overfetch:
+                skills = await _list_skills_batch(limit_value=limit)
+            else:
+                page_limit = limit * 5
+                offset = 0
+                for _ in range(_MAX_OVERFETCH_ROUNDS):
+                    batch = await _list_skills_batch(
+                        limit_value=page_limit,
+                        offset_value=offset,
+                    )
+                    if not batch:
+                        break
+                    skills.extend(_apply_post_filters(batch))
+                    if len(batch) < page_limit:
+                        # EOF from storage — no more pages to scan.
+                        break
+                    if len(skills) >= limit:
+                        break
+                    offset += page_limit
+
+            skills = skills[:limit]
 
             # Extract lightweight metadata only
             skill_list = []

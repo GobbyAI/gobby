@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,8 @@ class ChildSessionConfig:
     """Git branch for the session."""
 
     external_id: str | None = None
-    """External session ID (e.g., Gemini's session_id from preflight capture)."""
+    """External session ID. Optional — if omitted, a placeholder is generated and
+    later overwritten by the SessionStart hook with the CLI-native session id."""
 
     lifecycle_variables: dict[str, Any] | None = None
     """Lifecycle variables for the session."""
@@ -68,19 +69,19 @@ class ChildSessionManager:
     - Agent depth (0 = human-initiated, 1+ = agent-spawned)
     - Which agent spawned them (for tracking and cleanup)
 
-    Thread-safe: Uses the underlying LocalSessionManager's thread safety.
+    Thread-safe: Uses the underlying SessionManager's thread safety.
     """
 
     def __init__(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         max_agent_depth: int = 1,
     ) -> None:
         """
         Initialize ChildSessionManager.
 
         Args:
-            session_storage: LocalSessionManager for SQLite operations.
+            session_storage: SessionManager for SQLite operations.
             max_agent_depth: Maximum allowed nesting depth (default: 1).
                 Depth 0 = human-initiated session.
                 Depth 1 = agent can spawn, but child cannot spawn further.
@@ -160,7 +161,10 @@ class ChildSessionManager:
         # Calculate child's agent depth (parent depth + 1)
         child_depth = parent_depth + 1
 
-        # Use provided external_id (e.g., from Gemini preflight) or generate placeholder
+        # Use the provided external_id when the caller already knows the child
+        # session's native ID. Otherwise generate a placeholder that lives only
+        # until register() returns, then fall back to child_id; SESSION_START
+        # later replaces that fallback with the CLI-native external_id.
         if config.external_id:
             external_id = config.external_id
             use_provided_external_id = True
@@ -193,9 +197,10 @@ class ChildSessionManager:
 
         child_id = child.id
 
-        # For sessions with provided external_id (e.g., Gemini preflight), keep it.
-        # For sessions without (e.g., Claude with --session-id), update external_id
-        # to match internal id so session_start hook can find this pre-created session.
+        # If external_id was provided, keep it. Otherwise persist child_id as
+        # the fallback external_id so SESSION_START can find this pre-created
+        # row through the terminal_context/GOBBY_SESSION_ID handoff path before
+        # the real CLI-native external_id arrives.
         if not use_provided_external_id:
             self._storage.update(session_id=child_id, external_id=child_id)
         # Re-fetch to get updated external_id

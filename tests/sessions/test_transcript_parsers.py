@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
@@ -969,6 +969,25 @@ class TestCodexTranscriptParser:
         )
 
     @staticmethod
+    def _reasoning(
+        ts: str = "2024-06-15T10:30:00Z",
+        **extra: Any,
+    ) -> str:
+        """Build a Codex response_item/reasoning envelope line."""
+        return json.dumps(
+            {
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": None,
+                    **extra,
+                },
+            }
+        )
+
+    @staticmethod
     def _event_msg(event_type: str, ts: str = "2024-06-15T10:30:00Z", **extra) -> str:
         """Build a Codex event_msg envelope line."""
         return json.dumps(
@@ -1103,6 +1122,19 @@ class TestCodexTranscriptParser:
 
     # -- parse_line: error handling --
 
+    def test_parse_line_reasoning_is_ignored_without_unknown_warning(
+        self, parser, monkeypatch
+    ) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def _log_unknown_block(**kwargs: Any) -> None:
+            calls.append(kwargs)
+
+        monkeypatch.setattr(parser.error_log, "log_unknown_block", _log_unknown_block)
+
+        assert parser.parse_line(self._reasoning(), 0) is None
+        assert calls == []
+
     def test_parse_line_invalid_json(self, parser) -> None:
         assert parser.parse_line("not valid json", 0) is None
 
@@ -1147,6 +1179,152 @@ class TestCodexTranscriptParser:
         assert msgs[3].content_type == "tool_result"
         assert msgs[4].index == 9
         assert msgs[4].content == "Third"
+
+    def test_parse_lines_skips_reasoning_without_consuming_index(self, parser) -> None:
+        lines = [
+            self._msg("user", "First"),
+            self._reasoning(),
+            self._msg("assistant", "Second"),
+        ]
+
+        records = parser.parse_lines(lines, start_index=10)
+
+        assert len(records) == 2
+        messages = [r for r in records if isinstance(r, ParsedMessage)]
+
+        assert [m.index for m in messages] == [10, 11]
+        assert [m.content for m in messages] == ["First", "Second"]
+
+    # -- mcp_tool_call_* event_msg parsing --
+
+    def test_parse_mcp_tool_call_begin(self, parser) -> None:
+        line = self._event_msg(
+            "mcp_tool_call_begin",
+            call_id="call_abc",
+            invocation={
+                "server": "gobby",
+                "tool": "get_tool_schema",
+                "arguments": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "create_task",
+                    "session_id": "#2995",
+                },
+            },
+        )
+        record = parser.parse_line(line, 0)
+
+        assert isinstance(record, ParsedToolEvent)
+        assert record.phase == "begin"
+        assert record.call_id == "call_abc"
+        assert record.server == "gobby"
+        assert record.tool == "get_tool_schema"
+        assert record.arguments == {
+            "server_name": "gobby-tasks",
+            "tool_name": "create_task",
+            "session_id": "#2995",
+        }
+        assert record.result is None
+        assert record.error is None
+
+    def test_parse_mcp_tool_call_end_ok(self, parser) -> None:
+        line = self._event_msg(
+            "mcp_tool_call_end",
+            call_id="call_xyz",
+            invocation={
+                "server": "gobby",
+                "tool": "get_tool_schema",
+                "arguments": {"server_name": "gobby-tasks", "tool_name": "close_task"},
+            },
+            duration={"secs": 0, "nanos": 18_695_333},
+            result={"Ok": {"content": [{"type": "text", "text": "{...}"}]}},
+        )
+        record = parser.parse_line(line, 0)
+
+        assert isinstance(record, ParsedToolEvent)
+        assert record.phase == "end"
+        assert record.call_id == "call_xyz"
+        assert record.server == "gobby"
+        assert record.tool == "get_tool_schema"
+        assert record.arguments == {
+            "server_name": "gobby-tasks",
+            "tool_name": "close_task",
+        }
+        assert record.result == {"content": [{"type": "text", "text": "{...}"}]}
+        assert record.error is None
+        assert record.duration_ns == 18_695_333
+
+    def test_parse_mcp_tool_call_end_err(self, parser) -> None:
+        line = self._event_msg(
+            "mcp_tool_call_end",
+            call_id="call_err",
+            invocation={
+                "server": "gobby",
+                "tool": "list_tools",
+                "arguments": {"server_name": "context7"},
+            },
+            result={"Err": "transport closed"},
+        )
+        record = parser.parse_line(line, 0)
+
+        assert isinstance(record, ParsedToolEvent)
+        assert record.error == "transport closed"
+        assert record.result is None
+
+    def test_parse_mcp_tool_call_string_arguments(self, parser) -> None:
+        line = self._event_msg(
+            "mcp_tool_call_begin",
+            call_id="call_str",
+            invocation={
+                "server": "gobby",
+                "tool": "create_task",
+                # Codex sometimes serializes inner arguments as a JSON string.
+                "arguments": '{"title": "x", "category": "code"}',
+            },
+        )
+        record = parser.parse_line(line, 0)
+
+        assert isinstance(record, ParsedToolEvent)
+        assert record.arguments == {"title": "x", "category": "code"}
+
+    def test_parse_mcp_tool_call_missing_invocation_returns_none(self, parser) -> None:
+        line = self._event_msg("mcp_tool_call_begin", call_id="call_x")
+        assert parser.parse_line(line, 0) is None
+
+    def test_parse_lines_mixes_messages_and_tool_events(self, parser) -> None:
+        """Tool events must not consume the message-index counter."""
+        lines = [
+            self._msg("user", "First"),
+            self._event_msg(
+                "mcp_tool_call_begin",
+                call_id="call_1",
+                invocation={
+                    "server": "gobby",
+                    "tool": "get_tool_schema",
+                    "arguments": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+                },
+            ),
+            self._event_msg(
+                "mcp_tool_call_end",
+                call_id="call_1",
+                invocation={
+                    "server": "gobby",
+                    "tool": "get_tool_schema",
+                    "arguments": {"server_name": "gobby-tasks", "tool_name": "create_task"},
+                },
+                result={"Ok": {"ok": True}},
+            ),
+            self._msg("assistant", "Second"),
+        ]
+
+        records = parser.parse_lines(lines, start_index=10)
+
+        assert len(records) == 4
+        messages = [r for r in records if isinstance(r, ParsedMessage)]
+        tool_events = [r for r in records if isinstance(r, ParsedToolEvent)]
+
+        assert [m.index for m in messages] == [10, 11]
+        assert [m.content for m in messages] == ["First", "Second"]
+        assert [e.phase for e in tool_events] == ["begin", "end"]
 
     # -- extract_last_messages --
 
@@ -1272,6 +1450,25 @@ class TestCodexTranscriptParser:
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.usage is None
+
+    def test_token_count_invalid_values_fall_back_to_zero(self, parser) -> None:
+        line = self._event_msg(
+            "token_count",
+            input_tokens="bad",
+            cached_input_tokens="oops",
+            output_tokens=None,
+            reasoning_output_tokens="nah",
+            cache_creation_input_tokens="wat",
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert msg is not None
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 0
+        assert msg.usage.output_tokens == 0
+        assert msg.usage.cache_creation_tokens == 0
+        assert msg.usage.cache_read_tokens == 0
 
 
 class TestGeminiTranscriptParser:
@@ -1742,6 +1939,37 @@ class TestGeminiTranscriptParser:
         assert len(msgs) == 7
         for i, msg in enumerate(msgs):
             assert msg.index == i, f"Expected index {i}, got {msg.index} for {msg.content_type}"
+
+    def test_gemini_parse_session_json_message_ids_stay_unique(self, parser) -> None:
+        """A single Gemini message can expand into multiple parsed messages."""
+        data = {
+            "sessionId": "abc-123",
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "timestamp": "2024-01-01T10:00:01Z",
+                    "type": "gemini",
+                    "content": "OK",
+                    "toolCalls": [
+                        {
+                            "name": "tool1",
+                            "args": {},
+                            "result": [{"functionResponse": "r1"}],
+                        },
+                        {
+                            "name": "tool2",
+                            "args": {},
+                            "result": [{"functionResponse": "r2"}],
+                        },
+                    ],
+                },
+            ],
+        }
+
+        msgs = parser.parse_session_json(data)
+        message_ids = [msg.message_id for msg in msgs]
+        assert all(message_ids)
+        assert len(message_ids) == len(set(message_ids))
 
     def test_gemini_parse_session_json_result_as_dict(self, parser) -> None:
         """Test parse_session_json handles result as dict (backwards compat)."""

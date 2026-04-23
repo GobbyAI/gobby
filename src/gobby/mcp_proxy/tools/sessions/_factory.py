@@ -21,13 +21,13 @@ from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tool
 
 if TYPE_CHECKING:
     from gobby.sessions.transcript_reader import TranscriptReader
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 __all__ = ["create_session_messages_registry"]
 
 
 def create_session_messages_registry(
-    session_manager: LocalSessionManager | None = None,
+    session_manager: SessionManager | None = None,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
     config: Any | None = None,
@@ -42,7 +42,7 @@ def create_session_messages_registry(
     Create a sessions tool registry with session and message tools.
 
     Args:
-        session_manager: LocalSessionManager instance for session CRUD
+        session_manager: SessionManager instance for session CRUD
         llm_service: LLM service for handoff generation (optional)
         transcript_processor: Transcript processor for handoff generation (optional)
         config: DaemonConfig for settings (optional)

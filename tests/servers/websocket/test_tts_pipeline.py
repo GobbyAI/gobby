@@ -23,6 +23,12 @@ class OrderedTTS:
         yield text.encode("utf-8"), 24000
 
 
+class FailingTTS:
+    async def synthesize_stream(self, text: str) -> AsyncIterator[tuple[bytes, int]]:
+        raise RuntimeError("reference conditioning invalid")
+        yield  # pragma: no cover  # noqa: RET503
+
+
 class DummyWebSocket:
     def __init__(self) -> None:
         self.send = AsyncMock()
@@ -73,5 +79,38 @@ class TestTTSPipeline:
             call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
         ]
         assert binary_frames == [b"First sentence.", b"Tail fragment"]
+
+        await pipeline.cancel()
+
+    @pytest.mark.asyncio
+    async def test_synthesis_failure_emits_tts_error_status_once(self) -> None:
+        ws = DummyWebSocket()
+        pipeline = TTSPipeline(
+            tts=FailingTTS(),
+            conversation_id="conv-1234",
+            clients={ws: {"conversation_id": "conv-1234"}},
+        )
+
+        pipeline.feed_text("First sentence. Second sentence. ")
+        await pipeline.flush()
+
+        text_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], str)
+        ]
+        payloads = [json.loads(message) for message in text_frames]
+        error_frames = [payload for payload in payloads if payload["type"] == "tts_status"]
+        binary_frames = [
+            call.args[0] for call in ws.send.await_args_list if isinstance(call.args[0], bytes)
+        ]
+
+        assert error_frames == [
+            {
+                "type": "tts_status",
+                "conversation_id": "conv-1234",
+                "status": "error",
+                "error": "reference conditioning invalid",
+            }
+        ]
+        assert binary_frames == []
 
         await pipeline.cancel()

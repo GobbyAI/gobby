@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -41,7 +41,7 @@ def task_manager(temp_db) -> LocalTaskManager:
 
 @pytest.fixture
 def session(temp_db, project_id: str):
-    session_manager = LocalSessionManager(temp_db)
+    session_manager = SessionManager(temp_db)
     return session_manager.register(
         external_id="test-external-session",
         machine_id="test-machine",
@@ -67,7 +67,7 @@ def server(temp_db, task_manager):
     srv = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
-        session_manager=LocalSessionManager(temp_db),
+        session_manager=SessionManager(temp_db),
         task_manager=task_manager,
     )
     return srv
@@ -296,6 +296,15 @@ class TestGetTask:
         assert "state" in data
         assert "compat" in data
 
+    def test_get_by_seq_num_uses_project_context(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
+        response = client.get(f"/api/tasks/{sample_task['seq_num']}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == sample_task["id"]
+        assert data["seq_num"] == sample_task["seq_num"]
+
     def test_get_state_ignores_descendant_completion_blocks(
         self, client: TestClient, task_manager: LocalTaskManager, project_id: str
     ) -> None:
@@ -447,6 +456,18 @@ class TestLifecycleMutations:
         assert data["state"]["owner_session_id"] == session_id
         assert data["state"]["is_claimed"] is True
 
+    def test_claim_task_by_seq_num_uses_project_context(
+        self, client: TestClient, sample_task: dict, session_id: str
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['seq_num']}/claim",
+            json={"session_id": session_id},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == sample_task["id"]
+        assert data["claimed_by_session_id"] == session_id
+
     def test_claim_task_resolves_session_ref(
         self,
         client: TestClient,
@@ -516,6 +537,25 @@ class TestLifecycleMutations:
         assert data["status"] == "review_approved"
         assert data["state"]["lifecycle_stage"] == "review_approved"
         assert data["state"]["is_merge_ready"] is True
+
+    def test_mark_task_review_rejected(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+        session_id: str,
+    ) -> None:
+        task_manager.claim_task(sample_task["id"], session_id=session_id)
+        task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/review-rejected",
+            json={"notes": "Need another pass", "round": 1},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "open"
+        assert "## Adversary Findings — Round 1" in (data["description"] or "")
+        assert "planning-round:1" in (data["labels"] or [])
 
     def test_escalate_task(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(

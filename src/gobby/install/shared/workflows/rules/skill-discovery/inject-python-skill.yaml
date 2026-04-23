@@ -2,25 +2,16 @@ tags: [skill-discovery, context, gobby, default]
 
 rules:
   inject-python-skill:
-    description: "Block first Python write/edit, inject python coding standards"
+    description: "Block first Python write/edit, require python coding standards"
     event: before_tool
     enabled: true
     priority: 30
     when: >
-      'python' not in variables.get('injected_skills', [])
-      and event.data.get('tool_name') in ('Write', 'Edit')
-      and tool_input.get('file_path', '').endswith('.py')
+      not skill_loaded('python')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith('.py')
     effects:
       - type: block
         reason: >
           One-time nudge: this Python edit should follow the repo's Python conventions.
-          See the injected python skill below for the default standards before continuing.
-      - type: mcp_call
-        server: gobby-skills
-        tool: get_skill
-        arguments:
-          name: python
-        inject_result: true
-      - type: set_variable
-        variable: injected_skills
-        value: "variables.get('injected_skills', []) + ['python']"
+          Call get_skill(name="python") on gobby-skills, then continue.

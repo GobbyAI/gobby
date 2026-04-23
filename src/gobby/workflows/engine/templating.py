@@ -13,6 +13,7 @@ from gobby.hooks.events import HookEvent
 from gobby.storage.database import DatabaseProtocol
 from gobby.workflows.enforcement.blocking import (
     get_touched_file_paths,
+    is_current_plan_artifact,
     is_discovery_tool,
     is_message_delivery_tool,
     is_plan_file,
@@ -76,9 +77,9 @@ class TemplatingMixin:
                 session_id = event.metadata.get("_platform_session_id")
                 if session_id:
                     from gobby.storage.projects import LocalProjectManager
-                    from gobby.storage.sessions import LocalSessionManager
+                    from gobby.storage.sessions import SessionManager
 
-                    session_db = LocalSessionManager(self.db).get(session_id)
+                    session_db = SessionManager(self.db).get(session_id)
                     if session_db and session_db.project_id:
                         proj = LocalProjectManager(self.db).get(session_db.project_id)
                         if proj:
@@ -105,12 +106,21 @@ class TemplatingMixin:
     def _build_allowed_funcs(self, ctx: dict[str, Any]) -> dict[str, Callable[..., Any]]:
         """Build the shared helper-function dict for condition evaluation and template rendering."""
         variables = ctx.get("variables", {})
-        funcs = build_condition_helpers(context=ctx)
+        project_path = (ctx.get("project") or {}).get("path")
+        funcs = build_condition_helpers(
+            task_manager=getattr(self, "_task_manager", None),
+            context=ctx,
+        )
         funcs["isinstance"] = isinstance
         funcs["is_server_listed"] = lambda ti: is_server_listed(ti, variables)
         funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)
         funcs["is_discovery_tool"] = is_discovery_tool
         funcs["is_plan_file"] = is_plan_file
+        funcs["is_current_plan_artifact"] = (
+            lambda file_path, artifact_path: is_current_plan_artifact(
+                file_path, artifact_path, project_path=project_path
+            )
+        )
         funcs["get_touched_file_paths"] = get_touched_file_paths
         funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
         funcs["is_message_delivery_tool"] = is_message_delivery_tool

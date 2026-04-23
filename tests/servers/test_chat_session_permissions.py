@@ -58,9 +58,11 @@ class TestCanUseTool:
         """ExitPlanMode blocks until user approves."""
         session.set_chat_mode("plan")
         session._plan_file_path = "p.md"
+        session._on_mode_changed = AsyncMock()
 
         async def delayed_approve():
             await asyncio.sleep(0.01)
+            session._pending_post_plan_mode = "bypass"
             session.provide_plan_decision("approve")
 
         task = asyncio.create_task(delayed_approve())
@@ -68,8 +70,9 @@ class TestCanUseTool:
         await task
 
         assert isinstance(result, PermissionResultAllow)
-        assert session.chat_mode == "plan"
+        assert session.chat_mode == "bypass"
         assert session._plan_approved is True
+        session._on_mode_changed.assert_awaited_once_with("bypass", "plan_approved")
 
     @pytest.mark.asyncio
     async def test_exit_plan_mode_blocking_rejection(self, session: ChatSession) -> None:

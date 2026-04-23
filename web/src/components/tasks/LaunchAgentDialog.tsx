@@ -150,14 +150,6 @@ export function LaunchAgentDialog({
     })
   }, [isOpen, taskId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    const currentValues = new Set(reasoningOptions.map(option => option.value))
-    if (!currentValues.has(reasoningEffort)) {
-      setReasoningEffort(AUTO_REASONING_EFFORT)
-      setReasoningRequired(false)
-    }
-  }, [reasoningOptions, reasoningEffort])
-
   const handleAgentChange = useCallback((nextAgentName: string) => {
     const nextDefinition = definitions.find(d => d.definition.name === nextAgentName)
     setAgentName(nextAgentName)

@@ -165,8 +165,8 @@ class RecommendationService:
             }
             prompt = self._loader.render(prompt_path, context)
 
-            provider = self._llm_service.get_default_provider()
-            response = await provider.generate_text(
+            response = await self._llm_service.call_feature(
+                config,
                 prompt,
                 caller="mcp_proxy.recommendation.hybrid_rerank",
             )
@@ -207,8 +207,8 @@ class RecommendationService:
             }
             prompt = self._loader.render(prompt_path, context)
 
-            provider = self._llm_service.get_default_provider()
-            response = await provider.generate_text(
+            response = await self._llm_service.call_feature(
+                config,
                 prompt,
                 caller="mcp_proxy.recommendation.llm",
             )

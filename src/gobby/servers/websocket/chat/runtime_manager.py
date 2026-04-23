@@ -14,7 +14,7 @@ from gobby.agents.sandbox import (
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
-from gobby.servers.websocket.chat.provider_backends import (
+from gobby.servers.websocket.chat.backends import (
     ClaudeWebChatBackend,
     CodexManagedChatSession,
     CodexWebChatBackend,

@@ -79,19 +79,35 @@ class TestFeatureConfigInheritance:
         assert cfg.tier == ModelTier.MID
         assert cfg.model == "sonnet"
 
-    def test_review_config(self) -> None:
-        from gobby.config.features import ReviewConfig
+    def test_task_expansion_config(self) -> None:
+        from gobby.config.tasks import TaskExpansionConfig
 
-        assert issubclass(ReviewConfig, FeatureDefaultConfig)
-        cfg = ReviewConfig()
+        assert issubclass(TaskExpansionConfig, FeatureDefaultConfig)
+        cfg = TaskExpansionConfig()
         assert cfg.tier == ModelTier.HIGH
         assert cfg.model == "opus"
+
+    def test_task_validation_config(self) -> None:
+        from gobby.config.tasks import TaskValidationConfig
+
+        assert issubclass(TaskValidationConfig, FeatureDefaultConfig)
+        cfg = TaskValidationConfig()
+        assert cfg.tier == ModelTier.MID
+        assert cfg.model == "sonnet"
 
     def test_tool_summarizer_config(self) -> None:
         from gobby.config.features import ToolSummarizerConfig
 
         assert issubclass(ToolSummarizerConfig, FeatureDefaultConfig)
         cfg = ToolSummarizerConfig()
+        assert cfg.tier == ModelTier.LOW
+        assert cfg.model == "haiku"
+
+    def test_conductor_config(self) -> None:
+        from gobby.config.conductor import ConductorConfig
+
+        assert issubclass(ConductorConfig, FeatureDefaultConfig)
+        cfg = ConductorConfig()
         assert cfg.tier == ModelTier.LOW
         assert cfg.model == "haiku"
 

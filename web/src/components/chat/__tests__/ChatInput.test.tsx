@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { ChatInput } from '../ChatInput'
@@ -81,6 +81,54 @@ function PTTHarness({
   )
 }
 
+function SttToggleHarness({
+  callOrder,
+}: {
+  callOrder: string[]
+}) {
+  const [sttEnabled, setSttEnabled] = useState(false)
+
+  return (
+    <ChatInput
+      onSend={vi.fn()}
+      sttEnabled={sttEnabled}
+      onSttEnabledChange={(enabled) => {
+        callOrder.push(`toggle:${String(enabled)}`)
+        setSttEnabled(enabled)
+      }}
+      startRecording={async () => {
+        callOrder.push(`start:${String(sttEnabled)}`)
+      }}
+      stopRecording={vi.fn(async () => {})}
+      cancelRecording={vi.fn()}
+    />
+  )
+}
+
+function DeferredSttEnableHarness({
+  startRecording,
+}: {
+  startRecording: () => Promise<void>
+}) {
+  const [sttEnabled, setSttEnabled] = useState(false)
+
+  return (
+    <>
+      <button type="button" onClick={() => setSttEnabled(true)}>
+        Enable externally
+      </button>
+      <ChatInput
+        onSend={vi.fn()}
+        sttEnabled={sttEnabled}
+        onSttEnabledChange={vi.fn()}
+        startRecording={startRecording}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+      />
+    </>
+  )
+}
+
 describe('ChatInput', () => {
   const defaultProps = {
     onSend: vi.fn(),
@@ -157,6 +205,41 @@ describe('ChatInput', () => {
     expect(toolbar).toBeTruthy()
     expect(container.querySelector('.chat-input-notice-slot')?.contains(notice)).toBe(true)
     expect(toolbar?.previousElementSibling).toContainElement(notice)
+  })
+
+  it('prepares browser TTS playback before enabling text-to-speech', async () => {
+    const prepareTTSPlayback = vi.fn()
+    const onTtsEnabledChange = vi.fn()
+
+    render(
+      <ChatInput
+        {...defaultProps}
+        ttsEnabled={false}
+        prepareTTSPlayback={prepareTTSPlayback}
+        onTtsEnabledChange={onTtsEnabledChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByLabelText('Toggle text-to-speech'))
+
+    expect(prepareTTSPlayback).toHaveBeenCalledTimes(1)
+    expect(onTtsEnabledChange).toHaveBeenCalledWith(true)
+  })
+
+  it('pulses the TTS toggle while voice is warming', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        ttsEnabled={true}
+        voiceLoading={true}
+        voiceReady={false}
+        onTtsEnabledChange={vi.fn()}
+      />,
+    )
+
+    const button = screen.getByLabelText('Text-to-speech warming up')
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    expect(button).toHaveClass('chat-input-voice-toggle--warming')
   })
 
   it('calls onSend when Enter is pressed', async () => {
@@ -237,31 +320,6 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('agent-indicator')).toHaveAttribute('data-disabled', 'true')
     expect(screen.getAllByTestId('branch-indicator')[0]).toHaveAttribute('data-disabled', 'true')
     expect(screen.getByTitle('Attached session owns attachments')).toBeDisabled()
-  })
-
-  it('renders the activity panel toggle beside the agent selector and keeps it enabled while input is disabled', async () => {
-    const onToggleActivityPanel = vi.fn()
-    const { container } = render(
-      <ChatInput
-        {...defaultProps}
-        disabled={true}
-        onAgentChange={vi.fn()}
-        agentName="default"
-        agentDefinitions={[{ name: 'default', source: 'project' } as any]}
-        onToggleActivityPanel={onToggleActivityPanel}
-      />,
-    )
-
-    const toggle = screen.getByRole('button', { name: 'Show activity panel' })
-    expect(toggle).toBeEnabled()
-
-    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
-    const agentIndicator = screen.getByTestId('agent-indicator')
-    expect(toolbarLeft?.children[toolbarLeft.children.length - 2]).toBe(agentIndicator)
-    expect(toolbarLeft?.lastElementChild).toBe(toggle)
-
-    await userEvent.click(toggle)
-    expect(onToggleActivityPanel).toHaveBeenCalledTimes(1)
   })
 
   it('shows a mic button in PTT mode with empty input', () => {
@@ -383,6 +441,81 @@ describe('ChatInput', () => {
     expect(onCancelRecording).toHaveBeenCalledTimes(1)
   })
 
+  it('waits for sttEnabled state to flip before starting recording from the toolbar toggle', async () => {
+    const callOrder: string[] = []
+    render(<SttToggleHarness callOrder={callOrder} />)
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+
+    await waitFor(() => {
+      expect(callOrder).toEqual(['toggle:true', 'start:true'])
+    })
+  })
+
+  it('disables STT when the mic toggle is clicked while STT is on but idle', async () => {
+    const onSttEnabledChange = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        isRecording={false}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={vi.fn(async () => {})}
+        cancelRecording={vi.fn()}
+        onSttEnabledChange={onSttEnabledChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+
+    expect(onSttEnabledChange).toHaveBeenCalledWith(false)
+  })
+
+  it('clears the pending STT start when STT remains disabled', async () => {
+    const startRecording = vi.fn(async () => {})
+    render(<DeferredSttEnableHarness startRecording={startRecording} />)
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(startRecording).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Enable externally' }))
+
+    await waitFor(() => {
+      expect(startRecording).not.toHaveBeenCalled()
+    })
+  })
+
+  it('stops recording before disabling STT when the mic is clicked mid-recording', async () => {
+    const callOrder: string[] = []
+    const stopRecording = vi.fn(async () => {
+      callOrder.push('stop')
+    })
+    const onSttEnabledChange = vi.fn((enabled: boolean) => {
+      callOrder.push(`toggle:${String(enabled)}`)
+    })
+    render(
+      <ChatInput
+        {...defaultProps}
+        sttEnabled={true}
+        isRecording={true}
+        startRecording={vi.fn(async () => {})}
+        stopRecording={stopRecording}
+        cancelRecording={vi.fn()}
+        onSttEnabledChange={onSttEnabledChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByLabelText('Toggle microphone'))
+
+    await waitFor(() => {
+      expect(callOrder).toEqual(['stop', 'toggle:false'])
+    })
+  })
+
   it('clears input after sending', async () => {
     const onSend = vi.fn()
     render(<ChatInput {...defaultProps} onSend={onSend} />)
@@ -437,7 +570,7 @@ describe('ChatInput', () => {
     expect(screen.getByLabelText('Select model')).toBeTruthy()
   })
 
-  it('formats known provider labels with canonical casing', () => {
+  it('keeps the collapsed provider trigger icon-only', () => {
     render(
       <ChatInput
         {...defaultProps}
@@ -449,7 +582,8 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByText('OpenAI')).toBeTruthy()
+    expect(screen.queryByText('OpenAI')).toBeNull()
+    expect(screen.getByLabelText('Select provider')).toHaveAttribute('title', 'OpenAI')
     expect(screen.getByText('Local')).toBeTruthy()
     expect(screen.getByLabelText('Select reasoning effort')).toBeTruthy()
   })

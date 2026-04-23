@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from gobby.mcp_proxy.tools.workflows._resolution import resolve_session_id
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.definitions import WorkflowDefinition
 from gobby.workflows.loader import WorkflowLoader
@@ -203,7 +203,7 @@ def list_workflows(
 
 
 def get_workflow_status(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     session_id: str | None = None,
     instance_manager: WorkflowInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
@@ -215,7 +215,7 @@ def get_workflow_status(
     and session variables separately.
 
     Args:
-        session_manager: LocalSessionManager instance
+        session_manager: SessionManager instance
         session_id: Session reference (accepts #N, N, UUID, or prefix)
         instance_manager: Optional WorkflowInstanceManager for multi-workflow status
         session_var_manager: Optional SessionVariableManager for session variables

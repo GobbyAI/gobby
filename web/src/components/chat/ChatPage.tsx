@@ -11,13 +11,13 @@ import type {
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { ArtifactType } from "../../types/artifacts";
+import type { GobbySession } from "../../types/sessions";
 import { useArtifacts } from "../../hooks/useArtifacts";
 import { ArtifactContext } from "./artifacts/ArtifactContext";
 import { MessageList, type MessageListHandle } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
-import { ActiveSessionsModal } from "./ActiveSessionsModal";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
 import { VoiceStatusBar } from "./VoiceStatusBar";
@@ -59,12 +59,10 @@ interface ChatPageProps {
   ) => void;
   // Command palette actions from App.tsx
   paletteActions?: CommandPaletteAction[];
-  // Active sessions modal
-  onViewAgent?: (agent: {
-    run_id: string;
-    session_id?: string;
-    mode?: string;
-  }) => void;
+  allProjectSessions?: GobbySession[];
+  allProjectSessionsLoading?: boolean;
+  onSttEnabledChange?: (enabled: boolean) => void;
+  onTtsEnabledChange?: (enabled: boolean) => void;
 }
 
 export function ChatPage({
@@ -84,7 +82,10 @@ export function ChatPage({
   reasoningPreferences = {},
   onReasoningPreferenceChange,
   paletteActions = [],
-  onViewAgent,
+  allProjectSessions = [],
+  allProjectSessionsLoading = false,
+  onSttEnabledChange,
+  onTtsEnabledChange,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -160,16 +161,15 @@ export function ChatPage({
 
   // Session browsing via activity panel instead of Observing mode
   const [focusSessionId, setFocusSessionId] = useState<string | null>(null);
-  const handleViewCliSession = useCallback(
-    (session: { id: string }) => {
-      setFocusSessionId(session.id);
-      showTab("sessions");
-    },
-    [showTab],
-  );
   const handleFocusSessionHandled = useCallback(() => {
     setFocusSessionId(null);
   }, []);
+
+  useEffect(() => {
+    if (isMobile && isPinned) {
+      setIsPinned(false);
+    }
+  }, [isMobile, isPinned, setIsPinned]);
 
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
@@ -198,7 +198,7 @@ export function ChatPage({
         if (targetSession) {
           conversations.onSelectSession(targetSession);
         }
-        if (isMobile) {
+        if (isMobile && isPinned) {
           setIsPinned(false);
         }
         return;
@@ -206,11 +206,24 @@ export function ChatPage({
 
       chat.viewSession?.(target.sessionId);
       chat.observeSession?.(target.sessionId, "observe");
-      if (isMobile) {
+      if (isMobile && isPinned) {
         setIsPinned(false);
       }
     },
-    [chat, conversations, isMobile, parkCurrentSession, setIsPinned],
+    [chat, conversations, isMobile, isPinned, parkCurrentSession, setIsPinned],
+  );
+
+  const handleResumeSessionFromActivity = useCallback(
+    async (sessionId: string) => {
+      if (!chat.continueSessionInChat) {
+        return "";
+      }
+      parkCurrentSession(sessionId);
+      return chat.continueSessionInChat(sessionId, projectId ?? undefined, {
+        fallbackContext: "auto",
+      });
+    },
+    [chat, parkCurrentSession, projectId],
   );
 
   // Available LLM providers — fetched from daemon API
@@ -333,6 +346,7 @@ export function ChatPage({
         model: effectiveInputModel,
         reasoningEffort: effectiveInputReasoning,
         chatMode: viewingMeta?.chatMode ?? null,
+        fallbackContext: "auto",
       },
     );
   }, [
@@ -381,6 +395,7 @@ export function ChatPage({
         model,
         reasoningEffort,
         chatMode: viewingMeta?.chatMode ?? null,
+        fallbackContext: "auto",
       });
     },
     [
@@ -473,7 +488,6 @@ export function ChatPage({
 
   // Modals
   const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [showActiveSessions, setShowActiveSessions] = useState(false);
 
   useEffect(() => {
     if (chat.canvasPanel) {
@@ -601,20 +615,20 @@ export function ChatPage({
   const handleApprovePlan = useCallback(() => {
     setPendingPlanArtifactId(null);
     onApprovePlan?.();
-    if (isMobile) {
+    if (isMobile && isPinned) {
       setIsPinned(false);
     }
-  }, [isMobile, onApprovePlan, setIsPinned]);
+  }, [isMobile, isPinned, onApprovePlan, setIsPinned]);
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
       setPendingPlanArtifactId(null);
       onRequestPlanChanges?.(feedback);
-      if (isMobile) {
+      if (isMobile && isPinned) {
         setIsPinned(false);
       }
     },
-    [isMobile, onRequestPlanChanges, setIsPinned],
+    [isMobile, isPinned, onRequestPlanChanges, setIsPinned],
   );
 
   // Close artifact and auto-close activity panel if it was opened programmatically
@@ -650,12 +664,6 @@ export function ChatPage({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Cmd+K — Command Palette (handled in App.tsx chord, but also direct)
-      // Cmd+Shift+A — Active Sessions
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "A") {
-        e.preventDefault();
-        setShowActiveSessions(true);
-        return;
-      }
       // Cmd+` — Toggle Activity Panel
       if ((e.metaKey || e.ctrlKey) && e.key === "`") {
         e.preventDefault();
@@ -666,6 +674,13 @@ export function ChatPage({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePanel]);
+
+  const showVoiceStatusBar = Boolean(
+    (voice.ttsEnabled && voice.voiceLoading) ||
+      (voice.sttEnabled &&
+        voice.voiceInputMode === "vad" &&
+        (voice.isListening || voice.isTranscribing || voice.voiceError)),
+  );
 
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
@@ -681,22 +696,17 @@ export function ChatPage({
           }
           sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
           onOpenPalette={() => setShowCommandPalette(true)}
-          onOpenActiveSessions={() => setShowActiveSessions(true)}
           onNewChat={handleNewChat}
-          onTogglePanel={togglePanel}
-          agents={conversations.agents ?? []}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
           agentProjectDefs={agentProjectDefs}
           agentShowScopeToggle={agentShowScopeToggle}
           agentHasGlobal={agentHasGlobal}
           agentHasProject={agentHasProject}
-          isPanelPinned={isPinned}
         />
-        {voice.sttEnabled &&
-          voice.voiceInputMode === "vad" &&
-          (voice.isListening || voice.isTranscribing || voice.voiceError) && (
+        {showVoiceStatusBar && (
           <VoiceStatusBar
+            voiceLoading={voice.voiceLoading ?? false}
             isListening={voice.isListening ?? false}
             isSpeechDetected={voice.isSpeechDetected ?? false}
             isTranscribing={voice.isTranscribing ?? false}
@@ -729,23 +739,23 @@ export function ChatPage({
             />
           </div>
 
-          {viewingMeta && (
-            <AgentStatusBar
-              viewingMeta={viewingMeta}
-              interactionMode={chat.sessionInteractionMode ?? "none"}
-              isAttached={!!chat.attachedSessionId}
-              isAutonomousSession={isAutonomousSession}
-              onAttach={
-                canAttachViewedSession ? chat.onAttachToViewed : undefined
-              }
-              onResume={
-                canControlViewedSession ? handleResumeViewedSession : undefined
-              }
-              onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
-              onTogglePanel={!showChatInput ? togglePanel : undefined}
-              isPanelPinned={isPinned}
-            />
-          )}
+          <AgentStatusBar
+            viewingMeta={viewingMeta}
+            interactionMode={chat.sessionInteractionMode ?? "none"}
+            contextUsage={chat.contextUsage}
+            contextUsageUpdatedAt={chat.contextUsageUpdatedAt}
+            isAttached={!!chat.attachedSessionId}
+            isAutonomousSession={isAutonomousSession}
+            onAttach={
+              canAttachViewedSession ? chat.onAttachToViewed : undefined
+            }
+            onResume={
+              canControlViewedSession ? handleResumeViewedSession : undefined
+            }
+            onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+            onTogglePanel={togglePanel}
+            isPanelPinned={isPinned}
+          />
 
           {/* Chat input */}
           {showChatInput && (
@@ -763,7 +773,6 @@ export function ChatPage({
               onModeChange={chat.onModeChange}
               modeDisabled={isProxyAttached}
               modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
-              contextUsage={chat.contextUsage}
               currentBranch={effectiveBranch}
               worktreePath={chat.worktreePath}
               projectId={projectId ?? null}
@@ -779,11 +788,19 @@ export function ChatPage({
               agentHasGlobal={agentHasGlobal}
               agentHasProject={agentHasProject}
               sttEnabled={voice.sttEnabled}
+              ttsEnabled={voice.ttsEnabled}
               voiceInputMode={voice.voiceInputMode}
               isRecording={voice.isRecording}
+              isSpeaking={voice.isSpeaking}
+              voiceLoading={voice.voiceLoading}
+              voiceReady={voice.voiceReady}
+              prepareTTSPlayback={voice.prepareTTSPlayback}
               startRecording={voice.startRecording}
               stopRecording={voice.stopRecording}
               cancelRecording={voice.cancelRecording}
+              stopTTS={voice.stopTTS}
+              onSttEnabledChange={onSttEnabledChange}
+              onTtsEnabledChange={onTtsEnabledChange}
               isMobile={isMobile}
               onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
               provider={effectiveInputProvider}
@@ -811,8 +828,6 @@ export function ChatPage({
               proxySlashMode={isSwappedTerminal && chat.sessionInteractionMode === "proxy"}
               proxyDeliveryNotice={chat.proxyDeliveryNotice}
               attachmentsDisabled={isProxyAttached}
-              onToggleActivityPanel={togglePanel}
-              isActivityPanelPinned={isPinned}
             />
           )}
         </ArtifactContext.Provider>
@@ -845,12 +860,15 @@ export function ChatPage({
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
         projectId={projectId}
+        sessions={allProjectSessions}
+        sessionsLoading={allProjectSessionsLoading}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={activityPanelChatSessionId}
         focusSessionId={focusSessionId}
         onFocusSessionHandled={handleFocusSessionHandled}
         onSwapSession={handleSwapSession}
+        onResumeSession={handleResumeSessionFromActivity}
         onAddFileToChat={handleAddFileToChat}
         isMobile={isMobile}
       />
@@ -865,20 +883,6 @@ export function ChatPage({
         onDeleteSession={conversations.onDeleteSession}
         onRenameSession={conversations.onRenameSession}
         actions={paletteActions}
-      />
-
-      {/* Active Sessions Modal */}
-      <ActiveSessionsModal
-        isOpen={showActiveSessions}
-        onClose={() => setShowActiveSessions(false)}
-        agents={conversations.agents ?? []}
-        cliSessions={conversations.cliSessions}
-        onViewAgent={(agent) => {
-          onViewAgent?.(agent);
-          setShowActiveSessions(false);
-        }}
-        onKillAgent={conversations.onKillAgent}
-        onViewCliSession={handleViewCliSession}
       />
     </div>
   );
