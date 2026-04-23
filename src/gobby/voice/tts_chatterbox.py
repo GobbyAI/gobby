@@ -111,12 +111,12 @@ def _prepare_turbo_conditionals(
         t3_cond_prompt_tokens, _ = tokenizer.forward(
             [ref_16k_wav[: model.ENC_COND_LEN]], max_len=plen
         )
-        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)  # type: ignore[no-untyped-call]
+        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)
 
     ve_embed_array = np.asarray(
         _coerce_conditioning_audio(model.ve.embeds_from_wavs([ref_16k_wav], sample_rate=s3_sr))
     )
-    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)  # type: ignore[call-overload]
+    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)
 
     t3_cond = chatterbox_turbo.T3Cond(
         speaker_emb=ve_embed,
