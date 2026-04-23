@@ -223,6 +223,8 @@ CREATE INDEX idx_sessions_status ON sessions(status);
 CREATE INDEX idx_sessions_project_id ON sessions(project_id);
 CREATE INDEX idx_sessions_pending_transcript ON sessions(status, transcript_processed)
     WHERE status = 'expired' AND transcript_processed = FALSE;
+CREATE INDEX idx_sessions_prune_status_updated_at ON sessions(status, updated_at);
+CREATE INDEX idx_sessions_parent_session ON sessions(parent_session_id);
 CREATE INDEX idx_sessions_agent_depth ON sessions(agent_depth);
 CREATE INDEX idx_sessions_spawned_by ON sessions(spawned_by_agent_id);
 CREATE INDEX idx_sessions_workflow ON sessions(workflow_name);
@@ -459,6 +461,7 @@ CREATE TABLE memories (
 CREATE INDEX idx_memories_project ON memories(project_id);
 CREATE INDEX idx_memories_type ON memories(memory_type);
 CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph_processed = 0;
+CREATE INDEX idx_memories_source_session ON memories(source_session_id);
 
 CREATE TABLE session_memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

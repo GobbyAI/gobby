@@ -3,8 +3,11 @@
 For new databases (version == 0):
     BASELINE_SCHEMA is applied, jumping directly to BASELINE_VERSION.
 
-For existing databases at or above the minimum supported version:
+For existing databases at the launch baseline:
     Any migrations in MIGRATIONS beyond BASELINE_VERSION are applied incrementally.
+
+Older pre-launch SQLite databases are intentionally unsupported. Newer
+versions are left untouched so a newer build's schema is never downgraded.
 
 To add a new migration:
     1. Add helper callables to gobby.storage.migration_helpers when needed.
@@ -19,32 +22,11 @@ from pathlib import Path
 from gobby.storage._migration_registry import MIGRATIONS
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migration_helpers import (
-    _add_column_if_missing,
-    _add_prune_empty_session_indexes,
-    _add_summary_column,
-    _column_exists,
-    _drop_agent_runs_mode,
-    _drop_column_if_exists,
-    _drop_summary_column,
-    _migrate_add_token_events,
-    _migrate_agent_run_claimed_session_id,
-    _migrate_agent_run_reasoning_fields,
-    _migrate_claimed_by_session_id,
-    _migrate_code_graph_target_schema,
-    _migrate_expansion_runs,
-    _migrate_sessions_sandbox_fields,
-    _migrate_task_lifecycle_stage,
-    _migrate_tasks_claimed_session_fk_set_null,
-    _narrow_memories_fts_update_trigger,
-    _remove_usd_columns,
     _setup_code_content_fts,
     _setup_code_symbols_fts,
-    _setup_fts_tables,
     _setup_memories_fts,
     _setup_skills_fts,
     _setup_tasks_fts,
-    _table_exists,
-    _tasks_claimed_session_fk_is_set_null,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,33 +37,12 @@ __all__ = [
     "MIGRATIONS",
     "MigrationAction",
     "MigrationUnsupportedError",
-    "_add_column_if_missing",
-    "_add_prune_empty_session_indexes",
-    "_add_summary_column",
-    "_column_exists",
-    "_drop_agent_runs_mode",
-    "_drop_column_if_exists",
-    "_drop_summary_column",
-    "_migrate_add_token_events",
-    "_migrate_agent_run_claimed_session_id",
-    "_migrate_agent_run_reasoning_fields",
-    "_migrate_claimed_by_session_id",
-    "_migrate_code_graph_target_schema",
-    "_migrate_expansion_runs",
-    "_migrate_sessions_sandbox_fields",
-    "_migrate_task_lifecycle_stage",
-    "_migrate_tasks_claimed_session_fk_set_null",
-    "_narrow_memories_fts_update_trigger",
-    "_remove_usd_columns",
     "_run_migration_list",
     "_setup_code_content_fts",
     "_setup_code_symbols_fts",
-    "_setup_fts_tables",
     "_setup_memories_fts",
     "_setup_skills_fts",
     "_setup_tasks_fts",
-    "_table_exists",
-    "_tasks_claimed_session_fk_is_set_null",
     "get_current_version",
     "run_migrations",
 ]
@@ -95,8 +56,8 @@ class MigrationUnsupportedError(Exception):
 
 MigrationAction = str | Callable[[LocalDatabase], None]
 
-BASELINE_VERSION = 217
-_MIN_MIGRATION_VERSION = 171
+BASELINE_VERSION = 219
+_MIN_MIGRATION_VERSION = 219
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 
 
@@ -110,8 +71,8 @@ def get_current_version(db: LocalDatabase) -> int:
 
 
 def _apply_baseline(db: LocalDatabase) -> None:
-    """Apply baseline schema for new databases (flattened at v171)."""
-    logger.info("Applying baseline schema (v171)")
+    """Apply baseline schema for new databases (flattened at v219)."""
+    logger.info("Applying baseline schema (v219)")
 
     with db.transaction() as conn:
         # Execute baseline schema
@@ -198,7 +159,9 @@ def run_migrations(db: LocalDatabase) -> int:
         - Applies the current baseline schema directly.
 
     For existing databases:
-        - Runs any new migrations after the recorded schema version.
+        - Version 219 runs any future SQLite migrations and repairs the system session.
+        - Versions below 219 raise MigrationUnsupportedError.
+        - Versions above the latest known migration are left untouched.
 
     Args:
         db: LocalDatabase instance
@@ -216,19 +179,31 @@ def run_migrations(db: LocalDatabase) -> int:
         total_applied = 1
         current_version = BASELINE_VERSION
     elif current_version < _MIN_MIGRATION_VERSION:
-        # Unsupported: Pre-v171 database without legacy migrations
+        # Unsupported: pre-launch SQLite database without legacy migrations.
         msg = (
-            f"Database version {current_version} is older than minimum "
-            f"migration version {_MIN_MIGRATION_VERSION}. "
-            f"Upgrade not supported without legacy migrations. "
-            f"To recover: 1) Back up ~/.gobby/gobby-hub.db, "
-            f"2) Delete the database file, 3) Restart the daemon "
-            f"(gobby restart) to reinitialize with a fresh schema."
+            f"Database version {current_version} predates the SQLite launch "
+            f"baseline {_MIN_MIGRATION_VERSION}. Direct upgrade is unsupported. "
+            f"To recover: stop the daemon, remove ~/.gobby/gobby-hub.db or "
+            f"restore your pre-cutover backup, then restart Gobby to initialize "
+            f"schema {BASELINE_VERSION}."
         )
         logger.error(msg)
         raise MigrationUnsupportedError(msg)
 
-    # Run any new migrations (v172+)
+    latest_known_version = max(
+        BASELINE_VERSION,
+        max((version for version, _description, _action in MIGRATIONS), default=BASELINE_VERSION),
+    )
+    if current_version > latest_known_version:
+        logger.info(
+            "Database version %s is newer than this build's latest known SQLite "
+            "schema %s; leaving it untouched.",
+            current_version,
+            latest_known_version,
+        )
+        return 0
+
+    # Run any new migrations after the flattened launch baseline.
     if MIGRATIONS:
         applied = _run_migration_list(db, current_version, MIGRATIONS)
         total_applied += applied
