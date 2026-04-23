@@ -42,10 +42,19 @@ This is not a connection-string swap. Key SQLite-specific coupling the migration
 - **Upserts**: `INSERT OR IGNORE` (8 sites across `projects.py`, `session_tasks.py`, `migrations.py`, `sessions.py`, `pipelines.py`) and `INSERT OR REPLACE` (1 site at `agents.py:213`). Must be rewritten to `ON CONFLICT DO NOTHING / DO UPDATE SET`.
 - **Schema primitives**: `AUTOINCREMENT` (17 sites), `datetime('now')` (60+ DEFAULT expressions), `json_extract(...)` / `json_set(...)` (17 sites), `PRAGMA foreign_keys=ON`, `PRAGMA query_only=ON` (test read-only enforcement).
 - **Search**: FTS5 virtual tables with content-synced triggers on `tasks`, `memories`, `code_symbols`, `code_content`, `skills` (contentless). 12+ triggers keep virtual tables in sync. No abstraction — managers call FTS5 directly using `MATCH` and `bm25()`.
-- **Migration runner**: `src/gobby/storage/migrations.py` uses `conn.executescript()` (no PostgreSQL equivalent), splits SQL on `;` (breaks for trigger bodies), embeds Python callable migrations (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_memories_fts`, `_migrate_claimed_by_session_id`, etc.), uses `PRAGMA table_info(...)` for idempotency checks.
+- **Migration runner**: `src/gobby/storage/migrations.py` reads `baseline_schema.sql` as a string and executes it via `for stmt in sql.strip().split(";"): conn.execute(stmt)`. The naive `;` split cannot cross FTS5 trigger bodies (`BEGIN ... END;`) or Postgres function bodies (`$$ ... $$`); FTS5 setup is therefore extracted into five Python helpers in `src/gobby/storage/migration_helpers.py` (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_skills_fts`, `_setup_memories_fts`) that the runner calls after the baseline transaction commits. Version tracking uses a `schema_version (version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))` table. `BASELINE_VERSION = 219`; pre-v219 databases are explicitly unsupported and raise `MigrationUnsupportedError`. Post-baseline migrations live in `_migration_registry.MIGRATIONS` (currently empty).
 - **Bootstrap**: `src/gobby/config/bootstrap.py` has only `database_path`. No backend selection before DB-backed config loads.
 - **Test infrastructure**: `tests/conftest.py` uses `:memory:` SQLite exclusively. No Postgres fixtures. 11k+ tests, ~48 files under `tests/storage/`. Any Postgres-only bug cannot be caught until production today.
 - **Timestamps**: all `created_at` / `updated_at` stored as ISO8601 text. Python adapters assume UTC and add tzinfo; the `datetime('now')` DEFAULT produces naive UTC text. Migration must preserve UTC and align on `TIMESTAMPTZ`.
+
+## Post-flattening starting point
+
+Commit `4be00747a` flattened the 219-step SQLite migration chain. The PG migration inherits a simpler starting point than the original plan assumed:
+
+- `src/gobby/storage/baseline_schema.sql` — single source-of-truth DDL (68 tables, 173 indexes, plus seed `INSERT`s for the four placeholder projects). Already a portable `.sql` artifact — the Phase 4.2 translation has one file to port, not a 219-step chain to replay.
+- `src/gobby/storage/_migration_registry.py::MIGRATIONS` is empty. Post-baseline SQLite migrations (if any land before cutover) and the new Postgres runner share this list as their registration point.
+- There are no remaining Python *data* migrations. Only the five FTS5 setup helpers persist, and they are SQLite-only by construction — they die alongside FTS5 in Phase 7.2 and never need Postgres equivalents.
+- Pre-v219 SQLite databases are unsupported by the flattened runner. `gobby postgres migrate-from-sqlite` reuses the same `schema_version` gate — sources older than v219 are rejected before import, matching the launch-baseline contract.
 
 ## Target Architecture
 
@@ -765,11 +774,11 @@ conn.execute(
 
 For `INSERT OR REPLACE`-style full-row replacement (`agents.py:213`), spell the column list explicitly in `ON CONFLICT ... DO UPDATE SET col = EXCLUDED.col, ...`. No silent "replace everything" semantics — every replaced column is enumerated.
 
-### 3.7 Rewrite the migration runner to drop `executescript` and support both backends [category: code] (depends: 3.2, 3.3)
+### 3.7 Rewrite the migration runner with dollar-quote-aware splitting for both backends [category: code] (depends: 3.2, 3.3)
 
 Target: `src/gobby/storage/migrations.py`
 
-The current runner calls `conn.executescript()` (Postgres has no equivalent) and splits SQL on `;` (breaks trigger / function bodies). The rewrite discovers migration files from disk and executes statements one at a time with dollar-quote-aware splitting.
+The current runner splits `baseline_schema.sql` on `;` and executes statements one at a time. That strategy never handled FTS5 trigger bodies (hence the five Python helpers in `migration_helpers.py`) and will not handle Postgres `CREATE FUNCTION ... $$ ... $$ LANGUAGE plpgsql` bodies. The rewrite replaces both the split logic and the `_setup_*_fts` Python helpers with a dollar-quote-aware statement splitter that reads migration files from disk, applies them atomically per version, and records applied versions in a shared `schema_migrations` table.
 
 ```python
 # src/gobby/storage/migrations.py
@@ -854,25 +863,31 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 For Postgres, `NOW()` returns `TIMESTAMPTZ`. For SQLite during overlap, `NOW()` is not a builtin; the shared migration table creation uses `CURRENT_TIMESTAMP` which both backends accept — and the runner's insert uses `NOW()` on Postgres and `CURRENT_TIMESTAMP` on SQLite via a dialect-check in `_run_migration`'s bookkeeping step.
 
+**Table rename**: the SQLite baseline today uses `schema_version`. This task renames it to `schema_migrations` on both backends — pre-launch, a one-off `ALTER TABLE schema_version RENAME TO schema_migrations` against `~/.gobby/gobby-hub.db` suffices; no formal migration file is required. The name aligns with the `sqlx` convention that the later Rust port will consume.
+
 ## Phase 4: PostgreSQL schema and query parity
 
 **Goal**: every query path runs natively on Postgres, FTS5 is replaced with `pg_search` BM25 indexes, and all Rust-portability hygiene is applied.
 
-### 4.1 Convert Python migration callables to SQL-only files [category: refactor] (depends: 3.7)
+### 4.1 Verify no Python migration callables survive into Postgres paths [category: refactor] (depends: 3.7)
 
-Target: `src/gobby/storage/migrations.py`, new `src/gobby/storage/migrations/*.sql` files
+Target: `src/gobby/storage/_migration_registry.py`, `src/gobby/storage/migration_helpers.py`, lint rule under `src/gobby/storage/`
 
-Current callables identified in the audit: `_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_memories_fts`, `_migrate_claimed_by_session_id`, plus any others the first grep surfaces. Each callable's DDL is rewritten as a dialect-specific `.sql` file keyed to the same version number.
+**Scope after flattening**: the only Python callables remaining in the migration path are the five FTS5 setup helpers in `migration_helpers.py` (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_skills_fts`, `_setup_memories_fts`). These are SQLite-specific by construction — they set up FTS5 virtual tables and triggers that have no Postgres equivalent; `pg_search` BM25 indexes replace them in task 4.4, and the helpers themselves are deleted in Phase 7.2.
 
-Imperative backfill logic (reading rows and writing derived values) becomes either `INSERT ... SELECT` or `UPDATE ... FROM (SELECT ...)`. Postgres supports both directly; SQLite supports `UPDATE ... FROM (SELECT ...)` as of 3.33.
+This task therefore becomes a **verification pass**:
 
-If a specific callable genuinely cannot be expressed in pure SQL, the migration is blocked until that transformation is redesigned into SQL terms. Do not keep a Python fallback in the final cutover plan.
+1. Confirm `_migration_registry.MIGRATIONS` contains no callable entries and remains empty through cutover. If a post-baseline SQLite migration lands before cutover, its action must be a `str` pointing at a shared `.sql` file, not a Python callable.
+2. Confirm `migration_helpers.py` is referenced only from `migrations._apply_baseline` (the SQLite-only path) and the FTS5 backend code. It must never be invoked from the Postgres path.
+3. Add a lint in `src/gobby/storage/` that fails on any new `Callable` entry added to `MIGRATIONS`.
 
-Rationale: these files must be consumable by `sqlx migrate run` after the Rust port. "Mostly SQL, plus a few Python fallbacks" is how this work rots immediately.
+No new `.sql` files are produced by this task. The prior-revision scope (port `_migrate_claimed_by_session_id` and friends to SQL) is obsolete — those callables were folded into the v219 baseline and no longer exist.
 
 ### 4.2 Add `postgres_baseline_schema.sql` [category: code] (depends: 3.7)
 
 Target: `src/gobby/storage/postgres_baseline_schema.sql` (new)
+
+**Source artifact**: `src/gobby/storage/baseline_schema.sql` (1209 lines, 68 `CREATE TABLE`, 173 `CREATE INDEX`, seed `INSERT`s for the `_orphaned`, `_migrated`, `_personal`, and `_global` placeholder projects). This is the only SQL file to translate — there is no 219-step chain to replay.
 
 Translate `baseline_schema.sql` to Postgres-native types:
 
@@ -885,6 +900,11 @@ Translate `baseline_schema.sql` to Postgres-native types:
 | `TEXT` holding JSON | `JSONB` |
 | `INTEGER PRIMARY KEY AUTOINCREMENT` | `INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY` |
 | `UNIQUE (col, COALESCE(x, '__global__'))` | `UNIQUE NULLS NOT DISTINCT (col, x)` (PG15+) |
+| `INSERT INTO … VALUES (…, datetime('now'), datetime('now'))` (seed rows) | `INSERT INTO … VALUES (…, NOW(), NOW())` — or elide the explicit timestamps entirely and let the column `DEFAULT NOW()` populate them |
+
+**Version table**: the Postgres baseline ships the applied-migration table as `schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`, matching the rename adopted in task 3.7.
+
+**Cutover marker table**: the Postgres baseline also ships `gobby_migration_state (key TEXT PRIMARY KEY, value TEXT)`. The SQLite→Postgres importer (task 5.1 step 12) writes `('imported_from_sqlite_at', NOW()::text)` here; `gobby postgres activate` checks for that key before flipping `hub_backend`.
 
 Every FTS5 virtual table is replaced by a `pg_search` BM25 index on the content table (task 4.4). pg_search's index access method keeps the index in sync automatically — no `BEFORE UPDATE` trigger or shadow column is required.
 
@@ -1144,7 +1164,7 @@ Execution order:
 9. Recreate BM25 indexes. `CREATE INDEX ... USING bm25 ...` rebuilds from the just-loaded data. Validate index size and row count are non-zero.
 10. Reseed sequences (task 5.3).
 11. Run validation (task 5.2).
-12. Write a `migration_complete` marker row to `schema_migrations` so `postgres activate` knows the target is safe to flip to.
+12. Insert a `('imported_from_sqlite_at', NOW()::text)` row into the `gobby_migration_state (key TEXT PRIMARY KEY, value TEXT)` table (created by the Postgres baseline, task 4.2). `gobby postgres activate` checks for that key before flipping `hub_backend`. A sentinel version in `schema_migrations` is avoided because that table is reserved for applied migration versions — mixing a "finished importing" marker with real version rows is brittle and blocks schema-version sanity checks later.
 
 Resumability: record per-table progress in a `_migration_progress` table on the target. `--resume` picks up from the last completed table. If a table fails mid-copy, it is truncated and restarted — not resumed within-table. SQLite source is never modified.
 
@@ -1350,7 +1370,7 @@ Type changes:
 - Search behavior on tasks, memories, skills, and code index uses BM25 ranking on both SQLite (FTS5) and Postgres (pg_search). Representative-query top-N ordering matches across backends during the overlap and continues to return expected results post-cutover.
 - `gobby/postgres:17-pgsearch` image is built, passes `CREATE EXTENSION pg_search` smoke tests, and is published to the Gobby image registry on release.
 - The test suite runs against PostgreSQL via compose + `DATABASE_URL` with schema-per-xdist-worker plus test-scoped schema reset isolation; every Phase 3–5 task is covered by tests running against the real backend.
-- All migration files are pure `.sql` (no Python callables). All parameter placeholders use `$1` style. Runtime DSN bootstrap is explicit and pool/connection tuning is env-var-driven.
+- All **post-baseline** migration files are pure `.sql` with `$1`-style placeholders. The five SQLite-only FTS5 setup helpers in `migration_helpers.py` persist through the overlap window as SQLite-specific scaffolding and are deleted in Phase 7.2 with the rest of the SQLite runtime. Runtime DSN bootstrap is explicit and pool/connection tuning is env-var-driven.
 - Fresh installs initialize PostgreSQL directly; `~/.gobby/gobby-hub.db` is not created.
 - Phase 7 migrates bootstrap Postgres credentials out of plaintext `bootstrap.yaml`
   into OS keyring storage, and startup fails if `bootstrap.yaml` is not `0600`
