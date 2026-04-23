@@ -34,7 +34,7 @@ def workflow_db(_workflow_tmp_dir: Path) -> Iterator[LocalDatabase]:
     """
     from gobby.storage.database import LocalDatabase
     from gobby.storage.migrations import run_migrations
-    from gobby.workflows.sync import sync_bundled_pipelines
+    from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
     db_path = _workflow_tmp_dir / "test.db"
     db = LocalDatabase(db_path)

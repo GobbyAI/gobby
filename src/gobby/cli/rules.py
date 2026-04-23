@@ -210,7 +210,7 @@ def import_rules(file: str) -> None:
         click.echo("Rule file must have .yaml or .yml extension.", err=True)
         sys.exit(1)
 
-    from gobby.workflows.sync import sync_bundled_rules
+    from gobby.workflows.sync_rules import sync_bundled_rules
 
     db = LocalDatabase()
     result = sync_bundled_rules(db, rules_path=path.parent)

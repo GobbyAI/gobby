@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import threading
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
@@ -25,6 +24,7 @@ from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.tmux.wsl_compat import convert_windows_path_to_wsl, needs_wsl
+from gobby.config.tmux import TmuxConfig
 
 __all__ = [
     "TmuxConfig",

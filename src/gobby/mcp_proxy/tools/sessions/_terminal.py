@@ -11,8 +11,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
 

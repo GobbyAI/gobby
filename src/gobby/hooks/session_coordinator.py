@@ -396,7 +396,7 @@ class SessionCoordinator:
                 try:
                     import subprocess
 
-                    from gobby.agents.tmux.config import TmuxConfig
+                    from gobby.config.tmux import TmuxConfig
 
                     tmux_cfg = TmuxConfig()
                     cmd = [tmux_cfg.command]
@@ -421,7 +421,7 @@ class SessionCoordinator:
                 try:
                     import subprocess
 
-                    from gobby.agents.tmux.config import TmuxConfig
+                    from gobby.config.tmux import TmuxConfig
 
                     tmux_cfg = TmuxConfig()
                     kill_cmd = [tmux_cfg.command]

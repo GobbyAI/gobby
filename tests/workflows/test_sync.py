@@ -1,4 +1,4 @@
-"""Tests for workflow definition synchronization (sync.py).
+"""Tests for workflow definition synchronization split modules.
 
 Tests sync edge cases, error handling, orphan cleanup, and variable sync.
 """
@@ -40,20 +40,20 @@ class TestResolveSyncPlaceholders:
     """Tests for resolve_sync_placeholders."""
 
     def test_no_placeholder_returns_unchanged(self) -> None:
-        from gobby.workflows.sync import resolve_sync_placeholders
+        from gobby.workflows.sync_rules import resolve_sync_placeholders
 
         result = resolve_sync_placeholders('{"event": "before_tool"}')
         assert result == '{"event": "before_tool"}'
 
     def test_replaces_gobby_bin_with_which(self) -> None:
-        from gobby.workflows.sync import resolve_sync_placeholders
+        from gobby.workflows.sync_rules import resolve_sync_placeholders
 
         with patch("gobby.workflows.sync_rules.shutil.which", return_value="/usr/local/bin/gobby"):
             result = resolve_sync_placeholders("run {{ gobby_bin }} tasks list")
             assert result == "run /usr/local/bin/gobby tasks list"
 
     def test_falls_back_to_python_m_gobby(self) -> None:
-        from gobby.workflows.sync import resolve_sync_placeholders
+        from gobby.workflows.sync_rules import resolve_sync_placeholders
 
         with patch("gobby.workflows.sync_rules.shutil.which", return_value=None):
             result = resolve_sync_placeholders("run {{ gobby_bin }} tasks")
@@ -70,14 +70,14 @@ class TestSyncBundledRules:
     """Tests for sync_bundled_rules edge cases."""
 
     def test_missing_rules_path_returns_empty_result(self, db: LocalDatabase) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         result = sync_bundled_rules(db, rules_path=Path("/nonexistent/path"))
         assert result["success"] is True
         assert result["synced"] == 0
 
     def test_skips_non_dict_yaml(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
@@ -88,7 +88,7 @@ class TestSyncBundledRules:
         assert result["synced"] == 0
 
     def test_skips_yaml_without_rules_key(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
@@ -99,7 +99,7 @@ class TestSyncBundledRules:
         assert result["skipped"] == 1
 
     def test_skips_deprecated_directory(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         deprecated_dir = rules_dir / "deprecated"
@@ -120,7 +120,7 @@ rules:
         assert result["synced"] == 0
 
     def test_non_dict_rule_data_adds_error(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
@@ -137,7 +137,7 @@ rules:
         assert "bad-rule" in result["errors"][0]
 
     def test_user_tag_collision_skips(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         # Create a gobby-tagged installed rule
         manager = LocalWorkflowDefinitionManager(db)
@@ -168,7 +168,7 @@ rules:
         assert result["skipped"] == 1
 
     def test_handles_yaml_parse_error(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
@@ -182,7 +182,7 @@ rules:
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
     ) -> None:
         from gobby.mcp_proxy.tools.workflows._import import reload_cache
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
@@ -236,7 +236,7 @@ class TestSyncBundledPipelines:
     """Tests for sync_bundled_pipelines edge cases."""
 
     def test_missing_path_returns_error(self, db: LocalDatabase) -> None:
-        from gobby.workflows.sync import sync_bundled_pipelines
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         with patch(
             "gobby.workflows.sync_pipelines.get_bundled_pipelines_path",
@@ -246,7 +246,7 @@ class TestSyncBundledPipelines:
             assert len(result["errors"]) >= 1
 
     def test_skips_non_dict_yaml(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_pipelines
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pip_dir = tmp_path / "pipelines"
         pip_dir.mkdir()
@@ -262,7 +262,7 @@ class TestSyncBundledPipelines:
     def test_sync_with_real_bundled_pipelines(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        from gobby.workflows.sync import sync_bundled_pipelines
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         result = sync_bundled_pipelines(db)
 
@@ -277,7 +277,7 @@ class TestSyncBundledPipelines:
         assert "delivery-orchestrator" in names
 
     def test_skips_yaml_without_name(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_pipelines
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pip_dir = tmp_path / "pipelines"
         pip_dir.mkdir()
@@ -290,7 +290,7 @@ class TestSyncBundledPipelines:
             assert result["synced"] == 0
 
     def test_skips_invalid_schema(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_pipelines
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pip_dir = tmp_path / "pipelines"
         pip_dir.mkdir()
@@ -306,7 +306,7 @@ class TestSyncBundledPipelines:
             assert result["synced"] == 0
 
     def test_syncs_valid_pipeline(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_pipelines
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 
         pip_dir = tmp_path / "pipelines"
         pip_dir.mkdir()
@@ -337,14 +337,14 @@ class TestSyncBundledVariables:
     """Tests for sync_bundled_variables."""
 
     def test_missing_path_returns_empty_result(self, db: LocalDatabase) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         result = sync_bundled_variables(db, variables_path=Path("/nonexistent"))
         assert result["success"] is True
         assert result["synced"] == 0
 
     def test_syncs_new_variable(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -361,7 +361,7 @@ variables:
         assert result["synced"] == 1
 
     def test_skips_non_dict_yaml(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -371,7 +371,7 @@ variables:
         assert result["synced"] == 0
 
     def test_skips_yaml_without_variables_key(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -381,7 +381,7 @@ variables:
         assert result["skipped"] == 1
 
     def test_non_dict_variable_adds_error(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -396,7 +396,7 @@ variables:
         assert len(result["errors"]) == 1
 
     def test_does_not_overwrite_existing_variable(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -423,7 +423,7 @@ variables:
         assert result["skipped"] == 1
 
     def test_skips_unchanged_variable(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -440,7 +440,7 @@ variables:
         assert result["skipped"] == 1
 
     def test_orphan_cleanup(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -460,7 +460,7 @@ variables:
         assert result["orphaned"] >= 1
 
     def test_respects_soft_deleted_variable(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -484,7 +484,7 @@ variables:
         assert result["skipped"] == 1
 
     def test_handles_yaml_parse_error(self, db: LocalDatabase, tmp_path: Path) -> None:
-        from gobby.workflows.sync import sync_bundled_variables
+        from gobby.workflows.sync_variables import sync_bundled_variables
 
         var_dir = tmp_path / "variables"
         var_dir.mkdir()
@@ -503,21 +503,21 @@ class TestBundledPaths:
     """Tests for path helper functions."""
 
     def test_get_bundled_rules_path_returns_path(self) -> None:
-        from gobby.workflows.sync import get_bundled_rules_path
+        from gobby.workflows.sync_rules import get_bundled_rules_path
 
         result = get_bundled_rules_path()
         assert isinstance(result, Path)
         assert str(result).endswith("rules")
 
     def test_get_bundled_pipelines_path_returns_path(self) -> None:
-        from gobby.workflows.sync import get_bundled_pipelines_path
+        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 
         result = get_bundled_pipelines_path()
         assert isinstance(result, Path)
         assert str(result).endswith("pipelines")
 
     def test_get_bundled_variables_path_returns_path(self) -> None:
-        from gobby.workflows.sync import get_bundled_variables_path
+        from gobby.workflows.sync_variables import get_bundled_variables_path
 
         result = get_bundled_variables_path()
         assert isinstance(result, Path)

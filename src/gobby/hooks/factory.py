@@ -452,7 +452,7 @@ class HookManagerFactory:
         broadcaster: Any | None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
         from gobby.workflows.templates import TemplateEngine
 
         loader = WorkflowLoader(db=database)

@@ -10,9 +10,9 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -40,7 +40,7 @@ def db(tmp_path) -> LocalDatabase:
 
 
 def _sync_bundled(db: LocalDatabase) -> RuleDefinitionBody:
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     sync_bundled_rules(db, get_bundled_rules_path())
     manager = LocalWorkflowDefinitionManager(db)

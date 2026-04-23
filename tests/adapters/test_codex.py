@@ -17,12 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.adapters.codex_impl.adapter import (
-    CodexAdapter,
-    CodexNotifyAdapter,
-    _get_daemon_machine_id,
-)
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter, _get_daemon_machine_id
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.adapters.codex_impl.hooks_adapter import CodexNotifyAdapter
 from gobby.adapters.codex_impl.types import (
     CodexConnectionState,
     CodexItem,
@@ -1711,7 +1708,7 @@ class TestCodexHooksAdapterInit:
 
     def test_default_init(self) -> None:
         """Default initialization."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1720,7 +1717,7 @@ class TestCodexHooksAdapterInit:
 
     def test_with_hook_manager(self) -> None:
         """Initialize with hook manager."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         mock_hook_manager = MagicMock()
         adapter = CodexHooksAdapter(hook_manager=mock_hook_manager)
@@ -1729,7 +1726,7 @@ class TestCodexHooksAdapterInit:
 
     def test_backward_compat_alias(self) -> None:
         """CodexNotifyAdapter is an alias for CodexHooksAdapter."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         assert CodexNotifyAdapter is CodexHooksAdapter
 
@@ -1739,7 +1736,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_session_start(self) -> None:
         """Translate SessionStart to SESSION_START."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1763,7 +1760,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_pre_tool_use(self) -> None:
         """Translate PreToolUse to BEFORE_TOOL."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1786,7 +1783,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_pre_tool_use_apply_patch_as_write(self) -> None:
         """Translate apply_patch to canonical Write with touched file paths."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1830,7 +1827,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         self, tool_name: str, expected_tool_name: str
     ) -> None:
         """Translate raw Codex terminal tool names to canonical rule names."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1856,7 +1853,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_post_tool_use(self) -> None:
         """Translate PostToolUse to AFTER_TOOL."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1877,7 +1874,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_user_prompt_submit(self) -> None:
         """Translate UserPromptSubmit to BEFORE_AGENT."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1897,7 +1894,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_stop(self) -> None:
         """Translate Stop to STOP."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1917,7 +1914,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_unsupported_returns_none(self) -> None:
         """Unsupported hook type returns None."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1933,7 +1930,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_translate_pre_compact_unsupported_returns_none(self) -> None:
         """Codex terminal compact hooks remain unsupported and no-op."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
 
@@ -1949,7 +1946,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
 
     def test_all_event_types_mapped(self) -> None:
         """All 5 Codex hook types are in EVENT_MAP."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         expected = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"}
         assert set(CodexHooksAdapter.EVENT_MAP.keys()) == expected
@@ -1960,7 +1957,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_allow_response_minimal(self) -> None:
         """Allow response includes continue: true."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow")
@@ -1972,7 +1969,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_block_response(self) -> None:
         """Block response has no suppressOutput so block reason is visible."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="block", reason="Blocked by rule")
@@ -1984,7 +1981,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_deny_response(self) -> None:
         """Deny response maps to block with continue: false."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="deny", reason="Not allowed")
@@ -1996,7 +1993,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_pre_tool_use_block_uses_permission_decision(self) -> None:
         """PreToolUse blocks must use Codex permissionDecision, not continue=false."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2018,7 +2015,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_pre_tool_use_rewrite_blocks_and_surfaces_retry_input(self) -> None:
         """PreToolUse rewrites block and tell Codex how to retry safely."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2046,7 +2043,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_pre_tool_use_ignores_modified_input_without_rewrite_signal(self) -> None:
         """modified_input alone should not block ordinary Codex commands."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2061,7 +2058,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_context_injection_session_start(self) -> None:
         """SessionStart uses hookSpecificOutput.additionalContext."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", context="Rule injected context")
@@ -2073,7 +2070,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_context_injection_pre_tool_use_uses_system_message(self) -> None:
         """PreToolUse puts context in systemMessage, not additionalContext."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", context="Rule injected context")
@@ -2085,7 +2082,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_stop_routes_context_to_system_message(self) -> None:
         """Stop routes context to systemMessage (only accepted field for Stop)."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", context="Stop context")
@@ -2097,7 +2094,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_stop_combines_system_message_and_context(self) -> None:
         """Stop combines system_message and context in systemMessage without overwrite."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2112,7 +2109,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_system_message_routes_to_additional_context_for_user_prompt(self) -> None:
         """UserPromptSubmit routes system_message to additionalContext, not systemMessage."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", system_message="Session info")
@@ -2125,7 +2122,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_system_message_routes_only_to_additional_context_for_session_start(self) -> None:
         """SessionStart keeps the banner in startup context only once."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(decision="allow", system_message="Session banner")
@@ -2138,7 +2135,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_pre_tool_use_combines_system_message_and_context(self) -> None:
         """PreToolUse combines system_message and context_parts in systemMessage."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2154,7 +2151,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_session_metadata_first_hook(self) -> None:
         """First hook includes full session metadata in additionalContext."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2178,7 +2175,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_session_start_banner_and_metadata_include_session_id_once(self) -> None:
         """SessionStart does not duplicate the session ID between banner and metadata."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         banner = "Gobby Session ID: #100 (abc-123)"
@@ -2204,7 +2201,7 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
 
     def test_session_metadata_subsequent_hook(self) -> None:
         """Subsequent hooks do not inject session ref."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         response = HookResponse(
@@ -2225,7 +2222,7 @@ class TestCodexHooksAdapterHandleNative:
 
     def test_handle_native_success(self) -> None:
         """Handle native event through hook manager."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         mock_hook_manager = MagicMock()
@@ -2247,7 +2244,7 @@ class TestCodexHooksAdapterHandleNative:
 
     def test_handle_native_unsupported_event(self) -> None:
         """Handle unsupported event returns empty dict."""
-        from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
         mock_hook_manager = MagicMock()

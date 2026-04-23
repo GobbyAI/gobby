@@ -373,7 +373,7 @@ class RunningAgentRegistry:
         # Strategy 1: tmux kill-pane (primary — all agents use tmux)
         if ctx.get("tmux_pane"):
             try:
-                from gobby.agents.tmux.config import TmuxConfig
+                from gobby.config.tmux import TmuxConfig
 
                 tmux_socket = TmuxConfig().socket_name or "gobby"
 

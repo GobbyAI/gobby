@@ -2391,7 +2391,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2427,7 +2427,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2685,7 +2685,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockHooksAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockHooksAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2721,7 +2721,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {

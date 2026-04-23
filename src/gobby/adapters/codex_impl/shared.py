@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-ADAPTER_LOGGER_NAME = "gobby.adapters.codex_impl.adapter"
-
 # Codex uses different tool names - normalize to Claude Code conventions
 # so block_tools rules work across CLIs.
 TOOL_MAP: dict[str, str] = {
@@ -25,4 +23,4 @@ TOOL_MAP: dict[str, str] = {
     "GrepTool": "Grep",
 }
 
-__all__ = ["ADAPTER_LOGGER_NAME", "TOOL_MAP"]
+__all__ = ["TOOL_MAP"]

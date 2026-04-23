@@ -14,9 +14,6 @@ from gobby.adapters.base import (
     system_message_has_session_banner,
 )
 from gobby.adapters.codex_impl.shared import (
-    ADAPTER_LOGGER_NAME,
-)
-from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -24,7 +21,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
-logger = logging.getLogger(ADAPTER_LOGGER_NAME)
+logger = logging.getLogger(__name__)
 
 
 class CodexHooksAdapter(BaseAdapter):

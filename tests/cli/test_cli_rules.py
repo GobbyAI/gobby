@@ -270,7 +270,7 @@ class TestImportRules:
             "group: test\nrules:\n  my-rule:\n    event: before_tool\n    effect:\n      type: block\n      reason: test\n"
         )
 
-        with patch("gobby.workflows.sync.sync_bundled_rules") as mock_sync:
+        with patch("gobby.workflows.sync_rules.sync_bundled_rules") as mock_sync:
             mock_sync.return_value = {"success": True, "synced": 1, "updated": 0, "errors": []}
             result = cli_runner.invoke(rules, ["import", str(rule_file)])
             assert result.exit_code == 0

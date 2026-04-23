@@ -11,7 +11,7 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
 )
 from gobby.adapters.claude_code import ClaudeCodeAdapter
-from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.hooks.events import HookResponse
 
@@ -97,7 +97,7 @@ def test_codex_pre_tool_use_blank_reason_uses_sentinel(
         == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     )
     assert any(
-        record.name == "gobby.adapters.codex_impl.adapter"
+        record.name == "gobby.adapters.codex_impl.hooks_adapter"
         and "CodexHooksAdapter translated block without reason at adapter boundary"
         in record.message
         for record in caplog.records

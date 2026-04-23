@@ -11,7 +11,7 @@ from gobby.adapters.base import (
     normalize_adapter_response_reason,
 )
 from gobby.adapters.claude_code import ClaudeCodeAdapter
-from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.gemini import GeminiAdapter
 from gobby.hooks.events import HookResponse
 
@@ -153,7 +153,7 @@ def test_codex_blank_reason_uses_sentinel_and_logs_payload(
         result["hookSpecificOutput"]["permissionDecisionReason"]
         == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     )
-    messages = _warning_messages(caplog, logger_name="gobby.adapters.codex_impl.adapter")
+    messages = _warning_messages(caplog, logger_name="gobby.adapters.codex_impl.hooks_adapter")
     assert any(
         "CodexHooksAdapter translated block without reason at adapter boundary" in msg
         for msg in messages
@@ -174,4 +174,4 @@ def test_codex_populated_reason_passes_through_unchanged(
 
     assert result["reason"] == "Blocked by rule"
     assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Blocked by rule"
-    assert _warning_messages(caplog, logger_name="gobby.adapters.codex_impl.adapter") == []
+    assert _warning_messages(caplog, logger_name="gobby.adapters.codex_impl.hooks_adapter") == []

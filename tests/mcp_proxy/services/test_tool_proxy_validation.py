@@ -17,10 +17,10 @@ from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
-from gobby.workflows.rule_engine import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 

@@ -22,9 +22,9 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +44,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 def _sync_bundled(db):
     """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     return sync_bundled_rules(db, get_bundled_rules_path())
 

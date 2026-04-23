@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from gobby.adapters.codex_impl.adapter import CodexAdapter
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.hook_manager import HookManager
 from gobby.servers.exception_handlers import register_exception_handlers
 from gobby.utils.version import get_version

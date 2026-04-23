@@ -12,7 +12,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent, RuleTriggerEvent
-from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
 
@@ -2040,14 +2040,14 @@ class TestRuleEngineHelpers:
 
     def test_get_tool_identity_regular_tool(self) -> None:
         """Regular tool name is returned as-is."""
-        from gobby.workflows.rule_engine import _get_tool_identity
+        from gobby.workflows.engine.core import _get_tool_identity
 
         assert _get_tool_identity({"tool_name": "Edit"}) == "Edit"
         assert _get_tool_identity({"tool_name": "Read"}) == "Read"
 
     def test_get_tool_identity_mcp_call_tool(self) -> None:
         """MCP call_tool returns 'server:tool' identity."""
-        from gobby.workflows.rule_engine import _get_tool_identity
+        from gobby.workflows.engine.core import _get_tool_identity
 
         result = _get_tool_identity(
             {
@@ -2059,7 +2059,7 @@ class TestRuleEngineHelpers:
 
     def test_get_tool_identity_mcp_gobby_call_tool(self) -> None:
         """mcp__gobby__call_tool returns 'server:tool' identity."""
-        from gobby.workflows.rule_engine import _get_tool_identity
+        from gobby.workflows.engine.core import _get_tool_identity
 
         result = _get_tool_identity(
             {
@@ -2071,7 +2071,7 @@ class TestRuleEngineHelpers:
 
     def test_get_tool_identity_mcp_missing_fields(self) -> None:
         """MCP call_tool without server/tool returns tool_name."""
-        from gobby.workflows.rule_engine import _get_tool_identity
+        from gobby.workflows.engine.core import _get_tool_identity
 
         result = _get_tool_identity(
             {
@@ -2083,7 +2083,7 @@ class TestRuleEngineHelpers:
 
     def test_get_tool_identity_mcp_non_dict_input(self) -> None:
         """MCP call_tool with non-dict tool_input returns tool_name."""
-        from gobby.workflows.rule_engine import _get_tool_identity
+        from gobby.workflows.engine.core import _get_tool_identity
 
         result = _get_tool_identity(
             {

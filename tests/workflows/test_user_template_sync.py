@@ -46,7 +46,7 @@ class TestOrphanTagIsolation:
     ):
         """When a gobby-tagged template is orphaned, user-tagged templates
         with the same name survive."""
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         # Create a gobby template (global) and a user template (project-scoped)
         # They can share a name because they have different project_ids
@@ -77,7 +77,7 @@ class TestOrphanTagIsolation:
 
     def test_gobby_orphan_cleanup_only_targets_gobby_tagged(self, manager, temp_db, tmp_path):
         """Orphan cleanup only soft-deletes templates tagged 'gobby'."""
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         _create_rule(manager, "gobby-only-rule", source="installed", tags=["gobby"])
         _create_rule(manager, "user-only-rule", source="installed", tags=["user"])
@@ -107,7 +107,7 @@ class TestNameCollisionPrevention:
 
     def test_user_sync_skips_gobby_named_template(self, manager, temp_db, tmp_path):
         """sync_user_rules should skip rules whose names match gobby templates."""
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         # Create a gobby template
         _create_rule(manager, "protected-rule", source="installed", tags=["gobby"])
@@ -134,7 +134,7 @@ class TestSyncUserRules:
 
     def test_sync_user_rules_creates_with_user_tag(self, manager, temp_db, tmp_path):
         """User rule sync creates templates with tags=['user']."""
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
@@ -156,7 +156,7 @@ class TestSyncUserRules:
 
     def test_user_orphan_does_not_affect_gobby(self, manager, temp_db, tmp_path):
         """User orphan cleanup does not touch gobby templates."""
-        from gobby.workflows.sync import sync_bundled_rules
+        from gobby.workflows.sync_rules import sync_bundled_rules
 
         _create_rule(manager, "gobby-rule", source="installed", tags=["gobby"])
         _create_rule(manager, "old-user-rule", source="installed", tags=["user"])

@@ -366,7 +366,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # Select adapter based on source
             from gobby.adapters.base import BaseAdapter
             from gobby.adapters.claude_code import ClaudeCodeAdapter
-            from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+            from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.gemini import GeminiAdapter
             from gobby.adapters.qwen import QwenAdapter
 

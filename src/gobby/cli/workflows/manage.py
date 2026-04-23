@@ -79,11 +79,9 @@ def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
 def _run_sync(db: Any, workflow_type: str | None) -> dict[str, Any]:
     """Run the appropriate sync functions for the given workflow type."""
     from gobby.agents.sync import sync_bundled_agents
-    from gobby.workflows.sync import (
-        sync_bundled_pipelines,
-        sync_bundled_rules,
-        sync_bundled_variables,
-    )
+    from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+    from gobby.workflows.sync_rules import sync_bundled_rules
+    from gobby.workflows.sync_variables import sync_bundled_variables
 
     sync_map: dict[str, Any] = {
         "rule": ("rules", sync_bundled_rules),

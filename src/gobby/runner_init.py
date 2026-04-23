@@ -863,7 +863,7 @@ def init_servers(runner: GobbyRunner) -> None:
     # Create shared web-chat backends. Startup is handled in HTTP lifespan so
     # backend failures are non-fatal to daemon boot.
     codex_client = None
-    from gobby.adapters.codex_impl.adapter import CodexAdapter
+    from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 
     if CodexAdapter.is_codex_available():
         from gobby.adapters.codex_impl.client import CodexAppServerClient

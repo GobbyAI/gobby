@@ -15,8 +15,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 
 if TYPE_CHECKING:

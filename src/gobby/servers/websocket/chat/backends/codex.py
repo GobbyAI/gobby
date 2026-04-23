@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.adapters.codex_impl.adapter import CodexAdapter
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.adapters.codex_impl.item_normalization import (
     build_post_tool_lifecycle_payload,

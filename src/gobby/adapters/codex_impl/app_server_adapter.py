@@ -29,9 +29,6 @@ from gobby.adapters.codex_impl.item_normalization import (
     looks_like_tool_item as _shared_looks_like_tool_item,
 )
 from gobby.adapters.codex_impl.shared import (
-    ADAPTER_LOGGER_NAME,
-)
-from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
 from gobby.adapters.codex_impl.types import (
@@ -42,7 +39,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
 
-logger = logging.getLogger(ADAPTER_LOGGER_NAME)
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================

@@ -15,7 +15,7 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -35,7 +35,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 def _sync_bundled(db):
     """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
@@ -342,7 +342,7 @@ class TestTddVariableDefinitions:
     def test_variables_file_contains_tdd_variables(self) -> None:
         import yaml
 
-        from gobby.workflows.sync import get_bundled_rules_path
+        from gobby.workflows.sync_rules import get_bundled_rules_path
 
         vars_path = get_bundled_rules_path().parent / "variables" / "gobby-default-variables.yaml"
         with open(vars_path) as f:

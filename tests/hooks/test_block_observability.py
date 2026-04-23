@@ -19,7 +19,7 @@ from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit

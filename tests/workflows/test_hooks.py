@@ -626,7 +626,7 @@ class TestVariablePersistence:
     @pytest.fixture
     def rule_engine(self, db):
         """Create a real RuleEngine backed by the test DB."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         return RuleEngine(db=db)
 
@@ -765,7 +765,7 @@ class TestVariablePersistence:
         self, db, session_var_manager
     ) -> None:
         """Observer variable changes (e.g. task_claimed) should be persisted to DB."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
@@ -813,7 +813,7 @@ class TestVariablePersistence:
         self, db, session_var_manager
     ) -> None:
         """AFTER_AGENT should run turn-end reconciliation before rule evaluation."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         mock_task_manager.list_tasks.return_value = []
@@ -844,7 +844,7 @@ class TestVariablePersistence:
         self, db, session_var_manager
     ) -> None:
         """AFTER_AGENT should rebuild claimed review work from DB assignment state."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         review_task = MagicMock()
@@ -878,8 +878,8 @@ class TestVariablePersistence:
     @pytest.mark.asyncio
     async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(self, db) -> None:
         """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill directive."""
-        from gobby.workflows.rule_engine import RuleEngine
-        from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
+        from gobby.workflows.engine.core import RuleEngine
+        from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
         db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
@@ -936,7 +936,7 @@ class TestVariablePersistence:
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:
         """Both observer changes and rule set_variable effects should persist."""
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         mock_task_manager = MagicMock()
         mock_task = MagicMock()
@@ -1009,7 +1009,7 @@ class TestBaselineDirtyFilesSubtraction:
 
     @pytest.fixture
     def rule_engine(self, db):
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         return RuleEngine(db=db)
 
@@ -1317,7 +1317,7 @@ class TestStopFailsClosedOnVariableLoadError:
 
     @pytest.fixture
     def rule_engine(self, db):
-        from gobby.workflows.rule_engine import RuleEngine
+        from gobby.workflows.engine.core import RuleEngine
 
         return RuleEngine(db=db)
 

@@ -14,8 +14,8 @@ import signal
 import time
 from dataclasses import dataclass, field
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
 
 pytestmark = pytest.mark.unit

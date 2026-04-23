@@ -15,7 +15,7 @@ import stat
 import tempfile
 from collections.abc import Awaitable, Callable
 
-from gobby.agents.tmux.config import TmuxConfig
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 

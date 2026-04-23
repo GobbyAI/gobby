@@ -16,9 +16,9 @@ from uuid import uuid4
 
 from websockets.exceptions import ConnectionClosed
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
