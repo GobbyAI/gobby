@@ -1357,6 +1357,7 @@ export default function App() {
                   isTranscribing: voice.isTranscribing,
                   isSpeaking: voice.isSpeaking,
                   voiceError: voice.voiceError,
+                  prepareTTSPlayback: voice.prepareTTSPlayback,
                   startRecording: voice.startRecording,
                   stopRecording: voice.stopRecording,
                   cancelRecording: voice.cancelRecording,

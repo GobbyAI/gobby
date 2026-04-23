@@ -321,6 +321,7 @@ export interface VoiceProps {
   isTranscribing?: boolean;
   isSpeaking?: boolean;
   voiceError?: string | null;
+  prepareTTSPlayback?: () => void;
   startRecording?: () => Promise<void>;
   stopRecording?: () => Promise<void>;
   cancelRecording?: () => void;

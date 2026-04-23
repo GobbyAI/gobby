@@ -316,7 +316,7 @@ class VoiceMixin:
 
     def start_voice_warmup(self) -> None:
         """Begin best-effort background warmup for enabled voice models."""
-        if self._voice_warmup_task is not None:
+        if self._voice_warmup_task is not None and not self._voice_warmup_task.done():
             return
 
         voice_config = self._get_voice_config()
@@ -324,11 +324,11 @@ class VoiceMixin:
             return
 
         should_warm = False
-        if voice_config.stt_enabled:
+        if voice_config.stt_enabled and self._stt_warmup_status != _WARMUP_READY:
             self._stt_warmup_status = _WARMUP_LOADING
             self._stt_warmup_error = ""
             should_warm = True
-        if voice_config.tts_enabled:
+        if voice_config.tts_enabled and self._tts_warmup_status != _WARMUP_READY:
             self._tts_warmup_status = _WARMUP_LOADING
             self._tts_warmup_error = ""
             should_warm = True
@@ -427,6 +427,8 @@ class VoiceMixin:
 
     def _on_voice_warmup_done(self, task: asyncio.Task[None]) -> None:
         """Log unexpected warmup task failures."""
+        if self._voice_warmup_task is task:
+            self._voice_warmup_task = None
         if task.cancelled():
             return
         exc = task.exception()
@@ -690,8 +692,9 @@ class VoiceMixin:
 
         self._voice_enabled[conversation_id] = enabled
 
-        # Cancel TTS when leaving voice mode
-        if not enabled:
+        if enabled:
+            self.start_voice_warmup()
+        else:
             await self._cancel_tts(conversation_id)
 
         await websocket.send(
@@ -700,6 +703,7 @@ class VoiceMixin:
                     "type": "voice_status",
                     "conversation_id": conversation_id,
                     "status": "voice_mode_on" if enabled else "voice_mode_off",
+                    **self.get_voice_status(),
                 }
             )
         )
@@ -716,6 +720,8 @@ class VoiceMixin:
         }
         """
         conversation_id = data.get("conversation_id", "")
+        if data.get("tts_enabled") is True:
+            self._voice_enabled[conversation_id] = True
         self.start_voice_warmup()
 
         await websocket.send(
@@ -724,6 +730,7 @@ class VoiceMixin:
                     "type": "voice_status",
                     "conversation_id": conversation_id,
                     "status": "preparing",
+                    **self.get_voice_status(),
                 }
             )
         )

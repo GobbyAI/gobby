@@ -13,7 +13,7 @@ class TestVoiceConfig:
         config = VoiceConfig()
         assert config.enabled is False
         assert config.tts_provider == "chatterbox"
-        assert config.tts_chatterbox_max_generation_tokens == 96
+        assert config.tts_chatterbox_max_generation_tokens == 256
         assert config.tts_reference_text is None
         assert config.stt_enabled is True
         assert config.whisper_model_size == "base"

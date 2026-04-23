@@ -675,6 +675,13 @@ export function ChatPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePanel]);
 
+  const showVoiceStatusBar = Boolean(
+    (voice.ttsEnabled && voice.voiceLoading) ||
+      (voice.sttEnabled &&
+        voice.voiceInputMode === "vad" &&
+        (voice.isListening || voice.isTranscribing || voice.voiceError)),
+  );
+
   return (
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
       {ConfirmDialogElement}
@@ -697,10 +704,9 @@ export function ChatPage({
           agentHasGlobal={agentHasGlobal}
           agentHasProject={agentHasProject}
         />
-        {voice.sttEnabled &&
-          voice.voiceInputMode === "vad" &&
-          (voice.isListening || voice.isTranscribing || voice.voiceError) && (
+        {showVoiceStatusBar && (
           <VoiceStatusBar
+            voiceLoading={voice.voiceLoading ?? false}
             isListening={voice.isListening ?? false}
             isSpeechDetected={voice.isSpeechDetected ?? false}
             isTranscribing={voice.isTranscribing ?? false}
@@ -786,6 +792,9 @@ export function ChatPage({
               voiceInputMode={voice.voiceInputMode}
               isRecording={voice.isRecording}
               isSpeaking={voice.isSpeaking}
+              voiceLoading={voice.voiceLoading}
+              voiceReady={voice.voiceReady}
+              prepareTTSPlayback={voice.prepareTTSPlayback}
               startRecording={voice.startRecording}
               stopRecording={voice.stopRecording}
               cancelRecording={voice.cancelRecording}

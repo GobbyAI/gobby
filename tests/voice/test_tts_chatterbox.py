@@ -172,7 +172,7 @@ class TestChatterboxTurboProvider:
                 "t3_cond": "conds",
                 "text_tokens": "tokens",
                 "temperature": voice_config.tts_temperature,
-                "max_gen_len": 96,
+                "max_gen_len": 256,
             }
         ]
         assert mock_model.t3.inference_turbo is inference_turbo
@@ -224,6 +224,33 @@ class TestChatterboxTurboProvider:
 
         assert inference_calls[0]["max_gen_len"] == 144
         assert provider._status_details()["tts_chatterbox_max_generation_tokens"] == 144
+
+    def test_warmup_prime_uses_short_generation_cap(self, voice_config: VoiceConfig) -> None:
+        from gobby.voice.tts_chatterbox import ChatterboxTurboProvider
+
+        provider = ChatterboxTurboProvider(voice_config)
+        inference_calls: list[dict[str, Any]] = []
+
+        def inference_turbo(*args: object, **kwargs: Any) -> str:
+            inference_calls.append(kwargs.copy())
+            return "speech_tokens"
+
+        def generate(text: str, **kwargs: Any) -> Any:
+            assert text == "warm up"
+            mock_model.t3.inference_turbo(
+                t3_cond="conds",
+                text_tokens="tokens",
+                temperature=kwargs["temperature"],
+            )
+            return MagicMock()
+
+        mock_model = MagicMock()
+        mock_model.t3 = SimpleNamespace(inference_turbo=inference_turbo)
+        mock_model.generate.side_effect = generate
+
+        provider._prime_synthesis_runtime(mock_model)
+
+        assert inference_calls[0]["max_gen_len"] == 8
 
     def test_missing_reference_audio_makes_provider_unavailable(
         self, voice_config_no_ref: VoiceConfig

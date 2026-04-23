@@ -207,6 +207,41 @@ describe('ChatInput', () => {
     expect(toolbar?.previousElementSibling).toContainElement(notice)
   })
 
+  it('prepares browser TTS playback before enabling text-to-speech', async () => {
+    const prepareTTSPlayback = vi.fn()
+    const onTtsEnabledChange = vi.fn()
+
+    render(
+      <ChatInput
+        {...defaultProps}
+        ttsEnabled={false}
+        prepareTTSPlayback={prepareTTSPlayback}
+        onTtsEnabledChange={onTtsEnabledChange}
+      />,
+    )
+
+    await userEvent.click(screen.getByLabelText('Toggle text-to-speech'))
+
+    expect(prepareTTSPlayback).toHaveBeenCalledTimes(1)
+    expect(onTtsEnabledChange).toHaveBeenCalledWith(true)
+  })
+
+  it('pulses the TTS toggle while voice is warming', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        ttsEnabled={true}
+        voiceLoading={true}
+        voiceReady={false}
+        onTtsEnabledChange={vi.fn()}
+      />,
+    )
+
+    const button = screen.getByLabelText('Text-to-speech warming up')
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    expect(button).toHaveClass('chat-input-voice-toggle--warming')
+  })
+
   it('calls onSend when Enter is pressed', async () => {
     const onSend = vi.fn()
     render(<ChatInput {...defaultProps} onSend={onSend} />)

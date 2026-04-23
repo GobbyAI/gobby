@@ -40,6 +40,9 @@ interface ChatInputProps {
   voiceInputMode?: VoiceInputMode
   isRecording?: boolean
   isSpeaking?: boolean
+  voiceLoading?: boolean
+  voiceReady?: boolean
+  prepareTTSPlayback?: () => void
   startRecording?: () => Promise<void>
   stopRecording?: () => Promise<void>
   cancelRecording?: () => void
@@ -117,6 +120,9 @@ export function ChatInput({
   voiceInputMode = 'ptt',
   isRecording = false,
   isSpeaking = false,
+  voiceLoading = false,
+  voiceReady = false,
+  prepareTTSPlayback,
   startRecording,
   stopRecording,
   cancelRecording,
@@ -343,6 +349,7 @@ export function ChatInput({
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
+  const ttsWarming = ttsEnabled && voiceLoading && !voiceReady
   const {
     canSelectModel,
     effectiveProvider,
@@ -692,20 +699,27 @@ export function ChatInput({
                       stopTTS?.()
                       return
                     }
+                    if (!ttsEnabled) {
+                      prepareTTSPlayback?.()
+                    }
                     onTtsEnabledChange(!ttsEnabled)
                   }}
                   title={
                     isSpeaking
                       ? 'Stop speaking'
+                      : ttsWarming
+                        ? 'Text-to-speech warming up'
                       : ttsEnabled
                         ? 'Disable text-to-speech'
                         : 'Enable text-to-speech'
                   }
-                  aria-label="Toggle text-to-speech"
+                  aria-label={ttsWarming ? 'Text-to-speech warming up' : 'Toggle text-to-speech'}
                   aria-pressed={ttsEnabled || isSpeaking}
+                  aria-busy={ttsWarming}
                   className={cn(
                     'chat-input-voice-toggle',
                     (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active',
+                    ttsWarming && 'chat-input-voice-toggle--warming',
                   )}
                 >
                   <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />

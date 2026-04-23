@@ -1,4 +1,5 @@
 interface VoiceStatusBarProps {
+  voiceLoading?: boolean
   isListening: boolean
   isSpeechDetected: boolean
   isTranscribing: boolean
@@ -6,6 +7,7 @@ interface VoiceStatusBarProps {
 }
 
 export function VoiceStatusBar({
+  voiceLoading = false,
   isListening,
   isSpeechDetected,
   isTranscribing,
@@ -13,7 +15,12 @@ export function VoiceStatusBar({
 }: VoiceStatusBarProps) {
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 bg-muted border-b border-border text-xs">
-      {isTranscribing ? (
+      {voiceLoading ? (
+        <>
+          <SpinnerIcon />
+          <span className="text-muted-foreground">Warming voice...</span>
+        </>
+      ) : isTranscribing ? (
         <>
           <SpinnerIcon />
           <span className="text-muted-foreground">Transcribing...</span>
