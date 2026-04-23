@@ -17,6 +17,13 @@ from gobby.sessions.liveness_monitor import SessionLivenessMonitor
 pytestmark = pytest.mark.unit
 
 
+def _as_tuples(records):
+    return [
+        (record.session_id, record.parent_pid, record.tmux_pane, record.tmux_socket_path)
+        for record in records
+    ]
+
+
 @pytest.fixture
 def mock_session_storage():
     storage = MagicMock()
@@ -126,9 +133,9 @@ class TestCheckSessions:
     async def test_handles_missing_parent_pid(
         self, monitor, mock_session_storage, mock_dispatch_fn
     ) -> None:
-        """Sessions without parent_pid in terminal_context are skipped."""
+        """Sessions without any terminal liveness metadata are skipped."""
         mock_session_storage.db.fetchall.return_value = [
-            {"id": "s1", "terminal_context": json.dumps({"tmux_pane": "%1"})},
+            {"id": "s1", "terminal_context": json.dumps({})},
         ]
 
         await monitor._check_sessions()
@@ -206,7 +213,11 @@ class TestCheckSessions:
 
         with (
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False),
-            patch.object(SessionLivenessMonitor, "_is_tmux_pane_alive", return_value=True),
+            patch.object(
+                SessionLivenessMonitor,
+                "_get_live_tmux_panes_by_socket",
+                return_value={None: {"%6"}},
+            ),
         ):
             await monitor._check_sessions()
 
@@ -230,13 +241,67 @@ class TestCheckSessions:
 
         with (
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False),
-            patch.object(SessionLivenessMonitor, "_is_tmux_pane_alive", return_value=False),
+            patch.object(
+                SessionLivenessMonitor,
+                "_get_live_tmux_panes_by_socket",
+                return_value={None: set()},
+            ),
         ):
             await monitor._check_sessions()
 
         mock_dispatch_fn.assert_called_once_with("s1", False, None)
         mock_session_storage.update_status.assert_called_once_with("s1", "expired")
         assert "s1" in monitor._recently_handled
+
+    @pytest.mark.asyncio
+    async def test_missing_tmux_pane_expires_even_when_parent_pid_alive(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        """Destroyed tmux pane is decisive even if the recorded parent PID is alive."""
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "s1",
+                "terminal_context": json.dumps({"parent_pid": 123, "tmux_pane": "%6"}),
+            },
+        ]
+
+        with (
+            patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
+            patch.object(
+                SessionLivenessMonitor,
+                "_get_live_tmux_panes_by_socket",
+                return_value={None: set()},
+            ),
+        ):
+            await monitor._check_sessions()
+
+        mock_dispatch_fn.assert_called_once_with("s1", False, None)
+        mock_session_storage.update_status.assert_called_once_with("s1", "expired")
+
+    @pytest.mark.asyncio
+    async def test_tmux_command_failure_falls_back_to_live_pid(
+        self, monitor, mock_session_storage, mock_dispatch_fn
+    ):
+        """Unexpected tmux command failure should not mass-expire live sessions."""
+        mock_session_storage.db.fetchall.return_value = [
+            {
+                "id": "s1",
+                "terminal_context": json.dumps({"parent_pid": 123, "tmux_pane": "%6"}),
+            },
+        ]
+
+        with (
+            patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=True),
+            patch.object(
+                SessionLivenessMonitor,
+                "_get_live_tmux_panes_by_socket",
+                return_value={None: None},
+            ),
+        ):
+            await monitor._check_sessions()
+
+        mock_dispatch_fn.assert_not_called()
+        mock_session_storage.update_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_dead_pid_no_tmux_pane_expires(
@@ -271,7 +336,11 @@ class TestCheckSessions:
 
         with (
             patch.object(SessionLivenessMonitor, "_is_pid_alive", return_value=False),
-            patch.object(SessionLivenessMonitor, "_is_tmux_pane_alive", return_value=True),
+            patch.object(
+                SessionLivenessMonitor,
+                "_get_live_tmux_panes_by_socket",
+                return_value={None: {"%6"}},
+            ),
         ):
             await monitor._check_sessions()
 
@@ -453,8 +522,8 @@ class TestIsTmuxPaneAlive:
             assert SessionLivenessMonitor._is_tmux_pane_alive("%6") is False
 
 
-class TestGetActiveSessionsWithPid:
-    """Tests for _get_active_sessions_with_pid query."""
+class TestGetActiveTerminalSessions:
+    """Tests for _get_active_terminal_sessions query."""
 
     def test_parses_terminal_context(self, monitor, mock_session_storage):
         """Correctly extracts parent_pid and tmux_pane from terminal_context JSON."""
@@ -472,22 +541,32 @@ class TestGetActiveSessionsWithPid:
             },
         ]
 
-        result = monitor._get_active_sessions_with_pid()
+        result = monitor._get_active_terminal_sessions()
 
-        assert result == [
+        assert _as_tuples(result) == [
             ("s1", 12345, None, None),
             ("s2", 67890, "%3", "/tmp/tmux-1000/gobby"),
         ]
 
     def test_skips_missing_pid(self, monitor, mock_session_storage):
-        """Sessions without parent_pid are excluded."""
+        """Sessions without any terminal liveness metadata are excluded."""
+        mock_session_storage.db.fetchall.return_value = [
+            {"id": "s1", "terminal_context": json.dumps({})},
+        ]
+
+        result = monitor._get_active_terminal_sessions()
+
+        assert result == []
+
+    def test_includes_tmux_pane_without_pid(self, monitor, mock_session_storage):
+        """Sessions with only tmux_pane are still sweepable."""
         mock_session_storage.db.fetchall.return_value = [
             {"id": "s1", "terminal_context": json.dumps({"tmux_pane": "%1"})},
         ]
 
-        result = monitor._get_active_sessions_with_pid()
+        result = monitor._get_active_terminal_sessions()
 
-        assert result == []
+        assert _as_tuples(result) == [("s1", None, "%1", None)]
 
     def test_skips_invalid_pid(self, monitor, mock_session_storage):
         """Non-integer or zero/negative PIDs are excluded."""
@@ -497,28 +576,38 @@ class TestGetActiveSessionsWithPid:
             {"id": "s3", "terminal_context": json.dumps({"parent_pid": -1})},
         ]
 
-        result = monitor._get_active_sessions_with_pid()
+        result = monitor._get_active_terminal_sessions()
 
         assert result == []
+
+    def test_accepts_numeric_string_pid(self, monitor, mock_session_storage):
+        """Numeric parent_pid strings from older terminal contexts are usable."""
+        mock_session_storage.db.fetchall.return_value = [
+            {"id": "s1", "terminal_context": json.dumps({"parent_pid": "123"})},
+        ]
+
+        result = monitor._get_active_terminal_sessions()
+
+        assert _as_tuples(result) == [("s1", 123, None, None)]
 
     def test_handles_db_error(self, monitor, mock_session_storage):
         """DB errors return empty list."""
         mock_session_storage.db.fetchall.side_effect = Exception("DB error")
 
-        result = monitor._get_active_sessions_with_pid()
+        result = monitor._get_active_terminal_sessions()
 
         assert result == []
 
-    def test_excludes_agent_sessions(self, monitor, mock_session_storage):
-        """Query filters out sessions with agent_run_id (handled by TmuxPaneMonitor)."""
-        # Verify the SQL query excludes agent sessions
+    def test_excludes_only_active_agent_runs(self, monitor, mock_session_storage):
+        """Query leaves completed agent sessions sweepable."""
         mock_session_storage.db.fetchall.return_value = []
 
-        monitor._get_active_sessions_with_pid()
+        monitor._get_active_terminal_sessions()
 
         call_args = mock_session_storage.db.fetchall.call_args
         sql = call_args[0][0]
-        assert "agent_run_id IS NULL" in sql
+        assert "LEFT JOIN agent_runs" in sql
+        assert "ar.status NOT IN ('running', 'pending')" in sql
 
     def test_non_string_tmux_pane_treated_as_none(self, monitor, mock_session_storage):
         """Non-string tmux_pane values are normalized to None."""
@@ -526,9 +615,9 @@ class TestGetActiveSessionsWithPid:
             {"id": "s1", "terminal_context": json.dumps({"parent_pid": 123, "tmux_pane": 42})},
         ]
 
-        result = monitor._get_active_sessions_with_pid()
+        result = monitor._get_active_terminal_sessions()
 
-        assert result == [("s1", 123, None, None)]
+        assert _as_tuples(result) == [("s1", 123, None, None)]
 
     def test_non_string_tmux_socket_path_treated_as_none(self, monitor, mock_session_storage):
         """Non-string tmux_socket_path values are normalized to None."""
@@ -545,6 +634,6 @@ class TestGetActiveSessionsWithPid:
             },
         ]
 
-        result = monitor._get_active_sessions_with_pid()
+        result = monitor._get_active_terminal_sessions()
 
-        assert result == [("s1", 123, "%4", None)]
+        assert _as_tuples(result) == [("s1", 123, "%4", None)]

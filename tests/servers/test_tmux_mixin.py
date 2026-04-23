@@ -282,6 +282,103 @@ class TestTmuxKillSession:
         assert len(errors) == 1
         assert errors[0]["code"] == "AGENT_MANAGED"
 
+    @pytest.mark.asyncio
+    async def test_kill_expires_mapped_gobby_session(self, server: WebSocketServer) -> None:
+        from gobby.agents.tmux.session_manager import TmuxSessionInfo
+
+        ws = MockWebSocket()
+        gobby_session = MagicMock()
+        gobby_session.id = "sess-1"
+        gobby_session.terminal_context = {
+            "tmux_pane": "%5",
+            "tmux_socket_path": "/private/tmp/tmux-501/default",
+        }
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.list.side_effect = (
+            lambda status: [gobby_session] if status == "active" else []
+        )
+        mock_arm = MagicMock()
+        mock_arm.list_active.return_value = []
+        server.session_manager = mock_session_mgr
+        server.broadcast_session_event = AsyncMock()
+
+        with (
+            patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm),
+            patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=MagicMock()),
+            patch.object(
+                server._tmux_mgr_default,
+                "list_sessions",
+                new_callable=AsyncMock,
+                return_value=[TmuxSessionInfo(name="term-1", pane_id="%5")],
+            ),
+            patch.object(
+                server._tmux_mgr_default,
+                "kill_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}),
+        ):
+            await server._handle_tmux_kill_session(
+                ws,
+                {"request_id": "r1", "session_name": "term-1", "socket": "default"},
+            )
+
+        mock_session_mgr.update_status.assert_called_once_with("sess-1", "expired")
+        server.broadcast_session_event.assert_awaited_once_with("session_expired", "sess-1")
+        results = ws.messages_of_type("tmux_kill_result")
+        assert results[0]["success"] is True
+        assert results[0]["expired_session_ids"] == ["sess-1"]
+
+    @pytest.mark.asyncio
+    async def test_kill_does_not_expire_different_socket_session(
+        self, server: WebSocketServer
+    ) -> None:
+        from gobby.agents.tmux.session_manager import TmuxSessionInfo
+
+        ws = MockWebSocket()
+        gobby_session = MagicMock()
+        gobby_session.id = "sess-1"
+        gobby_session.terminal_context = {
+            "tmux_pane": "%5",
+            "tmux_socket_path": "/private/tmp/tmux-501/gobby",
+        }
+
+        mock_session_mgr = MagicMock()
+        mock_session_mgr.list.side_effect = (
+            lambda status: [gobby_session] if status == "active" else []
+        )
+        mock_arm = MagicMock()
+        mock_arm.list_active.return_value = []
+        server.session_manager = mock_session_mgr
+
+        with (
+            patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm),
+            patch("gobby.agents.pty_reader.get_pty_reader_manager", return_value=MagicMock()),
+            patch.object(
+                server._tmux_mgr_default,
+                "list_sessions",
+                new_callable=AsyncMock,
+                return_value=[TmuxSessionInfo(name="term-1", pane_id="%5")],
+            ),
+            patch.object(
+                server._tmux_mgr_default,
+                "kill_session",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(server._tmux_bridge, "list_bridges", new_callable=AsyncMock, return_value={}),
+        ):
+            await server._handle_tmux_kill_session(
+                ws,
+                {"request_id": "r1", "session_name": "term-1", "socket": "default"},
+            )
+
+        mock_session_mgr.update_status.assert_not_called()
+        results = ws.messages_of_type("tmux_kill_result")
+        assert results[0]["expired_session_ids"] == []
+
 
 class TestTmuxResize:
     """Test _handle_tmux_resize handler."""
