@@ -665,7 +665,7 @@ call_tool("gobby-agents", "send_command", {
 
 ## Worktree Management (`gobby-worktrees`)
 
-14 tools for git worktree parallel development.
+16 tools for git worktree parallel development.
 
 | Tool | Description |
 | :--- | :--- |
@@ -677,7 +677,10 @@ call_tool("gobby-agents", "send_command", {
 | `release_worktree` | Release ownership |
 | `delete_worktree` | Delete worktree (git + DB) |
 | `sync_worktree` | Sync with main branch |
+| `merge_worktree` | Merge a worktree branch |
 | `mark_worktree_merged` | Mark as merged (ready for cleanup) |
+| `abandon_worktree` | Mark as abandoned |
+| `reactivate_worktree` | Reactivate and clear merge cleanup scheduling |
 | `detect_stale_worktrees` | Find inactive worktrees |
 | `cleanup_stale_worktrees` | Delete stale worktrees |
 | `get_worktree_stats` | Get project worktree statistics |

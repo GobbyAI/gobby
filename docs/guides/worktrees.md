@@ -280,6 +280,26 @@ call_tool(server_name="gobby-worktrees", tool_name="mark_worktree_merged", argum
 })
 ```
 
+### abandon_worktree
+
+Mark a worktree as abandoned.
+
+```python
+call_tool(server_name="gobby-worktrees", tool_name="abandon_worktree", arguments={
+    "worktree_id": "<worktree_id>"
+})
+```
+
+### reactivate_worktree
+
+Reactivate a worktree and clear merge cleanup scheduling.
+
+```python
+call_tool(server_name="gobby-worktrees", tool_name="reactivate_worktree", arguments={
+    "worktree_id": "<worktree_id>"
+})
+```
+
 ### detect_stale_worktrees
 
 Find worktrees with no activity for a period.

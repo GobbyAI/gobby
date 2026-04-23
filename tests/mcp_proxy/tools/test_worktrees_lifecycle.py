@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
-from gobby.storage.worktrees import Worktree
+from gobby.storage.worktrees import Worktree, WorktreeStatus
 
 pytestmark = pytest.mark.unit
 
@@ -198,6 +198,78 @@ async def test_release_worktree_not_found(registry, mock_worktree_storage) -> No
     result = await registry.call("release_worktree", {"worktree_id": "nonexistent"})
     assert "error" in result
     assert "not found" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_abandon_worktree(registry, mock_worktree_storage) -> None:
+    wt = Worktree(
+        id="wt-1",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status=WorktreeStatus.ACTIVE.value,
+        created_at="",
+        updated_at="",
+        agent_session_id=None,
+        task_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_worktree_storage.mark_abandoned.return_value = wt
+
+    result = await registry.call("abandon_worktree", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    mock_worktree_storage.mark_abandoned.assert_called_once_with("wt-1")
+
+
+@pytest.mark.asyncio
+async def test_abandon_worktree_not_found(registry, mock_worktree_storage) -> None:
+    mock_worktree_storage.get.return_value = None
+    result = await registry.call("abandon_worktree", {"worktree_id": "missing"})
+    assert result["success"] is False
+    assert "not found" in result["error"]
+    mock_worktree_storage.mark_abandoned.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reactivate_worktree(registry, mock_worktree_storage) -> None:
+    wt = Worktree(
+        id="wt-1",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="p1",
+        base_branch="main",
+        status=WorktreeStatus.MERGED.value,
+        created_at="",
+        updated_at="",
+        agent_session_id=None,
+        task_id=None,
+        merged_at="2026-04-22T00:00:00+00:00",
+        cleanup_after="2026-04-29T00:00:00+00:00",
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_worktree_storage.update.return_value = wt
+
+    result = await registry.call("reactivate_worktree", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    mock_worktree_storage.update.assert_called_once_with(
+        "wt-1",
+        status=WorktreeStatus.ACTIVE.value,
+        merged_at=None,
+        cleanup_after=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reactivate_worktree_not_found(registry, mock_worktree_storage) -> None:
+    mock_worktree_storage.get.return_value = None
+    result = await registry.call("reactivate_worktree", {"worktree_id": "missing"})
+    assert result["success"] is False
+    assert "not found" in result["error"]
+    mock_worktree_storage.update.assert_not_called()
 
 
 @pytest.mark.asyncio

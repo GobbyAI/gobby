@@ -1648,8 +1648,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test out_of_repo reason still enforces commit check when session had edits."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -1668,9 +1666,7 @@ class TestCloseTaskTool:
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
-            ) as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
@@ -1680,6 +1676,7 @@ class TestCloseTaskTool:
             mock_session_instance = MagicMock()
             mock_session_instance.get.return_value = mock_session
             MockSessionManager.return_value = mock_session_instance
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
                 "close_task",
@@ -1698,8 +1695,6 @@ class TestCloseTaskTool:
         self, mock_task_manager, mock_sync_manager
     ):
         """Test out_of_repo reason succeeds when the session had no in-repo edits."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
-
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
@@ -1724,9 +1719,7 @@ class TestCloseTaskTool:
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
-            ) as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
         ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = None
@@ -1736,6 +1729,7 @@ class TestCloseTaskTool:
             mock_session_instance = MagicMock()
             mock_session_instance.get.return_value = mock_session
             MockSessionManager.return_value = mock_session_instance
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
             result = await registry.call(
                 "close_task",
@@ -1773,9 +1767,6 @@ class TestCloseTaskTool:
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
-            ) as MockCloseSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -1784,11 +1775,6 @@ class TestCloseTaskTool:
             mock_session_manager.resolve_session_reference.return_value = "test-session"
             mock_session_manager.get.return_value = None
             MockSessionManager.return_value = mock_session_manager
-
-            # Patch the SessionManager used inside close_task
-            mock_close_session_manager = MagicMock()
-            mock_close_session_manager.get.return_value = None
-            MockCloseSessionManager.return_value = mock_close_session_manager
 
             # Session variables with only this task claimed
             mock_sv_manager = MagicMock()
@@ -1895,8 +1881,10 @@ class TestReopenTaskTool:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_reopen_task_reactivates_worktree(self, mock_task_manager, mock_sync_manager):
-        """Test reopen_task reactivates associated worktrees."""
+    async def test_reopen_task_leaves_worktree_status_unchanged(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test reopen_task does not mutate associated worktrees."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._context.LocalWorktreeManager"
         ) as MockWorktreeManager:
@@ -1918,7 +1906,8 @@ class TestReopenTaskTool:
 
             await registry.call("reopen_task", {"task_id": "550e8400-e29b-41d4-a716-446655440000"})
 
-            mock_wt_instance.update.assert_called()
+            mock_wt_instance.get_by_task.assert_not_called()
+            mock_wt_instance.update.assert_not_called()
 
 
 # =============================================================================
@@ -2551,9 +2540,6 @@ class TestSessionVariableMirroring:
                 "gobby.utils.git.normalize_commit_sha",
                 side_effect=lambda sha, cwd=None: sha,
             ),
-            patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.SessionManager"
-            ) as MockCloseSessionManager,
         ):
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
@@ -2562,11 +2548,6 @@ class TestSessionVariableMirroring:
             mock_session_manager.resolve_session_reference.return_value = "test-session"
             mock_session_manager.get.return_value = None
             MockSessionManager.return_value = mock_session_manager
-
-            # Patch the SessionManager used inside close_task
-            mock_close_session_manager = MagicMock()
-            mock_close_session_manager.get.return_value = None
-            MockCloseSessionManager.return_value = mock_close_session_manager
 
             mock_sv_manager = MagicMock()
             mock_sv_manager.get_variables.return_value = {

@@ -1,4 +1,4 @@
-"""Worktree lifecycle tools: claim, release, delete, mark merged, link task."""
+"""Worktree lifecycle tools: claim, release, delete, status transitions, link task."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.storage.worktrees import WorktreeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         ctx: Shared registry context
 
     Returns:
-        InternalToolRegistry with claim/release/delete/merge/link tools
+        InternalToolRegistry with claim/release/delete/status/link tools
     """
     registry = InternalToolRegistry(
         name="gobby-worktrees-lifecycle",
@@ -187,6 +188,57 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         updated = ctx.worktree_storage.mark_merged(worktree_id)
         if not updated:
             return {"success": False, "error": "Failed to mark worktree as merged"}
+
+        return {"success": True}
+
+    @registry.tool(
+        name="abandon_worktree",
+        description="Mark a worktree as abandoned.",
+    )
+    async def abandon_worktree(worktree_id: str) -> dict[str, Any]:
+        """Mark a worktree as abandoned.
+
+        Args:
+            worktree_id: The worktree ID to abandon.
+
+        Returns:
+            Dict with success status.
+        """
+        worktree = ctx.worktree_storage.get(worktree_id)
+        if not worktree:
+            return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+
+        updated = ctx.worktree_storage.mark_abandoned(worktree_id)
+        if not updated:
+            return {"success": False, "error": "Failed to abandon worktree"}
+
+        return {"success": True}
+
+    @registry.tool(
+        name="reactivate_worktree",
+        description="Reactivate a worktree without merging or deleting it.",
+    )
+    async def reactivate_worktree(worktree_id: str) -> dict[str, Any]:
+        """Reactivate a worktree.
+
+        Args:
+            worktree_id: The worktree ID to reactivate.
+
+        Returns:
+            Dict with success status.
+        """
+        worktree = ctx.worktree_storage.get(worktree_id)
+        if not worktree:
+            return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+
+        updated = ctx.worktree_storage.update(
+            worktree_id,
+            status=WorktreeStatus.ACTIVE.value,
+            merged_at=None,
+            cleanup_after=None,
+        )
+        if not updated:
+            return {"success": False, "error": "Failed to reactivate worktree"}
 
         return {"success": True}
 

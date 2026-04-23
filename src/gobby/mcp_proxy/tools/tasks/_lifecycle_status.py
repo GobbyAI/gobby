@@ -83,19 +83,6 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
                 except Exception as e:
                     logger.debug(f"Best-effort session link update on reopen failed: {e}")
 
-            # Reactivate any associated worktrees that were marked merged/abandoned
-            try:
-                from gobby.storage.worktrees import WorktreeStatus
-
-                wt = ctx.worktree_manager.get_by_task(resolved_id)
-                if wt and wt.status in (
-                    WorktreeStatus.MERGED.value,
-                    WorktreeStatus.ABANDONED.value,
-                ):
-                    ctx.worktree_manager.update(wt.id, status=WorktreeStatus.ACTIVE.value)
-            except Exception as e:
-                logger.debug(f"Best-effort reopen worktree update failed: {e}")
-
             return {}
         except ValueError as e:
             return {"error": str(e)}

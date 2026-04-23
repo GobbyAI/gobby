@@ -367,23 +367,6 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except Exception as e:
                 logger.debug(f"Best-effort had_edits reset failed: {e}")
 
-        # Update worktree status based on closure reason (case-insensitive)
-        try:
-            reason_normalized = reason.lower()
-            wt = ctx.worktree_manager.get_by_task(resolved_id)
-            if wt:
-                if reason_normalized in (
-                    "wont_fix",
-                    "obsolete",
-                    "duplicate",
-                    "already_implemented",
-                ):
-                    ctx.worktree_manager.mark_abandoned(wt.id)
-                elif reason_normalized == "completed":
-                    ctx.worktree_manager.mark_merged(wt.id)
-        except Exception as e:
-            logger.debug(f"Best-effort worktree update failed during close: {e}")
-
         return {"success": True}
 
     registry.register(
