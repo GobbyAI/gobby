@@ -403,6 +403,10 @@ class TestChatterboxTurboProvider:
                     is_floating_point=np.issubdtype(self.array.dtype, np.floating)
                 )
 
+            @property
+            def ndim(self) -> int:
+                return self.array.ndim
+
             def to(self, device: str | None = None, dtype: Any | None = None) -> FakeTensor:
                 array = self.array
                 if dtype is not None:
@@ -411,8 +415,13 @@ class TestChatterboxTurboProvider:
                 clone.device = device or self.device
                 return clone
 
-            def mean(self, axis: int = 0, keepdim: bool = False) -> FakeTensor:
-                return FakeTensor(self.array.mean(axis=axis, keepdims=keepdim))
+            def reshape(self, *shape: int) -> FakeTensor:
+                clone = FakeTensor(self.array.reshape(*shape))
+                clone.device = self.device
+                return clone
+
+            def mean(self, dim: int = 0, keepdim: bool = False) -> FakeTensor:
+                return FakeTensor(self.array.mean(axis=dim, keepdims=keepdim))
 
             def __rmul__(self, value: float) -> FakeTensor:
                 return FakeTensor(value * self.array)
@@ -421,6 +430,7 @@ class TestChatterboxTurboProvider:
             is_tensor=lambda value: isinstance(value, FakeTensor),
             float32=np.float32,
             atleast_2d=lambda value: FakeTensor(np.atleast_2d(value)),
+            as_tensor=lambda value, device=None: FakeTensor(np.asarray(value)).to(device=device),
             from_numpy=lambda value: FakeTensor(np.asarray(value)),
             ones=lambda *shape: FakeTensor(np.ones(shape, dtype=np.float32)),
         )

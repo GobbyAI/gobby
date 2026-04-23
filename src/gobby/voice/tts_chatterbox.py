@@ -105,18 +105,20 @@ def _prepare_turbo_conditionals(
 
     s3gen_ref_dict = model.s3gen.embed_ref(s3gen_ref_wav, s3gen_sr, device=model.device)
 
-    t3_cond_prompt_tokens = None
+    t3_cond_prompt_tokens: torch.Tensor | None = None
     if plen := model.t3.hp.speech_cond_prompt_len:
         tokenizer = model.s3gen.tokenizer
         t3_cond_prompt_tokens, _ = tokenizer.forward(
             [ref_16k_wav[: model.ENC_COND_LEN]], max_len=plen
         )
-        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)
+        t3_cond_prompt_tokens = torch.as_tensor(t3_cond_prompt_tokens, device=model.device)
+        if t3_cond_prompt_tokens.ndim < 2:
+            t3_cond_prompt_tokens = t3_cond_prompt_tokens.reshape(1, -1)
 
     ve_embed_array = np.asarray(
         _coerce_conditioning_audio(model.ve.embeds_from_wavs([ref_16k_wav], sample_rate=s3_sr))
     )
-    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)
+    ve_embed = torch.from_numpy(ve_embed_array).mean(dim=0, keepdim=True).to(model.device)
 
     t3_cond = chatterbox_turbo.T3Cond(
         speaker_emb=ve_embed,
