@@ -333,10 +333,7 @@ class SessionLivenessMonitor:
     ) -> dict[str | None, set[str] | None]:
         """Batch tmux pane liveness by recorded socket path."""
         socket_paths = {record.tmux_socket_path for record in records if record.tmux_pane}
-        return {
-            socket_path: self._list_tmux_panes(socket_path)
-            for socket_path in socket_paths
-        }
+        return {socket_path: self._list_tmux_panes(socket_path) for socket_path in socket_paths}
 
     async def _expire_session(self, session_id: str) -> None:
         """Dispatch summaries and expire a session."""
