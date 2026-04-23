@@ -1,0 +1,450 @@
+"""Focused tests for session storage behavior."""
+
+from unittest.mock import patch
+
+import pytest
+
+from gobby.storage.sessions import SessionManager
+
+pytestmark = pytest.mark.unit
+
+
+class TestSessionManagerMetadata:
+    """Tests split from the SessionManager storage monolith."""
+
+    def test_update_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating session title."""
+        session = session_manager.register(
+            external_id="title-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.update_title(session.id, "New Title")
+        assert updated is not None
+        assert updated.title == "New Title"
+
+    def test_update_title_schedules_tmux_rename(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Title changes propagate to tmux through the shared title update path."""
+        session = session_manager.register(
+            external_id="tmux-title-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={"tmux_pane": "%42"},
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.update_title(session.id, "Terminal Title")
+
+        assert updated is not None
+        mock_rename.assert_called_once()
+        renamed_session, renamed_title = mock_rename.call_args.args
+        assert renamed_session.id == session.id
+        assert renamed_title == "Terminal Title"
+
+    def test_update_title_can_update_source_without_renaming(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Changing provenance alone should not notify listeners or rename tmux."""
+        session = session_manager.register(
+            external_id="title-source-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Stable Title",
+            terminal_context={"tmux_pane": "%42"},
+        )
+        session_manager.update(session.id, title_source="heuristic")
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.update_title(
+                session.id,
+                "Stable Title",
+                title_source="llm",
+            )
+
+        assert updated is not None
+        assert updated.title_source == "llm"
+        assert calls == []
+        mock_rename.assert_not_called()
+
+    def test_update_title_notifies_listeners(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Listeners receive successful title changes."""
+        session = session_manager.register(
+            external_id="title-listener-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title(session.id, "Listener Title")
+
+        assert updated is not None
+        assert calls == [(session.id, "Listener Title")]
+
+    def test_update_title_skips_noop_listener_notifications(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """No-op title updates do not notify listeners or rewrite updated_at."""
+        session = session_manager.register(
+            external_id="title-noop-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            title="Stable Title",
+        )
+        original_updated_at = session.updated_at
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title(session.id, "Stable Title")
+
+        assert updated is not None
+        assert updated.title == "Stable Title"
+        assert updated.updated_at == original_updated_at
+        assert calls == []
+
+    def test_update_title_missing_session_does_not_notify_listener(
+        self,
+        session_manager: SessionManager,
+    ) -> None:
+        """Missing sessions return None and do not notify listeners."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title("missing-session", "Nope")
+
+        assert updated is None
+        assert calls == []
+
+    def test_update_title_listener_failure_does_not_break_update(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """One broken listener cannot block the title update or later listeners."""
+        session = session_manager.register(
+            external_id="title-failure-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+
+        def _broken_listener(session_id: str, title: str) -> None:
+            raise RuntimeError("listener failed")
+
+        session_manager.register_title_listener(_broken_listener)
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+
+        updated = session_manager.update_title(session.id, "Recovered Title")
+
+        assert updated is not None
+        assert updated.title == "Recovered Title"
+        assert calls == [(session.id, "Recovered Title")]
+
+    def test_unregister_title_listener(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Unregistered listeners are not called."""
+        session = session_manager.register(
+            external_id="title-unregister-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+
+        def _listener(session_id: str, title: str) -> None:
+            calls.append((session_id, title))
+
+        session_manager.register_title_listener(_listener)
+        session_manager.unregister_title_listener(_listener)
+
+        updated = session_manager.update_title(session.id, "Detached Title")
+
+        assert updated is not None
+        assert calls == []
+
+    def test_update_stats(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating session stats."""
+        session = session_manager.register(
+            external_id="stats-update-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.update_stats(
+            session.id,
+            message_count=10,
+            turn_count=5,
+            tool_call_count=3,
+            last_assistant_content="Testing stats update.",
+        )
+
+        assert updated is not None
+        assert updated.message_count == 10
+        assert updated.turn_count == 5
+        assert updated.tool_call_count == 3
+        assert updated.last_assistant_content == "Testing stats update."
+
+        # Verify DB persisted
+        row = session_manager.db.fetchone("SELECT * FROM sessions WHERE id = ?", (session.id,))
+        assert row["message_count"] == 10
+        assert row["turn_count"] == 5
+        assert row["tool_call_count"] == 3
+        assert row["last_assistant_content"] == "Testing stats update."
+
+    @pytest.mark.unit
+    def test_update_model(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating session model."""
+        session = session_manager.register(
+            external_id="model-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        # Initially model should be None
+        assert session.model is None
+
+        updated = session_manager.update_model(session.id, "claude-opus-4-5-20251101")
+        assert updated is not None
+        assert updated.model == "claude-opus-4-5-20251101"
+
+    def test_update_summary(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating session summary."""
+        session = session_manager.register(
+            external_id="summary-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.update_summary(
+            session.id,
+            summary_path="/path/to/summary.md",
+            summary_markdown="# Summary\nThis is a test.",
+        )
+
+        assert updated is not None
+        assert updated.summary_path == "/path/to/summary.md"
+        assert updated.summary_markdown == "# Summary\nThis is a test."
+
+    def test_update_resume_metadata_fields(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating session_type/model/chat_mode together for tmux resume."""
+        session = session_manager.register(
+            external_id="resume-ext",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            session_type="terminal",
+        )
+
+        updated = session_manager.update(
+            session.id,
+            source="codex",
+            model="gpt-5.4",
+            chat_mode="accept_edits",
+            session_type="web_chat",
+            status="active",
+        )
+
+        assert updated is not None
+        assert updated.source == "codex"
+        assert updated.model == "gpt-5.4"
+        assert updated.chat_mode == "accept_edits"
+        assert updated.session_type == "web_chat"
+        assert updated.status == "active"
+
+    def test_update_terminal_pickup_metadata(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating terminal pickup metadata."""
+        session = session_manager.register(
+            external_id="pickup-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        # Note: agent_run_id has a foreign key to agent_runs table
+        # We test without agent_run_id to avoid FK constraint
+        updated = session_manager.update_terminal_pickup_metadata(
+            session.id,
+            workflow_name="plan-execute",
+            context_injected=True,
+            original_prompt="Implement feature X",
+        )
+
+        assert updated is not None
+        assert updated.workflow_name == "plan-execute"
+        assert updated.context_injected is True
+        assert updated.original_prompt == "Implement feature X"
+
+    def test_update_terminal_pickup_metadata_partial(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating terminal pickup metadata with partial fields."""
+        session = session_manager.register(
+            external_id="partial-pickup",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        # Update only workflow_name
+        updated = session_manager.update_terminal_pickup_metadata(
+            session.id,
+            workflow_name="test-driven",
+        )
+
+        assert updated is not None
+        assert updated.workflow_name == "test-driven"
+        assert updated.agent_run_id is None
+
+    def test_update_terminal_pickup_metadata_no_fields(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test update_terminal_pickup_metadata with no fields returns session unchanged."""
+        session = session_manager.register(
+            external_id="no-pickup-update",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        result = session_manager.update_terminal_pickup_metadata(session.id)
+
+        assert result is not None
+        assert result.id == session.id
+
+    def test_update_terminal_pickup_context_injected_false(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating context_injected to False."""
+        session = session_manager.register(
+            external_id="context-false",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        # First set to True
+        session_manager.update_terminal_pickup_metadata(
+            session.id,
+            context_injected=True,
+        )
+
+        # Then set to False
+        updated = session_manager.update_terminal_pickup_metadata(
+            session.id,
+            context_injected=False,
+        )
+
+        assert updated is not None
+        assert updated.context_injected is False
+
+    def test_update_summary_partial(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating summary with only summary_path."""
+        session = session_manager.register(
+            external_id="summary-partial",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.update_summary(
+            session.id,
+            summary_path="/path/to/summary.md",
+        )
+
+        assert updated is not None
+        assert updated.summary_path == "/path/to/summary.md"
+        assert updated.summary_markdown is None
+
+    def test_update_summary_markdown_only(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Test updating summary with only summary_markdown."""
+        session = session_manager.register(
+            external_id="summary-md-only",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        updated = session_manager.update_summary(
+            session.id,
+            summary_markdown="# Just markdown",
+        )
+
+        assert updated is not None
+        assert updated.summary_path is None
+        assert updated.summary_markdown == "# Just markdown"
+

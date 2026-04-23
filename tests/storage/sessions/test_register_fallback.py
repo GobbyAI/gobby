@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -115,14 +116,26 @@ def test_register_raises_on_storage_failure(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
-    original_execute = session_mgr.db.execute
+    original_transaction = session_mgr.db.transaction_immediate
 
-    def execute_with_insert_failure(sql: str, params: object = ()) -> object:
-        if "INSERT INTO sessions" in sql:
-            raise RuntimeError("boom")
-        return original_execute(sql, params)
+    class FailingConnection:
+        def __init__(self, conn):
+            self._conn = conn
 
-    with patch.object(session_mgr.db, "execute", side_effect=execute_with_insert_failure):
+        def execute(self, sql: str, params: object = ()) -> object:
+            if "INSERT INTO sessions" in sql:
+                raise RuntimeError("boom")
+            return self._conn.execute(sql, params)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._conn, name)
+
+    @contextmanager
+    def transaction_with_insert_failure():
+        with original_transaction() as conn:
+            yield FailingConnection(conn)
+
+    with patch.object(session_mgr.db, "transaction_immediate", transaction_with_insert_failure):
         with pytest.raises(RuntimeError, match="boom"):
             session_mgr.register(
                 external_id="raise-session",
