@@ -678,7 +678,7 @@ call_tool("gobby-agents", "send_command", {
 | `delete_worktree` | Delete worktree (git + DB) |
 | `sync_worktree` | Sync with main branch |
 | `merge_worktree` | Merge a worktree branch |
-| `mark_worktree_merged` | Mark as merged (ready for cleanup) |
+| `mark_worktree_merged` | Verify git ancestry and mark as merged |
 | `abandon_worktree` | Mark as abandoned |
 | `reactivate_worktree` | Reactivate and clear merge cleanup scheduling |
 | `detect_stale_worktrees` | Find inactive worktrees |

@@ -9,6 +9,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
 from gobby.storage.worktrees import WorktreeStatus
 
 logger = logging.getLogger(__name__)
@@ -184,6 +185,18 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+
+        git_merged = is_worktree_git_merged(worktree, ctx.git_manager)
+        if git_merged is None:
+            return {"success": False, "error": "Git manager not available"}
+        if not git_merged:
+            return {
+                "success": False,
+                "error": (
+                    f"Cannot mark worktree as merged: branch '{worktree.branch_name}' "
+                    f"is not merged into '{worktree.base_branch}'"
+                ),
+            }
 
         updated = ctx.worktree_storage.mark_merged(worktree_id)
         if not updated:

@@ -92,6 +92,37 @@ async def test_get_worktree_path_not_exists(
 
 
 @pytest.mark.asyncio
+async def test_get_worktree_downgrades_stale_merged_status(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="wt-123",
+        project_id="proj-1",
+        branch_name="feature/not-merged",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status=WorktreeStatus.MERGED.value,
+        created_at="",
+        updated_at="",
+        task_id=None,
+        agent_session_id=None,
+        merged_at="2026-04-22T00:00:00+00:00",
+        cleanup_after="2026-04-29T00:00:00+00:00",
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager._run_git.return_value = MagicMock(returncode=1, stdout="", stderr="")
+
+    with patch("pathlib.Path.exists", return_value=True):
+        result = await registry.call("get_worktree", {"worktree_id": "wt-123"})
+
+    assert result["success"] is True
+    assert result["worktree"]["status"] == WorktreeStatus.ACTIVE.value
+    assert result["worktree"]["stored_status"] == WorktreeStatus.MERGED.value
+    assert result["worktree"]["merged_at"] is None
+    assert result["worktree"]["git_merge_state"]["git_merged"] is False
+
+
+@pytest.mark.asyncio
 async def test_list_worktrees(registry, mock_worktree_storage) -> None:
     wt1 = Worktree(
         id="1",
@@ -270,6 +301,60 @@ async def test_reactivate_worktree_not_found(registry, mock_worktree_storage) ->
     assert result["success"] is False
     assert "not found" in result["error"]
     mock_worktree_storage.update.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mark_worktree_merged_requires_git_ancestry(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="wt-1",
+        project_id="p1",
+        branch_name="feature/not-merged",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status=WorktreeStatus.ACTIVE.value,
+        created_at="",
+        updated_at="",
+        agent_session_id=None,
+        task_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager._run_git.return_value = MagicMock(returncode=1, stdout="", stderr="")
+
+    result = await registry.call("mark_worktree_merged", {"worktree_id": "wt-1"})
+
+    assert result["success"] is False
+    assert "not merged" in result["error"]
+    mock_worktree_storage.mark_merged.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mark_worktree_merged_success(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="wt-1",
+        project_id="p1",
+        branch_name="feature/merged",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status=WorktreeStatus.ACTIVE.value,
+        created_at="",
+        updated_at="",
+        agent_session_id=None,
+        task_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager._run_git.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    mock_worktree_storage.mark_merged.return_value = wt
+
+    result = await registry.call("mark_worktree_merged", {"worktree_id": "wt-1"})
+
+    assert result["success"] is True
+    mock_worktree_storage.mark_merged.assert_called_once_with("wt-1")
 
 
 @pytest.mark.asyncio
@@ -555,6 +640,39 @@ async def test_merge_worktree_success(registry, mock_worktree_storage, mock_git_
 
 
 @pytest.mark.asyncio
+async def test_merge_worktree_does_not_mark_merged_when_target_lacks_source(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="wt-1",
+        project_id="proj-1",
+        branch_name="feature/not-merged",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status="active",
+        created_at="",
+        updated_at="",
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+
+    def _run_git_side_effect(args, cwd=None, timeout=30, check=False):
+        if args[:2] == ["merge-base", "--is-ancestor"]:
+            return MagicMock(returncode=1, stdout="", stderr="")
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    mock_git_manager._run_git.side_effect = _run_git_side_effect
+
+    result = await registry.call("merge_worktree", {"worktree_id": "wt-1", "target_branch": "main"})
+
+    assert result["success"] is True
+    assert result["merged"] is False
+    mock_worktree_storage.mark_merged.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_merge_worktree_push_success(
     registry, mock_worktree_storage, mock_git_manager
 ) -> None:
@@ -828,3 +946,32 @@ async def test_merge_worktree_no_main_repo_operations(
     for call in mock_git_manager._run_git.call_args_list:
         cwd = call.kwargs.get("cwd") or (call[1].get("cwd") if len(call) > 1 else None)
         assert cwd == "/tmp/wt1", f"Git command ran without worktree cwd: {call}"
+
+
+@pytest.mark.asyncio
+async def test_get_worktree_by_task_downgrades_stale_merged_status(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="wt-123",
+        project_id="proj-1",
+        branch_name="feature/not-merged",
+        worktree_path="/tmp/wt1",
+        base_branch="main",
+        status=WorktreeStatus.MERGED.value,
+        created_at="",
+        updated_at="",
+        task_id="task-1",
+        agent_session_id=None,
+        merged_at="2026-04-22T00:00:00+00:00",
+        cleanup_after="2026-04-29T00:00:00+00:00",
+    )
+    mock_worktree_storage.get_by_task.return_value = wt
+    mock_git_manager._run_git.return_value = MagicMock(returncode=1, stdout="", stderr="")
+
+    result = await registry.call("get_worktree_by_task", {"task_id": "task-1"})
+
+    assert result["success"] is True
+    assert result["worktree"]["status"] == WorktreeStatus.ACTIVE.value
+    assert result["worktree"]["stored_status"] == WorktreeStatus.MERGED.value
+    assert result["worktree"]["git_merge_state"]["git_merged"] is False

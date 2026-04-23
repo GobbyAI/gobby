@@ -272,7 +272,8 @@ call_tool(server_name="gobby-worktrees", tool_name="sync_worktree", arguments={
 
 ### mark_worktree_merged
 
-Mark a worktree as merged (ready for cleanup).
+Mark a worktree as merged (ready for cleanup). The tool verifies that the worktree branch is
+already merged into its base branch in git before updating metadata.
 
 ```python
 call_tool(server_name="gobby-worktrees", tool_name="mark_worktree_merged", arguments={
