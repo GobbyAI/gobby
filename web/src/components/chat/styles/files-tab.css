@@ -1,0 +1,311 @@
+/* ============================================
+   Files Tab
+   ============================================ */
+.file-tree-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  font-size: calc(var(--font-size-base) * 0.85);
+  transition: background 0.1s;
+}
+
+.file-tree-entry:hover {
+  background: var(--bg-tertiary);
+}
+
+.file-tree-entry--active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.file-tree-chevron {
+  font-size: 0.6em;
+  color: var(--text-muted);
+  width: 0.75rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.file-tree-chevron--leaf {
+  visibility: hidden;
+}
+
+.file-tree-size {
+  font-size: calc(var(--font-size-base) * 0.65);
+  color: var(--text-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.file-tree-rename-input {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  font-size: inherit;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.file-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  gap: 0.5rem;
+}
+
+.file-viewer-path {
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.file-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.file-viewer-action {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: calc(var(--font-size-base) * 0.7);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.file-viewer-action:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.file-viewer-action--save {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
+.file-viewer-action--save:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.files-code-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #0a0a0a;
+}
+
+.files-code-viewer > div {
+  min-height: 100%;
+}
+
+/* Tree items (matches FilesPage.css) */
+.files-tree-arrow {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.files-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.1875rem 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: calc(var(--font-size-base) * 0.8125);
+  color: var(--text-secondary);
+  transition: background 0.1s;
+}
+
+.files-tree-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.files-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-tree-loading {
+  padding: 0.25rem 0.5rem;
+  font-size: calc(var(--font-size-base) * 0.75);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Git status indicators */
+.files-git-badge {
+  font-size: calc(var(--font-size-base) * 0.65);
+  font-weight: 700;
+  font-family: inherit;
+  flex-shrink: 0;
+  margin-left: 0.375rem;
+  padding-right: 0.25rem;
+}
+
+.files-tree-name--modified,
+.files-tree-name--M {
+  color: #e5c07b;
+}
+
+.files-tree-name--A {
+  color: #4ade80;
+}
+
+.files-tree-name--D {
+  color: #f87171;
+  text-decoration: line-through;
+}
+
+.files-tree-name--untracked {
+  color: #737373;
+}
+
+/* Markdown viewer */
+.files-markdown-viewer {
+  padding: 1rem 1.5rem;
+  font-size: calc(var(--font-size-base) * 0.875);
+  line-height: 1.7;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+}
+
+/* File context menu */
+.file-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.file-ctx-menu {
+  z-index: 91;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  padding: 0.25rem;
+  min-width: 140px;
+}
+
+.file-ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.375rem 0.625rem;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: calc(var(--font-size-base) * 0.8);
+  cursor: pointer;
+  border-radius: 0.25rem;
+  transition: background 0.1s;
+}
+
+.file-ctx-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.file-ctx-item--danger {
+  color: #ef4444;
+}
+
+.file-ctx-item--danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* ── File Changes Tab ── */
+.file-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.625rem;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  border-radius: 0.25rem;
+  flex-shrink: 0;
+}
+
+.file-status-modified {
+  background: color-mix(in srgb, #eab308 20%, transparent);
+  color: #eab308;
+}
+
+.file-status-added {
+  background: color-mix(in srgb, #22c55e 20%, transparent);
+  color: #22c55e;
+}
+
+.file-status-deleted {
+  background: color-mix(in srgb, #ef4444 20%, transparent);
+  color: #ef4444;
+}
+
+.file-status-renamed {
+  background: color-mix(in srgb, #3b82f6 20%, transparent);
+  color: #3b82f6;
+}
+
+.file-status-untracked {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+/* ── Diff View ── */
+.diff-line {
+  padding: 0 0.75rem;
+  white-space: pre;
+  min-height: 1.25rem;
+}
+
+.diff-add {
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  color: #4ade80;
+}
+
+.diff-remove {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: #f87171;
+}
+
+.diff-hunk {
+  background: color-mix(in srgb, #3b82f6 8%, transparent);
+  color: #60a5fa;
+}
+
+.diff-meta {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+[data-theme="light"] .diff-add {
+  background: color-mix(in srgb, #16a34a 10%, transparent);
+  color: #15803d;
+}
+[data-theme="light"] .diff-remove {
+  background: color-mix(in srgb, #dc2626 10%, transparent);
+  color: #b91c1c;
+}
+[data-theme="light"] .diff-hunk {
+  background: color-mix(in srgb, #2563eb 8%, transparent);
+  color: #1d4ed8;
+}
+
