@@ -126,6 +126,66 @@ const HANDOFF_READY_SESSION = makeSession({
   updated_at: "2026-04-08T12:18:00Z",
 });
 
+const RUNNING_AGENT_SESSION = makeSession({
+  id: "agent-running-1",
+  ref: "#206",
+  external_id: "agent-running-ext-1",
+  title: "Running Agent Terminal",
+  status: "active",
+  seq_num: 206,
+  agent_run_id: "run-running-1",
+  updated_at: "2026-04-08T12:19:00Z",
+  terminal_context: { tmux_pane: "%46" },
+});
+
+const PENDING_AGENT_SESSION = makeSession({
+  id: "agent-pending-1",
+  ref: "#207",
+  external_id: "agent-pending-ext-1",
+  title: "Pending Agent Terminal",
+  status: "paused",
+  seq_num: 207,
+  agent_run_id: "run-pending-1",
+  updated_at: "2026-04-08T12:20:00Z",
+  terminal_context: { tmux_pane: "%47" },
+});
+
+const COMPLETED_AGENT_SESSION = makeSession({
+  id: "agent-success-1",
+  ref: "#208",
+  external_id: "agent-success-ext-1",
+  title: "Completed Agent Terminal",
+  status: "success",
+  seq_num: 208,
+  agent_run_id: "run-success-1",
+  updated_at: "2026-04-08T12:21:00Z",
+  terminal_context: { tmux_pane: "%48" },
+});
+
+const ERRORED_AGENT_SESSION = makeSession({
+  id: "agent-error-1",
+  ref: "#209",
+  external_id: "agent-error-ext-1",
+  title: "Errored Agent Terminal",
+  status: "error",
+  seq_num: 209,
+  agent_run_id: "run-error-1",
+  updated_at: "2026-04-08T12:22:00Z",
+  terminal_context: { tmux_pane: "%49" },
+});
+
+const CANCELLED_AGENT_SESSION = makeSession({
+  id: "agent-cancelled-1",
+  ref: "#210",
+  external_id: "agent-cancelled-ext-1",
+  title: "Cancelled Agent Terminal",
+  status: "cancelled",
+  seq_num: 210,
+  agent_run_id: "run-cancelled-1",
+  updated_at: "2026-04-08T12:23:00Z",
+  terminal_context: { tmux_pane: "%50" },
+});
+
 const PIPELINE_SESSION = makeSession({
   id: "pipeline-1",
   ref: "#204",
@@ -205,6 +265,42 @@ describe("SessionsTab", () => {
     });
     expect(screen.queryByText("#202: Paused Terminal")).toBeNull();
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
+  });
+
+  it("shows active/paused agent sessions in Live but excludes terminal agent statuses", async () => {
+    render(
+      <SessionsTab
+        sessions={[
+          RUNNING_AGENT_SESSION,
+          PENDING_AGENT_SESSION,
+          COMPLETED_AGENT_SESSION,
+          ERRORED_AGENT_SESSION,
+          CANCELLED_AGENT_SESSION,
+        ]}
+        focusSessionId="agent-running-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("#206: Running Agent Terminal")).toBeInTheDocument();
+      expect(screen.getByText("#207: Pending Agent Terminal")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("#208: Completed Agent Terminal")).toBeNull();
+    expect(screen.queryByText("#209: Errored Agent Terminal")).toBeNull();
+    expect(screen.queryByText("#210: Cancelled Agent Terminal")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Session status filter"), {
+      target: { value: "expired" },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("#206: Running Agent Terminal")).toBeNull();
+      expect(screen.queryByText("#207: Pending Agent Terminal")).toBeNull();
+    });
+    expect(screen.queryByText("#208: Completed Agent Terminal")).toBeNull();
+    expect(screen.queryByText("#209: Errored Agent Terminal")).toBeNull();
+    expect(screen.queryByText("#210: Cancelled Agent Terminal")).toBeNull();
   });
 
   it("defaults to transcript mode, toggles to summary via digest fallback, and keeps action order", async () => {

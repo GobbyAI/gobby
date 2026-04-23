@@ -514,6 +514,50 @@ class TestLocalAgentRunManager:
         assert updated_session is not None
         assert updated_session.status == "expired"
 
+    def test_terminal_run_session_expiry_preserves_active_runs(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Terminal-run sweep keeps pending/running child sessions live."""
+        pending_session = session_manager.register(
+            external_id="agent-child-pending",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        running_session = session_manager.register(
+            external_id="agent-child-running",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        pending_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Pending child session test",
+            child_session_id=pending_session.id,
+        )
+        running_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Running child session test",
+            child_session_id=running_session.id,
+        )
+        agent_manager.start(running_run.id)
+
+        expired = agent_manager.expire_sessions_for_terminal_runs()
+
+        assert expired == 0
+        assert agent_manager.get(pending_run.id).status == "pending"
+        pending_updated = session_manager.get(pending_session.id)
+        running_updated = session_manager.get(running_session.id)
+        assert pending_updated is not None
+        assert running_updated is not None
+        assert pending_updated.status == "active"
+        assert running_updated.status == "active"
+
     def test_timeout_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test timing out nonexistent run returns None."""
         result = agent_manager.timeout("nonexistent-id")
