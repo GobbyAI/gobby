@@ -31,7 +31,7 @@ from gobby.adapters.base import (
     system_message_has_session_banner,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import compress_and_truncate
+from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -390,9 +390,9 @@ class GeminiAdapter(BaseAdapter):
             hook_specific["toolConfig"] = response.modify_args
 
         if context_parts:
-            hook_specific["additionalContext"] = compress_and_truncate("\n\n".join(context_parts))[
-                0
-            ]
+            hook_specific["additionalContext"] = truncate_additional_context(
+                "\n\n".join(context_parts)
+            )
 
         # Only add hookSpecificOutput if there's content
         if hook_specific:

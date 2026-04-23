@@ -105,7 +105,7 @@ class CodexHooksAdapter(BaseAdapter):
         self, response: HookResponse, hook_type: str | None = None
     ) -> dict[str, Any]:
         """Convert HookResponse to Codex hooks.json expected format."""
-        from gobby.llm.sdk_utils import compress_and_truncate
+        from gobby.llm.sdk_utils import truncate_additional_context
 
         hook_event_name = hook_type or "Unknown"
         normalized_reason = normalize_adapter_response_reason(
@@ -147,7 +147,7 @@ class CodexHooksAdapter(BaseAdapter):
                     "permissionDecisionReason": retry_reason,
                 },
             }
-            retry_result["systemMessage"] = compress_and_truncate("\n\n".join(retry_parts))[0]
+            retry_result["systemMessage"] = truncate_additional_context("\n\n".join(retry_parts))
             return retry_result
 
         if response.decision in ("deny", "block"):
@@ -171,9 +171,9 @@ class CodexHooksAdapter(BaseAdapter):
                 if response.context:
                     system_parts.append(response.context)
                 if system_parts:
-                    deny_result["systemMessage"] = compress_and_truncate("\n\n".join(system_parts))[
-                        0
-                    ]
+                    deny_result["systemMessage"] = truncate_additional_context(
+                        "\n\n".join(system_parts)
+                    )
                 return deny_result
 
             block_result: dict[str, Any] = {"continue": False, "decision": "block"}
@@ -222,7 +222,7 @@ class CodexHooksAdapter(BaseAdapter):
         # Build hookSpecificOutput or systemMessage based on event type.
         # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
-            combined_context = compress_and_truncate("\n\n".join(context_parts))[0]
+            combined_context = truncate_additional_context("\n\n".join(context_parts))
             if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
                 # Append to existing systemMessage (from system_message routing above)
                 # instead of overwriting it.

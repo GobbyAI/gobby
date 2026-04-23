@@ -22,7 +22,7 @@ from gobby.adapters.claude_contract import (
     get_claude_contract,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.llm.sdk_utils import compress_and_truncate
+from gobby.llm.sdk_utils import truncate_additional_context
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -173,7 +173,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         if not additional_context_parts:
             return None
 
-        return compress_and_truncate("\n\n".join(additional_context_parts))[0]
+        return truncate_additional_context("\n\n".join(additional_context_parts))
 
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
