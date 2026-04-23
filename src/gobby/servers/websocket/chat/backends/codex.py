@@ -130,15 +130,16 @@ class CodexManagedChatSession(
         if dedup_key in self._before_tool_cached_responses:
             return self._before_tool_cached_responses[dedup_key]
 
-        task = self._before_tool_inflight_tasks.get(dedup_key)
+        task_key = dedup_key
+        task = self._before_tool_inflight_tasks.get(task_key)
         if task is None:
             task = asyncio.create_task(self._apply_pre_tool_lifecycle(tool_name, tool_input))
-            self._before_tool_inflight_tasks[dedup_key] = task
+            self._before_tool_inflight_tasks[task_key] = task
 
             def _finalize_pre_tool_task(
                 completed_task: asyncio.Task[dict[str, Any] | None],
                 *,
-                key: str = dedup_key,
+                key: str = task_key,
             ) -> None:
                 current_task = self._before_tool_inflight_tasks.get(key)
                 if current_task is completed_task:
