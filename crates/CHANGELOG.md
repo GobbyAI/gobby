@@ -7,6 +7,21 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Claude statusline handler** — `ghook --gobby-owned --cli=claude --type=statusline` now handles Claude Code statusline ticks directly in Rust. The handler bypasses the normal enqueue-first hook dispatch path, extracts the same token-usage payload as the legacy Python statusline middleware, posts it to `/api/sessions/statusline`, and preserves downstream statusline stdout bytes without adding a newline.
+- **Statusline parity fixtures** — Added golden JSON fixtures under `crates/ghook/tests/fixtures/statusline/` so Claude statusline input-to-daemon-payload parity is machine-checkable and survives removal of the Python reference in a later Gobby-side phase.
+
+### Changed
+
+#### gobby-hooks
+
+- **Statusline failure semantics** — Malformed statusline JSON, missing `session_id`, daemon POST failures, and downstream command failures all exit successfully so Claude's statusline display is not broken by telemetry issues. Daemon POSTs use a short background worker wait, and downstream forwarding has a bounded timeout.
+
 ## [0.3.0] — gobby-hooks
 
 ### Added
