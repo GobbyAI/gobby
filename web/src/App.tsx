@@ -4,10 +4,7 @@ import {
   useMemo,
   useEffect,
   useRef,
-  lazy,
   Suspense,
-  Component,
-  type ReactNode,
 } from "react";
 import { useAuth } from "./hooks/useAuth";
 import { useChat } from "./hooks/useChat";
@@ -16,7 +13,6 @@ import { useSettings } from "./hooks/useSettings";
 import { useMcp } from "./hooks/useMcp";
 import { useSkills } from "./hooks/useSkills";
 import { useColonAutocomplete } from "./hooks/useColonAutocomplete";
-import type { PaletteItem } from "./hooks/useColonAutocomplete";
 import { useAgentDefinitions } from "./hooks/useAgentDefinitions";
 import { useProjects } from "./hooks/useProjects";
 import { useSessionCatalog } from "./hooks/useSessionCatalog";
@@ -33,7 +29,27 @@ import { SlashCommandModal } from "./components/command-browser/SlashCommandModa
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
 import { Button } from "./components/chat/ui/Button";
-import type { CommandPaletteAction } from "./components/chat/CommandPalette";
+import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
+import {
+  ComingSoonPage,
+  ConfigurationPage,
+  CronJobsPage,
+  DashboardPage,
+  IntegrationsPage,
+  McpPage,
+  MemoryPage,
+  ProjectsPage,
+  ReportsPage,
+  SkillsPage,
+  TasksPage,
+  TracesPage,
+  WorkflowsPage,
+} from "./components/app/AppPages";
+import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
+import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
+import { useAppKeyboardShortcuts } from "./components/app/useAppKeyboardShortcuts";
+import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
+import { HamburgerIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
 import {
   buildReasoningPreferenceKey,
@@ -43,219 +59,11 @@ import {
   resolveModelValueForProvider,
   type ProviderModelEntry,
 } from "./lib/providerModels";
+import {
+  loadReasoningPreferences,
+  REASONING_PREFERENCES_STORAGE_KEY,
+} from "./lib/sessionPersistence";
 import { cn } from "./lib/utils";
-
-const CONVERSATION_ID_STORAGE_KEY = "gobby-conversation-id";
-const DB_SESSION_ID_STORAGE_KEY = "gobby-db-session-id";
-const REASONING_PREFERENCES_STORAGE_KEY = "gobby-reasoning-preferences";
-
-
-function loadPersistedConversationId(): string | null {
-  try {
-    return (
-      localStorage.getItem(DB_SESSION_ID_STORAGE_KEY) ||
-      localStorage.getItem(CONVERSATION_ID_STORAGE_KEY)
-    );
-  } catch {
-    return null;
-  }
-}
-
-
-function loadPersistedDbSessionId(): string | null {
-  try {
-    return localStorage.getItem(DB_SESSION_ID_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function loadReasoningPreferences(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(REASONING_PREFERENCES_STORAGE_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
-const MemoryPage = lazy(() =>
-  import("./components/memory/MemoryPage").then((m) => ({
-    default: m.MemoryPage,
-  })),
-);
-const ProjectsPage = lazy(() =>
-  import("./components/projects/ProjectsPage").then((m) => ({
-    default: m.ProjectsPage,
-  })),
-);
-const TasksPage = lazy(() =>
-  import("./components/tasks/TasksPage").then((m) => ({
-    default: m.TasksPage,
-  })),
-);
-const SkillsPage = lazy(() =>
-  import("./components/skills/SkillsPage").then((m) => ({
-    default: m.SkillsPage,
-  })),
-);
-const McpPage = lazy(() =>
-  import("./components/mcp/McpPage").then((m) => ({ default: m.McpPage })),
-);
-const IntegrationsPage = lazy(() =>
-  import("./components/integrations/IntegrationsPage").then((m) => ({
-    default: m.IntegrationsPage,
-  })),
-);
-const CronJobsPage = lazy(() =>
-  import("./components/CronJobsPage").then((m) => ({
-    default: m.CronJobsPage,
-  })),
-);
-const ConfigurationPage = lazy(() =>
-  import("./components/ConfigurationPage").then((m) => ({
-    default: m.ConfigurationPage,
-  })),
-);
-const WorkflowsPage = lazy(() =>
-  import("./components/workflows/WorkflowsPage").then((m) => ({
-    default: m.WorkflowsPage,
-  })),
-);
-const ReportsPage = lazy(() =>
-  import("./components/workflows/ReportsPage").then((m) => ({
-    default: m.ReportsPage,
-  })),
-);
-const DashboardPage = lazy(() =>
-  import("./components/dashboard/DashboardPage").then((m) => ({
-    default: m.DashboardPage,
-  })),
-);
-const TracesPage = lazy(() =>
-  import("./components/traces/TracesPage").then((m) => ({
-    default: m.TracesPage,
-  })),
-);
-
-class AppErrorBoundary extends Component<
-  { children: ReactNode; activeTab: string; onReturnToChat: () => void },
-  { hasError: boolean; error: Error | null }
-> {
-  constructor(props: {
-    children: ReactNode;
-    activeTab: string;
-    onReturnToChat: () => void;
-  }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error(
-      "[AppErrorBoundary] Caught error in tab:",
-      this.props.activeTab,
-      error,
-      info,
-    );
-  }
-  componentDidUpdate(prevProps: { activeTab: string }) {
-    if (prevProps.activeTab !== this.props.activeTab && this.state.hasError) {
-      this.setState({ hasError: false, error: null });
-    }
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <main
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            flex: 1,
-            gap: "1rem",
-            padding: "2rem",
-            color: "var(--text-secondary)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "1.25rem",
-              color: "var(--text-primary)",
-              fontWeight: 600,
-            }}
-          >
-            Something went wrong
-          </div>
-          <div
-            style={{
-              fontSize: "0.85rem",
-              maxWidth: 480,
-              textAlign: "center",
-              lineHeight: 1.5,
-            }}
-          >
-            An error occurred in the <b>{this.props.activeTab}</b> tab. This is
-            usually caused by a rendering failure in a third-party library.
-          </div>
-          {this.state.error && (
-            <code
-              style={{
-                fontSize: "0.75rem",
-                color: "var(--text-muted)",
-                background: "var(--bg-secondary)",
-                padding: "0.5rem 1rem",
-                borderRadius: 4,
-                maxWidth: 600,
-                overflow: "auto",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {this.state.error.message}
-            </code>
-          )}
-          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
-            <button
-              onClick={() => this.setState({ hasError: false, error: null })}
-              style={{
-                padding: "0.4rem 1rem",
-                borderRadius: 4,
-                border: "1px solid var(--border)",
-                background: "var(--bg-secondary)",
-                color: "var(--text-primary)",
-                cursor: "pointer",
-                fontSize: "0.8rem",
-              }}
-            >
-              Try Again
-            </button>
-            <button
-              onClick={this.props.onReturnToChat}
-              style={{
-                padding: "0.4rem 1rem",
-                borderRadius: 4,
-                border: "none",
-                background: "var(--accent)",
-                color: "#fff",
-                cursor: "pointer",
-                fontSize: "0.8rem",
-              }}
-            >
-              Return to Chat
-            </button>
-          </div>
-        </main>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
@@ -377,21 +185,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>(() => {
     const hash = window.location.hash.slice(1);
-    const validTabs = new Set([
-      "dashboard",
-      "chat",
-      "projects",
-      "tasks",
-      "workflows",
-      "reports",
-      "cron",
-      "traces",
-      "memory",
-      "skills",
-      "mcp",
-      "configuration",
-    ]);
-    return validTabs.has(hash) ? hash : "chat";
+    return APP_VALID_TABS.has(hash) ? hash : "chat";
   });
 
   useEffect(() => {
@@ -414,56 +208,7 @@ export default function App() {
     setActiveTab("traces");
   }, []);
 
-  // Global keyboard: Cmd+K opens command palette (or chord Cmd+K → t for quick capture)
-  const chordPendingRef = useRef(false);
-  const chordTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        // If already in chord mode, cancel it
-        if (chordPendingRef.current) {
-          chordPendingRef.current = false;
-          if (chordTimeoutRef.current)
-            window.clearTimeout(chordTimeoutRef.current);
-        }
-        // Start chord timer — if no follow-up key, open palette
-        chordPendingRef.current = true;
-        if (chordTimeoutRef.current)
-          window.clearTimeout(chordTimeoutRef.current);
-        chordTimeoutRef.current = window.setTimeout(() => {
-          chordPendingRef.current = false;
-          if (activeTab === "chat") {
-            window.dispatchEvent(new CustomEvent("gobby:open-command-palette"));
-          }
-        }, 300);
-        return;
-      }
-
-      if (chordPendingRef.current && e.key === "t") {
-        e.preventDefault();
-        chordPendingRef.current = false;
-        if (chordTimeoutRef.current)
-          window.clearTimeout(chordTimeoutRef.current);
-        setQuickCaptureOpen(true);
-      } else if (chordPendingRef.current) {
-        chordPendingRef.current = false;
-        if (chordTimeoutRef.current)
-          window.clearTimeout(chordTimeoutRef.current);
-        // No recognized chord key — open palette immediately
-        if (activeTab === "chat") {
-          window.dispatchEvent(new CustomEvent("gobby:open-command-palette"));
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      if (chordTimeoutRef.current) window.clearTimeout(chordTimeoutRef.current);
-    };
-  }, [activeTab]);
+  useAppKeyboardShortcuts({ activeTab, setQuickCaptureOpen });
 
   // Build project options for the selector (exclude internal system projects)
   const projectOptions = useMemo(
@@ -653,7 +398,7 @@ export default function App() {
       effectiveProjectId !== prevProjectRef.current
     ) {
       startNewChat();
-      initialReconciliationDone.current = false;
+      initialReconciliationDoneRef.current = false;
     }
     prevProjectRef.current = effectiveProjectId ?? null;
   }, [effectiveProjectId, startNewChat, projectReady]);
@@ -675,71 +420,18 @@ export default function App() {
   );
 
   // Auto-select most recent server session on initial load (cross-device sync)
-  const initialReconciliationDone = useRef(false);
-
-  useEffect(() => {
-    if (!projectReady) return;
-    if (initialReconciliationDone.current) return;
-    if (!effectiveProjectId || sessionCatalog.isLoading) return;
-
-    // Guard: ensure fetched sessions belong to the current project.
-    // After a project switch, the fetch for the new project may still be in-flight
-    // while webChatSessions contains stale data from the old project.
-    const sessionsMatchProject =
-      webChatSessions.length === 0 ||
-      webChatSessions.some((s) => s.project_id === effectiveProjectId);
-    if (!sessionsMatchProject) return;
-
-    const persistedConversationId = loadPersistedConversationId();
-    const persistedDbSessionId = loadPersistedDbSessionId();
-
-    const activeMainChatId = dbSessionId || persistedDbSessionId;
-    const match = activeMainChatId
-      ? webChatSessions.find((s) => s.id === activeMainChatId)
-      : undefined;
-
-    if (match) {
-      initialReconciliationDone.current = true;
-      if (dbSessionId === match.id) {
-        return;
-      }
-      switchConversation(match.id, {
-        preserveViewing: Boolean(viewingSessionId),
-      });
-    } else if (viewingSessionId) {
-      // Restored watched/attached terminal state owns the main-chat surface
-      // until the parked web-chat session can be recovered cleanly.
-      return;
-    } else if (persistedDbSessionId && webChatSessions.length === 0) {
-      // A persisted main-chat session exists, but the catalog has not
-      // confirmed a different fallback target. Keep the local restore target
-      // authoritative instead of jumping to the most recent unrelated chat.
-      return;
-    } else if (persistedConversationId && !persistedDbSessionId) {
-      initialReconciliationDone.current = true;
-      // Preserve an explicit local fresh-chat ID so reloads do not jump back
-      // to the most recent saved session before the user sends a first message.
-      return;
-    } else if (webChatSessions.length > 0) {
-      initialReconciliationDone.current = true;
-      // Unknown conversation_id — switch to most recent session
-      const mostRecent = webChatSessions[0]; // sorted newest-first
-      switchConversation(mostRecent.id);
-    } else {
-      initialReconciliationDone.current = true;
-      // No sessions for this project — clear any stale messages from mount effect
-      startNewChat();
-    }
-  }, [
+  const initialReconciliationDoneRef = useRef(false);
+  useSessionReconciliation({
+    initialReconciliationDoneRef,
     projectReady,
     effectiveProjectId,
-    sessionCatalog.isLoading,
+    isLoadingSessions: sessionCatalog.isLoading,
     webChatSessions,
     dbSessionId,
     viewingSessionId,
     switchConversation,
     startNewChat,
-  ]);
+  });
 
   // Wrap sendMessage to include the selected model + colon command interception
   const handleSendMessage = useCallback(
@@ -959,178 +651,22 @@ export default function App() {
     [filterColonInput],
   );
 
-  const handlePaletteSelect = useCallback(
-    (item: PaletteItem) => {
-      // Sub-items are handled inline by ChatInput (Tab-complete into input)
-      if (item.kind !== "command") return;
-
-      if (item.action === "open_skills") {
-        setActiveModal("skills");
-        return;
-      }
-      if (item.action === "open_gobby") {
-        setActiveModal("gobby");
-        return;
-      }
-      if (item.action === "open_mcp") {
-        setActiveModal("mcp");
-        return;
-      }
-      if (item.action === "open_settings") {
-        setSettingsOpen(true);
-        return;
-      }
-      if (item.action === "clear_history") {
-        clearHistory();
-        return;
-      }
-      if (item.action === "compact_chat") {
-        sendMessage(
-          "/compact",
-          settings.model,
-          undefined,
-          effectiveProjectId,
-          undefined,
-          currentMainReasoning,
-        );
-        return;
-      }
-      if (item.action === "resume_session") {
-        setResumeModalOpen(true);
-        return;
-      }
-      if (item.action === "restart_daemon") {
-        addSystemMessage("Restarting daemon...");
-        const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-        fetch(`${baseUrl}/api/admin/restart`, { method: "POST" }).catch((err) =>
-          console.error("Restart request failed:", err),
-        );
-        return;
-      }
-      if (item.action === "exit_plan_mode") {
-        if (settings.chatMode === "plan") {
-          updateChatMode(settings.postPlanChatMode);
-          sendMode(settings.postPlanChatMode);
-        }
-        return;
-      }
-      if (item.action === "show_plan") {
-        if (settings.chatMode !== "plan") {
-          updateChatMode("plan");
-          sendMode("plan");
-        }
-        showPlanRef.current?.();
-      }
-    },
-    [
-      clearHistory,
-      sendMessage,
-      settings.model,
-      settings.chatMode,
-      settings.postPlanChatMode,
-      effectiveProjectId,
-      currentMainReasoning,
-      updateChatMode,
-      sendMode,
-      addSystemMessage,
-    ],
-  );
-
-  // Build command palette actions for ChatPage
-  const commandPaletteActions = useMemo<CommandPaletteAction[]>(() => {
-    const actions: CommandPaletteAction[] = [
-      {
-        id: "new-chat",
-        label: "New Chat",
-        icon: "+",
-        category: "action",
-        onSelect: () => startNewChat(),
-      },
-      {
-        id: "resume",
-        label: "Resume Session",
-        icon: "\u21BA",
-        category: "action",
-        onSelect: () => setResumeModalOpen(true),
-      },
-      {
-        id: "settings",
-        label: "Settings",
-        icon: "\u2699",
-        category: "action",
-        onSelect: () => setSettingsOpen(true),
-      },
-      {
-        id: "clear",
-        label: "Clear History",
-        icon: "\u2715",
-        category: "action",
-        onSelect: () => clearHistory(),
-      },
-      {
-        id: "compact",
-        label: "Compact Conversation",
-        icon: "\u2026",
-        category: "action",
-        onSelect: () =>
-          sendMessage(
-            "/compact",
-            settings.model,
-            undefined,
-            effectiveProjectId,
-            undefined,
-            currentMainReasoning,
-          ),
-      },
-      {
-        id: "restart",
-        label: "Restart Daemon",
-        icon: "\u21BB",
-        category: "action",
-        onSelect: () => {
-          addSystemMessage("Restarting daemon...");
-          const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-          fetch(`${baseUrl}/api/admin/restart`, { method: "POST" }).catch(
-            (err) => {
-              console.error("Restart request failed:", err);
-              addSystemMessage("Failed to restart daemon");
-            },
-          );
-        },
-      },
-    ];
-    // Navigation items
-    const navPages: Array<{ id: string; label: string }> = [
-      { id: "dashboard", label: "Dashboard" },
-      { id: "tasks", label: "Tasks" },
-      { id: "workflows", label: "Workflows" },
-      { id: "reports", label: "Reports" },
-      { id: "cron", label: "Cron Jobs" },
-      { id: "traces", label: "Traces" },
-      { id: "memory", label: "Memory" },
-      { id: "skills", label: "Skills" },
-      { id: "mcp", label: "MCP" },
-      { id: "configuration", label: "Configuration" },
-    ];
-    for (const page of navPages) {
-      actions.push({
-        id: `nav-${page.id}`,
-        label: page.label,
-        icon: "\u2192",
-        category: "navigate",
-        onSelect: () => setActiveTab(page.id),
-      });
-    }
-    return actions;
-  }, [
+  const { handlePaletteSelect, commandPaletteActions } = useAppCommandPalette({
     startNewChat,
     clearHistory,
     sendMessage,
-    settings.model,
+    settings,
     effectiveProjectId,
     currentMainReasoning,
+    updateChatMode,
+    sendMode,
     addSystemMessage,
-  ]);
+    setActiveTab,
+    setActiveModal,
+    setSettingsOpen,
+    setResumeModalOpen,
+    showPlanRef,
+  });
 
   // Auth guard — shown after all hooks (React rules)
   if (authLoading) {
@@ -1153,31 +689,7 @@ export default function App() {
     return <LoginPage onLogin={login} />;
   }
 
-  const navItems = [
-    { id: "chat", label: "Chat", icon: <ChatIcon /> },
-    {
-      id: "dashboard",
-      label: "Dashboard",
-      icon: <DashboardIcon />,
-      separator: true,
-    },
-    { id: "projects", label: "Project", icon: <ProjectsIcon /> },
-    { id: "tasks", label: "Tasks", icon: <TasksIcon /> },
-    { id: "workflows", label: "Workflows", icon: <WorkflowsIcon /> },
-    { id: "cron", label: "Cron Jobs", icon: <CronIcon /> },
-    { id: "reports", label: "Reports", icon: <ReportsIcon /> },
-    { id: "traces", label: "Traces", icon: <TracesIcon /> },
-    { id: "memory", label: "Memory", icon: <MemoryIcon /> },
-    { id: "skills", label: "Skills", icon: <SkillsIcon /> },
-    { id: "mcp", label: "MCP", icon: <McpIcon /> },
-    { id: "integrations", label: "Integrations", icon: <IntegrationsIcon /> },
-    {
-      id: "configuration",
-      label: "Configuration",
-      icon: <ConfigurationIcon />,
-      separator: true,
-    },
-  ];
+  const navItems = createAppNavItems();
 
   return (
     <div className="app">
@@ -1452,284 +964,5 @@ export default function App() {
         </div>
       )}
     </div>
-  );
-}
-
-function HamburgerIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="3" y1="6" x2="21" y2="6" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <line x1="3" y1="18" x2="21" y2="18" />
-    </svg>
-  );
-}
-
-function DashboardIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="7" height="9" />
-      <rect x="14" y="3" width="7" height="5" />
-      <rect x="14" y="12" width="7" height="9" />
-      <rect x="3" y="16" width="7" height="5" />
-    </svg>
-  );
-}
-
-function ComingSoonPage({ title }: { title: string }) {
-  return (
-    <main className="coming-soon-page">
-      <div className="coming-soon-content">
-        <h2>{title}</h2>
-        <p>Coming Soon</p>
-      </div>
-    </main>
-  );
-}
-
-function TasksIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M9 11l3 3L22 4" />
-      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-    </svg>
-  );
-}
-
-function ProjectsIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}
-
-function ReportsIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M4 19h16" />
-      <path d="M4 15h16" />
-      <path d="M4 11h16" />
-      <rect x="6" y="3" width="4" height="18" rx="1" opacity="0.3" />
-      <rect x="6" y="7" width="4" height="14" rx="1" />
-      <rect x="14" y="3" width="4" height="18" rx="1" opacity="0.3" />
-      <rect x="14" y="11" width="4" height="10" rx="1" />
-    </svg>
-  );
-}
-
-function WorkflowsIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="6" y1="3" x2="6" y2="15" />
-      <circle cx="18" cy="6" r="3" />
-      <circle cx="6" cy="18" r="3" />
-      <path d="M18 9a9 9 0 0 1-9 9" />
-    </svg>
-  );
-}
-
-function MemoryIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-    </svg>
-  );
-}
-
-function SkillsIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  );
-}
-
-function CronIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
-    </svg>
-  );
-}
-
-function IntegrationsIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-    </svg>
-  );
-}
-
-function McpIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <circle cx="4" cy="6" r="2" />
-      <circle cx="20" cy="6" r="2" />
-      <circle cx="4" cy="18" r="2" />
-      <circle cx="20" cy="18" r="2" />
-      <line x1="6" y1="6" x2="9.5" y2="10" />
-      <line x1="18" y1="6" x2="14.5" y2="10" />
-      <line x1="6" y1="18" x2="9.5" y2="14" />
-      <line x1="18" y1="18" x2="14.5" y2="14" />
-    </svg>
-  );
-}
-
-function ChatIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-      <path d="M8 10h8" />
-      <path d="M8 14h4" />
-    </svg>
-  );
-}
-
-function TracesIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-    </svg>
-  );
-}
-
-function ConfigurationIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
   );
 }

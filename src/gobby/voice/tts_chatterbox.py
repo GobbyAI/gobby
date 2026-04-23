@@ -12,8 +12,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from gobby.config.voice import VoiceConfig
 from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is_available
 
@@ -39,6 +37,8 @@ def _auto_device() -> str:
 
 def _coerce_conditioning_audio(value: Any) -> Any:
     """Cast Chatterbox conditioning audio to float32 for MPS compatibility."""
+    import numpy as np
+
     torch_module: Any | None = None
     try:
         import torch
@@ -83,6 +83,7 @@ def _prepare_turbo_conditionals(
 ) -> None:
     """Prepare Chatterbox Turbo conditionals with float32-safe reference audio handling."""
     import librosa
+    import numpy as np
     import torch
     from chatterbox import tts_turbo as chatterbox_turbo
 
@@ -110,12 +111,12 @@ def _prepare_turbo_conditionals(
         t3_cond_prompt_tokens, _ = tokenizer.forward(
             [ref_16k_wav[: model.ENC_COND_LEN]], max_len=plen
         )
-        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)  # type: ignore[no-untyped-call]
+        t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(model.device)
 
     ve_embed_array = np.asarray(
         _coerce_conditioning_audio(model.ve.embeds_from_wavs([ref_16k_wav], sample_rate=s3_sr))
     )
-    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)  # type: ignore[call-overload]
+    ve_embed = torch.from_numpy(ve_embed_array).mean(axis=0, keepdim=True).to(model.device)
 
     t3_cond = chatterbox_turbo.T3Cond(
         speaker_emb=ve_embed,
@@ -338,6 +339,8 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                 self._runtime_primed = True
 
             # Convert torch.Tensor to PCM int16 bytes
+            import numpy as np
+
             samples = wav.squeeze().cpu().numpy()
             pcm_int16 = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
             yield pcm_int16.tobytes(), self._sample_rate

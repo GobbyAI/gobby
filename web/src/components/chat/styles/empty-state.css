@@ -1,0 +1,62 @@
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+}
+.chat-scope-empty {
+  padding: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+  .mobile-chat-drawer-empty {
+    padding: 0.75rem 1rem;
+    color: var(--text-muted);
+    font-size: calc(var(--font-size-base) * 0.85);
+  }
+.command-palette-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.85);
+}
+.activity-tab-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: calc(var(--font-size-base) * 0.85);
+  padding: 2rem;
+  text-align: center;
+}
+
+.chat-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.chat-empty-state__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+}
+
+.chat-empty-state__title {
+  font-size: 1.125rem;
+  color: var(--text-secondary);
+}
+
+.chat-empty-state__copy {
+  max-width: 26rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}

@@ -203,7 +203,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             # Check if task has commits (including the one being linked right now)
             has_commits = bool(task.commits) or bool(commit_sha)
 
-            if session_had_edits and not has_commits:
+            if session_had_edits is True and not has_commits:
                 return {
                     "success": False,
                     "error": "missing_commits_for_edits",
@@ -270,7 +270,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # an explicit commit, prefer its normalized short SHA over current HEAD.
         from gobby.utils.git import normalize_commit_sha, run_git_command
 
-        requires_closed_commit_sha = bool(commit_sha or session_had_edits or task.commits)
+        requires_closed_commit_sha = bool(
+            commit_sha or task.commits or (not skip_leaf_checks and session_had_edits is True)
+        )
         current_commit_sha: str | None = None
         if requires_closed_commit_sha:
             current_commit_sha = (
