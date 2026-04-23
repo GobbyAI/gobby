@@ -135,6 +135,12 @@ def http_server(
 
 
 @pytest.fixture
+def basic_http_server(http_server: HTTPServer) -> HTTPServer:
+    """Compatibility alias for legacy HTTP coverage tests."""
+    return http_server
+
+
+@pytest.fixture
 def client(http_server: HTTPServer) -> Iterator[TestClient]:
     """Create a test client for the HTTP server."""
     with patch("gobby.servers.app_factory.HookManager") as MockHM:
