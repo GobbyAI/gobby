@@ -517,5 +517,3 @@ class TestSessionManagerLifecycle:
 
         sessions = session_manager.list()  # No filters
         assert len(sessions) >= 2
-
-

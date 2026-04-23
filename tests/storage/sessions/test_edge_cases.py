@@ -360,5 +360,3 @@ class TestSessionEdgeCases:
         assert updated is not None
         assert updated.original_prompt == "Implement feature X"
         assert updated.workflow_name is None
-
-

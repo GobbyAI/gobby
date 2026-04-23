@@ -187,4 +187,3 @@ class TestSessionManagerModelFields:
         assert "original_prompt" in d
         assert "created_at" in d
         assert "updated_at" in d
-

@@ -502,7 +502,6 @@ class TestSessionManagerPruning:
 
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 0
-
     def test_get_pending_transcript_sessions_excludes_no_jsonl(
         self,
         session_manager: SessionManager,
@@ -520,4 +519,3 @@ class TestSessionManagerPruning:
 
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 0
-

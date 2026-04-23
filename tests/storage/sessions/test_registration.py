@@ -330,4 +330,3 @@ class TestSessionManagerRegistration:
         assert session2.git_branch == "feature/new"
         assert session2.parent_session_id == parent.id
         assert session2.status == "active"  # Status reset to active
-

@@ -447,4 +447,3 @@ class TestSessionManagerMetadata:
         assert updated is not None
         assert updated.summary_path is None
         assert updated.summary_markdown == "# Just markdown"
-
