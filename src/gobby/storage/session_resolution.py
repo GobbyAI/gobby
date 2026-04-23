@@ -49,12 +49,23 @@ def resolve_session_reference(db: DatabaseProtocol, ref: str, project_id: str | 
     if not ref:
         raise ValueError("Empty session reference")
 
-    # #N or N format: seq_num lookup
-    seq_num_ref = ref
-    if ref.startswith("#"):
-        seq_num_ref = ref[1:]
+    # #N is always a seq_num lookup. Plain numeric refs are treated as seq_num
+    # only when they do not uniquely identify a session UUID prefix.
+    seq_num_ref = ref[1:] if ref.startswith("#") else ref
 
-    if seq_num_ref.isdigit():
+    if ref.startswith("#"):
+        is_seq_num_lookup = seq_num_ref.isdigit()
+    else:
+        is_seq_num_lookup = seq_num_ref.isdigit()
+        if is_seq_num_lookup and len(seq_num_ref) >= 8:
+            prefix_rows = db.fetchall(
+                "SELECT id FROM sessions WHERE id LIKE ? LIMIT 2",
+                (f"{seq_num_ref}%",),
+            )
+            if len(prefix_rows) == 1:
+                return str(prefix_rows[0]["id"])
+
+    if is_seq_num_lookup:
         seq_num = int(seq_num_ref)
         if not project_id:
             raise ValueError(

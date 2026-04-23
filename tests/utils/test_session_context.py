@@ -443,9 +443,12 @@ def test_resolve_and_seed_contexts_both_unresolvable_returns_empty_tokens() -> N
 
 def test_resolve_and_seed_contexts_valueerror_on_session_logs_warning(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Ambiguous external_id surfaces as a warning and leaves session_token empty."""
     mgr = _make_session_manager(resolve_exc=ValueError("Ambiguous session reference"))
+    mock_warning = MagicMock()
+    monkeypatch.setattr("gobby.utils.session_context.logger.warning", mock_warning)
     caplog.set_level(logging.WARNING, logger="gobby.utils.session_context")
     tokens = resolve_and_seed_contexts(
         session_ref=SESSION_EXTERNAL_UUID,
@@ -456,7 +459,8 @@ def test_resolve_and_seed_contexts_valueerror_on_session_logs_warning(
     try:
         assert tokens.session_token is None
         assert tokens.resolved_session_id is None
-        assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        assert mock_warning.call_count == 1
+        assert "could not resolve session ref" in mock_warning.call_args.args[0]
     finally:
         reset_seeded_contexts(tokens)
 

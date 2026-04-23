@@ -316,7 +316,10 @@ class TestExecuteMCPStep:
 
     @pytest.mark.asyncio
     async def test_execute_mcp_step_unresolvable_session_id_skips_set_session_context(
-        self, mock_tool_proxy, caplog: pytest.LogCaptureFixture
+        self,
+        mock_tool_proxy,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Unresolvable session ref logs warning and falls through to the no-session path."""
         import logging as _logging
@@ -324,6 +327,8 @@ class TestExecuteMCPStep:
         session_manager = _make_session_manager(
             resolve_to=None, resolve_exc=ValueError("Session not found")
         )
+        mock_warning = MagicMock()
+        monkeypatch.setattr("gobby.utils.session_context.logger.warning", mock_warning)
         step = PipelineStep(
             id="test_step",
             mcp=MCPStepConfig(server="gobby-workflows", tool="list_pipeline_executions"),
@@ -335,7 +340,8 @@ class TestExecuteMCPStep:
             step, context, lambda: mock_tool_proxy, session_manager=session_manager
         )
 
-        assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        assert mock_warning.call_count == 1
+        assert "could not resolve session ref" in mock_warning.call_args.args[0]
         assert mock_tool_proxy.get_tool_schema.call_args.kwargs["session_id"] is None
         assert mock_tool_proxy.call_tool.call_args.kwargs["session_id"] is None
 

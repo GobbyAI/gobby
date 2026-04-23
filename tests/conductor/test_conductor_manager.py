@@ -133,11 +133,17 @@ async def test_handle_tick_does_not_repeat_provider_validation_after_init() -> N
     """Provider validation happens in __init__, not again inside the tick path."""
     manager, _ = _make_manager()
     manager._config.provider = "codex"
+    sentinel = RuntimeError("tick path reached")
+
+    async def fake_ensure_session():
+        raise sentinel
+
+    manager._ensure_session = fake_ensure_session  # type: ignore[method-assign]
 
     job = MagicMock()
     result = await manager(job)
 
-    assert "Working directory does not exist" in result
+    assert "tick path reached" in result
 
 
 @pytest.mark.asyncio

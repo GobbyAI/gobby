@@ -58,6 +58,7 @@ class TestCanUseTool:
         """ExitPlanMode blocks until user approves."""
         session.set_chat_mode("plan")
         session._plan_file_path = "p.md"
+        session._last_plan_content = "draft plan"
         session._on_mode_changed = AsyncMock()
 
         async def delayed_approve():
@@ -79,6 +80,7 @@ class TestCanUseTool:
         """ExitPlanMode blocks until user requests changes."""
         session.set_chat_mode("plan")
         session._plan_file_path = "p.md"
+        session._last_plan_content = "draft plan"
         session.set_plan_feedback("too complex")
 
         async def delayed_reject():

@@ -140,6 +140,11 @@ class ChatSessionPermissionsMixin:
                 await self._on_mode_changed("plan", "agent_requested")
             return PermissionResultAllow(updated_input=input_data)
         if tool_name == "ExitPlanMode":
+            # Approval is authoritative once granted; don't re-read the plan
+            # artifact just to leave plan mode.
+            if self._plan_approved:
+                return PermissionResultAllow(updated_input=input_data)
+
             plan_content = self._read_plan_file()
             if not plan_content:
                 return PermissionResultDeny(
@@ -148,11 +153,6 @@ class ChatSessionPermissionsMixin:
                         "or .claude/plans/*.md file first, then call ExitPlanMode."
                     )
                 )
-
-            # If already approved (user clicked approve before ExitPlanMode
-            # was called), skip blocking.
-            if self._plan_approved:
-                return PermissionResultAllow(updated_input=input_data)
 
             # Block until the user approves or rejects the plan in the UI.
             # The plan_pending_approval broadcast was already sent when the

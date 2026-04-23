@@ -238,8 +238,16 @@ class TestResolveReferenceExternalId:
         self,
         session_manager: SessionManager,
         sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If an id prefix matches, it wins regardless of external_id matches."""
+        import uuid as _uuid
+
+        monkeypatch.setattr(
+            _uuid,
+            "uuid4",
+            lambda: _uuid.UUID("88212625-de4a-4fbc-b666-cedcdaa2cfc1"),
+        )
         sess = session_manager.register(
             external_id="something-unique",
             machine_id="m",
@@ -247,6 +255,7 @@ class TestResolveReferenceExternalId:
             project_id=sample_project["id"],
         )
         prefix = sess.id[:8]
+        assert prefix.isdigit()
         resolved = session_manager.resolve_session_reference(
             prefix, project_id=sample_project["id"]
         )
