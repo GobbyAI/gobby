@@ -1,10 +1,18 @@
 """Shared fixtures and helpers for server tests."""
 
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
+from gobby.storage.database import LocalDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
@@ -82,3 +90,56 @@ def create_http_server(
         test_mode=test_mode,
         codex_client=codex_client,
     )
+
+
+@pytest.fixture
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
+    """Create session storage."""
+    return SessionManager(temp_db)
+
+
+@pytest.fixture
+def project_storage(temp_db: LocalDatabase) -> LocalProjectManager:
+    """Create project storage."""
+    return LocalProjectManager(temp_db)
+
+
+@pytest.fixture
+def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[str, Any]:
+    """Create a test project with project.json file."""
+    project = project_storage.create(name="test-project", repo_path=str(temp_dir))
+
+    gobby_dir = temp_dir / ".gobby"
+    gobby_dir.mkdir()
+    (gobby_dir / "project.json").write_text(f'{{"id": "{project.id}", "name": "test-project"}}')
+
+    return project.to_dict()
+
+
+@pytest.fixture
+def http_server(
+    session_storage: SessionManager,
+) -> HTTPServer:
+    """Create an HTTP server instance for testing."""
+    services = ServiceContainer(
+        config=None,
+        database=session_storage.db,
+        session_manager=session_storage,
+        task_manager=MagicMock(),
+    )
+    return HTTPServer(
+        services=services,
+        port=60887,
+        test_mode=True,
+    )
+
+
+@pytest.fixture
+def client(http_server: HTTPServer) -> Iterator[TestClient]:
+    """Create a test client for the HTTP server."""
+    with patch("gobby.servers.app_factory.HookManager") as MockHM:
+        mock_instance = MockHM.return_value
+        mock_instance._stop_registry = MagicMock()
+        mock_instance.shutdown = MagicMock()
+        with TestClient(http_server.app) as client:
+            yield client
