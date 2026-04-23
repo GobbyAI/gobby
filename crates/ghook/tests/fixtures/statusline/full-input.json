@@ -1,0 +1,15 @@
+{
+  "session_id": "sess-123",
+  "model": {
+    "id": "claude-opus-4-6"
+  },
+  "cost": {
+    "input_tokens": 12345,
+    "output_tokens": 6789,
+    "cache_creation_tokens": 1000,
+    "cache_read_tokens": 5000
+  },
+  "context_window": {
+    "size": 200000
+  }
+}

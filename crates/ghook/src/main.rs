@@ -27,6 +27,7 @@ mod cli_config;
 mod detach;
 mod diagnose;
 mod envelope;
+mod statusline;
 mod terminal_context;
 mod transport;
 
@@ -130,8 +131,20 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
     // registering phantom sessions. Short-circuit before any side effects: no
     // enqueue, no POST, no terminal-context enrichment.
     if hooks_disabled_by_env() {
+        if statusline::is_statusline_hook(cli, hook_type) {
+            return ExitCode::SUCCESS;
+        }
         println!("{}", serde_json::json!({}));
         return ExitCode::SUCCESS;
+    }
+
+    if statusline::is_statusline_hook(cli, hook_type) {
+        let mut stdin_raw = Vec::with_capacity(4096);
+        if let Err(e) = std::io::stdin().read_to_end(&mut stdin_raw) {
+            eprintln!("ghook statusline: failed to read stdin: {e}");
+            return ExitCode::SUCCESS;
+        }
+        return statusline::handle(&stdin_raw);
     }
 
     let cfg = CliConfig::for_dispatch(cli);
