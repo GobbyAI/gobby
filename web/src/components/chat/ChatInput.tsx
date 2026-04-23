@@ -4,21 +4,15 @@ import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
+import { MicIcon, PaperclipIcon, SendIcon, SpeakerIcon, StopIcon } from './ChatInputIcons'
+import { ChatInputModelControls } from './ChatInputModelControls'
 import { ModeSelector } from './ModeSelector'
 import { BranchIndicator } from './BranchIndicator'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
+import { useChatInputProviderSelection } from './useChatInputProviderSelection'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from './ui/Select'
-import { SourceIcon } from '../shared/SourceIcon'
 import {
   AUTO_REASONING_EFFORT,
-  getModelLabel,
-  getModelsForProvider,
-  getOrderedProviders,
-  getPreferredModelForProvider,
-  getPreferredReasoningEffort,
-  getProviderDisplayName,
-  getReasoningOptionsForModel,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
 
@@ -349,97 +343,33 @@ export function ChatInput({
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'
-  const effectiveProvider = provider ?? 'claude'
-  const pickerProviders =
-    availableProviders.length > 0 ? availableProviders : [effectiveProvider]
-  const orderedProviders = getOrderedProviders(pickerProviders)
-  const visibleModels = getModelsForProvider(providerModelCatalog, effectiveProvider)
-  const modelOptions =
-    visibleModels.length > 0
-      ? visibleModels
-      : [{ value: currentModel || 'default', label: getModelLabel(providerModelCatalog, effectiveProvider, currentModel) }]
-  const resolvedModelValue = currentModel || modelOptions[0]?.value || 'default'
-  const resolvedModelLabel = getModelLabel(
-    providerModelCatalog,
+  const {
+    canSelectModel,
     effectiveProvider,
+    handleModelSelect,
+    handleProviderSelect,
+    handleReasoningSelect,
+    modelOptions,
+    orderedProviders,
+    reasoningOptions,
+    resolvedModelLabel,
     resolvedModelValue,
-  )
-  const reasoningOptions = getReasoningOptionsForModel(
+    resolvedReasoning,
+    selectionDisabled,
+  } = useChatInputProviderSelection({
+    availableProviders,
+    currentModel,
+    currentReasoning,
+    disabled,
+    onModelChange,
+    onProviderChange,
+    onProviderSelectionChange,
+    onReasoningChange,
+    onSwitchProvider,
+    provider,
     providerModelCatalog,
-    effectiveProvider,
-    resolvedModelValue,
-  )
-  const resolvedReasoning =
-    currentReasoning ||
-    getPreferredReasoningEffort(
-        providerModelCatalog,
-        effectiveProvider,
-        resolvedModelValue,
-        AUTO_REASONING_EFFORT,
-      )
-  const canSelectModel = Boolean(onModelChange)
-  const selectionDisabled = disabled || Boolean(providerPickerDisabledReason)
-
-  const applySelection = useCallback(
-    (nextProvider: string, nextModel: string, nextReasoning: string) => {
-      if (onProviderSelectionChange) {
-        onProviderSelectionChange(nextProvider, nextModel, nextReasoning)
-        return
-      }
-
-      const providerChanged = nextProvider !== effectiveProvider
-      if (providerChanged) {
-        onProviderChange?.(nextProvider)
-      }
-      onModelChange?.(nextModel)
-      onReasoningChange?.(nextReasoning)
-      if (providerChanged) {
-        onSwitchProvider?.(nextProvider, {
-          model: nextModel,
-          reasoningEffort: nextReasoning,
-        })
-      }
-    },
-    [
-      effectiveProvider,
-      onModelChange,
-      onProviderChange,
-      onProviderSelectionChange,
-      onReasoningChange,
-      onSwitchProvider,
-    ],
-  )
-
-  const handleProviderSelect = (nextProvider: string) => {
-    const nextModel =
-      getPreferredModelForProvider(providerModelCatalog, nextProvider, null) ??
-      resolvedModelValue ??
-      'default'
-    const nextReasoning = getPreferredReasoningEffort(
-      providerModelCatalog,
-      nextProvider,
-      nextModel,
-      null,
-    )
-    applySelection(nextProvider, nextModel, nextReasoning)
-  }
-
-  const handleModelSelect = useCallback(
-    (nextModel: string) => {
-      const nextReasoning = getPreferredReasoningEffort(
-        providerModelCatalog,
-        effectiveProvider,
-        nextModel,
-        resolvedReasoning,
-      )
-      applySelection(effectiveProvider, nextModel, nextReasoning)
-    },
-    [applySelection, effectiveProvider, providerModelCatalog, resolvedReasoning],
-  )
-
-  const handleReasoningSelect = (nextReasoning: string) => {
-    applySelection(effectiveProvider, resolvedModelValue, nextReasoning)
-  }
+    providerPickerDisabledReason,
+  })
 
   type PrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
 
@@ -898,110 +828,26 @@ export function ChatInput({
           </div>
 
           {canSelectModel && (
-            <div className="chat-input-controls">
-              <div className="chat-input-model-controls">
-                <Select
-                  value={effectiveProvider}
-                  onValueChange={handleProviderSelect}
-                  disabled={selectionDisabled}
-                >
-                  <SelectTrigger
-                    className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto"
-                    aria-label="Select provider"
-                    title={providerPickerDisabledReason ?? getProviderDisplayName(effectiveProvider)}
-                  >
-                    <div className="chat-input-select__value">
-                      <SourceIcon source={effectiveProvider} size={14} />
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent side="top" className="chat-input-select__content">
-                    <SelectGroup>
-                      <SelectLabel className="chat-input-select__label">Provider</SelectLabel>
-                      {orderedProviders.map((candidateProvider) => (
-                        <SelectItem key={candidateProvider} value={candidateProvider}>
-                          <span className="chat-input-select__item">
-                            <SourceIcon source={candidateProvider} size={14} />
-                            <span>{getProviderDisplayName(candidateProvider)}</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={resolvedModelValue}
-                  onValueChange={handleModelSelect}
-                  disabled={selectionDisabled}
-                >
-                  <SelectTrigger
-                    className="chat-input-select chat-input-select--model !w-auto"
-                    aria-label="Select model"
-                    title={providerPickerDisabledReason ?? 'Select model'}
-                  >
-                    <div className="chat-input-select__value">
-                      <span className="chat-input-select__text">
-                        {resolvedModelLabel}
-                      </span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent side="top" className="chat-input-select__content">
-                    <SelectGroup>
-                      <SelectLabel className="chat-input-select__label">Model</SelectLabel>
-                      {modelOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  value={resolvedReasoning}
-                  onValueChange={handleReasoningSelect}
-                  disabled={
-                    selectionDisabled ||
-                    (reasoningOptions.length === 1 && Boolean(reasoningOptions[0]?.disabled))
-                  }
-                >
-                  <SelectTrigger
-                    className="chat-input-select chat-input-select--reasoning !w-auto"
-                    aria-label="Select reasoning effort"
-                    title={providerPickerDisabledReason ?? 'Select reasoning effort'}
-                  >
-                    <div className="chat-input-select__value">
-                      <BrainIcon />
-                      <span className="chat-input-select__text">
-                        {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ?? 'Auto'}
-                      </span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent side="top" className="chat-input-select__content">
-                    <SelectGroup>
-                      <SelectLabel className="chat-input-select__label">Effort</SelectLabel>
-                      {reasoningOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value} disabled={option.disabled}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-
-                {onWorktreeChange && (
-                  <BranchIndicator
-                    currentBranch={currentBranch ?? null}
-                    worktreePath={worktreePath ?? null}
-                    projectId={projectId ?? null}
-                    onWorktreeChange={onWorktreeChange}
-                    disabled={disabled || worktreePickerDisabled}
-                    variant="select"
-                  />
-                )}
-
-              </div>
-            </div>
+            <ChatInputModelControls
+              currentBranch={currentBranch}
+              disabled={disabled}
+              effectiveProvider={effectiveProvider}
+              modelOptions={modelOptions}
+              onModelSelect={handleModelSelect}
+              onProviderSelect={handleProviderSelect}
+              onReasoningSelect={handleReasoningSelect}
+              onWorktreeChange={onWorktreeChange}
+              orderedProviders={orderedProviders}
+              projectId={projectId}
+              providerPickerDisabledReason={providerPickerDisabledReason}
+              reasoningOptions={reasoningOptions}
+              resolvedModelLabel={resolvedModelLabel}
+              resolvedModelValue={resolvedModelValue}
+              resolvedReasoning={resolvedReasoning}
+              selectionDisabled={selectionDisabled}
+              worktreePath={worktreePath}
+              worktreePickerDisabled={worktreePickerDisabled}
+            />
           )}
           {showObserveOverlay && (
             <div className="chat-input-overlay">
@@ -1017,74 +863,5 @@ export function ChatInput({
         </div>
       </div>
     </div>
-  )
-}
-
-function SendIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="22" y1="2" x2="11" y2="13" />
-      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-    </svg>
-  )
-}
-
-function StopIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-      <rect x="3" y="3" width="10" height="10" rx="1" />
-    </svg>
-  )
-}
-
-function MicIcon({ muted = false }: { muted?: boolean } = {}) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" y1="19" x2="12" y2="23" />
-      <line x1="8" y1="23" x2="16" y2="23" />
-      {muted && <line x1="3" y1="3" x2="21" y2="21" />}
-    </svg>
-  )
-}
-
-function PaperclipIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  )
-}
-
-function SpeakerIcon({ muted = false }: { muted?: boolean }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      {muted ? (
-        <>
-          <line x1="22" y1="9" x2="16" y2="15" />
-          <line x1="16" y1="9" x2="22" y2="15" />
-        </>
-      ) : (
-        <>
-          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-        </>
-      )}
-    </svg>
-  )
-}
-
-function BrainIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9.5 2A3.5 3.5 0 0 0 6 5.5v1A2.5 2.5 0 0 0 3.5 9v1.5A2.5 2.5 0 0 0 6 13v3a4 4 0 0 0 4 4" />
-      <path d="M14.5 2A3.5 3.5 0 0 1 18 5.5v1A2.5 2.5 0 0 1 20.5 9v1.5A2.5 2.5 0 0 1 18 13v3a4 4 0 0 1-4 4" />
-      <path d="M9 8h1" />
-      <path d="M14 8h1" />
-      <path d="M9 12h6" />
-      <path d="M12 13v5" />
-    </svg>
   )
 }
