@@ -122,10 +122,11 @@ resulting `~/.gobby/bin/ghook` and stamp files, and then runs the live
 The runner suite uses the same Gobby-managed hook command that installers
 prefer locally today, then rewrites the `--gobby-owned` branch into
 `--diagnose`. That keeps the check aligned to the currently installed `ghook`
-binary and the mirrored `schemas/diagnose-output.v1.schema.json` contract.
+binary and the mirrored `schemas/diagnose-output.v2.schema.json` contract.
 
 If the Rust-side diagnose schema changes:
 
-1. Mirror the schema into `schemas/`.
+1. Mirror the new active schema into `schemas/` and keep older versioned schemas
+   frozen for compatibility.
 2. Update the runner expectations in `tests/integration/sandbox/runner.py`.
 3. Re-run `uv run pytest tests/integration/sandbox/ -v --run-sandbox`.
