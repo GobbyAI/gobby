@@ -8,7 +8,6 @@ import json
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
@@ -17,17 +16,6 @@ pytestmark = pytest.mark.unit
 
 class TestLoadAgentBody:
     """_load_agent_body loads from workflow_definitions."""
-
-    @pytest.fixture
-    def db(self, tmp_path) -> LocalDatabase:
-        db_path = tmp_path / "test_load_agent.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
-        return database
-
-    @pytest.fixture
-    def manager(self, db: LocalDatabase) -> LocalWorkflowDefinitionManager:
-        return LocalWorkflowDefinitionManager(db)
 
     def test_loads_existing_agent(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager

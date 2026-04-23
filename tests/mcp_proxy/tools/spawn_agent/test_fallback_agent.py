@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -17,17 +16,6 @@ pytestmark = pytest.mark.unit
 
 class TestFallbackAgent:
     """Tests for fallback_agent provider rotation in the spawn factory."""
-
-    @pytest.fixture
-    def db(self, tmp_path) -> LocalDatabase:
-        db_path = tmp_path / "test_fallback.db"
-        database = LocalDatabase(db_path)
-        run_migrations(database)
-        return database
-
-    @pytest.fixture
-    def manager(self, db: LocalDatabase) -> LocalWorkflowDefinitionManager:
-        return LocalWorkflowDefinitionManager(db)
 
     def _create_agent(
         self,
