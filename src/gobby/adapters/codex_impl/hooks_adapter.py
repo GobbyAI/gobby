@@ -147,7 +147,13 @@ class CodexHooksAdapter(BaseAdapter):
                     "permissionDecisionReason": retry_reason,
                 },
             }
-            retry_result["systemMessage"] = truncate_additional_context("\n\n".join(retry_parts))
+            retry_result["systemMessage"] = truncate_additional_context(
+                "\n\n".join(retry_parts),
+                contributor_sizes={
+                    f"retry_part_{idx}": len(part) for idx, part in enumerate(retry_parts, start=1)
+                },
+                logger=logger,
+            )
             return retry_result
 
         if response.decision in ("deny", "block"):
@@ -172,7 +178,12 @@ class CodexHooksAdapter(BaseAdapter):
                     system_parts.append(response.context)
                 if system_parts:
                     deny_result["systemMessage"] = truncate_additional_context(
-                        "\n\n".join(system_parts)
+                        "\n\n".join(system_parts),
+                        contributor_sizes={
+                            f"system_part_{idx}": len(part)
+                            for idx, part in enumerate(system_parts, start=1)
+                        },
+                        logger=logger,
                     )
                 return deny_result
 
@@ -184,11 +195,11 @@ class CodexHooksAdapter(BaseAdapter):
         result: dict[str, Any] = {"continue": True}
 
         # Build additionalContext from all context sources
-        context_parts: list[str] = []
+        context_parts: list[tuple[str, str]] = []
 
         # Workflow-injected context (inject_context action)
         if response.context:
-            context_parts.append(response.context)
+            context_parts.append(("response.context", response.context))
 
         session_start_hook = hook_event_name == "SessionStart"
 
@@ -201,7 +212,7 @@ class CodexHooksAdapter(BaseAdapter):
                 result["systemMessage"] = response.system_message
             else:
                 # Always feed to model via additionalContext
-                context_parts.insert(0, response.system_message)
+                context_parts.insert(0, ("system_message", response.system_message))
 
         # Session metadata (Gobby session ID, terminal context, etc.)
         if response.metadata:
@@ -217,12 +228,16 @@ class CodexHooksAdapter(BaseAdapter):
                     include_tty=False,
                 )
                 if context_lines:
-                    context_parts.append("\n".join(context_lines))
+                    context_parts.append(("metadata", "\n".join(context_lines)))
 
         # Build hookSpecificOutput or systemMessage based on event type.
         # PreToolUse/Stop only accept systemMessage — additionalContext is rejected.
         if context_parts:
-            combined_context = truncate_additional_context("\n\n".join(context_parts))
+            combined_context = truncate_additional_context(
+                "\n\n".join(part for _, part in context_parts),
+                contributor_sizes={label: len(part) for label, part in context_parts},
+                logger=logger,
+            )
             if hook_event_name in self.SYSTEM_MESSAGE_ONLY_EVENTS:
                 # Append to existing systemMessage (from system_message routing above)
                 # instead of overwriting it.

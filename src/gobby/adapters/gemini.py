@@ -347,17 +347,17 @@ class GeminiAdapter(BaseAdapter):
 
         # Build hookSpecificOutput based on hook type
         hook_specific: dict[str, Any] = {}
-        context_parts: list[str] = []
+        context_parts: list[tuple[str, str]] = []
 
         # Add context injection if present
         if response.context:
-            context_parts.append(response.context)
+            context_parts.append(("response.context", response.context))
 
         # SessionStart startup context should be injected once via
         # additionalContext, not duplicated into systemMessage.
         if response.system_message:
             if session_start_hook:
-                context_parts.insert(0, response.system_message)
+                context_parts.insert(0, ("system_message", response.system_message))
             else:
                 result["systemMessage"] = response.system_message
 
@@ -376,7 +376,7 @@ class GeminiAdapter(BaseAdapter):
                     ),
                 )
                 if context_lines:
-                    context_parts.append("\n".join(context_lines))
+                    context_parts.append(("metadata", "\n".join(context_lines)))
 
         if resolved_hook_type in hooks_with_context and context_parts and hook_event_name:
             hook_specific["hookEventName"] = hook_event_name
@@ -391,7 +391,9 @@ class GeminiAdapter(BaseAdapter):
 
         if context_parts:
             hook_specific["additionalContext"] = truncate_additional_context(
-                "\n\n".join(context_parts)
+                "\n\n".join(part for _, part in context_parts),
+                contributor_sizes={label: len(part) for label, part in context_parts},
+                logger=logger,
             )
 
         # Only add hookSpecificOutput if there's content

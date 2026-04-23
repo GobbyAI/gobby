@@ -1237,32 +1237,13 @@ class TestSyntheticCodexMcpAfterTool:
     async def test_proxy_schema_after_tool_injects_task_creation(
         self, mock_mcp_manager, mock_internal_manager, temp_db
     ) -> None:
-        """Codex terminal proxy schema shims should resolve #N refs before injecting skills."""
+        """Codex terminal proxy schema shims should resolve #N refs before directives."""
         sync_bundled_rules(temp_db, get_bundled_rules_path())
         temp_db.execute(
             "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
         )
 
-        async def mock_dispatcher(
-            server_name: str, tool_name: str, arguments: dict[str, object], event: object
-        ) -> dict[str, object]:
-            assert server_name == "gobby-skills"
-            assert tool_name == "get_skill"
-            assert arguments["name"] == "task-creation"
-            return {
-                "success": True,
-                "result": {
-                    "success": True,
-                    "skill": {
-                        "name": "task-creation",
-                        "content": "# Task creation",
-                    },
-                },
-            }
-
-        workflow_handler = WorkflowHookHandler(
-            rule_engine=RuleEngine(db=temp_db, mcp_dispatcher=mock_dispatcher)
-        )
+        workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=temp_db))
 
         session = SimpleNamespace(
             source="codex",
@@ -1303,7 +1284,8 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         variables = SessionVariableManager(temp_db).get_variables(resolved_session_id)
-        assert "task-creation" in variables.get("injected_skills", [])
+        assert "task-creation" not in variables.get("loaded_skills", [])
+        assert "task-creation" not in variables.get("injected_skills", [])
 
 
 class TestStripUnknownParameters:

@@ -148,16 +148,16 @@ class ClaudeCodeAdapter(BaseAdapter):
         if not contract or not contract.allows_additional_context:
             return None
 
-        additional_context_parts: list[str] = []
+        additional_context_parts: list[tuple[str, str]] = []
         session_start_hook = contract.hook_event_name == "SessionStart"
 
         # SessionStart startup context should be injected once through
         # additionalContext, not duplicated into systemMessage.
         if response.system_message and session_start_hook:
-            additional_context_parts.append(response.system_message)
+            additional_context_parts.append(("system_message", response.system_message))
 
         if response.context:
-            additional_context_parts.append(response.context)
+            additional_context_parts.append(("response.context", response.context))
 
         if response.metadata:
             context_lines = build_first_hook_session_metadata_lines(
@@ -168,12 +168,17 @@ class ClaudeCodeAdapter(BaseAdapter):
                 ),
             )
             if context_lines:
-                additional_context_parts.append("\n".join(context_lines))
+                additional_context_parts.append(("metadata", "\n".join(context_lines)))
 
         if not additional_context_parts:
             return None
 
-        return truncate_additional_context("\n\n".join(additional_context_parts))
+        contributor_sizes = {label: len(part) for label, part in additional_context_parts}
+        return truncate_additional_context(
+            "\n\n".join(part for _, part in additional_context_parts),
+            contributor_sizes=contributor_sizes,
+            logger=logger,
+        )
 
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None

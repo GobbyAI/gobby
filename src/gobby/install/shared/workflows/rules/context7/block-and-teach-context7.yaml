@@ -2,13 +2,13 @@ tags: [context7, documentation, gobby, default]
 
 rules:
   block-and-teach-context7:
-    description: "Block first code file write/edit, inject context7 skill to teach library doc lookup"
+    description: "Block first code file write/edit, require context7 skill for library doc lookup"
     event: before_tool
     enabled: true
     priority: 31
     when: >
       variables.get('context7_available', true)
-      and 'context7' not in variables.get('injected_skills', [])
+      and not skill_loaded('context7')
       and event.data.get('canonical_tool_kind') == 'write'
       and event.data.get('canonical_file_path', '').rpartition('.')[2]
           in ('py', 'rs', 'ts', 'tsx', 'js', 'jsx', 'go', 'java', 'rb',
@@ -21,13 +21,4 @@ rules:
           For internal changes (type annotations, refactors, stdlib usage, pure logic
           fixes), you can proceed without checking — context7 is only valuable at
           external library boundaries.
-          See the context7 skill injected below for usage.
-      - type: mcp_call
-        server: gobby-skills
-        tool: get_skill
-        arguments:
-          name: context7
-        inject_result: true
-      - type: set_variable
-        variable: injected_skills
-        value: "variables.get('injected_skills', []) + ['context7']"
+          Call get_skill(name="context7") on gobby-skills, then continue.

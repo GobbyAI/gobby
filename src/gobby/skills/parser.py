@@ -95,8 +95,8 @@ class ParsedSkill:
         scripts: List of script file paths (relative to skill dir)
         references: List of reference file paths (relative to skill dir)
         assets: List of asset file paths (relative to skill dir)
-        always_apply: Whether skill should always be injected at session start
-        injection_format: How to inject skill (summary, full, content)
+        always_apply: Whether skill should always be advertised at session start
+        injection_format: Manifest selection format (summary, full, content)
         audience_config: Agent-type-aware audience configuration (from metadata.gobby)
         internal: Methodology skill loaded by other skills via get_skill; hidden from listings
     """

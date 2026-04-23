@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, lifecycle, gobby, default]
 
 rules:
   inject-transition-skill:
-    description: "Inject task-transitions skill when agent fetches schema for lifecycle tools"
+    description: "Prompt for task-transitions skill when agent fetches schema for lifecycle tools"
     event: after_tool
     enabled: true
     priority: 25
@@ -11,14 +11,7 @@ rules:
        or event.data.get('tool_name') in ('get_tool_schema', 'mcp__gobby__get_tool_schema'))
       and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
       and (tool_input.get('tool_name') or tool_input.get('tool')) in ('close_task', 'mark_task_needs_review', 'mark_task_review_approved', 'mark_task_review_rejected', 'reopen_task', 'escalate_task', 'de_escalate_task')
-      and 'task-transitions' not in variables.get('injected_skills', [])
+      and not skill_loaded('task-transitions')
     effects:
-      - type: mcp_call
-        server: gobby-skills
-        tool: get_skill
-        arguments:
-          name: task-transitions
-        inject_result: true
-      - type: set_variable
-        variable: injected_skills
-        value: "variables.get('injected_skills', []) + ['task-transitions']"
+      - type: inject_context
+        template: 'Call get_skill(name="task-transitions") on gobby-skills, then continue.'

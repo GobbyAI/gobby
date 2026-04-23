@@ -24,7 +24,7 @@ instructions: |
 
   METHODOLOGY:
   After claiming your task, your first action MUST be to load the `plan-review`
-  skill via `get_skill(name="plan-review")` on `gobby-skills`. Follow that
+  skill. Call get_skill(name="plan-review") on gobby-skills, then continue. Follow that
   skill's heuristics EXACTLY — attitude, method, traceability, gobby-specific
   checks, severity-based escalation policy, round-scoped findings heading, and
   halt conditions. Do not manufacture findings. Do not approve without a
@@ -92,7 +92,7 @@ steps:
   - name: load_skill
     description: "Load the plan-review methodology skill"
     status_message: |
-      Call `get_skill(name="plan-review")` on `gobby-skills` before reviewing.
+      Call get_skill(name="plan-review") on gobby-skills, then continue before reviewing.
       The returned skill content is the authoritative methodology for this
       agent and must be followed exactly.
     allowed_tools:

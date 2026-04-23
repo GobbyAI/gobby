@@ -190,8 +190,8 @@ class SkillManager:
             source_type: Source type
             source_ref: Git ref for updates
             enabled: Whether skill is active
-            always_apply: Whether skill should always be injected
-            injection_format: How to inject skill (summary, full, content)
+            always_apply: Whether skill should always be advertised
+            injection_format: Manifest selection format (summary, full, content)
             project_id: Project scope (uses default if not specified)
             source: 'template' or 'installed' (default 'installed')
             **kwargs: Additional fields passed to storage

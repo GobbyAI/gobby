@@ -8,15 +8,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.skills.formatting import recommend_skills_for_task, render_skills_for_context
+from gobby.skills.formatting import (
+    format_skill_fetch_context,
+    recommend_skills_for_task,
+    render_skills_for_context,
+    skill_fetch_directive,
+)
 
 pytestmark = pytest.mark.unit
 
 
 class TestRenderSkillsForContext:
-    """Tests for render_skills_for_context injection formats."""
+    """Tests for render_skills_for_context manifests."""
 
-    def test_summary_skills_render_as_compact_list(self) -> None:
+    def test_summary_skills_render_as_active_manifest(self) -> None:
         skill = SimpleNamespace(
             name="plan-review",
             description="Review a gobby plan document.",
@@ -25,11 +30,12 @@ class TestRenderSkillsForContext:
 
         rendered = render_skills_for_context([(skill, "summary")])
 
-        assert "### Skill Summaries" in rendered
-        assert "- `plan-review`: Review a gobby plan document." in rendered
+        assert "<active_skills>" in rendered
+        assert "- name: plan-review" in rendered
+        assert 'ref: gobby-skills:get_skill name="plan-review"' in rendered
         assert "# Full content" not in rendered
 
-    def test_full_and_summary_skills_render_together(self) -> None:
+    def test_full_and_summary_skills_render_manifest_only(self) -> None:
         full_skill = SimpleNamespace(
             name="bridge",
             description="UI annotation workflow.",
@@ -43,12 +49,34 @@ class TestRenderSkillsForContext:
 
         rendered = render_skills_for_context([(full_skill, "full"), (summary_skill, "summary")])
 
-        assert "### bridge" in rendered
-        assert "# Bridge content" in rendered
-        assert "### Skill Summaries" in rendered
-        assert "- `brevity`: Terse output mode." in rendered
-        # Summary-mode skills must NOT have their full content injected.
+        assert "- name: bridge" in rendered
+        assert "- name: brevity" in rendered
+        assert 'ref: gobby-skills:get_skill name="bridge"' in rendered
+        assert 'ref: gobby-skills:get_skill name="brevity"' in rendered
+        assert "# Bridge content" not in rendered
         assert "# Brevity content" not in rendered
+
+    def test_deduplicates_manifest_entries(self) -> None:
+        skill = SimpleNamespace(name="brevity", description="", content="body")
+
+        rendered = render_skills_for_context([(skill, "full"), (skill, "summary")])
+
+        assert rendered.count("- name: brevity") == 1
+        assert "body" not in rendered
+
+
+class TestSkillFetchDirectives:
+    def test_skill_fetch_directive_is_canonical(self) -> None:
+        assert (
+            skill_fetch_directive("plan")
+            == 'Call get_skill(name="plan") on gobby-skills, then continue.'
+        )
+
+    def test_format_skill_fetch_context_preserves_args(self) -> None:
+        rendered = format_skill_fetch_context("plan", "draft auth flow")
+
+        assert 'Call get_skill(name="plan") on gobby-skills, then continue.' in rendered
+        assert "User arguments: draft auth flow" in rendered
 
 
 class TestRecommendSkillsForTask:

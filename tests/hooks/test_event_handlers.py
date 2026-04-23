@@ -2446,7 +2446,7 @@ class TestSkillToolInterception:
     def test_skill_tool_resolves_gobby_skill(
         self, handlers_with_skills: EventHandlers, skill_manager: MagicMock
     ) -> None:
-        """Skill tool call with a gobby skill name blocks and injects context."""
+        """Skill tool call with a gobby skill name blocks with fetch directive."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Skill", "tool_input": {"skill": "test-battery"}},
@@ -2454,9 +2454,11 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert '<skill-context name="test-battery">' in response.context
-        assert "# Test Battery" in response.context
-        assert "</skill-context>" in response.context
+        assert 'Call get_skill(name="test-battery") on gobby-skills, then continue.' in (
+            response.context or ""
+        )
+        assert "# Test Battery" not in (response.context or "")
+        assert "<skill-context" not in (response.context or "")
         skill_manager.resolve_skill_name.assert_called_once_with("test-battery")
 
     def test_skill_tool_with_gobby_prefix(
@@ -2470,7 +2472,9 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert '<skill-context name="test-battery">' in response.context
+        assert 'Call get_skill(name="test-battery") on gobby-skills, then continue.' in (
+            response.context or ""
+        )
         skill_manager.resolve_skill_name.assert_called_once_with("test-battery")
 
     def test_skill_tool_with_args(self, handlers_with_skills: EventHandlers) -> None:
@@ -2575,8 +2579,11 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert '<skill-context name="playwright">' in response.context
-        assert "Browser automation" in response.context
+        assert 'Call get_skill(name="playwright") on gobby-skills, then continue.' in (
+            response.context or ""
+        )
+        assert "Browser automation" not in (response.context or "")
+        assert "<skill-context" not in (response.context or "")
         mock_call_tool.assert_any_call("gobby-skills", "get_skill", {"name": "playwright"})
 
     def test_skill_tool_tier3_hub_nudge(
@@ -2663,4 +2670,6 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert '<skill-context name="playwright">' in response.context
+        assert 'Call get_skill(name="playwright") on gobby-skills, then continue.' in (
+            response.context or ""
+        )

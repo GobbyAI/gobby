@@ -52,7 +52,7 @@ def select_and_format_agent_skills(
 ) -> tuple[str | None, int, list[str]]:
     """Audience-aware skill selection and formatting for agent activation.
 
-    Shared between session activation and web chat skill injection.
+    Shared between session activation and web chat skill manifest building.
 
     Args:
         agent_body: Resolved agent definition body

@@ -12,12 +12,12 @@ You have been invoked as the `/gobby` help command.
 
 ## What to Do
 
-1. If this is a bare `/gobby` or `/gobby help` invocation (no skill-context block below), show the user what's available:
+1. If this is a bare `/gobby` or `/gobby help` invocation, show the user what's available:
    - Run `list_mcp_servers()` and `list_skills()` on the gobby-skills server if not already done this session
    - Show available skills with `/gobby skillname` invocation syntax
    - Show available MCP servers
 
-2. If invoked as `/gobby skillname`, the skill content has **already been injected** into your context via hooks. Look for a `<skill-context>` block in the system context above this message and follow those instructions directly. Do **NOT** call `get_skill()` again — the content is already present.
+2. If invoked as `/gobby skillname`, hooks provide a directive instead of the skill body. Call get_skill(name="<skill>") on gobby-skills, then continue with the user's arguments.
 
 ## Skill Invocation
 

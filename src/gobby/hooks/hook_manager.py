@@ -640,9 +640,7 @@ class HookManager:
                 if dr.get("block_on_success") and dr.get("success"):
                     block_override = HookResponse(
                         decision="block",
-                        reason=(
-                            f"Intercepted by {dr['server']}/{dr['tool']} — results injected below."
-                        ),
+                        reason=(f"Intercepted by {dr['server']}/{dr['tool']} — see context below."),
                         context="\n\n".join(extra_context) if extra_context else None,
                     )
                     break

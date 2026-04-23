@@ -520,19 +520,19 @@ class ChatMessagingMixin:
                     except Exception:
                         logger.debug("Failed to set session status to active", exc_info=True)
 
-            # Enrich content with inject_context for SDK (invisible to chat UI)
+            # Enrich content with hook context for SDK (invisible to chat UI)
             sdk_content = content
             if inject_context and isinstance(inject_context, str):
                 if isinstance(sdk_content, str):
                     sdk_content = (
-                        f"{sdk_content}\n\n<skill-context>\n{inject_context}\n</skill-context>"
+                        f"{sdk_content}\n\n<gobby-context>\n{inject_context}\n</gobby-context>"
                     )
                 elif isinstance(sdk_content, list):
                     # For content blocks, append context as an additional text block
                     sdk_content = sdk_content + [
                         {
                             "type": "text",
-                            "text": f"\n\n<skill-context>\n{inject_context}\n</skill-context>",
+                            "text": f"\n\n<gobby-context>\n{inject_context}\n</gobby-context>",
                         }
                     ]
 

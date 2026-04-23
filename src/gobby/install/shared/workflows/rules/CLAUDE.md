@@ -9,9 +9,9 @@ This directory contains 16 bundled rule groups. These are **templates** — they
 | `worker-safety` | `worker-safety/` | 7 | Block git push (global + worker-scoped), force push, destructive git, bash sleep, agent spawn from merge, external GitHub issues |
 | `tool-hygiene` | `tool-hygiene/` | 2 | Require `uv` for Python, track pending memory review |
 | `progressive-discovery` | `progressive-discovery/` | 7 | Enforce MCP discovery order: list_servers → list_tools → get_schema → call_tool |
-| `task-enforcement` | `task-enforcement/` | 8 | Block native task tools, require task before edit, track claims, require commits before status, block validation skip, block needs_review and review_approved for interactive, require error triage before status |
+| `task-enforcement` | `task-enforcement/` | 11 | Block native task tools, require task before edit, track claims, require lifecycle skills, require commits before status, block validation skip, block needs_review and review_approved for interactive, require error triage before status |
 | `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before a turn can end |
-| `plan-mode` | `plan-mode/` | 3 | Detect enter/exit plan mode, reset on session start |
+| `plan-mode` | `plan-mode/` | 4 | Detect enter/exit plan mode, prompt for plan skill, reset on session start |
 | `memory-lifecycle` | `memory-lifecycle/` | 6 | Memory recall, digest, capture, title generation, tracking reset |
 | `context-handoff` | `context-handoff/` | 7 | Session summary injection (clear/compact/resume), task context, baseline dirty files |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
@@ -19,8 +19,8 @@ This directory contains 16 bundled rule groups. These are **templates** — they
 | `pipeline-enforcement` | `pipeline-enforcement/` | 1 | Auto-run assigned pipeline on session start |
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
-| `skill-discovery` | `skill-discovery/` | 3 | Inject language skills on first file read, reset injection tracking on context loss |
-| `context7` | `context7/` | 1 | Block first code file write/edit, inject context7 docs skill |
+| `skill-discovery` | `skill-discovery/` | 3 | Require language skills on first file write, reset loading tracking on context loss |
+| `context7` | `context7/` | 1 | Block first code file write/edit, require context7 docs skill |
 | `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
 
 ## File Convention

@@ -174,7 +174,7 @@ class RuleEffect(BaseModel):
     elicitation_content: dict[str, Any] | None = None
     elicitation_error: str | None = None
 
-    # load_skill — resolve and inject a skill's content into agent context
+    # load_skill — emit an on-demand skill fetch directive into agent context
     skill: str | None = None
 
     def model_post_init(self, __context: Any) -> None:

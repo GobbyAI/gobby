@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse, SessionSource
+from gobby.skills.formatting import format_skill_fetch_context, skill_fetch_directive
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def _inject_agent_instructions_if_needed(
         self, event: HookEvent, session_id: str, response: HookResponse
     ) -> None:
-        """Format and inject agent instructions on first before_agent.
+        """Format agent instructions and active-skill manifests on first before_agent.
 
         Everything needed is already in DB from SessionStart activation:
         - Agent name: _agent_type session variable
@@ -190,7 +191,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if agent_body.instructions:
             parts.append(f"## Instructions\n{agent_body.instructions}")
 
-        # Format skills list
+        # Format active skill manifest
         from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
         from gobby.skills.manager import SkillManager
 
@@ -219,7 +220,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def _intercept_skill_command(self, prompt: str, session_id: str | None = None) -> str | None:
         """Intercept /gobby and /gobby skillname commands.
 
-        Returns context string to inject, or None if not a /gobby command.
+        Returns context string to add, or None if not a /gobby command.
         Supports space syntax (/gobby expand) and legacy colon syntax.
         """
         match = _GOBBY_CMD_PATTERN.match(prompt)
@@ -253,7 +254,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not skill_name or skill_name.lower() == "help":
             return self._generate_help_content(session_id)
 
-        # /gobby skillname → resolve and inject
+        # /gobby skillname → resolve and direct the agent to fetch it on demand
         if self._skill_manager is None:
             raise RuntimeError("skill_manager not initialized")
         skill = resolved if resolved else self._skill_manager.resolve_skill_name(skill_name)
@@ -261,15 +262,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         if not skill:
             return self._skill_not_found_context(skill_name)
 
-        # Wrap skill content in context tags
-        parts = [f'<skill-context name="{skill.name}">']
-        parts.append(skill.content)
-        parts.append("</skill-context>")
-
-        if args:
-            parts.append(f"\nUser arguments: {args}")
-
-        return "\n".join(parts)
+        return format_skill_fetch_context(skill.name, args)
 
     def _suggest_skills(self, prompt: str) -> str | None:
         """Suggest skills based on trigger keyword matching.
@@ -289,7 +282,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return None
 
         skill, score = matches[0]
-        fallback = f'Relevant skill available: `get_skill(name="{skill.name}")` on `gobby-skills`'
+        fallback = f"Relevant skill available. {skill_fetch_directive(skill.name)}"
         return _load_agent_prompt("skill-hint", {"skill_name": skill.name}, fallback)
 
     def _generate_help_content(self, session_id: str | None = None) -> str:
@@ -312,7 +305,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             except Exception:
                 pass
 
-        # Sort alphabetically, skip always-apply skills (they're auto-injected)
+        # Sort alphabetically, skip always-apply skills (already advertised)
         user_skills = sorted(
             [s for s in skills if not s.is_always_apply()],
             key=lambda s: s.name,

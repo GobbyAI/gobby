@@ -1,5 +1,5 @@
 name: default
-description: Baseline agent — loads default-tagged rules; skills inject on-demand via rules
+description: Baseline agent — loads default-tagged rules; skills load on demand via rules
 sources: [claude, gemini, qwen, codex]
 surfaces: [spawn, persona]
 provider: inherit
@@ -69,8 +69,8 @@ workflows:
       - "tag:default"
   skill_selectors:
     include: []
-    # Skills inject on-demand via rules (brevity on first turn, code-index on
+    # Skills load on demand via rules (brevity on first turn, code-index on
     # first code read/search, etc.). Keep the default agent lean — other skills
-    # stay on-demand via get_skill() MCP.
+    # stay on-demand via get_skill(name="...") on gobby-skills.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   variables: {}

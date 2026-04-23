@@ -1,5 +1,7 @@
 """Tests for shared SDK utilities in gobby.llm.sdk_utils."""
 
+import logging
+
 import pytest
 
 from gobby.llm.sdk_utils import (
@@ -81,6 +83,23 @@ class TestTruncateAdditionalContext:
         text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
         result = truncate_additional_context(text)
         assert result.endswith("\n... [truncated]")
+
+    def test_over_limit_logs_warning_with_contributor_sizes(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        text = "x" * (ADDITIONAL_CONTEXT_LIMIT + 100)
+        logger = logging.getLogger("tests.additional_context")
+
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            truncate_additional_context(
+                text,
+                contributor_sizes={"skills": 6000, "metadata": 4050},
+                logger=logger,
+            )
+
+        assert "additionalContext truncated" in caplog.text
+        assert f"aggregate_len={len(text)}" in caplog.text
+        assert "contributors={'skills': 6000, 'metadata': 4050}" in caplog.text
 
     def test_empty_string(self) -> None:
         assert truncate_additional_context("") == ""

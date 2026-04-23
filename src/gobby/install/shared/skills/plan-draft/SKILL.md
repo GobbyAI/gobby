@@ -13,7 +13,7 @@ metadata:
 
 # plan-draft — Gobby Plan Drafting Methodology
 
-> Internal methodology skill; invoked via `get_skill` from `/gobby plan` and autonomous agents. Not a user-facing command.
+> Internal methodology skill; loaded with `get_skill(name="plan-draft")` from `/gobby plan` and autonomous agents. Not a user-facing command.
 
 This skill is the single source of truth for **how to write a gobby plan document**.
 

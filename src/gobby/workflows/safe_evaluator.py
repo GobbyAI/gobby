@@ -457,10 +457,20 @@ def build_condition_helpers(
             return False
         return bool(result.get(field) == value)
 
+    def _skill_loaded(name: str) -> bool:
+        """Check canonical and legacy skill ledgers."""
+        variables = _get_variables(ctx)
+        ledgers = (
+            variables.get("loaded_skills", []),
+            variables.get("injected_skills", []),
+        )
+        return any(isinstance(ledger, list) and name in ledger for ledger in ledgers)
+
     funcs["mcp_called"] = _mcp_called
     funcs["mcp_result_is_null"] = _mcp_result_is_null
     funcs["mcp_failed"] = _mcp_failed
     funcs["mcp_result_has"] = _mcp_result_has
+    funcs["skill_loaded"] = _skill_loaded
 
     # --- Plugin conditions ---
 

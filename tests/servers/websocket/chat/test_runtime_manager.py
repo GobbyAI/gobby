@@ -28,6 +28,12 @@ from gobby.sessions.transcripts.base import ParsedMessage
 
 pytestmark = pytest.mark.unit
 
+PYTHON_SKILL_DIRECTIVE = 'Call get_skill(name="python") on gobby-skills, then continue.'
+CODE_INDEX_SKILL_DIRECTIVE = 'Call get_skill(name="code-index") on gobby-skills, then continue.'
+TASK_TRANSITIONS_SKILL_DIRECTIVE = (
+    'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
+)
+
 
 def _async_stream(*items: Any):
     async def _gen():
@@ -176,9 +182,9 @@ class TestGeminiBackend:
         session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
         session._connected = True
         session.sdk_session_id = "sess-1"
-        session._on_pre_tool = AsyncMock(return_value={"context": '<skill name="python">...'})
+        session._on_pre_tool = AsyncMock(return_value={"context": PYTHON_SKILL_DIRECTIVE})
         session._on_post_tool = AsyncMock(
-            return_value={"context": '<skill name="task-transitions">...'}
+            return_value={"context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
         )
 
         first_events = [event async for event in session.send_message("first")]
@@ -197,10 +203,8 @@ class TestGeminiBackend:
             }
         )
         assert isinstance(second_events[-1], DoneEvent)
-        assert '<skill name="python">...' in backend.send_message.call_args_list[1].args[1]
-        assert (
-            '<skill name="task-transitions">...' in backend.send_message.call_args_list[1].args[1]
-        )
+        assert PYTHON_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
+        assert TASK_TRANSITIONS_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
 
 
 class TestQwenBackend:
@@ -491,7 +495,7 @@ class TestCodexBackend:
         session.chat_mode = "accept_edits"
         session._thread_id = "thread-1"
         session._on_pre_tool = AsyncMock(
-            return_value={"decision": "block", "context": '<skill name="task-transitions">...'}
+            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
         )
         backend._sessions_by_thread["thread-1"] = session
 
@@ -521,7 +525,7 @@ class TestCodexBackend:
                 "tool_input": {"server_name": "gobby-tasks", "tool_name": "close_task"},
             }
         )
-        assert session._consume_deferred_context() == '<skill name="task-transitions">...'
+        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_send_message_replays_deferred_context_prefix(self) -> None:
@@ -534,16 +538,13 @@ class TestCodexBackend:
         session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
         session._connected = True
         session._thread_id = "thread-1"
-        session._deferred_contexts.append('<skill name="code-index">...')
+        session._deferred_contexts.append(CODE_INDEX_SKILL_DIRECTIVE)
 
         events = [event async for event in session.send_message("hello")]
 
         assert isinstance(events[-1], DoneEvent)
         assert backend.send_message.call_args.kwargs["context_prefix"] is not None
-        assert (
-            '<skill name="code-index">...'
-            in backend.send_message.call_args.kwargs["context_prefix"]
-        )
+        assert CODE_INDEX_SKILL_DIRECTIVE in backend.send_message.call_args.kwargs["context_prefix"]
 
     @pytest.mark.asyncio
     async def test_send_message_applies_post_tool_lifecycle_for_completed_items(self) -> None:
@@ -593,7 +594,7 @@ class TestCodexBackend:
         session._connected = True
         session._thread_id = "thread-1"
         session._on_post_tool = AsyncMock(
-            return_value={"context": '<skill name="task-transitions">...'}
+            return_value={"context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
         )
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
@@ -610,7 +611,7 @@ class TestCodexBackend:
                 "mcp_tool": "close_task",
             }
         )
-        assert session._consume_deferred_context() == '<skill name="task-transitions">...'
+        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_send_message_normalizes_realistic_completed_mcp_items(self) -> None:

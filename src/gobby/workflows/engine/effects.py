@@ -247,26 +247,10 @@ class EffectsMixin:
                 )
 
         elif effect.type == "load_skill":
-            if effect.skill and self._skill_manager:
-                try:
-                    skill = self._skill_manager.resolve_skill_name(effect.skill)
-                    if skill:
-                        context_parts.append(
-                            f'<skill name="{skill.name}">\n{skill.content}\n</skill>'
-                        )
-                    else:
-                        logger.warning(
-                            f"load_skill effect: skill {effect.skill!r} not found (rule {row.name})",
-                        )
-                except Exception:
-                    logger.warning(
-                        f"load_skill effect: failed to resolve skill {effect.skill!r} (rule {row.name})",
-                        exc_info=True,
-                    )
-            elif effect.skill and not self._skill_manager:
-                logger.warning(
-                    f"load_skill effect: no skill_manager available (rule {row.name})",
-                )
+            if effect.skill:
+                from gobby.skills.formatting import skill_fetch_directive
+
+                context_parts.append(skill_fetch_directive(effect.skill))
 
         return True
 

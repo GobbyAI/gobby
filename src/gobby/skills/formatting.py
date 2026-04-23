@@ -1,6 +1,6 @@
 """Skill formatting helpers.
 
-Functions for rendering skill lists as JSON, markdown tables, and injection formats.
+Functions for rendering skill lists, active skill manifests, and fetch directives.
 """
 
 from __future__ import annotations
@@ -16,6 +16,34 @@ if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
+
+
+def skill_fetch_directive(name: str) -> str:
+    """Return the canonical agent-facing directive for loading a skill."""
+    return f"Call get_skill(name={json.dumps(name)}) on gobby-skills, then continue."
+
+
+def format_skill_fetch_context(name: str, args: str | None = None) -> str:
+    """Return a skill fetch directive with optional user arguments preserved."""
+    parts = [skill_fetch_directive(name)]
+    if args:
+        parts.append(f"User arguments: {args}")
+    return "\n\n".join(parts)
+
+
+def active_skill_manifest(skills: Sequence[Any]) -> str:
+    """Render an agent-visible manifest of active skills without skill bodies."""
+    lines = ["<active_skills>"]
+    seen: set[str] = set()
+    for skill in skills:
+        name = getattr(skill, "name", None)
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        seen.add(name)
+        lines.append(f"- name: {name}")
+        lines.append(f"  ref: gobby-skills:get_skill name={json.dumps(name)}")
+    lines.append("</active_skills>")
+    return "\n".join(lines) if seen else ""
 
 
 class SkillLike(Protocol):
@@ -69,45 +97,16 @@ def format_skills_markdown_table(skills_list: list[Any]) -> str:
 def render_skills_for_context(skills_with_formats: list[tuple[Any, str]]) -> str:
     """Format skills with pre-resolved injection formats.
 
-    Emits expanded sections for ``full``/``content`` skills and a compact
-    summary list for ``summary`` skills.
+    Emits only an active-skill manifest. Full skill bodies are loaded on demand
+    through gobby-skills:get_skill so hooks never inline skill content.
 
     Args:
         skills_with_formats: List of (ParsedSkill, resolved_format) tuples
 
     Returns:
-        Formatted markdown string with skill content and compact summaries, or
-        empty string if nothing was rendered.
+        Active skill manifest, or empty string if nothing was rendered.
     """
-    expanded_sections: list[str] = []
-    summaries: list[str] = []
-
-    for skill, fmt in skills_with_formats:
-        name = getattr(skill, "name", "unknown")
-        description = getattr(skill, "description", "")
-        content = getattr(skill, "content", "")
-
-        if fmt == "full":
-            section_lines = [f"### {name}"]
-            if description:
-                section_lines.append(description)
-            if content:
-                section_lines.append("")
-                section_lines.append(content)
-            expanded_sections.append("\n".join(section_lines))
-        elif fmt == "content" and content:
-            expanded_sections.append(content)
-        elif fmt == "summary":
-            summary = description.strip() if isinstance(description, str) else ""
-            if summary:
-                summaries.append(f"- `{name}`: {summary}")
-            else:
-                summaries.append(f"- `{name}`")
-
-    if summaries:
-        expanded_sections.append("### Skill Summaries\n" + "\n".join(summaries))
-
-    return "\n\n".join(expanded_sections)
+    return active_skill_manifest([skill for skill, _fmt in skills_with_formats])
 
 
 # Backwards-compatible aliases

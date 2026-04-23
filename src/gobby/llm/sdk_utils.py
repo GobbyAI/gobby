@@ -6,6 +6,9 @@ chat_session_helpers.py to eliminate duplication across SDK consumers.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
+
 
 def sanitize_error(e: Exception) -> str:
     """Return a user-facing error message, hiding internal library details."""
@@ -35,7 +38,12 @@ def format_exception_group(eg: ExceptionGroup) -> str:
 ADDITIONAL_CONTEXT_LIMIT = 9_950
 
 
-def truncate_additional_context(text: str) -> str:
+def truncate_additional_context(
+    text: str,
+    *,
+    contributor_sizes: Mapping[str, int] | None = None,
+    logger: logging.Logger | None = None,
+) -> str:
     """Truncate text to fit within the SDK's additionalContext limit.
 
     Truncation only — no compression, no mutation. Contributors (skills,
@@ -45,4 +53,11 @@ def truncate_additional_context(text: str) -> str:
     """
     if len(text) <= ADDITIONAL_CONTEXT_LIMIT:
         return text
+    if logger:
+        logger.warning(
+            "additionalContext truncated aggregate_len=%d limit=%d contributors=%s",
+            len(text),
+            ADDITIONAL_CONTEXT_LIMIT,
+            dict(contributor_sizes or {}),
+        )
     return text[: ADDITIONAL_CONTEXT_LIMIT - 16] + "\n... [truncated]"

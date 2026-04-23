@@ -1,11 +1,11 @@
-"""End-to-end integration test for Codex MCP skill injection.
+"""End-to-end integration test for Codex MCP skill loading directives.
 
 Codex CLI's experimental hooks don't fire PreToolUse/PostToolUse for MCP
 tool calls; SessionMessageProcessor synthesizes BEFORE_TOOL/AFTER_TOOL
 HookEvents from the rollout JSONL instead. This test verifies that a
 synthesized AFTER_TOOL event for `mcp__gobby__get_tool_schema(server_name=
 'gobby-tasks', tool_name='create_task')` causes the bundled
-`inject-task-creation-on-schema` rule to fire end-to-end.
+`inject-task-creation-on-schema` rule to emit an on-demand skill directive.
 """
 
 from __future__ import annotations
@@ -35,25 +35,12 @@ _INJECT_TASK_CREATION_ON_SCHEMA = RuleDefinitionBody(
         "'mcp__gobby__get_tool_schema'))\n"
         "and tool_input.get('server_name') == 'gobby-tasks'\n"
         "and tool_input.get('tool_name') in ('create_task', 'claim_task')\n"
-        "and 'task-creation' not in variables.get('injected_skills', [])\n"
+        "and not skill_loaded('task-creation')\n"
     ),
     effects=[
-        # The bundled rule has a sibling mcp_call(get_skill, inject_result=true)
-        # before the set_variable. With no MCP dispatcher wired, the engine
-        # takes the deferred-dispatch branch (rule_engine effects.py:141) and
-        # the subsequent set_variable still runs — which is exactly the bit
-        # that drives the injected_skills ledger.
         RuleEffect(
-            type="mcp_call",
-            server="gobby-skills",
-            tool="get_skill",
-            arguments={"name": "task-creation"},
-            inject_result=True,
-        ),
-        RuleEffect(
-            type="set_variable",
-            variable="injected_skills",
-            value="variables.get('injected_skills', []) + ['task-creation']",
+            type="inject_context",
+            template='Call get_skill(name="task-creation") on gobby-skills, then continue.',
         ),
     ],
 )
@@ -87,7 +74,7 @@ def _install_rule(
 
 
 @pytest.mark.asyncio
-async def test_synthesized_after_tool_fires_inject_task_creation_rule(
+async def test_synthesized_after_tool_emits_task_creation_directive(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
     _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
@@ -125,14 +112,17 @@ async def test_synthesized_after_tool_fires_inject_task_creation_rule(
     response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
     assert response.decision == "allow"
-    assert variables.get("injected_skills") == ["task-creation"]
+    assert (
+        response.context == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+    )
+    assert "loaded_skills" not in variables
 
 
 @pytest.mark.asyncio
-async def test_synthesized_event_skipped_when_skill_already_injected(
+async def test_synthesized_event_skipped_when_skill_already_loaded(
     db: LocalDatabase, manager: LocalWorkflowDefinitionManager
 ) -> None:
-    """The rule's idempotency guard ('not in injected_skills') still applies."""
+    """The rule's canonical loaded_skills idempotency guard applies."""
     _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
 
     tool_event = ParsedToolEvent(
@@ -157,11 +147,46 @@ async def test_synthesized_event_skipped_when_skill_already_injected(
     assert hook_event is not None
 
     engine = RuleEngine(db)
-    variables: dict[str, object] = {"injected_skills": ["task-creation"]}
-    await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    variables: dict[str, object] = {"loaded_skills": ["task-creation"]}
+    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    # No change; rule no-ops because task-creation is already present.
-    assert variables["injected_skills"] == ["task-creation"]
+    assert response.context is None
+    assert variables["loaded_skills"] == ["task-creation"]
+
+
+@pytest.mark.asyncio
+async def test_synthesized_event_skipped_when_skill_legacy_injected(
+    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+) -> None:
+    """Existing sessions with injected_skills still satisfy skill_loaded()."""
+    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+
+    tool_event = ParsedToolEvent(
+        phase="end",
+        call_id="call_legacy",
+        server="gobby",
+        tool="get_tool_schema",
+        arguments={"server_name": "gobby-tasks", "tool_name": "claim_task"},
+        timestamp=datetime.now(UTC),
+        raw_json={},
+        result={"ok": True},
+    )
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "external-sid",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
+    assert hook_event is not None
+
+    engine = RuleEngine(db)
+    variables: dict[str, object] = {"injected_skills": ["task-creation"]}
+    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+
+    assert response.context is None
 
 
 @pytest.mark.asyncio
@@ -193,6 +218,7 @@ async def test_synthesized_event_for_unrelated_server_does_not_fire(
 
     engine = RuleEngine(db)
     variables: dict[str, object] = {}
-    await engine.evaluate(hook_event, session_id="sid", variables=variables)
+    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
 
-    assert "injected_skills" not in variables or variables["injected_skills"] == []
+    assert response.context is None
+    assert "loaded_skills" not in variables

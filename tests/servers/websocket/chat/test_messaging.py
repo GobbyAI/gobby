@@ -251,6 +251,29 @@ class TestStreamChatResponse:
         assert "sdk" not in mixin._chat_sessions
 
     @pytest.mark.asyncio
+    async def test_stream_wraps_injected_context_as_gobby_context(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ) -> None:
+        mixin.clients[ws] = {"conversation_id": "c1"}
+        session = AsyncMock()
+        mixin._chat_sessions["c1"] = session
+        captured_content: list[object] = []
+
+        async def mock_stream(content):
+            captured_content.append(content)
+            yield DoneEvent(
+                sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
+            )
+
+        session.send_message = lambda content: mock_stream(content)
+        directive = 'Call get_skill(name="python") on gobby-skills, then continue.'
+
+        await mixin._stream_chat_response(ws, "c1", "hi", None, inject_context=directive)
+
+        assert captured_content == [f"hi\n\n<gobby-context>\n{directive}\n</gobby-context>"]
+        assert "<skill-context>" not in str(captured_content[0])
+
+    @pytest.mark.asyncio
     async def test_stream_cancellation_safely(self, mixin: DummyMessagingMixin, ws: AsyncMock):
         mixin.clients[ws] = {"conversation_id": "c1"}
         session = AsyncMock()

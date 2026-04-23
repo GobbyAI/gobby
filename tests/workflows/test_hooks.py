@@ -15,7 +15,6 @@ import json
 import logging
 import threading
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -877,30 +876,15 @@ class TestVariablePersistence:
         assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
 
     @pytest.mark.asyncio
-    async def test_codex_schema_lookup_rehydrates_and_injects_transition_skill(self, db) -> None:
-        """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill injection."""
+    async def test_codex_schema_lookup_rehydrates_and_prompts_transition_skill(self, db) -> None:
+        """Codex AFTER_TOOL should rehydrate get_tool_schema context for skill directive."""
         from gobby.workflows.rule_engine import RuleEngine
         from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
 
         sync_bundled_rules(db, get_bundled_rules_path())
         db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
-            assert server == "gobby-skills"
-            assert tool == "get_skill"
-            assert args["name"] == "task-transitions"
-            return {
-                "success": True,
-                "result": {
-                    "success": True,
-                    "skill": {
-                        "name": "task-transitions",
-                        "content": "# Task transitions",
-                    },
-                },
-            }
-
-        rule_engine = RuleEngine(db=db, mcp_dispatcher=mock_dispatcher)
+        rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(rule_engine=rule_engine)
 
         before_event = HookEvent(
@@ -943,7 +927,11 @@ class TestVariablePersistence:
 
         assert response.decision == "allow"
         assert response.context is not None
-        assert '<skill name="task-transitions">' in response.context
+        assert (
+            'Call get_skill(name="task-transitions") on gobby-skills, then continue.'
+            in response.context
+        )
+        assert "# Task transitions" not in response.context
 
     @pytest.mark.asyncio
     async def test_observer_and_rule_changes_both_persisted(self, db, session_var_manager) -> None:

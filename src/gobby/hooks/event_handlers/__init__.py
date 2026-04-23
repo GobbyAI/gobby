@@ -80,7 +80,7 @@ class EventHandlers(
             task_manager: LocalTaskManager for task operations
             session_coordinator: SessionCoordinator for session tracking
             skill_manager: HookSkillManager for skill discovery
-            skills_config: SkillsConfig for skill injection settings
+            skills_config: SkillsConfig for skill discovery/manifest settings
             workflow_config: WorkflowConfig for workflow settings (debug_echo_context)
             get_machine_id: Function to get machine ID
             resolve_project_id: Function to resolve project ID from cwd

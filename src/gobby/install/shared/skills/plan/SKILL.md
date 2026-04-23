@@ -14,7 +14,7 @@ metadata:
 
 Guide the user through structured requirements gathering and specification writing, optionally with an **adversarial review loop** that spawns the `plan-adversary` agent to critique each revision before handoff to `/gobby expand`.
 
-The **drafting methodology** (phase structure, task format, TDD rules, categories, hierarchy, verification checklist) lives in the `plan-draft` skill — load it via `get_skill(name="plan-draft")` on `gobby-skills` during Step 3. Do not inline that methodology here.
+The **drafting methodology** (phase structure, task format, TDD rules, categories, hierarchy, verification checklist) lives in the `plan-draft` skill. During Step 3: Call get_skill(name="plan-draft") on gobby-skills, then continue. Do not inline that methodology here.
 
 The **review methodology** for the adversarial loop lives in the `plan-review` skill — the spawned `plan-adversary` agent loads it; you do not need to load it in this skill.
 

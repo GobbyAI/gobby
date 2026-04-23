@@ -65,7 +65,7 @@ def _inject_agent_skills(
     project_id: str,
     cli_source: str = "claude",
 ) -> str | None:
-    """Run audience-aware skill injection for an agent definition."""
+    """Build an audience-aware active-skill manifest for an agent definition."""
     from gobby.hooks.event_handlers._session import select_and_format_agent_skills
     from gobby.skills.manager import SkillManager
     from gobby.workflows.selectors import resolve_skills_for_agent

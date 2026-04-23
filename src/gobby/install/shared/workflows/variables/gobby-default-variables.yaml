@@ -80,15 +80,15 @@ variables:
   is_subagent:
     value: false
     description: "True while a native Claude Code subagent is active (toggled by SUBAGENT_START/STOP hooks)"
-  injected_skills:
+  loaded_skills:
     value: []
-    description: "Set of skill names fully injected into context this session (dedup for JIT skill loading)"
+    description: "Skill names the agent has fetched with gobby-skills:get_skill this session"
   memory_nudge_fired:
     value: false
     description: "True after memory-capture-nudge has fired once this session"
   _agent_context_injected:
     value: false
-    description: "True after agent instructions/skills/code-index have been injected on first before_agent"
+    description: "True after agent instructions and active-skill manifests have been sent on first before_agent"
   _agent_identity_reinject:
     value: false
     description: "True when the next before_agent should re-inject role/goal/personality after a persona switch"

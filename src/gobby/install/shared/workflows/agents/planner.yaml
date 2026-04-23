@@ -24,7 +24,7 @@ instructions: |
 
   METHODOLOGY:
   After claiming your task, your first action MUST be to load the `plan-draft`
-  skill via `get_skill(name="plan-draft")` on `gobby-skills`. Follow that
+  skill. Call get_skill(name="plan-draft") on gobby-skills, then continue. Follow that
   skill's methodology EXACTLY when drafting or revising the plan artifact —
   phase structure, task format, TDD compatibility, categories, hierarchy,
   dependency notation, and verification checklist. Do not invent alternative
@@ -90,7 +90,7 @@ steps:
   - name: load_skill
     description: "Load the plan-draft methodology skill"
     status_message: |
-      Call `get_skill(name="plan-draft")` on `gobby-skills` before drafting.
+      Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
       The returned skill content is the authoritative methodology for this
       agent and must be followed exactly.
     allowed_tools:

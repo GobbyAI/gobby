@@ -1807,10 +1807,10 @@ class TestInlineMcpCallDispatch:
     """Tests for inline mcp_call dispatch (inject_result atomicity)."""
 
     @pytest.mark.asyncio
-    async def test_inline_dispatch_success_injects_context(
+    async def test_inline_dispatch_success_formats_get_skill_as_directive(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """inject_result mcp_call dispatched inline should inject context."""
+        """Daemon-side get_skill inject_result should format a fetch directive."""
         _insert_rule(
             manager,
             "inject-skill",
@@ -1845,9 +1845,8 @@ class TestInlineMcpCallDispatch:
         event = _make_event(data={"tool_name": "Read"})
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
-        # Context should contain injected skill
-        assert response.context is not None
-        assert "python" in response.context.lower()
+        assert response.context == 'Call get_skill(name="python") on gobby-skills, then continue.'
+        assert "# Python skill content" not in (response.context or "")
         # Variable should be set (inline dispatch succeeded)
         assert variables.get("injected") is True
         # Should NOT appear in deferred mcp_calls
@@ -2569,10 +2568,10 @@ class TestLoadSkillEffect:
     """Tests for load_skill effect type."""
 
     @pytest.mark.asyncio
-    async def test_load_skill_injects_content(
+    async def test_load_skill_emits_fetch_directive(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """load_skill should resolve skill and inject content into context."""
+        """load_skill should emit a get_skill directive without skill content."""
         _insert_rule(
             manager,
             "load-plan-skill",
@@ -2589,14 +2588,14 @@ class TestLoadSkillEffect:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
-        assert '<skill name="plan">' in (response.context or "")
-        assert "You are now in plan mode." in (response.context or "")
+        assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
+        assert "You are now in plan mode." not in (response.context or "")
 
     @pytest.mark.asyncio
-    async def test_load_skill_missing_skill_fails_open(
+    async def test_load_skill_missing_skill_still_emits_directive(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """load_skill with nonexistent skill should not block."""
+        """load_skill does not resolve skills daemon-side."""
         _insert_rule(
             manager,
             "load-missing-skill",
@@ -2613,13 +2612,15 @@ class TestLoadSkillEffect:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
-        assert not (response.context or "")
+        assert (
+            response.context == 'Call get_skill(name="nonexistent") on gobby-skills, then continue.'
+        )
 
     @pytest.mark.asyncio
-    async def test_load_skill_no_skill_manager_fails_open(
+    async def test_load_skill_no_skill_manager_still_emits_directive(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """load_skill without skill_manager should not block."""
+        """load_skill without skill_manager should still direct the agent."""
         _insert_rule(
             manager,
             "load-no-manager",
@@ -2635,7 +2636,7 @@ class TestLoadSkillEffect:
         response = await engine.evaluate(event, session_id="sess-1", variables=variables)
 
         assert response.decision == "allow"
-        assert not (response.context or "")
+        assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
 
     @pytest.mark.asyncio
     async def test_load_skill_with_per_effect_when(
@@ -2692,4 +2693,5 @@ class TestLoadSkillEffect:
 
         assert response.decision == "allow"
         assert variables["plan_mode"] is True
-        assert "Plan skill content" in (response.context or "")
+        assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
+        assert "Plan skill content" not in (response.context or "")

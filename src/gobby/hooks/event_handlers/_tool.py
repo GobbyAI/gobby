@@ -9,6 +9,7 @@ from typing import Any
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.normalization import is_shell_tool
+from gobby.skills.formatting import format_skill_fetch_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
         """Handle BEFORE_TOOL event.
 
         Intercepts Skill tool calls and resolves gobby skills via a 4-tier
-        fallback chain, injecting skill content as context and blocking the
-        native tool call (which would fail with "Unknown skill").
+        fallback chain, directing the agent to fetch the skill through
+        gobby-skills and blocking the native tool call.
         """
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
@@ -129,19 +130,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if self._skill_manager:
             skill = self._skill_manager.resolve_skill_name(skill_name)
             if skill is not None:
-                return self._build_skill_response(
-                    skill.name, skill.content, raw_skill_name, tool_input
-                )
+                return self._build_skill_response(skill.name, raw_skill_name, tool_input)
 
         # --- Tier 2: gobby-skills MCP get_skill fallback ---
         if self._call_tool:
             result = self._call_tool("gobby-skills", "get_skill", {"name": skill_name})
             if result and isinstance(result, dict) and result.get("success"):
                 skill_data = result.get("skill") or result.get("result", {}).get("skill")
-                if skill_data and isinstance(skill_data, dict) and skill_data.get("content"):
+                if skill_data and isinstance(skill_data, dict) and skill_data.get("name"):
                     return self._build_skill_response(
                         skill_data.get("name", skill_name),
-                        skill_data["content"],
                         raw_skill_name,
                         tool_input,
                         source="MCP",
@@ -173,21 +171,12 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def _build_skill_response(
         self,
         name: str,
-        content: str,
         raw_skill_name: str,
         tool_input: dict[str, Any],
         source: str = "local",
     ) -> HookResponse:
-        """Build a blocking HookResponse with skill content injected as context."""
-        parts = [f'<skill-context name="{name}">']
-        parts.append(content)
-        parts.append("</skill-context>")
-
-        args = tool_input.get("args", "")
-        if args:
-            parts.append(f"\nUser arguments: {args}")
-
-        context = "\n".join(parts)
+        """Build a blocking HookResponse with an on-demand skill fetch directive."""
+        context = format_skill_fetch_context(name, str(tool_input.get("args", "") or ""))
 
         self.logger.info(
             f"Resolved gobby skill '{name}' via {source} (requested: '{raw_skill_name}')",
@@ -195,7 +184,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(
             decision="block",
-            reason=f"Gobby skill '{name}' resolved via {source} — content injected as context",
+            reason=f"Gobby skill '{name}' resolved via {source} — fetch it with gobby-skills",
             context=context,
         )
 

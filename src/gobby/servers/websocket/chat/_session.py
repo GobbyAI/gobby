@@ -49,10 +49,10 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
     """Build the non-duplicated identity preamble for web-chat sessions.
 
-    Gemini web chat injects instructions and skills through the first
+    Gemini web chat sends instructions and skill manifests through the first
     BEFORE_AGENT lifecycle hook, so its session bootstrap should only carry
     stable identity fields. Other providers can still use the full prompt
-    preamble plus skill injection.
+    preamble plus skill manifests.
     """
     parts: list[str] = []
     if getattr(agent_body, "role", None):
@@ -726,8 +726,8 @@ class ChatSessionMixin:
                         preamble = agent_body.build_prompt_preamble()
                     if preamble:
                         context_parts.append(preamble)
-                    # Gemini/Qwen web chat defer instructions + skills to BEFORE_AGENT
-                    # so the first prompt does not duplicate heavy context blocks.
+                    # Gemini/Qwen web chat defer instructions + skill manifests to BEFORE_AGENT
+                    # so the first prompt does not duplicate context blocks.
                     if effective_provider not in {"gemini", "qwen"}:
                         skills_text = await asyncio.to_thread(
                             _inject_agent_skills,
