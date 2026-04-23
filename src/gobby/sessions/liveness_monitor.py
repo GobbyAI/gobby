@@ -1,10 +1,10 @@
 """CLI session liveness monitor.
 
-Polls active sessions to detect when the owning terminal disappears. For
-tmux-backed sessions, the recorded pane is the primary liveness signal; for
-plain terminals, the parent CLI process is used. When liveness is gone the
-session is expired and summary generation is dispatched while the JSONL
-transcript file still exists on disk.
+Polls active sessions to detect when the owning terminal disappears. Modern
+tmux-backed terminal sessions require both the recorded CLI process and tmux
+pane to be alive; legacy pane-only sessions can still be kept alive by a live
+tmux pane. When liveness is gone the session is expired and summary generation
+is dispatched while the JSONL transcript file still exists on disk.
 
 This is the fast-path counterpart to the 24-hour stale-session expiry in
 SessionLifecycleManager, reducing the detection window from hours to
@@ -145,7 +145,7 @@ class SessionLivenessMonitor:
 
         live_panes_by_socket = self._get_live_tmux_panes_by_socket(active_sessions)
 
-        # 3. Prefer tmux pane liveness when available; fallback to parent PID.
+        # 3. Recorded PID and pane are both authoritative for modern terminal rows.
         for record in active_sessions:
             if record.session_id in self._recently_handled:
                 continue
@@ -165,20 +165,19 @@ class SessionLivenessMonitor:
                     await self._expire_session(record.session_id)
                     self._recently_handled[record.session_id] = now
                     continue
-                else:
-                    if record.parent_pid is None or not self._is_pid_alive(record.parent_pid):
-                        logger.debug(
-                            f"Session {record.session_id} parent PID {record.parent_pid} "
-                            f"dead/missing but tmux pane {record.tmux_pane} alive - refreshing",
+                elif record.parent_pid is None:
+                    logger.debug(
+                        f"Session {record.session_id} has live tmux pane "
+                        f"{record.tmux_pane} and no parent PID - refreshing",
+                    )
+                    try:
+                        self._session_manager.touch(record.session_id)
+                    except Exception:
+                        logger.warning(
+                            "SessionLivenessMonitor: failed to touch session "
+                            f"{record.session_id}",
+                            exc_info=True,
                         )
-                        try:
-                            self._session_manager.touch(record.session_id)
-                        except Exception:
-                            logger.warning(
-                                "SessionLivenessMonitor: failed to touch session "
-                                f"{record.session_id}",
-                                exc_info=True,
-                            )
                     continue
 
             if record.parent_pid is None:
@@ -315,14 +314,17 @@ class SessionLivenessMonitor:
         for command in candidate_commands:
             try:
                 result = subprocess.run(
-                    [*command, "list-panes", "-a", "-F", "#{pane_id}"],
+                    [*command, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_dead}"],
                     capture_output=True,
                     text=True,
                     timeout=5,
                 )
             except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
                 return None
-            live_panes.update(line.strip() for line in result.stdout.splitlines() if line.strip())
+            for line in result.stdout.splitlines():
+                pane_id, _separator, pane_dead = line.strip().partition("\t")
+                if pane_id and pane_dead != "1":
+                    live_panes.add(pane_id)
         return live_panes
 
     def _get_live_tmux_panes_by_socket(

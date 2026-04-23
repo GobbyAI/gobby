@@ -691,12 +691,18 @@ class TestTmuxSessionManagerExtended:
 
     @pytest.mark.asyncio
     async def test_list_pane_ids(self) -> None:
-        """list_pane_ids returns set of pane IDs."""
+        """list_pane_ids returns only panes that tmux reports as alive."""
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "%0\n%5\n%12\n", "")
+            mock_run.return_value = (0, "%0\t0\n%5\t1\n%12\t0\n", "")
             result = await mgr.list_pane_ids()
-        assert result == {"%0", "%5", "%12"}
+        assert result == {"%0", "%12"}
+        mock_run.assert_awaited_once_with(
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}\t#{pane_dead}",
+        )
 
     @pytest.mark.asyncio
     async def test_list_pane_ids_failure(self) -> None:

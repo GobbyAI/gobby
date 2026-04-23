@@ -116,6 +116,16 @@ const EXPIRED_SESSION = makeSession({
   terminal_context: null,
 });
 
+const HANDOFF_READY_SESSION = makeSession({
+  id: "handoff-1",
+  ref: "#205",
+  external_id: "handoff-ext-1",
+  title: "Handoff Terminal",
+  status: "handoff_ready",
+  seq_num: 205,
+  updated_at: "2026-04-08T12:18:00Z",
+});
+
 const PIPELINE_SESSION = makeSession({
   id: "pipeline-1",
   ref: "#204",
@@ -152,10 +162,16 @@ describe("SessionsTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("filters live vs expired, excludes pipeline sources, and searches title/ref/external id", async () => {
+  it("filters live vs expired, excludes handoff and pipeline sources, and searches", async () => {
     render(
       <SessionsTab
-        sessions={[LIVE_SESSION, PAUSED_SESSION, EXPIRED_SESSION, PIPELINE_SESSION]}
+        sessions={[
+          LIVE_SESSION,
+          PAUSED_SESSION,
+          EXPIRED_SESSION,
+          HANDOFF_READY_SESSION,
+          PIPELINE_SESSION,
+        ]}
         focusSessionId="live-1"
       />,
     );
@@ -166,6 +182,7 @@ describe("SessionsTab", () => {
     });
 
     expect(screen.queryByText("#203: Expired Terminal")).toBeNull();
+    expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
     expect(screen.queryByText("#204: Pipeline Session")).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
@@ -187,6 +204,7 @@ describe("SessionsTab", () => {
       expect(screen.getByText("#203: Expired Terminal")).toBeInTheDocument();
     });
     expect(screen.queryByText("#202: Paused Terminal")).toBeNull();
+    expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
   });
 
   it("defaults to transcript mode, toggles to summary via digest fallback, and keeps action order", async () => {

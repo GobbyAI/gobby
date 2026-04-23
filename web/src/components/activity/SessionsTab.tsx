@@ -65,7 +65,7 @@ type SessionStatusFilter = "live" | "expired";
 type WatchingContentMode = "transcript" | "summary";
 
 const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
-const LIVE_SESSION_STATUSES = new Set(["active", "paused", "handoff_ready"]);
+const LIVE_SESSION_STATUSES = new Set(["active", "paused"]);
 const HIDDEN_SOURCES = new Set(["pipeline", "cron", "system"]);
 
 function getBaseUrl(): string {
