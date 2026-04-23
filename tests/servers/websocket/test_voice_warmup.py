@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -55,6 +56,56 @@ class TestVoiceWarmup:
         status = mixin.get_voice_status()
         assert status["voice_ready"] is True
         assert status["voice_loading"] is False
+        assert mixin._voice_warmup_task is None
+
+    @pytest.mark.asyncio
+    async def test_voice_mode_enable_starts_warmup(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_mode_toggle(
+            websocket,
+            {"conversation_id": "conv-1", "enabled": True},
+        )
+
+        assert mixin._voice_enabled["conv-1"] is True
+        assert mixin._voice_warmup_task is not None
+        payload = json.loads(websocket.send.await_args.args[0])
+        assert payload["status"] == "voice_mode_on"
+        assert payload["tts_warmup_status"] == "loading"
+        assert payload["voice_loading"] is True
+
+        await mixin._voice_warmup_task
+        mock_tts.warmup.assert_awaited_once()
+        assert mixin._tts_warmup_status == "ready"
+
+    @pytest.mark.asyncio
+    async def test_voice_prepare_can_arm_tts_before_toggle_frame(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock()
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+        websocket = SimpleNamespace(send=AsyncMock())
+
+        await mixin._handle_voice_prepare(
+            websocket,
+            {"conversation_id": "conv-1", "tts_enabled": True},
+        )
+
+        assert mixin._voice_enabled["conv-1"] is True
+        payload = json.loads(websocket.send.await_args.args[0])
+        assert payload["status"] == "preparing"
+        assert payload["voice_loading"] is True
+
+        assert mixin._voice_warmup_task is not None
+        await mixin._voice_warmup_task
 
     @pytest.mark.asyncio
     async def test_start_voice_warmup_records_failures(self) -> None:
@@ -74,6 +125,23 @@ class TestVoiceWarmup:
         assert status["voice_ready"] is False
         assert status["tts_warmup_status"] == "error"
         assert status["tts_warmup_error"] == "chatterbox missing"
+
+    @pytest.mark.asyncio
+    async def test_start_voice_warmup_records_provider_warmup_failure(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True, stt_enabled=False))
+
+        mock_tts = MagicMock()
+        mock_tts.warmup = AsyncMock(side_effect=RuntimeError("reference audio invalid"))
+        mixin._get_tts = MagicMock(return_value=mock_tts)
+        mixin._get_tts_availability = MagicMock(return_value=(True, ""))
+
+        mixin.start_voice_warmup()
+        assert mixin._voice_warmup_task is not None
+
+        await mixin._voice_warmup_task
+
+        assert mixin._tts_warmup_status == "error"
+        assert mixin._tts_warmup_error == "reference audio invalid"
 
     @pytest.mark.asyncio
     async def test_cleanup_voice_unloads_models_and_cancels_tasks(self) -> None:

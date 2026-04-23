@@ -11,7 +11,12 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.sessions.transcripts.base import BaseTranscriptParser, ParsedMessage, TokenUsage
+from gobby.sessions.transcripts.base import (
+    BaseTranscriptParser,
+    ParsedMessage,
+    ParsedToolEvent,
+    TokenUsage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +282,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
 
         data, msg_type, timestamp = parsed
         usage, model = self._extract_usage(data)
+        message_id = self._message_id_for(data, index)
         results: list[ParsedMessage] = []
 
         def _make_msg(
@@ -302,6 +308,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 usage=usage,
                 tool_use_id=tool_use_id,
                 model=model,
+                message_id=message_id,
             )
 
         if msg_type == "user":
@@ -440,6 +447,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
 
         data, msg_type, timestamp = parsed
         usage, model = self._extract_usage(data)
+        message_id = self._message_id_for(data, index)
 
         role = "unknown"
         content = ""
@@ -527,6 +535,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             usage=usage,
             tool_use_id=tool_use_id,
             model=model,
+            message_id=message_id,
         )
 
     def _extract_usage(self, data: dict[str, Any]) -> tuple[TokenUsage | None, str | None]:
@@ -577,7 +586,20 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             cache_read_tokens=cache_read_tokens,
         ), model
 
-    def parse_lines(self, lines: list[str], start_index: int = 0) -> list[ParsedMessage]:
+    def _message_id_for(self, data: dict[str, Any], index: int) -> str | None:
+        """Return a stable Claude message identifier for deduping token events."""
+        message = data.get("message")
+        if isinstance(message, dict):
+            raw_id = message.get("id")
+            if isinstance(raw_id, str) and raw_id.strip():
+                return raw_id.strip()
+        if self.session_id:
+            return f"{self.session_id}:claude:{index}"
+        return f"claude:{index}"
+
+    def parse_lines(
+        self, lines: list[str], start_index: int = 0
+    ) -> list[ParsedMessage | ParsedToolEvent]:
         """
         Parse a list of transcript lines, expanding multi-block messages.
 
@@ -592,7 +614,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         Returns:
             List of parsed ParsedMessage objects
         """
-        parsed_messages: list[ParsedMessage] = []
+        parsed_messages: list[ParsedMessage | ParsedToolEvent] = []
         current_index = start_index
 
         for line in lines:

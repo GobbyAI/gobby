@@ -554,7 +554,56 @@ def detect_mcp_call(event: "HookEvent", variables: dict[str, Any], session_id: s
 
     tool_output = event.data.get("tool_output") or {}
 
-    _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
+    tracked = _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
+    if tracked and server_name == "gobby-skills" and inner_tool == "get_skill":
+        _track_loaded_skill(variables, tool_output, session_id)
+
+
+def _track_loaded_skill(
+    variables: dict[str, Any],
+    tool_output: dict[str, Any] | Any,
+    session_id: str,
+) -> None:
+    """Record a successful agent-visible gobby-skills:get_skill result."""
+    name = _extract_loaded_skill_name(tool_output)
+    if not name:
+        return
+
+    loaded = variables.setdefault("loaded_skills", [])
+    if not isinstance(loaded, list):
+        loaded = [loaded] if loaded else []
+    if name not in loaded:
+        loaded.append(name)
+    variables["loaded_skills"] = loaded
+    logger.debug("Session %s: loaded skill tracked %s", session_id, name)
+
+
+def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
+    """Extract the resolved skill name from a successful get_skill tool result."""
+    if not isinstance(tool_output, dict):
+        return None
+    if tool_output.get("error") or tool_output.get("status") == "error":
+        return None
+    if tool_output.get("success") is False:
+        return None
+
+    candidates = [tool_output]
+    result = tool_output.get("result")
+    if isinstance(result, dict):
+        if result.get("success") is False or result.get("error"):
+            return None
+        candidates.append(result)
+        nested_result = result.get("result")
+        if isinstance(nested_result, dict):
+            candidates.append(nested_result)
+
+    for candidate in candidates:
+        skill = candidate.get("skill") if isinstance(candidate, dict) else None
+        if isinstance(skill, dict):
+            name = skill.get("name")
+            if isinstance(name, str) and name:
+                return name
+    return None
 
 
 def _track_mcp_call(
@@ -571,11 +620,15 @@ def _track_mcp_call(
     result = None
     is_error = False
     if isinstance(tool_output, dict):
-        if tool_output.get("error") or tool_output.get("status") == "error":
+        if (
+            tool_output.get("error")
+            or tool_output.get("status") == "error"
+            or tool_output.get("success") is False
+        ):
             is_error = True
         else:
             result = tool_output.get("result")
-            if isinstance(result, dict) and result.get("error"):
+            if isinstance(result, dict) and (result.get("error") or result.get("success") is False):
                 is_error = True
 
     if is_error:

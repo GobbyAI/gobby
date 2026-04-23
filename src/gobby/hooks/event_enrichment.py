@@ -56,11 +56,11 @@ class EventEnricher:
 
     def __init__(
         self,
-        session_storage: Any,  # Avoid runtime import of LocalSessionManager
+        session_manager: Any,  # Avoid runtime import of SessionManager
         injected_sessions: set[str],
         inter_session_msg_manager: InterSessionMessageManager | None = None,
     ):
-        self._session_storage = session_storage
+        self._session_manager = session_manager
         self._injected_sessions = injected_sessions
         self._inter_session_msg_manager = inter_session_msg_manager
 
@@ -87,9 +87,9 @@ class EventEnricher:
 
             # Look up seq_num for session_ref (#N format)
             # Guard with try/except: during shutdown the DB may already be closed
-            if self._session_storage:
+            if self._session_manager:
                 try:
-                    session_obj = self._session_storage.get(platform_session_id)
+                    session_obj = self._session_manager.get(platform_session_id)
                 except Exception:
                     session_obj = None
                 if session_obj and session_obj.seq_num:
@@ -196,9 +196,9 @@ class EventEnricher:
         """
         if not from_session:
             return ""
-        if self._session_storage:
+        if self._session_manager:
             try:
-                session_obj = self._session_storage.get(from_session)
+                session_obj = self._session_manager.get(from_session)
                 if session_obj and session_obj.seq_num:
                     return f"Session #{session_obj.seq_num}: "
             except Exception:

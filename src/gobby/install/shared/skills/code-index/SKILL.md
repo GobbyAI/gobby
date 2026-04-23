@@ -1,6 +1,6 @@
 ---
 name: code-index
-description: Instructions for using gcode CLI for code search and retrieval. Auto-injected when project has a code index.
+description: Instructions for using gcode CLI for code search and retrieval. Loaded on demand when project has a code index.
 category: core
 metadata:
   gobby:

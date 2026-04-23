@@ -64,6 +64,8 @@ def test_removed_fields_no_longer_exist() -> None:
         "neo4j_url",
         "neo4j_auth",
         "neo4j_database",
+        "kg_provider",
+        "kg_model",
     ]
     for field_name in removed_fields:
         assert not hasattr(config, field_name), f"{field_name} should be removed"
@@ -78,6 +80,7 @@ def test_kept_fields_still_exist() -> None:
     assert hasattr(config, "crossref_threshold")
     assert hasattr(config, "crossref_max_links")
     assert hasattr(config, "access_debounce_seconds")
+    assert hasattr(config, "kg")
     assert hasattr(config, "code_link_min_score")
 
 

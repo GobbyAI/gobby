@@ -541,6 +541,12 @@ class TestRebuildKnowledgeGraph:
     async def test_no_kg_service(self, mock_memory_manager: MagicMock) -> None:
         """Returns error when KG service not initialized."""
         mock_memory_manager.kg_service = None
+        mock_memory_manager.rebuild_knowledge_graph = AsyncMock(
+            return_value={
+                "success": False,
+                "error": "KnowledgeGraphService not initialized",
+            }
+        )
         registry = create_memory_registry(mock_memory_manager)
         result = await registry.call("rebuild_knowledge_graph", {})
 
@@ -550,13 +556,14 @@ class TestRebuildKnowledgeGraph:
     @pytest.mark.asyncio
     async def test_success(self, mock_memory_manager: MagicMock) -> None:
         """Successful knowledge graph rebuild."""
-        mock_kg = MagicMock()
-        mock_kg.add_to_graph = AsyncMock()
-        mock_memory_manager.kg_service = mock_kg
-        mock_memory_manager.list_memories.return_value = [
-            MockMemory(id="m1"),
-            MockMemory(id="m2"),
-        ]
+        mock_memory_manager.rebuild_knowledge_graph = AsyncMock(
+            return_value={
+                "success": True,
+                "memories_processed": 2,
+                "memories_extracted": 2,
+                "errors": 0,
+            }
+        )
 
         registry = create_memory_registry(mock_memory_manager)
         result = await registry.call("rebuild_knowledge_graph", {})
@@ -568,13 +575,14 @@ class TestRebuildKnowledgeGraph:
     @pytest.mark.asyncio
     async def test_partial_failure(self, mock_memory_manager: MagicMock) -> None:
         """Counts errors on individual extraction failures."""
-        mock_kg = MagicMock()
-        mock_kg.add_to_graph = AsyncMock(side_effect=[None, Exception("KG error")])
-        mock_memory_manager.kg_service = mock_kg
-        mock_memory_manager.list_memories.return_value = [
-            MockMemory(id="m1"),
-            MockMemory(id="m2"),
-        ]
+        mock_memory_manager.rebuild_knowledge_graph = AsyncMock(
+            return_value={
+                "success": True,
+                "memories_processed": 2,
+                "memories_extracted": 1,
+                "errors": 1,
+            }
+        )
 
         registry = create_memory_registry(mock_memory_manager)
         result = await registry.call("rebuild_knowledge_graph", {})

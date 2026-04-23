@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from importlib.resources import files
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from gobby.hooks.event_handlers._agent import (
     _GOBBY_CMD_PATTERN,
     AgentEventHandlerMixin,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
@@ -44,9 +47,8 @@ class _TestHandler(AgentEventHandlerMixin):
     def __init__(self) -> None:
         self.logger = MagicMock()
         self._session_manager = MagicMock()
-        self._session_storage = MagicMock()
         # Prevent real DB calls in handle_subagent_start depth tracking
-        self._session_storage.db.fetchone.return_value = None
+        self._session_manager.db.fetchone.return_value = None
         self._session_coordinator = None
         self._message_processor = None
         self._task_manager = None
@@ -129,6 +131,51 @@ class TestHandleBeforeAgent:
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
 
+    def test_default_agent_auto_injects_brevity_on_first_prompt(self) -> None:
+        handler = _TestHandler()
+        event = _make_event(
+            data={"prompt": "hello"},
+            metadata={"_platform_session_id": "sess-1"},
+        )
+
+        agent_path = files("gobby.install.shared").joinpath("workflows/agents/default.yaml")
+        default_agent = AgentDefinitionBody.model_validate(
+            yaml.safe_load(agent_path.read_text(encoding="utf-8"))
+        )
+
+        with (
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.get_variables",
+                return_value={
+                    "_agent_type": "default",
+                    "_active_skill_names": ["brevity"],
+                    "_agent_context_injected": False,
+                },
+            ),
+            patch(
+                "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
+            ) as mock_merge,
+            patch("gobby.workflows.agent_resolver.resolve_agent", return_value=default_agent),
+            patch("gobby.skills.manager.SkillManager.list_skills", return_value=[]),
+            patch(
+                "gobby.hooks.event_handlers._session_start.select_and_format_agent_skills",
+                return_value=("### brevity\nTerse output mode.", 1, ["brevity"]),
+            ),
+        ):
+            result = handler.handle_before_agent(event)
+
+        assert result.decision == "allow"
+        assert result.context is not None
+        assert "## Instructions" in result.context
+        assert "### brevity" in result.context
+        mock_merge.assert_called_once_with(
+            "sess-1",
+            {
+                "_agent_context_injected": True,
+                "_agent_identity_reinject": False,
+            },
+        )
+
 
 # ---------------------------------------------------------------------------
 # _intercept_skill_command tests
@@ -164,8 +211,8 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby:expand")
         assert result is not None
-        assert "expand" in result
-        assert "# Expand skill" in result
+        assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
+        assert "# Expand skill" not in result
 
     def test_gobby_space_skill(self) -> None:
         handler = _TestHandler()
@@ -176,7 +223,24 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby expand some args")
         assert result is not None
+        assert 'Call get_skill(name="expand") on gobby-skills, then continue.' in result
         assert "some args" in result
+
+    def test_gobby_plan_does_not_inline_oversized_skill_body(self) -> None:
+        handler = _TestHandler()
+        mock_skill = MagicMock()
+        mock_skill.name = "plan"
+        mock_skill.content = "# Plan\n" + ("x" * 20_000)
+        handler._skill_manager.resolve_skill_name.return_value = mock_skill
+
+        result = handler._intercept_skill_command("/gobby plan draft auth")
+
+        assert result is not None
+        assert 'Call get_skill(name="plan") on gobby-skills, then continue.' in result
+        assert "User arguments: draft auth" in result
+        assert "<skill-context" not in result
+        assert "# Plan" not in result
+        assert "... [truncated]" not in result
 
     def test_gobby_skill_not_found(self) -> None:
         handler = _TestHandler()
@@ -212,8 +276,8 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skills bridge")
         assert result is not None
-        assert "bridge" in result
-        assert "# Bridge skill" in result
+        assert 'Call get_skill(name="bridge") on gobby-skills, then continue.' in result
+        assert "# Bridge skill" not in result
         handler._skill_manager.resolve_skill_name.assert_called_with("bridge")
 
     def test_gobby_skill_singular_namespace(self) -> None:
@@ -225,7 +289,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skill bridge")
         assert result is not None
-        assert "bridge" in result
+        assert 'Call get_skill(name="bridge") on gobby-skills, then continue.' in result
 
     def test_gobby_skills_namespace_with_args(self) -> None:
         handler = _TestHandler()

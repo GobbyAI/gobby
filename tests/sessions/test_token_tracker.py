@@ -1,8 +1,4 @@
-"""Tests for gobby.sessions.token_tracker module.
-
-Tests for the SessionTokenTracker class that aggregates usage from sessions
-and provides budget tracking based on token counts (not USD).
-"""
+"""Tests for session token usage aggregation."""
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -67,21 +63,19 @@ class TestSessionTokenTrackerInit:
         """Initialize with session storage."""
         from gobby.sessions.token_tracker import SessionTokenTracker
 
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=5_000_000,
-        )
-
-        assert tracker.session_storage is mock_session_storage
-        assert tracker.daily_budget_tokens == 5_000_000
-
-    def test_init_default_budget(self, mock_session_storage: MagicMock) -> None:
-        """Initialize with default budget."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
         tracker = SessionTokenTracker(session_storage=mock_session_storage)
 
-        assert tracker.daily_budget_tokens == 10_000_000  # Default: 10M tokens
+        assert tracker.session_storage is mock_session_storage
+
+    def test_init_requires_db_or_storage(self) -> None:
+        """Initialization fails fast when no dependency is provided."""
+        from gobby.sessions.token_tracker import SessionTokenTracker
+
+        with pytest.raises(
+            ValueError,
+            match="SessionTokenTracker requires db or session_storage",
+        ):
+            SessionTokenTracker()
 
 
 class TestGetUsageSummary:
@@ -185,148 +179,3 @@ class TestGetUsageSummary:
         assert summary["session_count"] == 0
         assert summary["usage_by_source"] == {}
         assert summary["usage_by_model"] == {}
-
-
-class TestGetBudgetStatus:
-    """Tests for get_budget_status method."""
-
-    def test_get_budget_status_under_budget(
-        self, mock_session_storage: MagicMock, sample_sessions: list[Any]
-    ) -> None:
-        """Get budget status when under budget."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        # sess-1: 1500 tokens, sess-2: 3000 tokens = 4500 total
-        mock_session_storage.get_sessions_since.return_value = sample_sessions[:2]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=10_000_000,
-        )
-        status = tracker.get_budget_status()
-
-        assert status["daily_budget_tokens"] == 10_000_000
-        assert status["used_today_tokens"] == 4500  # 1000+500 + 2000+1000
-        assert status["remaining_tokens"] == 10_000_000 - 4500
-        assert status["over_budget"] is False
-
-    def test_get_budget_status_over_budget(
-        self, mock_session_storage: MagicMock, sample_sessions: list[Any]
-    ) -> None:
-        """Get budget status when over budget."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        mock_session_storage.get_sessions_since.return_value = sample_sessions[:2]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=1000,  # Very small budget
-        )
-        status = tracker.get_budget_status()
-
-        assert status["daily_budget_tokens"] == 1000
-        assert status["used_today_tokens"] == 4500
-        assert status["over_budget"] is True
-
-    def test_get_budget_status_negative_budget_is_unlimited(
-        self, mock_session_storage: MagicMock, sample_sessions: list[Any]
-    ) -> None:
-        """Negative daily_budget_tokens is treated as unlimited (same as 0)."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        mock_session_storage.get_sessions_since.return_value = sample_sessions[:2]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=-10,
-        )
-        status = tracker.get_budget_status()
-
-        assert status["daily_budget_tokens"] == -10
-        assert status["over_budget"] is False
-        assert status["remaining_tokens"] == float("inf")
-
-
-class TestCanSpawnAgent:
-    """Tests for can_spawn_agent method."""
-
-    def test_can_spawn_agent_under_budget(
-        self, mock_session_storage: MagicMock, sample_sessions: list[Any]
-    ) -> None:
-        """Can spawn agent when under budget."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        mock_session_storage.get_sessions_since.return_value = sample_sessions[:2]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=10_000_000,
-        )
-        can_spawn, reason = tracker.can_spawn_agent()
-
-        assert can_spawn is True
-        assert reason is None
-
-    def test_cannot_spawn_agent_over_budget(
-        self, mock_session_storage: MagicMock, sample_sessions: list[Any]
-    ) -> None:
-        """Cannot spawn agent when over budget."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        mock_session_storage.get_sessions_since.return_value = sample_sessions[:2]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=1000,  # Very small budget
-        )
-        can_spawn, reason = tracker.can_spawn_agent()
-
-        assert can_spawn is False
-        assert reason is not None and "budget exceeded" in reason.lower()
-
-    def test_can_spawn_agent_with_estimated_tokens(
-        self, mock_session_storage: MagicMock, sample_sessions: list[Any]
-    ) -> None:
-        """Cannot spawn agent when estimated tokens would exceed budget."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        mock_session_storage.get_sessions_since.return_value = sample_sessions[:2]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=5000,  # Budget is 5000, used is 4500
-        )
-
-        # Without estimated tokens - should be able to spawn
-        can_spawn, _ = tracker.can_spawn_agent()
-        assert can_spawn is True
-
-        # With estimated tokens that would exceed budget
-        can_spawn, reason = tracker.can_spawn_agent(estimated_tokens=1000)
-        assert can_spawn is False
-        assert reason is not None and "exceed budget" in reason.lower()
-
-    def test_can_spawn_agent_unlimited_budget(self, mock_session_storage: MagicMock) -> None:
-        """Can always spawn agent when budget is unlimited (0)."""
-        from gobby.sessions.token_tracker import SessionTokenTracker
-
-        expensive_session = MagicMock(
-            id="sess-expensive",
-            usage_input_tokens=1_000_000,
-            usage_output_tokens=500_000,
-            usage_cache_creation_tokens=None,
-            usage_cache_read_tokens=None,
-            model="claude-3-5-sonnet-20241022",
-            source="claude",
-            created_at=datetime.now(UTC).isoformat(),
-        )
-        mock_session_storage.get_sessions_since.return_value = [expensive_session]
-
-        tracker = SessionTokenTracker(
-            session_storage=mock_session_storage,
-            daily_budget_tokens=0,  # Unlimited budget
-        )
-        can_spawn, reason = tracker.can_spawn_agent()
-
-        assert can_spawn is True
-        assert reason is None

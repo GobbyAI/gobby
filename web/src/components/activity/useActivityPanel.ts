@@ -6,12 +6,12 @@ const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
 const STORAGE_KEY_TAB = 'gobby-activity-panel-tab'
 const VALID_TABS: ActivityTab[] = [
   'sessions',
-  'pipelines',
   'tasks',
-  'files',
   'plans',
   'artifacts',
+  'files',
   'canvas',
+  'pipelines',
 ]
 
 export function useActivityPanel() {

@@ -1,7 +1,7 @@
 """Status transition handlers for task lifecycle.
 
-Handles reopen, escalate, de_escalate, mark_task_review_approved, and
-mark_task_needs_review tool registrations.
+Handles reopen, escalate, de_escalate, review approval/rejection, and
+needs_review tool registrations.
 """
 
 import logging
@@ -83,19 +83,6 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
                 except Exception as e:
                     logger.debug(f"Best-effort session link update on reopen failed: {e}")
 
-            # Reactivate any associated worktrees that were marked merged/abandoned
-            try:
-                from gobby.storage.worktrees import WorktreeStatus
-
-                wt = ctx.worktree_manager.get_by_task(resolved_id)
-                if wt and wt.status in (
-                    WorktreeStatus.MERGED.value,
-                    WorktreeStatus.ABANDONED.value,
-                ):
-                    ctx.worktree_manager.update(wt.id, status=WorktreeStatus.ACTIVE.value)
-            except Exception as e:
-                logger.debug(f"Best-effort reopen worktree update failed: {e}")
-
             return {}
         except ValueError as e:
             return {"error": str(e)}
@@ -144,6 +131,9 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
+        if not session_id:
+            return {"error": "No session context available. Ensure session_id is set."}
+
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except (TaskNotFoundError, ValueError) as e:
@@ -335,6 +325,117 @@ def register_mark_task_review_approved(
     )
 
 
+def register_mark_task_review_rejected(
+    registry: InternalToolRegistry, ctx: RegistryContext
+) -> None:
+    """Register the mark_task_review_rejected tool on the given registry."""
+
+    def mark_task_review_rejected(
+        task_id: str,
+        rejection_notes: str | None = None,
+        round_number: int | None = None,
+        **legacy_kwargs: Any,
+    ) -> dict[str, Any]:
+        """Reject a task after review and return it to open status."""
+        from gobby.utils.session_context import get_current_session_id
+
+        legacy_round = legacy_kwargs.pop("round", None)
+        if legacy_kwargs:
+            unexpected = ", ".join(sorted(legacy_kwargs))
+            return {"error": f"Unexpected arguments for mark_task_review_rejected: {unexpected}"}
+        if round_number is not None and legacy_round is not None:
+            return {"error": "Use either round_number or round, not both"}
+        if round_number is None:
+            round_number = legacy_round
+
+        session_id = get_current_session_id()
+        if not session_id:
+            return {"error": "No session context available. Ensure session_id is set."}
+
+        try:
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+        except (TaskNotFoundError, ValueError) as e:
+            return {"error": str(e)}
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task:
+            return {"error": f"Task {task_id} not found"}
+        prior_assignee = get_claimed_session_id(task)
+
+        if task.status not in ("needs_review", "in_progress"):
+            return {
+                "error": f"Cannot reject review for task with status '{task.status}'. "
+                "Task must be in 'needs_review' or 'in_progress' status to reject review."
+            }
+
+        try:
+            resolved_session_id = ctx.resolve_session_id(session_id)
+        except ValueError as e:
+            return {"error": f"Cannot resolve session '{session_id}': {e}"}
+
+        try:
+            updated = ctx.task_manager.mark_task_review_rejected(
+                resolved_id,
+                rejection_notes=rejection_notes,
+                round_number=round_number,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
+
+        if not updated:
+            return {"error": f"Failed to reject review for task {task_id}"}
+
+        _clear_prior_claim_session_variables(
+            ctx,
+            resolved_id,
+            prior_assignee,
+            action="review rejection",
+        )
+
+        notify_parent_on_status_change(
+            ctx.task_manager.db,
+            resolved_id,
+            "open",
+            task_ref=f"#{task.seq_num}" if task.seq_num else None,
+        )
+
+        try:
+            ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "review_rejected")
+        except Exception:
+            pass  # nosec B110 # best-effort linking
+
+        return {}
+
+    registry.register(
+        name="mark_task_review_rejected",
+        description=(
+            "Reject a task after review. Returns the task to 'open', optionally appends "
+            "review findings, and can bump the planning-round label."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task reference: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID",
+                },
+                "rejection_notes": {
+                    "type": "string",
+                    "description": "Optional review findings or rejection notes to append to the task description.",
+                    "default": None,
+                },
+                "round_number": {
+                    "type": "integer",
+                    "description": "Optional planning round number used to update the planning-round:N label.",
+                    "default": None,
+                },
+            },
+            "required": ["task_id"],
+        },
+        func=mark_task_review_rejected,
+    )
+
+
 def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the mark_task_needs_review tool on the given registry."""
 
@@ -478,6 +579,8 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
+        if not session_id:
+            return {"error": "No session context available. Ensure session_id is set."}
 
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)

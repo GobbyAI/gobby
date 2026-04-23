@@ -11,6 +11,9 @@ from typing import Any
 
 import click
 
+from gobby.storage.database import LocalDatabase
+from gobby.storage.secrets import SecretStore
+
 from ._detectors import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
@@ -50,7 +53,7 @@ from .installers import (
     uninstall_neo4j,
     uninstall_qwen,
 )
-from .utils import get_install_dir
+from .utils import get_install_dir, load_full_config_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -255,47 +258,78 @@ def install(
 
     # Track results
     results: dict[str, dict[str, Any]] = {}
+    db: LocalDatabase | None = None
+    secret_store: SecretStore | None = None
 
-    # Standard CLIs (claude, gemini, qwen, codex)
-    _standard_installers = {
-        "claude": install_claude,
-        "gemini": install_gemini,
-        "qwen": install_qwen,
-        "codex": install_codex,
-    }
-    for cli_name, installer_fn in _standard_installers.items():
-        if cli_name in clis_to_install:
-            _run_standard_cli_install(cli_name, installer_fn, project_path, mode, results)
+    try:
+        config = load_full_config_from_db()
+        db = LocalDatabase(Path(config.database_path).expanduser())
+        secret_store = SecretStore(db)
+    except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
+        # Missing config file, unreadable DB path, malformed config values.
+        # The orchestration proceeds with db/secret_store=None — downstream
+        # steps open their own DB via _ensure_db_and_secrets if they need it.
+        logger.warning(
+            "Failed to initialize install database/secret store (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
 
-    # Git hooks
-    if install_hooks:
-        _run_git_hooks_install(install_git_hooks, project_path, results)
+    try:
+        # Standard CLIs (claude, gemini, qwen, codex)
+        _standard_installers = {
+            "claude": install_claude,
+            "gemini": install_gemini,
+            "qwen": install_qwen,
+            "codex": install_codex,
+        }
+        for cli_name, installer_fn in _standard_installers.items():
+            if cli_name in clis_to_install:
+                _run_standard_cli_install(cli_name, installer_fn, project_path, mode, results)
 
-    # Embedding provider setup (runs before Docker services so "none" can skip them)
-    embedding_provider = _run_embedding_install(
-        install_embedding, results, no_interactive=no_interactive_flag
-    )
+        # Git hooks
+        if install_hooks:
+            _run_git_hooks_install(install_git_hooks, project_path, results)
 
-    # Voice chat (optional — installs ~500MB of deps including PyTorch)
-    _run_voice_install(results, voice_flag=voice_flag, no_interactive=no_interactive_flag)
+        # Embedding provider setup (runs before Docker services so "none" can skip them)
+        embedding_provider = _run_embedding_install(
+            install_embedding, results, no_interactive=no_interactive_flag
+        )
 
-    # Docker services (Qdrant + Neo4j, installed by default if Docker available)
-    # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
-    if not no_ext_services_flag and embedding_provider != "none":
-        _run_qdrant_install(install_qdrant, results)
-        _run_neo4j_install(install_neo4j, neo4j_password, results)
-    elif embedding_provider == "none":
-        click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
-        click.echo("")
+        # Voice chat (optional — installs ~500MB of deps including PyTorch)
+        _run_voice_install(
+            results,
+            voice_flag=voice_flag,
+            no_interactive=no_interactive_flag,
+            db=db,
+            secret_store=secret_store,
+        )
 
-    # Migration detection
-    if mode == "global":
-        _echo_migration_notice(project_path)
+        # Docker services (Qdrant + Neo4j, installed by default if Docker available)
+        # Skipped if user chose "none" for embeddings (no semantic search = no vector store needed)
+        if not no_ext_services_flag and embedding_provider != "none":
+            _run_qdrant_install(install_qdrant, results)
+            _run_neo4j_install(install_neo4j, neo4j_password, results)
+        elif embedding_provider == "none":
+            click.echo("Skipping Qdrant/Neo4j install (embeddings disabled)")
+            click.echo("")
 
-    # Summary, next steps, API key prompts
-    all_success = _echo_install_summary(results, no_interactive_flag)
-    if not all_success:
-        sys.exit(1)
+        # Migration detection
+        if mode == "global":
+            _echo_migration_notice(project_path)
+
+        # Summary, next steps, API key prompts
+        all_success = _echo_install_summary(
+            results,
+            no_interactive_flag,
+            db=db,
+            secret_store=secret_store,
+        )
+        if not all_success:
+            sys.exit(1)
+    finally:
+        if db is not None:
+            db.close()
 
 
 @click.command("uninstall")

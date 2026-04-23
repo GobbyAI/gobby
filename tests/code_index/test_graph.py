@@ -35,7 +35,21 @@ async def test_add_relationships_success(mock_client):
 
     cnt = await graph.add_relationships("p1", "a.py", imports, calls, contains)
     assert cnt == 3
-    assert mock_client.execute_write.call_count == 3
+    assert mock_client.execute_write.call_count == 11
+
+
+@pytest.mark.asyncio
+async def test_add_relationships_skips_incomplete_records(mock_client):
+    graph = CodeGraph(neo4j_client=mock_client)
+
+    imports = [{"source_file": "a.py", "target_module": ""}]
+    calls = [{"caller_symbol_id": "sym1", "callee_name": "", "file_path": "a.py", "line": 1}]
+    contains = [{"id": "sym1", "name": "", "kind": "func", "line_start": 1}]
+
+    cnt = await graph.add_relationships("p1", "a.py", imports, calls, contains)
+
+    assert cnt == 0
+    assert mock_client.execute_write.call_count == 8
 
 
 @pytest.mark.asyncio
@@ -43,9 +57,8 @@ async def test_add_relationships_exception(mock_client):
     graph = CodeGraph(neo4j_client=mock_client)
     mock_client.execute_write.side_effect = Exception("err")
     imports = [{"source_file": "start.py"}]
-    # Should catch exception and log warning, return 0 for that insert
-    cnt = await graph.add_relationships("p1", "a.py", imports)
-    assert cnt == 0
+    with pytest.raises(Exception, match="err"):
+        await graph.add_relationships("p1", "a.py", imports)
 
 
 @pytest.mark.asyncio
@@ -105,6 +118,9 @@ async def test_get_import_chain(mock_client):
     graph = CodeGraph(mock_client)
     mock_client.execute_read.return_value = [{"name": "n1"}]
     assert await graph.get_import_chain("m", "p1") == [{"name": "n1"}]
+    query, params = mock_client.execute_read.await_args.args
+    assert "[:IMPORTS*1..3]" in query
+    assert params == {"module": "m", "project": "p1"}
     mock_client.execute_read.side_effect = Exception("e")
     assert await graph.get_import_chain("m", "p1") == []
 
@@ -119,17 +135,15 @@ async def test_find_blast_radius(mock_client):
     with pytest.raises(ValueError):
         await graph.find_blast_radius(None, None, "p")
 
-    # Path 1: symbol_name
-    mock_client.execute_read.return_value = [
-        {"symbol_id": "sym1", "distance": 1, "rel_type": "call"}
-    ]
+    # Path 1: symbol_id
+    mock_client.execute_read.return_value = [{"node_id": "sym1", "distance": 1, "rel_type": "call"}]
     res = await graph.find_blast_radius("s", None, "p")
     assert len(res) == 1
 
     # Path 2: file_path
     mock_client.execute_read.side_effect = [
-        [{"symbol_id": "sym2", "distance": 1, "rel_type": "call"}],  # call_records
-        [{"file_path": "f2", "distance": 2, "rel_type": "import"}],  # import_records
+        [{"node_id": "sym2", "distance": 1, "rel_type": "call"}],  # call_records
+        [{"node_id": "f2", "distance": 2, "rel_type": "import"}],  # import_records
     ]
     res = await graph.find_blast_radius(None, "f", "p")
     assert len(res) == 2
@@ -144,11 +158,32 @@ async def test_get_file_graph(mock_client):
     mock_client.execute_read.side_effect = [
         [{"id": "f1", "path": "p1", "type": "file", "symbol_count": 1}],  # file_records
         [{"source": "f1", "target": "m1", "type": "IMPORTS"}],  # import_records
-        [{"source": "f1", "target": "sym1", "type": "DEFINES"}],  # defines_records
-        [{"source": "sym1", "target": "sym2", "type": "CALLS"}],  # call_records
+        [
+            {
+                "source": "f1",
+                "target": "sym1",
+                "type": "DEFINES",
+                "symbol_name": "sym1",
+                "symbol_kind": "function",
+                "symbol_file_path": "f1",
+                "line_start": 10,
+            }
+        ],
+        [
+            {
+                "source": "sym1",
+                "target": "sym2",
+                "type": "CALLS",
+                "target_name": "sym2",
+                "target_type": "external",
+                "target_kind": None,
+                "target_file_path": None,
+                "target_line_start": None,
+            }
+        ],
     ]
     res = await graph.get_file_graph("p1", limit=1)
-    assert len(res["nodes"]) == 3  # f1 (file), m1 (module), sym1 (symbol)
+    assert len(res["nodes"]) == 4  # f1 (file), m1 (module), sym1, sym2
     assert len(res["links"]) == 3
 
     mock_client.execute_read.side_effect = Exception("e")
@@ -159,8 +194,36 @@ async def test_get_file_graph(mock_client):
 async def test_get_file_symbols(mock_client):
     graph = CodeGraph(mock_client)
     mock_client.execute_read.side_effect = [
-        [{"id": "sym1", "name": "sym1"}],  # sym_records
-        [{"source": "sym1", "target": "sym2", "line": 1}],  # call_records
+        [
+            {
+                "id": "sym1",
+                "name": "sym1",
+                "type": "function",
+                "kind": "function",
+                "file_path": "f",
+                "line_start": 1,
+                "signature": "def sym1(): ...",
+            }
+        ],
+        [
+            {
+                "source_id": "sym1",
+                "source_name": "sym1",
+                "source_type": "function",
+                "source_kind": "function",
+                "source_file_path": "f",
+                "source_line_start": 1,
+                "source_signature": "def sym1(): ...",
+                "target_id": "sym2",
+                "target_name": "sym2",
+                "target_type": "external",
+                "target_kind": None,
+                "target_file_path": None,
+                "target_line_start": None,
+                "target_signature": None,
+                "line": 1,
+            }
+        ],
     ]
     res = await graph.get_file_symbols("f", "p")
     assert len(res["nodes"]) == 2  # sym1, sym2
@@ -177,6 +240,7 @@ async def test_get_symbol_neighbors(mock_client):
         {
             "id": "sym_in",
             "name": "in",
+            "type": "function",
             "kind": "func",
             "direction": "incoming",
             "file_path": "f",
@@ -185,6 +249,7 @@ async def test_get_symbol_neighbors(mock_client):
         {
             "id": "sym_out",
             "name": "out",
+            "type": "external",
             "kind": "func",
             "direction": "outgoing",
             "file_path": "f",
@@ -202,16 +267,27 @@ async def test_get_symbol_neighbors(mock_client):
 @pytest.mark.asyncio
 async def test_get_blast_radius_graph(mock_client):
     graph = CodeGraph(mock_client)
-    # Mock find_blast_radius since it's a wrapper
+    graph.find_blast_radius = AsyncMock(
+        return_value=[  # type: ignore[method-assign]
+            {
+                "node_id": "sym1",
+                "node_name": "nm",
+                "kind": "func",
+                "distance": 1,
+                "rel_type": "call",
+                "node_type": "function",
+            },
+            {
+                "node_id": "f1",
+                "node_name": "f1",
+                "distance": 2,
+                "rel_type": "import",
+                "node_type": "file",
+            },
+        ]
+    )
     mock_client.execute_read.return_value = [
-        {
-            "symbol_id": "sym1",
-            "symbol_name": "nm",
-            "kind": "func",
-            "distance": 1,
-            "rel_type": "call",
-        },
-        {"file_path": "f1", "distance": 2, "rel_type": "import"},
+        {"name": "target", "type": "function", "kind": "function", "file_path": "src/a.py"}
     ]
     res = await graph.get_blast_radius_graph("s", None, "p")
     assert res["center"] == "s"
@@ -229,14 +305,16 @@ async def test_clear_project(mock_client):
     mock_client.execute_write.assert_called_once()
 
     mock_client.execute_write.side_effect = Exception("e")
-    await graph.clear_project("p1")
+    with pytest.raises(Exception, match="e"):
+        await graph.clear_project("p1")
 
 
 @pytest.mark.asyncio
 async def test_delete_file(mock_client):
     graph = CodeGraph(mock_client)
     await graph.delete_file("f", "p")
-    assert mock_client.execute_write.call_count == 2
+    assert mock_client.execute_write.call_count == 5
 
     mock_client.execute_write.side_effect = Exception("e")
-    await graph.delete_file("f", "p")
+    with pytest.raises(Exception, match="e"):
+        await graph.delete_file("f", "p")

@@ -25,6 +25,7 @@ interface VoiceState {
 }
 
 export interface UseVoiceReturn extends VoiceState {
+  prepareTTSPlayback: () => void
   startRecording: () => Promise<void>
   stopRecording: () => Promise<void>
   cancelRecording: () => void
@@ -211,6 +212,10 @@ export function useVoice(
     }
   }, [wsRef])
 
+  const prepareTTSPlayback = useCallback(() => {
+    getAudioContext()
+  }, [getAudioContext])
+
   const tearDownRecording = useCallback(() => {
     const rec = recCtxRef.current
     if (!rec) return
@@ -381,6 +386,8 @@ export function useVoice(
     ws.send(JSON.stringify({
       type: 'voice_prepare',
       conversation_id: conversationId,
+      stt_enabled: sttEnabled,
+      tts_enabled: ttsEnabled,
     }))
     startStatusPolling()
   }, [
@@ -582,6 +589,19 @@ export function useVoice(
       } else if (status === 'transcribing') {
         if (mountedRef.current) setIsTranscribing(true)
         if (mountedRef.current) setVoiceError(null)
+      } else if (status === 'preparing') {
+        if (mountedRef.current) setVoiceLoading(true)
+        if (mountedRef.current) setVoiceReady(false)
+        if (mountedRef.current) setVoiceError(null)
+        startStatusPolling()
+      }
+      if ('voice_ready' in data || 'voice_loading' in data) {
+        const parsed = parseVoiceStatus(data as RawVoiceStatus, window.isSecureContext)
+        if (mountedRef.current) setSttAvailable(parsed.sttAvailable)
+        if (mountedRef.current) setVoiceAvailable(parsed.voiceAvailable)
+        if (mountedRef.current) setVoiceReady(parsed.voiceReady)
+        if (mountedRef.current) setVoiceLoading(parsed.voiceLoading)
+        if (mountedRef.current) setStatusVoiceError(parsed.warmupError)
       }
     } else if (type === 'tts_audio') {
       if (!ttsEnabled) return
@@ -596,7 +616,7 @@ export function useVoice(
         pendingTTSMetaRef.current = null
       }
     }
-  }, [setTransientError, ttsEnabled])
+  }, [setTransientError, startStatusPolling, ttsEnabled])
 
   return {
     voiceAvailable,
@@ -608,6 +628,7 @@ export function useVoice(
     isTranscribing,
     isSpeaking,
     voiceError: statusVoiceError ?? voiceError,
+    prepareTTSPlayback,
     startRecording,
     stopRecording,
     cancelRecording,

@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.config.tmux import TmuxConfig
 from gobby.config.tmux import TmuxConfig as TmuxConfigCanonical
 
 pytestmark = pytest.mark.unit
@@ -691,12 +691,18 @@ class TestTmuxSessionManagerExtended:
 
     @pytest.mark.asyncio
     async def test_list_pane_ids(self) -> None:
-        """list_pane_ids returns set of pane IDs."""
+        """list_pane_ids returns only panes that tmux reports as alive."""
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (0, "%0\n%5\n%12\n", "")
+            mock_run.return_value = (0, "%0\t0\n%5\t1\n%12\t0\n", "")
             result = await mgr.list_pane_ids()
-        assert result == {"%0", "%5", "%12"}
+        assert result == {"%0", "%12"}
+        mock_run.assert_awaited_once_with(
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}\t#{pane_dead}",
+        )
 
     @pytest.mark.asyncio
     async def test_list_pane_ids_failure(self) -> None:

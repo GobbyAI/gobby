@@ -660,6 +660,44 @@ class TestDetectMcpCall:
 
         assert "mcp_calls" not in variables
 
+    def test_tracks_loaded_skill_from_successful_get_skill(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
+            tool_output={"result": {"success": True, "skill": {"name": "plan"}}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["loaded_skills"] == ["plan"]
+
+    def test_tracks_loaded_skill_idempotently(self, variables, make_after_tool_event) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
+            tool_output={"success": True, "skill": {"name": "plan"}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["loaded_skills"] == ["plan"]
+
+    def test_failed_get_skill_does_not_track_loaded_skill(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
+            tool_output={"result": {"success": False, "error": "missing"}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert "loaded_skills" not in variables
+
     def test_ignores_missing_server_or_tool(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",

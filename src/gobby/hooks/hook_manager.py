@@ -36,9 +36,13 @@ from gobby.hooks.dispatchers.webhook import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
+from gobby.hooks.session_types import HookSessionManager
+from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
 
 if TYPE_CHECKING:
+    from gobby.agents.runner import AgentRunner
+    from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
 
 
@@ -87,6 +91,8 @@ class HookManager:
         message_processor: Any | None = None,
         memory_sync_manager: Any | None = None,
         task_sync_manager: Any | None = None,
+        agent_runner: "AgentRunner | None" = None,
+        completion_registry: "CompletionEventRegistry | None" = None,
         code_index_trigger: Any | None = None,
     ):
         """
@@ -105,6 +111,8 @@ class HookManager:
             message_processor: SessionMessageProcessor instance
             memory_sync_manager: Optional MemorySyncManager instance
             task_sync_manager: Optional TaskSyncManager instance
+            agent_runner: Optional AgentRunner for workflow-bound agent completion
+            completion_registry: Optional CompletionEventRegistry for wait wakeups
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -149,6 +157,8 @@ class HookManager:
             message_processor=message_processor,
             memory_sync_manager=memory_sync_manager,
             task_sync_manager=task_sync_manager,
+            agent_runner=agent_runner,
+            completion_registry=completion_registry,
             get_machine_id=self.get_machine_id,
             resolve_project_id=self._resolve_project_id,
             code_index_trigger=code_index_trigger,
@@ -159,7 +169,6 @@ class HookManager:
         self._database = components.database
         self._daemon_client = components.daemon_client
         self._transcript_processor = components.transcript_processor
-        self._session_storage = components.session_storage
         self._session_task_manager = components.session_task_manager
         self._memory_storage = components.memory_storage
         self._task_manager = components.task_manager
@@ -174,7 +183,7 @@ class HookManager:
         self._pipeline_executor = components.pipeline_executor
         self._workflow_handler = components.workflow_handler
         self._webhook_dispatcher = components.webhook_dispatcher
-        self._session_manager = components.session_manager
+        self._session_manager = cast(HookSessionManager, components.session_manager)
         self._session_coordinator = components.session_coordinator
         self._health_monitor = components.health_monitor
         self._hook_assembler = components.hook_assembler
@@ -198,7 +207,7 @@ class HookManager:
         from gobby.hooks.event_enrichment import EventEnricher
 
         self._enricher = EventEnricher(
-            session_storage=self._session_storage,
+            session_manager=self._session_manager,
             injected_sessions=self._injected_sessions,
             inter_session_msg_manager=self._inter_session_msg_manager,
         )
@@ -319,8 +328,18 @@ class HookManager:
                 reason=f"Daemon {daemon_status}: {error_reason or 'Unknown'}",
             )
 
-        # Resolve platform session_id from CLI external_id
-        self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
+        # SESSION_START is special: the handler establishes the canonical
+        # platform session first (including pre-created web-chat rows). Doing a
+        # generic lookup here can auto-register a stray duplicate before the
+        # handler gets a chance to bind the real session.
+        if event.event_type == HookEventType.SESSION_START:
+            if not event.project_id:
+                cwd = event.cwd or event.data.get("cwd")
+                event.project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
+        else:
+            # Resolve platform session_id from CLI external_id
+            self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
+            self._record_session_activity_pulse(event)
 
         # Translate #N session references to UUIDs for MCP tool calls.
         # #N is human-friendly but ambiguous across projects (seq_num is per-project).
@@ -350,6 +369,8 @@ class HookManager:
                         f"Event handler {event.event_type} failed: {e}", exc_info=True
                     )
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
+
+            self._record_session_activity_pulse(event)
 
             with create_span("hook.session_start.rules"):
                 workflow_context, blocking_response = self._evaluate_workflow_rules(event)
@@ -442,6 +463,13 @@ class HookManager:
         """
         return self._event_handlers.get_handler(event_type)
 
+    @staticmethod
+    def _record_session_activity_pulse(event: HookEvent) -> None:
+        """Record a non-statusline activity pulse for the event's platform session."""
+        platform_id = event.metadata.get("_platform_session_id")
+        if isinstance(platform_id, str) and platform_id:
+            record_session_activity(platform_id)
+
     def _resolve_session_refs_in_tool_input(self, event: HookEvent) -> None:
         """Resolve #N session references to UUIDs in MCP tool arguments.
 
@@ -504,6 +532,55 @@ class HookManager:
 
         return False
 
+    @staticmethod
+    def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:
+        """Return compact server/tool labels for workflow-triggered MCP calls."""
+        targets: list[str] = []
+        for call in mcp_calls:
+            server = call.get("server")
+            tool = call.get("tool")
+            if isinstance(server, str) and isinstance(tool, str) and server and tool:
+                targets.append(f"{server}/{tool}")
+        return targets
+
+    def _log_workflow_evaluation(
+        self,
+        event: HookEvent,
+        workflow_response: HookResponse,
+        mcp_calls: list[dict[str, Any]],
+    ) -> None:
+        """Log workflow decisions, keeping routine allow decisions at debug level."""
+        session_id = event.metadata.get("_platform_session_id", "unknown")
+        event_name = event.event_type.value
+        tool_name = event.data.get("tool_name")
+        has_rewrite = bool(workflow_response.modified_input)
+        has_visible_side_effects = bool(mcp_calls) or has_rewrite or workflow_response.auto_approve
+
+        parts = [
+            f"Workflow rule evaluation: event={event_name}",
+            f"decision={workflow_response.decision}",
+            f"session={session_id}",
+        ]
+        if isinstance(tool_name, str) and tool_name:
+            parts.append(f"tool={tool_name}")
+        if mcp_calls:
+            parts.append(f"mcp_calls={len(mcp_calls)}")
+            mcp_targets = self._summarize_mcp_calls(mcp_calls)
+            if mcp_targets:
+                parts.append(f"mcp_targets={', '.join(mcp_targets)}")
+        if has_rewrite:
+            parts.append("rewrote_input=true")
+        if workflow_response.auto_approve:
+            parts.append("auto_approve=true")
+        if workflow_response.reason and workflow_response.decision != "allow":
+            parts.append(f"reason={workflow_response.reason}")
+
+        message = ", ".join(parts)
+        if workflow_response.decision != "allow" or has_visible_side_effects:
+            self.logger.info(message)
+        else:
+            self.logger.debug(message)
+
     def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects.
 
@@ -521,9 +598,6 @@ class HookManager:
             # Extract and dispatch mcp_calls BEFORE the block check —
             # they're explicit side effects that should fire regardless of decision
             mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
-            self.logger.info(
-                f"Rule evaluation for {event.event_type}: decision={workflow_response.decision}, mcp_calls={len(mcp_calls)}, session={event.metadata.get('_platform_session_id', 'unknown')}",
-            )
 
             with create_span(
                 "hook.rules.mcp_dispatch",
@@ -566,20 +640,17 @@ class HookManager:
                 if dr.get("block_on_success") and dr.get("success"):
                     block_override = HookResponse(
                         decision="block",
-                        reason=(
-                            f"Intercepted by {dr['server']}/{dr['tool']} — results injected below."
-                        ),
+                        reason=(f"Intercepted by {dr['server']}/{dr['tool']} — see context below."),
                         context="\n\n".join(extra_context) if extra_context else None,
                     )
                     break
 
             if block_override:
+                self._log_workflow_evaluation(event, block_override, mcp_calls)
                 return None, block_override
 
             if workflow_response.decision != "allow":
-                self.logger.info(
-                    f"Workflow blocked/modified event: {workflow_response.decision}, session={event.metadata.get('_platform_session_id', 'unknown')}",
-                )
+                self._log_workflow_evaluation(event, workflow_response, mcp_calls)
                 # Merge any auto-heal context into the block response
                 if extra_context and workflow_response.context:
                     workflow_response.context = (
@@ -594,6 +665,8 @@ class HookManager:
             if workflow_response.modified_input:
                 event.metadata["_modified_input"] = workflow_response.modified_input
                 event.metadata["_auto_approve"] = workflow_response.auto_approve
+
+            self._log_workflow_evaluation(event, workflow_response, mcp_calls)
 
             # Capture context to merge later
             workflow_context = workflow_response.context if workflow_response.context else None
@@ -749,7 +822,7 @@ class HookManager:
             try:
                 await generate_session_summaries(
                     session_id=session_id,
-                    session_manager=self._session_storage,
+                    session_manager=self._session_manager,
                     llm_service=self._llm_service,
                     db=self._database,
                 )

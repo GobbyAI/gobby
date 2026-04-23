@@ -202,7 +202,7 @@ def _install_hooks_json(codex_home: Path, hooks_dir: Path) -> list[str]:
 def _is_gobby_hook(hook_entry: Any) -> bool:
     """Check if a hooks.json entry was installed by Gobby.
 
-    Inspects the entry's command/args for the hook_dispatcher.py path
+    Inspects the entry's command/args for the ``--gobby-owned`` marker
     rather than doing a broad string search on the JSON serialization.
     """
     return config_contains_gobby_hook(hook_entry)
@@ -243,7 +243,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
     codex_home.mkdir(parents=True, exist_ok=True)
     hooks_dir = _get_hooks_dir()
 
-    # 1. Install shared global hooks (hook_dispatcher.py etc.)
+    # 1. Install shared global hook helper files.
     try:
         global_hooks = install_global_hooks()
         files_installed.extend(global_hooks)

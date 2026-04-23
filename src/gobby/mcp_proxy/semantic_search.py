@@ -377,6 +377,7 @@ class SemanticToolSearch:
             api_base=self._api_base,
             api_key=self._openai_api_key,
             is_query=is_query,
+            expected_dim=self.embedding_dim,
         )
 
     async def embed_tool(

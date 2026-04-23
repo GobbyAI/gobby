@@ -1,6 +1,7 @@
 """Tests for VoiceConfig and its integration with DaemonConfig."""
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.config.voice import VoiceConfig
 
@@ -12,8 +13,8 @@ class TestVoiceConfig:
         config = VoiceConfig()
         assert config.enabled is False
         assert config.tts_provider == "chatterbox"
+        assert config.tts_chatterbox_max_generation_tokens == 256
         assert config.tts_reference_text is None
-        assert config.tts_voxcpm_model == "openbmb/VoxCPM2"
         assert config.stt_enabled is True
         assert config.whisper_model_size == "base"
         assert config.whisper_device == "auto"
@@ -24,9 +25,11 @@ class TestVoiceConfig:
         config = VoiceConfig(
             enabled=True,
             whisper_model_size="small",
+            tts_chatterbox_max_generation_tokens=144,
         )
         assert config.enabled is True
         assert config.whisper_model_size == "small"
+        assert config.tts_chatterbox_max_generation_tokens == 144
 
     def test_stt_only(self):
         config = VoiceConfig(enabled=True, stt_enabled=True)
@@ -49,6 +52,18 @@ class TestVoiceConfig:
     def test_daemon_config_with_voice(self):
         from gobby.config.app import DaemonConfig
 
-        config = DaemonConfig(voice={"enabled": True, "whisper_model_size": "medium"})
+        config = DaemonConfig(
+            voice={
+                "enabled": True,
+                "whisper_model_size": "medium",
+                "tts_chatterbox_max_generation_tokens": 144,
+            }
+        )
         assert config.voice.enabled is True
         assert config.voice.whisper_model_size == "medium"
+        assert config.voice.tts_chatterbox_max_generation_tokens == 144
+
+    @pytest.mark.parametrize("value", [0, 1001])
+    def test_generation_token_bounds_validation(self, value: int):
+        with pytest.raises(ValidationError):
+            VoiceConfig(tts_chatterbox_max_generation_tokens=value)

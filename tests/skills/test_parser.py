@@ -456,6 +456,82 @@ Content
         assert skill.is_always_apply() is True
         assert skill.get_category() == "core"
 
+    def test_internal_default_false(self) -> None:
+        """Test that internal defaults to False when absent from frontmatter."""
+        text = """---
+name: plain-skill
+description: No internal flag
+---
+
+Content
+"""
+        skill = parse_skill_text(text)
+        assert skill.internal is False
+        assert skill.is_internal() is False
+
+    def test_internal_top_level(self) -> None:
+        """Test top-level `internal: true` sets the flag and surfaces in metadata."""
+        text = """---
+name: methodology
+description: A shared methodology skill
+internal: true
+---
+
+Content
+"""
+        skill = parse_skill_text(text)
+        assert skill.internal is True
+        assert skill.is_internal() is True
+        # Top-level frontmatter fields are mirrored into metadata for DB round-trip
+        assert skill.metadata is not None
+        assert skill.metadata.get("internal") is True
+
+    def test_internal_nested_gobby_metadata(self) -> None:
+        """Test `metadata.gobby.internal: true` works as a fallback form."""
+        text = """---
+name: methodology
+description: A shared methodology skill
+metadata:
+  gobby:
+    internal: true
+---
+
+Content
+"""
+        skill = parse_skill_text(text)
+        assert skill.internal is True
+        assert skill.is_internal() is True
+
+    def test_internal_top_level_takes_precedence(self) -> None:
+        """Top-level internal overrides nested metadata.gobby.internal."""
+        text = """---
+name: methodology
+description: A shared methodology skill
+internal: true
+metadata:
+  gobby:
+    internal: false
+---
+
+Content
+"""
+        skill = parse_skill_text(text)
+        assert skill.internal is True
+        assert skill.is_internal() is True
+
+    def test_internal_in_to_dict(self) -> None:
+        """to_dict surfaces the internal flag for downstream callers."""
+        text = """---
+name: methodology
+description: A shared methodology skill
+internal: true
+---
+
+Content
+"""
+        skill = parse_skill_text(text)
+        assert skill.to_dict()["internal"] is True
+
 
 class TestParseSkillFile:
     """Tests for parse_skill_file function."""

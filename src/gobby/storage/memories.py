@@ -371,6 +371,22 @@ class LocalMemoryManager:
             if cursor.rowcount == 0:
                 raise ValueError(f"Memory not found: {memory_id}")
 
+    def mark_pending_graphs(self, project_id: str | None = None) -> int:
+        """Mark multiple memories as pending KG graph processing.
+
+        When ``project_id`` is provided, only memories in that project are reset.
+        When omitted, all memories are reset.
+        """
+        with self.db.transaction() as conn:
+            if project_id is None:
+                cursor = conn.execute("UPDATE memories SET graph_processed = 0")
+            else:
+                cursor = conn.execute(
+                    "UPDATE memories SET graph_processed = 0 WHERE project_id = ?",
+                    (project_id,),
+                )
+            return cursor.rowcount
+
     def mark_graph_processed(self, memory_id: str) -> None:
         """Mark a memory as having been processed by the KG pipeline."""
         with self.db.transaction() as conn:

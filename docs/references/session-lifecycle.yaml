@@ -313,17 +313,11 @@ triggers:
             2. Close the task: close_task(task_id="#N", commit_sha="<sha>")
             3. Then stop.
 
-        # Block naked python/pip commands - require uv run / uv pip
+        # Block naked python/pip commands - require uv
         - tools: [Bash]
-          command_pattern: "(?:^|[;&|])\\s*(?:sudo\\s+)?(?:python(?:3(?:\\.\\d+)?)?|pip3?)\\b"
-          command_not_pattern: "(?:^|[;&|])\\s*(?:sudo\\s+)?uv\\s+"
+          command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:3(?:\\.\\d+)?)?\\b)"
           when: "variables.get('require_uv')"
-          reason: |
-            Do not run python or pip directly. Use `uv` to ensure the correct virtual environment:
-            - `uv run python3 script.py` instead of `python3 script.py`
-            - `uv run python -m module` instead of `python -m module`
-            - `uv pip install pkg` or `uv add pkg` instead of `pip install pkg`
-            Rewrite your command with `uv` and retry.
+          reason: "Bare python/pip is not permitted in this repo. Use uv instead."
 
   on_after_tool:
     # Detect Claude Code plan mode entry/exit

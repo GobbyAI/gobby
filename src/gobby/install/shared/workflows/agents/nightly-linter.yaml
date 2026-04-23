@@ -36,7 +36,7 @@ instructions: |
   - Agent termination is separate and still requires `kill_agent`.
 
   CRITICAL RULES:
-  - Do NOT call mark_task_review_approved — close_task handles validation.
+  - Do NOT call mark_task_review_approved or mark_task_review_rejected — close_task handles validation.
   - Do NOT call reopen_task or de_escalate_task — close_task is your only lifecycle transition.
   - Do NOT call git push.
   - `close_task` must happen before the workflow can satisfy end-of-turn gates and terminate.
@@ -90,6 +90,7 @@ steps:
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:mark_task_review_rejected"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"

@@ -1,9 +1,7 @@
 """Tests for AgentDefinitionBody, AgentWorkflows, and agent_scope on RuleDefinitionBody.
 
 Covers:
-- AgentDefinitionBody model (16 fields: name, description, extends, role, goal, personality,
-  instructions, provider, model, mode, isolation, base_branch, timeout, max_turns,
-  workflows, enabled)
+- AgentDefinitionBody model (current expanded field set including surfaces)
 - AgentWorkflows model (pipeline, rules, variables)
 - agent_scope field on RuleDefinitionBody (list[str] | None)
 - Serialization to/from workflow_definitions as workflow_type='agent'
@@ -15,6 +13,7 @@ import json
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
@@ -52,6 +51,7 @@ class TestAgentDefinitionBodyModel:
         body = AgentDefinitionBody(name="developer")
         assert body.name == "developer"
         assert body.description is None
+        assert body.surfaces == ["spawn"]
         assert body.role is None
         assert body.goal is None
         assert body.personality is None
@@ -109,9 +109,20 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 25, f"Expected 25 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 26, f"Expected 26 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "surfaces" in fields
         assert "reasoning_required" in fields
         assert "fallback_agent" in fields
+
+    def test_surfaces_normalize_and_deduplicate(self) -> None:
+        """Persona/spawn usage surfaces normalize from YAML-ish inputs."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        body = AgentDefinitionBody(name="planner", surfaces=["persona", "spawn", "persona"])
+        assert body.surfaces == ["persona", "spawn"]
+
+        body = AgentDefinitionBody(name="planner", surfaces="persona")
+        assert body.surfaces == ["persona"]
 
     def test_workflows_default_empty(self) -> None:
         """Workflows defaults to empty AgentWorkflows."""
@@ -156,6 +167,47 @@ class TestAgentDefinitionBodyModel:
 
         body = AgentDefinitionBody(name="test")
         assert body.isolation == "inherit"
+
+    def test_reasoning_effort_normalizes_string_values(self) -> None:
+        """reasoning_effort keeps string normalization while rejecting coercion."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        body = AgentDefinitionBody(name="planner", reasoning_effort=" High ")
+        assert body.reasoning_effort == "high"
+
+    def test_reasoning_effort_rejects_non_string_values(self) -> None:
+        """reasoning_effort should fail early on malformed YAML types."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        with pytest.raises(ValidationError, match="reasoning_effort"):
+            AgentDefinitionBody(name="planner", reasoning_effort=1)
+
+    def test_reasoning_required_rejects_non_bool_values(self) -> None:
+        """reasoning_required should stay strict instead of coercing strings."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        with pytest.raises(ValidationError, match="reasoning_required"):
+            AgentDefinitionBody(name="planner", reasoning_required="true")
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("model", 123),
+            ("fallback_agent", 123),
+            ("api_base", 123),
+            ("api_token", 123),
+        ],
+    )
+    def test_execution_string_fields_reject_non_string_values(
+        self,
+        field_name: str,
+        value: int,
+    ) -> None:
+        """Execution config string fields should not stringify malformed values."""
+        from gobby.workflows.definitions import AgentDefinitionBody
+
+        with pytest.raises(ValidationError, match=field_name):
+            AgentDefinitionBody(name="planner", **{field_name: value})
 
 
 class TestAgentDefinitionBodySerialization:

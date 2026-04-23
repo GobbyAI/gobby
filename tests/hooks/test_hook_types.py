@@ -61,14 +61,29 @@ class TestHookTypeEnum:
             "USER_PROMPT_SUBMIT",
             "PRE_TOOL_USE",
             "POST_TOOL_USE",
+            "POST_TOOL_USE_FAILURE",
             "PRE_COMPACT",
+            "POST_COMPACT",
             "STOP",
+            "STOP_FAILURE",
             "SUBAGENT_START",
             "SUBAGENT_STOP",
+            "TASK_CREATED",
+            "TASK_COMPLETED",
+            "TEAMMATE_IDLE",
             "NOTIFICATION",
+            "INSTRUCTIONS_LOADED",
+            "CONFIG_CHANGE",
+            "CWD_CHANGED",
+            "FILE_CHANGED",
+            "WORKTREE_CREATE",
+            "WORKTREE_REMOVE",
+            "ELICITATION",
+            "ELICITATION_RESULT",
             "BEFORE_MODEL",
             "AFTER_MODEL",
             "PERMISSION_REQUEST",
+            "PERMISSION_DENIED",
         }
         actual_types = {t.name for t in HookType}
         assert actual_types == expected_types
@@ -413,10 +428,11 @@ class TestStopInput:
 class TestSubagentStartInput:
     """Tests for SubagentStartInput model."""
 
-    def test_required_fields(self) -> None:
-        """Test required fields."""
-        with pytest.raises(ValidationError):
-            SubagentStartInput(external_id="key")  # Missing subagent_id
+    def test_subagent_id_is_optional(self) -> None:
+        """Legacy subagent_id is optional for newer Claude payloads."""
+        input_data = SubagentStartInput(external_id="key", agent_id="agent-456")
+        assert input_data.subagent_id is None
+        assert input_data.agent_id == "agent-456"
 
     def test_valid_input(self) -> None:
         """Test valid input."""

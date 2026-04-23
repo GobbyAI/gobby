@@ -6,7 +6,7 @@ import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -19,7 +19,7 @@ def agent_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
 
 @pytest.fixture
 def sample_session(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     sample_project: dict,
 ) -> dict:
     """Create a sample session for agent run testing."""
@@ -206,7 +206,7 @@ class TestLocalAgentRunManager:
     def test_create_agent_run_with_child_session(
         self,
         agent_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -363,6 +363,33 @@ class TestLocalAgentRunManager:
         assert completed.tool_calls_count == 0
         assert completed.turns_used == 0
 
+    def test_complete_expires_child_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Completing an agent run expires its child session."""
+        child_session = session_manager.register(
+            external_id="agent-child-complete",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Complete child session test",
+            child_session_id=child_session.id,
+        )
+        agent_manager.start(agent_run.id)
+
+        agent_manager.complete(agent_run.id, result="Done")
+
+        updated_session = session_manager.get(child_session.id)
+        assert updated_session is not None
+        assert updated_session.status == "expired"
+
     def test_complete_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test completing nonexistent run returns None."""
         result = agent_manager.complete("nonexistent-id", result="test")
@@ -456,6 +483,81 @@ class TestLocalAgentRunManager:
 
         assert timed_out.turns_used == 0
 
+    def test_timeout_expires_child_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Timing out an agent run expires its child session."""
+        child_session = session_manager.register(
+            external_id="agent-child-timeout",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Timeout child session test",
+            child_session_id=child_session.id,
+        )
+        agent_manager.start(agent_run.id)
+
+        agent_manager.timeout(agent_run.id, error="Exceeded test timeout")
+
+        updated_run = agent_manager.get(agent_run.id)
+        assert updated_run is not None
+        assert updated_run.status == "timeout"
+        assert updated_run.error == "Exceeded test timeout"
+        updated_session = session_manager.get(child_session.id)
+        assert updated_session is not None
+        assert updated_session.status == "expired"
+
+    def test_terminal_run_session_expiry_preserves_active_runs(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Terminal-run sweep keeps pending/running child sessions live."""
+        pending_session = session_manager.register(
+            external_id="agent-child-pending",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        running_session = session_manager.register(
+            external_id="agent-child-running",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        pending_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Pending child session test",
+            child_session_id=pending_session.id,
+        )
+        running_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Running child session test",
+            child_session_id=running_session.id,
+        )
+        agent_manager.start(running_run.id)
+
+        expired = agent_manager.expire_sessions_for_terminal_runs()
+
+        assert expired == 0
+        assert agent_manager.get(pending_run.id).status == "pending"
+        pending_updated = session_manager.get(pending_session.id)
+        running_updated = session_manager.get(running_session.id)
+        assert pending_updated is not None
+        assert running_updated is not None
+        assert pending_updated.status == "active"
+        assert running_updated.status == "active"
+
     def test_timeout_nonexistent_returns_none(self, agent_manager: LocalAgentRunManager) -> None:
         """Test timing out nonexistent run returns None."""
         result = agent_manager.timeout("nonexistent-id")
@@ -505,7 +607,7 @@ class TestLocalAgentRunManager:
     def test_update_child_session(
         self,
         agent_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
@@ -662,7 +764,7 @@ class TestLocalAgentRunManager:
     def test_list_running(
         self,
         agent_manager: LocalAgentRunManager,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:

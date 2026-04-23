@@ -651,7 +651,7 @@ class TestSuggestNextTaskWithSessionId:
 
         # Monkeypatch session_manager.resolve_session_reference to pass through unchanged
         monkeypatch.setattr(
-            "gobby.storage.sessions.LocalSessionManager.resolve_session_reference",
+            "gobby.storage.sessions.SessionManager.resolve_session_reference",
             lambda self, sid, pid: sid,
         )
 
@@ -733,7 +733,7 @@ class TestSuggestNextTaskWithSessionId:
             lambda tm, tid, pid: tid,
         )
         monkeypatch.setattr(
-            "gobby.storage.sessions.LocalSessionManager.resolve_session_reference",
+            "gobby.storage.sessions.SessionManager.resolve_session_reference",
             lambda self, sid, pid: sid,
         )
 

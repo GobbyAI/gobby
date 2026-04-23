@@ -11,11 +11,10 @@ rules:
       - type: block
         tools: [TaskCreate, TaskUpdate, TaskGet, TaskList]
         reason: |
-          Native task tools require a claimed Gobby task. Create or claim a task first:
+          Native task tools (TaskCreate, TaskUpdate, TaskGet, TaskList) require a claimed Gobby task — they're for sub-step tracking within a claimed task. Create or claim a task first:
           - create_task(title, description, category, claim=True)
           - claim_task(task_id)
-          - list_ready_tasks()
-          Once a Gobby task is claimed, native task tools are available for sub-step tracking.
+          Once claimed, the gobby-task tracks the deliverable (commits, review, close) and native task tools track sub-steps to get there.
 
   block-native-todo-write:
     description: "Block TodoWrite - use gobby-tasks instead"
@@ -27,4 +26,4 @@ rules:
       - type: block
         tools: [TodoWrite]
         reason: |
-          TodoWrite is disabled. Use gobby-tasks MCP tools for task management instead.
+          TodoWrite is disabled by Gobby. For sub-step tracking within a claimed task, use TaskCreate / TaskUpdate / TaskGet / TaskList — they become available once you claim a gobby-task. The gobby-task tracks the deliverable (what gets committed, reviewed, and closed); native task tools track sub-steps along the way.

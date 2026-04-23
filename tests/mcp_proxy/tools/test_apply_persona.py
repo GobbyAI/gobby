@@ -215,6 +215,42 @@ class TestBuildPersonaChanges:
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# build_session_persona_changes
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestBuildSessionPersonaChanges:
+    """Tests for the narrow session persona helper."""
+
+    def test_only_sets_persona_context_fields(self, db: LocalDatabase) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import build_session_persona_changes
+        from gobby.workflows.definitions import WorkflowStep
+
+        agent = AgentDefinitionBody(
+            name="planner",
+            surfaces=["persona"],
+            workflows=AgentWorkflows(
+                variables={"should_not_merge": "nope"},
+                skill_format="compact",
+            ),
+            blocked_tools=["Write"],
+            blocked_mcp_tools=["gobby-tasks:delete_task"],
+            steps=[WorkflowStep(name="plan", instructions="Plan")],
+        )
+
+        changes, active_skills = build_session_persona_changes(agent, db)
+
+        assert changes == {
+            "_agent_type": "planner",
+            "_active_skill_names": None,
+            "_skill_format": "compact",
+            "_agent_context_injected": False,
+            "_agent_identity_reinject": True,
+        }
+        assert active_skills is None
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # apply_persona_impl
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -272,14 +308,18 @@ class TestApplyPersonaImpl:
         with (
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent",
-                return_value=AgentDefinitionBody(name="developer"),
+                return_value=AgentDefinitionBody(name="developer", surfaces=["persona"]),
             ),
             patch(
-                "gobby.mcp_proxy.tools.apply_persona.build_persona_changes",
+                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
                 return_value=(
-                    {"_agent_type": "developer", "_active_rule_names": []},
+                    {
+                        "_agent_type": "developer",
+                        "_active_skill_names": [],
+                        "_agent_context_injected": False,
+                        "_agent_identity_reinject": True,
+                    },
                     set(),
-                    None,
                 ),
             ) as mock_build,
             patch(
@@ -304,11 +344,18 @@ class TestApplyPersonaImpl:
         with (
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent",
-                return_value=AgentDefinitionBody(name="test"),
+                return_value=AgentDefinitionBody(name="test", surfaces=["persona"]),
             ),
             patch(
-                "gobby.mcp_proxy.tools.apply_persona.build_persona_changes",
-                return_value=({"_agent_type": "test"}, set(), None),
+                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
+                return_value=(
+                    {
+                        "_agent_type": "test",
+                        "_agent_context_injected": False,
+                        "_agent_identity_reinject": True,
+                    },
+                    None,
+                ),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -328,6 +375,23 @@ class TestApplyPersonaImpl:
         assert merged_changes["custom_key"] == "custom_val"
 
     @pytest.mark.asyncio
+    async def test_non_persona_capable_agent_errors(self, db: LocalDatabase) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
+
+        with patch(
+            "gobby.workflows.agent_resolver.resolve_agent",
+            return_value=AgentDefinitionBody(name="spawn-only"),
+        ):
+            result = await apply_persona_impl(
+                agent="spawn-only",
+                db=db,
+                session_id="sess-1",
+            )
+
+        assert result["success"] is False
+        assert "persona-capable" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_with_task_id(self, db: LocalDatabase) -> None:
         from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
 
@@ -339,11 +403,18 @@ class TestApplyPersonaImpl:
         with (
             patch(
                 "gobby.workflows.agent_resolver.resolve_agent",
-                return_value=AgentDefinitionBody(name="test"),
+                return_value=AgentDefinitionBody(name="test", surfaces=["persona"]),
             ),
             patch(
-                "gobby.mcp_proxy.tools.apply_persona.build_persona_changes",
-                return_value=({"_agent_type": "test"}, set(), None),
+                "gobby.mcp_proxy.tools.apply_persona.build_session_persona_changes",
+                return_value=(
+                    {
+                        "_agent_type": "test",
+                        "_agent_context_injected": False,
+                        "_agent_identity_reinject": True,
+                    },
+                    None,
+                ),
             ),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
@@ -353,7 +424,7 @@ class TestApplyPersonaImpl:
                 return_value={"id": "proj-1"},
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp",
+                "gobby.mcp_proxy.tools.tasks.resolve_task_id_for_mcp",
                 return_value="task-uuid",
             ),
         ):

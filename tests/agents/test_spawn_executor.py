@@ -2,7 +2,7 @@
 Tests for SpawnExecutor unified spawn dispatch.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -376,8 +376,8 @@ class TestExecuteSpawn:
             assert result.pid == 12345
 
     @pytest.mark.asyncio
-    async def test_codex_terminal_calls_preflight(self):
-        """Test that provider='codex' with mode='interactive' calls prepare_codex_spawn_with_preflight."""
+    async def test_codex_terminal_direct_spawn(self):
+        """Codex spawns directly (no preflight); command is `codex ...`, never `codex resume ...`."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -387,13 +387,15 @@ class TestExecuteSpawn:
             run_id="run",
             parent_session_id="parent",
             project_id="proj",
+            agent_run_id="run-abc123def456",
             session_manager=mock_session_manager,
         )
 
-        mock_preflight = AsyncMock(
+        mock_prepare = MagicMock(
             return_value=MagicMock(
                 session_id="gobby-sess-123",
-                env_vars={"GOBBY_CODEX_EXTERNAL_ID": "codex-ext-789"},
+                agent_run_id="run-abc123def456",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
             )
         )
 
@@ -401,16 +403,14 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
+            terminal_type="tmux",
+            tmux_session_name="agent-run-abc123def456",
         )
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_codex_spawn_with_preflight",
-                mock_preflight,
-            ),
-            patch(
-                "gobby.agents.spawn_executor.build_codex_command_with_resume",
-                return_value=["codex", "--resume"],
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                mock_prepare,
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -419,9 +419,35 @@ class TestExecuteSpawn:
         ):
             result = await execute_spawn(request)
 
-            mock_preflight.assert_called_once()
+            # prepare_terminal_spawn must be called with source='codex' and the
+            # caller's agent_run_id threaded through unchanged.
+            mock_prepare.assert_called_once()
+            call_kwargs = mock_prepare.call_args.kwargs
+            assert call_kwargs["source"] == "codex"
+            assert call_kwargs["agent_run_id"] == "run-abc123def456"
+
+            # Command starts with `codex` and never invokes `resume`.
+            spawn_kwargs = mock_spawner.spawn.call_args.kwargs
+            command = spawn_kwargs["command"]
+            assert command[0] == "codex"
+            assert "resume" not in command
+
+            # Env is passed to the tmux spawner so the SessionStart hook can
+            # late-link via GOBBY_SESSION_ID.
+            assert spawn_kwargs.get("env") is not None
+            assert spawn_kwargs["env"].get("GOBBY_SESSION_ID") == "gobby-sess-123"
+
+            # Codex learns its Gobby session_id via the prompt prefix (no
+            # equivalent of Claude's --session-id flag exists for Codex).
+            prompt_arg = command[-1]
+            assert "Your Gobby session_id is: gobby-sess-123" in prompt_arg
+
+            # SpawnResult.run_id is the caller-minted id (no fabricated
+            # `codex-xxxxxxxx` substitute).
             assert result.success is True
-            assert result.codex_session_id == "codex-ext-789"
+            assert result.run_id == "run-abc123def456"
+            assert result.child_session_id == "gobby-sess-123"
+            assert result.codex_session_id is None  # late-linked via SessionStart hook
 
     @pytest.mark.asyncio
     async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
@@ -440,20 +466,26 @@ class TestExecuteSpawn:
             sandbox_config=sandbox_config,
         )
 
-        mock_preflight = AsyncMock(
+        mock_prepare = MagicMock(
             return_value=MagicMock(
                 session_id="gobby-sess-123",
-                env_vars={"GOBBY_CODEX_EXTERNAL_ID": "codex-ext-789"},
+                agent_run_id="run-xyz",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
             )
         )
 
         mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=12345,
+            terminal_type="tmux",
+            tmux_session_name="agent-run-xyz",
+        )
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_codex_spawn_with_preflight",
-                mock_preflight,
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                mock_prepare,
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -465,6 +497,11 @@ class TestExecuteSpawn:
             command = mock_spawner.spawn.call_args.kwargs["command"]
             assert "--sandbox" in command
             assert "workspace-write" in command
+            prompt_arg = command[-1]
+            # Sandbox args must appear before the final prompt argv entry, which
+            # is the prefixed Codex prompt carrying the session_id and user text.
+            assert request.prompt in prompt_arg
+            assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True
 
     @pytest.mark.asyncio
@@ -801,56 +838,8 @@ class TestExecuteSpawnErrorPaths:
         assert "session_manager is required" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_codex_terminal_preflight_file_not_found(self) -> None:
-        """Test Codex terminal spawn when codex binary is not found."""
-        mock_session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            provider="codex",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=mock_session_manager,
-        )
-
-        with patch(
-            "gobby.agents.spawn_executor.prepare_codex_spawn_with_preflight",
-            side_effect=FileNotFoundError("codex not found"),
-        ):
-            result = await execute_spawn(request)
-
-        assert result.success is False
-        assert "codex not found" in (result.error or "")
-
-    @pytest.mark.asyncio
-    async def test_codex_terminal_preflight_generic_exception(self) -> None:
-        """Test Codex terminal spawn when preflight raises unexpected error."""
-        mock_session_manager = MagicMock()
-        request = SpawnRequest(
-            prompt="Test",
-            cwd="/path",
-            provider="codex",
-            session_id="sess",
-            run_id="run",
-            parent_session_id="parent",
-            project_id="proj",
-            session_manager=mock_session_manager,
-        )
-
-        with patch(
-            "gobby.agents.spawn_executor.prepare_codex_spawn_with_preflight",
-            side_effect=RuntimeError("unexpected"),
-        ):
-            result = await execute_spawn(request)
-
-        assert result.success is False
-        assert "preflight capture failed" in (result.error or "")
-
-    @pytest.mark.asyncio
     async def test_codex_terminal_spawn_failure(self) -> None:
-        """Test Codex terminal when tmux spawn fails."""
+        """Codex terminal returns failure when tmux spawn fails."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -863,10 +852,11 @@ class TestExecuteSpawnErrorPaths:
             session_manager=mock_session_manager,
         )
 
-        mock_preflight = AsyncMock(
+        mock_prepare = MagicMock(
             return_value=MagicMock(
                 session_id="gobby-sess-123",
-                env_vars={"GOBBY_CODEX_EXTERNAL_ID": "codex-ext-789"},
+                agent_run_id="run-xyz",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
             )
         )
 
@@ -879,12 +869,8 @@ class TestExecuteSpawnErrorPaths:
 
         with (
             patch(
-                "gobby.agents.spawn_executor.prepare_codex_spawn_with_preflight",
-                mock_preflight,
-            ),
-            patch(
-                "gobby.agents.spawn_executor.build_codex_command_with_resume",
-                return_value=["codex", "--resume"],
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                mock_prepare,
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",

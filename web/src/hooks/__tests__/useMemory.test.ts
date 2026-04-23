@@ -191,7 +191,15 @@ describe('useMemory', () => {
 
   it('fetchKnowledgeGraph returns entities and relationships', async () => {
     mockFetch.mockJsonResponse('/api/memories/graph/entities', {
-      entities: [{ name: 'React', type: 'technology', properties: {} }],
+      entities: [
+        {
+          entity_key: 'proj-1::react',
+          name: 'React',
+          entity_type: 'technology',
+          project_id: 'proj-1',
+          properties: {},
+        },
+      ],
       relationships: [],
     })
 
@@ -205,15 +213,30 @@ describe('useMemory', () => {
   })
 
   it('fetchEntityNeighbors returns neighbors', async () => {
-    mockFetch.mockJsonResponse('/api/memories/graph/entities/React/neighbors', {
-      entities: [{ name: 'Vite', type: 'technology', properties: {} }],
-      relationships: [{ source: 'React', target: 'Vite', type: 'used_with', properties: {} }],
+    mockFetch.mockJsonResponse('/api/memories/graph/entities/proj-1%3A%3Areact/neighbors', {
+      entities: [
+        {
+          entity_key: 'proj-1::vite',
+          name: 'Vite',
+          entity_type: 'technology',
+          project_id: 'proj-1',
+          properties: {},
+        },
+      ],
+      relationships: [
+        {
+          source_key: 'proj-1::react',
+          target_key: 'proj-1::vite',
+          type: 'used_with',
+          properties: {},
+        },
+      ],
     })
 
     const { result } = renderHook(() => useMemory())
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
-    const neighbors = await act(() => result.current.fetchEntityNeighbors('React'))
+    const neighbors = await act(() => result.current.fetchEntityNeighbors('proj-1::react'))
 
     expect(neighbors?.entities).toHaveLength(1)
     expect(neighbors?.relationships).toHaveLength(1)

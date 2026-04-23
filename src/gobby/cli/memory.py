@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import urllib.parse
 from typing import TYPE_CHECKING
 
@@ -370,10 +371,10 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
 
         gobby memory fix-null-project             # Apply fixes
     """
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
     db = LocalDatabase()
-    session_mgr = LocalSessionManager(db)
+    session_mgr = SessionManager(db)
 
     # Find memories with NULL project_id and session source
     rows = db.fetchall(
@@ -604,10 +605,95 @@ def rebuild_crossrefs(ctx: click.Context, project_ref: str | None) -> None:
     )
 
 
+@memory.command("clear-graph")
+@click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.pass_context
+def clear_graph(ctx: click.Context, project_ref: str | None, yes: bool) -> None:
+    """Clear only the Neo4j knowledge graph projection (requires running daemon).
+
+    Deletes the KG projection in Neo4j and marks affected memories pending
+    so they can be extracted again. Does not clear vectors, crossrefs, or FTS.
+
+    Examples:
+
+        gobby memory clear-graph
+
+        gobby memory clear-graph -p myproject
+
+        gobby memory clear-graph --yes
+    """
+    client = _get_daemon_client(ctx)
+    is_healthy, err = client.check_health()
+    if not is_healthy:
+        raise click.ClickException(f"Daemon not running: {err}")
+
+    project_id = resolve_project_ref(project_ref, exit_on_not_found=project_ref is not None)
+    if not project_id:
+        if project_ref is not None:
+            raise click.ClickException(
+                f"Project '{project_ref}' was not found. "
+                "Pass a valid -p value or check the identifier."
+            )
+        if not yes:
+            click.confirm(
+                "No project detected. This will clear the knowledge graph for ALL projects "
+                "and requeue affected memories. Continue?",
+                abort=True,
+            )
+    elif not yes:
+        click.confirm(
+            "This will clear the knowledge graph for this project and requeue affected "
+            "memories. Continue?",
+            abort=True,
+        )
+
+    params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
+    click.echo("Clearing knowledge graph...")
+    try:
+        response = client.call_http_api(
+            f"/api/memories/graph/clear{params}", method="POST", timeout=30.0
+        )
+    except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
+        click.echo(f"Error: Could not reach daemon — is it running? ({e})")
+        raise SystemExit(1) from e
+
+    if not response.is_success:
+        raise click.ClickException(f"Clear failed (HTTP {response.status_code}): {response.text}")
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise click.ClickException(f"Invalid response from daemon: {e}") from e
+
+    scope = f"project {project_id}" if project_id else "all projects"
+    click.echo(f"Knowledge graph cleared for {scope}.")
+    click.echo(
+        f"  Graph: {data.get('memories_deleted', 0)} memory nodes, "
+        f"{data.get('entities_deleted', 0)} orphaned entities"
+    )
+    click.echo(f"  Requeued: {data.get('memories_marked_pending', 0)} memories")
+    click.echo(
+        "Use `gobby memory rebuild-graph` to repopulate immediately, or let the "
+        "background worker refill it over time."
+    )
+
+
 @memory.command("rebuild-graph")
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option(
+    "--wait/--no-wait",
+    default=False,
+    help="Wait for completion by polling daemon status",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=600,
+    show_default=True,
+    help="Maximum seconds to wait while polling rebuild status",
+)
 @click.pass_context
-def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
+def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeout: int) -> None:
     """Extract entities from memories into the knowledge graph (requires running daemon).
 
     Processes all memories through LLM entity extraction and stores
@@ -618,17 +704,21 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
         gobby memory rebuild-graph
 
         gobby memory rebuild-graph -p myproject
+
+        gobby memory rebuild-graph --no-wait
     """
     client = _get_daemon_client(ctx)
     is_healthy, err = client.check_health()
     if not is_healthy:
         raise click.ClickException(f"Daemon not running: {err}")
 
-    click.echo("Rebuilding knowledge graph (this may take several minutes)...")
     project_id = resolve_project_ref(project_ref, exit_on_not_found=True) if project_ref else None
-    params = f"?project_id={urllib.parse.quote(str(project_id))}" if project_id else ""
+    query_params: dict[str, str] = {"background": "true"}
+    if project_id:
+        query_params["project_id"] = str(project_id)
+    params = f"?{urllib.parse.urlencode(query_params)}"
     response = client.call_http_api(
-        f"/api/memories/graph/rebuild{params}", method="POST", timeout=600.0
+        f"/api/memories/graph/rebuild{params}", method="POST", timeout=30.0
     )
     if not response.is_success:
         raise click.ClickException(f"Rebuild failed (HTTP {response.status_code}): {response.text}")
@@ -636,10 +726,88 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None) -> None:
         data = response.json()
     except ValueError as e:
         raise click.ClickException(f"Invalid response from daemon: {e}") from e
-    click.echo(
-        f"Done: {data.get('memories_extracted', '?')}/{data.get('memories_processed', '?')} "
-        f"memories extracted, {data.get('errors', '?')} errors"
-    )
+
+    job_id = data.get("job_id")
+    if not job_id:
+        raise click.ClickException("Invalid rebuild response: missing job_id")
+
+    if data.get("already_running"):
+        click.echo(f"Knowledge graph rebuild already running (job {job_id}).")
+    else:
+        click.echo(f"Started knowledge graph rebuild (job {job_id}).")
+
+    if not wait:
+        attach_cmd = "gobby memory rebuild-graph --wait"
+        if project_ref:
+            attach_cmd += f" -p {project_ref}"
+        click.echo(f"Use `{attach_cmd}` to attach and poll progress, or check daemon logs.")
+        return
+
+    click.echo("Polling knowledge graph rebuild progress...")
+    last_snapshot: tuple[object, ...] | None = None
+    status_params = urllib.parse.urlencode({"job_id": str(job_id)})
+    start_time = time.time()
+
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            raise click.ClickException(f"Rebuild job {job_id} timed out after {timeout} seconds")
+        status_response = client.call_http_api(
+            f"/api/memories/graph/rebuild/status?{status_params}",
+            method="GET",
+            timeout=30.0,
+        )
+        if not status_response.is_success:
+            raise click.ClickException(
+                f"Status check failed (HTTP {status_response.status_code}): {status_response.text}"
+            )
+        try:
+            status_data = status_response.json()
+        except ValueError as e:
+            raise click.ClickException(f"Invalid status response from daemon: {e}") from e
+
+        status = status_data.get("status", "unknown")
+        total = int(status_data.get("memories_total") or 0)
+        completed = int(status_data.get("memories_completed") or 0)
+        errors = int(status_data.get("errors") or 0)
+        counts = status_data.get("status_counts") or {}
+        snapshot = (
+            status,
+            completed,
+            total,
+            errors,
+            counts.get("success", 0),
+            counts.get("noop_no_entities", 0),
+        )
+        if snapshot != last_snapshot:
+            if status == "running":
+                click.echo(
+                    f"  progress: {completed}/{total or '?'} "
+                    f"(success={counts.get('success', 0)}, "
+                    f"noop={counts.get('noop_no_entities', 0)}, errors={errors})"
+                )
+            last_snapshot = snapshot
+
+        if status == "completed":
+            failed_memories = status_data.get("failed_memories") or []
+            click.echo(
+                f"Done: {status_data.get('result', {}).get('memories_extracted', '?')}/"
+                f"{status_data.get('result', {}).get('memories_processed', total or '?')} "
+                f"memories extracted, {errors} errors"
+            )
+            for failure in failed_memories:
+                memory_id = failure.get("memory_id", "?")
+                failure_status = failure.get("status", "unknown")
+                failure_errors = failure.get("errors") or []
+                detail = failure_errors[0] if failure_errors else "unknown error"
+                click.echo(f"  failure: {memory_id} ({failure_status}) {detail}")
+            return
+
+        if status == "failed":
+            detail = status_data.get("error") or "unknown error"
+            raise click.ClickException(f"Rebuild job {job_id} failed: {detail}")
+
+        time.sleep(3)
 
 
 @memory.command("invalidate")

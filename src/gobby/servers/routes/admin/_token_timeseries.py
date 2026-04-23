@@ -1,18 +1,29 @@
-"""Token time-series endpoint — hourly buckets of spent and saved tokens."""
+"""Token time-series endpoint — event-time buckets of spent and saved tokens."""
 
 from __future__ import annotations
 
-import logging
-import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query
 
+from gobby.storage.token_events import TokenEventStore
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-    from gobby.storage.database import DatabaseProtocol
 
-logger = logging.getLogger(__name__)
+
+def _bucket_expression(column: str, granularity: str) -> str:
+    if granularity == "30m":
+        return (
+            "CASE "
+            f"WHEN CAST(strftime('%M', {column}) AS INTEGER) < 30 "
+            f"THEN strftime('%Y-%m-%dT%H:00:00Z', {column}) "
+            f"ELSE strftime('%Y-%m-%dT%H:30:00Z', {column}) "
+            "END"
+        )
+    if granularity == "1d":
+        return f"strftime('%Y-%m-%dT00:00:00Z', {column})"
+    return f"strftime('%Y-%m-%dT%H:00:00Z', {column})"
 
 
 def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> None:
@@ -20,59 +31,49 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
     async def get_token_timeseries(
         hours: int = Query(24, ge=0, le=8760),
         project_id: str | None = Query(None),
+        granularity: str = Query("1h", pattern="^(30m|1h|1d)$"),
     ) -> dict[str, Any]:
-        """Return hourly buckets of tokens spent and tokens saved.
-
-        Args:
-            hours: Time window in hours. 0 = all time.
-            project_id: Filter to a specific project.
-        """
-        db: DatabaseProtocol = server.services.database
+        """Return event-time buckets of tokens spent and tokens saved."""
+        db = server.services.database
+        store = TokenEventStore(db)
+        spent_rows = store.get_timeseries(
+            hours=hours,
+            project_id=project_id,
+            granularity=granularity,  # type: ignore[arg-type]
+        )
+        spent_by_bucket = {row["timestamp"]: row["tokens_spent"] for row in spent_rows}
 
         clauses: list[str] = []
-        params: list[str] = []
-
+        params: list[Any] = []
         if hours > 0:
-            clauses.append("AND created_at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)")
+            clauses.append("AND datetime(created_at) >= datetime('now', ?)")
             params.append(f"-{hours} hours")
-
         if project_id:
             clauses.append("AND project_id = ?")
             params.append(project_id)
 
         where = " ".join(clauses)
+        # _bucket_expression() is safe to interpolate here because FastAPI validates
+        # granularity against ^(30m|1h|1d)$ before this query reaches db.fetchall().
+        bucket_expr = _bucket_expression("created_at", granularity)
+        rows = db.fetchall(
+            f"""
+            SELECT
+                {bucket_expr} AS bucket,
+                COALESCE(SUM(tokens_saved), 0) AS tokens_saved
+            FROM savings_ledger
+            WHERE 1=1 {where}
+            GROUP BY bucket
+            ORDER BY bucket ASC
+            """,
+            tuple(params),
+        )
+        saved_by_bucket = {
+            str(row["bucket"]): int(row["tokens_saved"] or 0)
+            for row in rows
+            if row["bucket"] is not None
+        }
 
-        # --- tokens spent (from sessions) ---
-        spent_by_bucket: dict[str, int] = {}
-        try:
-            rows = db.fetchall(
-                "SELECT strftime('%Y-%m-%dT%H:00:00', created_at) as bucket, "
-                "  COALESCE(SUM(usage_input_tokens + usage_output_tokens), 0) as tokens_spent "
-                f"FROM sessions WHERE 1=1 {where} "
-                "GROUP BY bucket",
-                tuple(params),
-            )
-            for r in rows:
-                spent_by_bucket[r["bucket"]] = r["tokens_spent"]
-        except sqlite3.Error as e:
-            logger.warning(f"Failed to query tokens spent: {e}")
-
-        # --- tokens saved (from savings_ledger) ---
-        saved_by_bucket: dict[str, int] = {}
-        try:
-            rows = db.fetchall(
-                "SELECT strftime('%Y-%m-%dT%H:00:00', created_at) as bucket, "
-                "  COALESCE(SUM(tokens_saved), 0) as tokens_saved "
-                f"FROM savings_ledger WHERE 1=1 {where} "
-                "GROUP BY bucket",
-                tuple(params),
-            )
-            for r in rows:
-                saved_by_bucket[r["bucket"]] = r["tokens_saved"]
-        except sqlite3.Error as e:
-            logger.warning(f"Failed to query tokens saved: {e}")
-
-        # --- merge into sorted buckets ---
         all_timestamps = sorted(set(spent_by_bucket) | set(saved_by_bucket))
         buckets = [
             {
@@ -85,5 +86,6 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
 
         return {
             "hours": hours,
+            "granularity": granularity,
             "buckets": buckets,
         }

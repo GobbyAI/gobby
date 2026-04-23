@@ -136,6 +136,12 @@ def spawn_agent_cmd(
 
         gobby agents spawn "Run tests" -s sess-abc123 --task next
     """
+    if reasoning_required and reasoning_effort is None:
+        raise click.UsageError(
+            "--reasoning-required requires --reasoning-effort. "
+            "Provide --reasoning-effort with a supported value."
+        )
+
     daemon_url = get_daemon_url()
 
     # Resolve session ID

@@ -65,9 +65,9 @@ def mock_hook_manager(temp_dir: Path):
             return_value=(True, None, "running", None)
         )
 
-        # Mock _session_storage.get to return None for get() to avoid pre-created session path
-        if manager._event_handlers._session_storage:
-            manager._event_handlers._session_storage.get = MagicMock(return_value=None)
+        # Mock _session_manager.get to return None for get() to avoid pre-created session path
+        if manager._event_handlers._session_manager:
+            manager._event_handlers._session_manager.get = MagicMock(return_value=None)
 
         # Replace _session_manager and _session_task_manager with mocks
         # so tests can set return_value on their methods

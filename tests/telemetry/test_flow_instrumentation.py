@@ -163,7 +163,7 @@ async def test_rule_engine_instrumentation(tracer_provider):
     _, exporter = tracer_provider
 
     from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-    from gobby.workflows.rule_engine import RuleEngine
+    from gobby.workflows.engine.core import RuleEngine
 
     mock_db = MagicMock()
     # Mock ConfigStore.get to avoid DB fetch

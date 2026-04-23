@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from gobby.adapters.claude_contract import (
+    build_graceful_error_hook_response,
+    get_claude_contract,
+)
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,
@@ -27,15 +31,6 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
-
-# Map hook types to hookEventName for additionalContext
-# Only these hook types support hookSpecificOutput in Claude Code
-HOOK_EVENT_NAME_MAP: dict[str, str] = {
-    "pre-tool-use": "PreToolUse",
-    "post-tool-use": "PostToolUse",
-    "post-tool-use-failure": "PostToolUse",
-    "user-prompt-submit": "UserPromptSubmit",
-}
 
 HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
     "PreToolUse": "PreToolUse",
@@ -58,22 +53,26 @@ def _graceful_error_response(hook_type: str, error_msg: str) -> dict[str, Any]:
 
     This prevents agents from being confused by non-fatal hook errors.
     """
-    response: dict[str, Any] = {
-        "continue": True,
-        "decision": "approve",
-    }
+    from gobby.adapters.claude_code import ClaudeCodeAdapter
 
-    # Add helpful context for supported hook types
-    hook_event_name = HOOK_EVENT_NAME_MAP.get(hook_type)
-    if hook_event_name:
-        response["hookSpecificOutput"] = {
-            "hookEventName": hook_event_name,
+    adapter = ClaudeCodeAdapter()
+    response = adapter.translate_from_hook_response(
+        build_graceful_error_hook_response(error_msg),
+        hook_type=hook_type,
+    )
+    if isinstance(response, dict):
+        return response
+
+    fallback: dict[str, Any] = {"continue": True}
+    contract = get_claude_contract(hook_type)
+    if contract and contract.allows_additional_context:
+        fallback["hookSpecificOutput"] = {
+            "hookEventName": contract.hook_event_name,
             "additionalContext": (
                 f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
             ),
         }
-
-    return response
+    return fallback
 
 
 MAX_PENDING_PER_SESSION = 3
@@ -161,12 +160,12 @@ async def _maybe_hold_open(
     ``None`` if the session is not a web chat session (so the caller should
     fall through to the normal adapter response path).
     """
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
     db = request.app.state.server.services.database
     if not db:
         return None
-    session_store = LocalSessionManager(db)
+    session_store = SessionManager(db)
     db_session = await asyncio.to_thread(session_store.get, session_id)
     if not db_session:
         try:
@@ -367,7 +366,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # Select adapter based on source
             from gobby.adapters.base import BaseAdapter
             from gobby.adapters.claude_code import ClaudeCodeAdapter
-            from gobby.adapters.codex_impl.adapter import CodexHooksAdapter
+            from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.gemini import GeminiAdapter
             from gobby.adapters.qwen import QwenAdapter
 
@@ -379,11 +378,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 adapter = QwenAdapter(hook_manager=hook_manager)
             elif source == "codex":
                 # Always use CodexHooksAdapter for HTTP hook requests from
-                # hook_dispatcher.py.  app.state.codex_adapter is the
+                # Gobby-managed hook commands. app.state.codex_adapter is the
                 # WebSocket-oriented CodexAdapter whose translate_to_hook_event
                 # expects JSON-RPC format ("method"/"params"), not the
-                # hooks.json format ("hook_type"/"input_data") that the
-                # dispatcher sends.  Using the wrong adapter silently drops
+                # hooks.json format ("hook_type"/"input_data") that these
+                # hook commands send. Using the wrong adapter silently drops
                 # every hook — no terminal_context, no rule enforcement, no
                 # stop gates.
                 adapter = CodexHooksAdapter(hook_manager=hook_manager)

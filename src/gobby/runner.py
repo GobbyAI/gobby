@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from gobby.storage.prompts import LocalPromptManager
     from gobby.storage.secrets import SecretStore
     from gobby.storage.session_tasks import SessionTaskManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.skills import LocalSkillManager
     from gobby.storage.spans import SpanStorage
     from gobby.storage.tasks import LocalTaskManager
@@ -106,7 +106,7 @@ class GobbyRunner:
     database: LocalDatabase
     secret_store: SecretStore
     config_store: ConfigStore
-    session_manager: LocalSessionManager
+    session_manager: SessionManager
     task_manager: LocalTaskManager
     session_task_manager: SessionTaskManager
     span_storage: SpanStorage

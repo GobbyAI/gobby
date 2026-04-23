@@ -208,8 +208,13 @@ class GeminiACPClient:
         env = os.environ.copy()
         if self._env_overrides:
             env.update(self._env_overrides)
-        # Prevent inherited CLI hooks from registering nested daemon sessions.
+        # Primary guard: ghook short-circuits when this is set, so the ACP
+        # child's inherited SessionStart hook never reaches the daemon.
         env["GOBBY_HOOKS_DISABLED"] = "1"
+        # Defense in depth: if an outdated ghook binary ignores the flag above,
+        # ghook still carries this marker into the hook envelope's
+        # terminal_context, and _session_start refuses to register on it.
+        env["GOBBY_ACP_CHILD"] = "1"
 
         self._process = await asyncio.create_subprocess_exec(
             *cmd,

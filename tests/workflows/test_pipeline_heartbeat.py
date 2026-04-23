@@ -10,7 +10,7 @@ import pytest
 
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.workflows.pipeline_heartbeat import PipelineHeartbeat
 from gobby.workflows.pipeline_state import ExecutionStatus
@@ -182,8 +182,8 @@ def agent_run_manager(temp_db: LocalDatabase) -> LocalAgentRunManager:
 
 
 @pytest.fixture
-def session_manager(temp_db: LocalDatabase) -> LocalSessionManager:
-    return LocalSessionManager(temp_db)
+def session_manager(temp_db: LocalDatabase) -> SessionManager:
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -191,7 +191,7 @@ def heartbeat_with_tasks(
     exec_manager: LocalPipelineExecutionManager,
     task_manager: LocalTaskManager,
     agent_run_manager: LocalAgentRunManager,
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
 ) -> PipelineHeartbeat:
     return PipelineHeartbeat(
         execution_manager=exec_manager,

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { GobbySession } from '../../hooks/useSessions'
+import type { GobbySession } from '../../types/sessions'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'

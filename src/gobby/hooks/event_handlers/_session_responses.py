@@ -35,13 +35,13 @@ def get_claimed_task_info(
     Returns:
         List of (ref, status, title) tuples, or None if no claimed tasks.
     """
-    if not session_id or not handler._session_storage or not handler._task_manager:
+    if not session_id or not handler._session_manager or not handler._task_manager:
         return None
 
     try:
         from gobby.workflows.state_manager import SessionVariableManager
 
-        sv_mgr = SessionVariableManager(handler._session_storage.db)
+        sv_mgr = SessionVariableManager(handler._session_manager.db)
         session_vars = sv_mgr.get_variables(session_id)
     except Exception as e:
         _logger.debug(f"Failed to load session variables for {session_id}: {e}")

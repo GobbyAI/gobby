@@ -25,8 +25,8 @@ from gobby.agents.spawners.base import (
 )
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.spawners.prompt_manager import MAX_ENV_PROMPT_LENGTH, create_prompt_file
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 

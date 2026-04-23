@@ -10,6 +10,6 @@ Invoke skills directly with `/gobby skillname` syntax:
 
 {{ skills_list }}
 
-**MCP access**: `list_skills()` / `get_skill(name)` on `gobby-skills`.
+**MCP access**: `list_skills()` / `get_skill(name="skill-name")` on `gobby-skills`.
 **Hub search**: `search_hub(query)` on `gobby-skills`.
 **MCP tools**: `list_mcp_servers()` for tool discovery.

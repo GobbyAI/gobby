@@ -3,6 +3,7 @@
 Handles registration, listing, lookup, status updates, expiry, and renaming.
 """
 
+import inspect
 import json
 import logging
 import subprocess  # nosec B404 # subprocess needed for git commit counting
@@ -11,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from starlette.requests import ClientDisconnect
 
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
@@ -18,6 +20,13 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_policy_hash,
 )
 from gobby.servers.models import SessionRegisterRequest, WebChatSessionRequest
+from gobby.servers.routes.sessions.statusline_activity import (
+    STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+    last_session_activity,
+    prune_trackers,
+    record_statusline_seen,
+)
+from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -336,7 +345,7 @@ def register_core_routes(
         from gobby.sessions.token_tracker import SessionTokenTracker
 
         sm = get_session_manager()
-        tracker = SessionTokenTracker(session_storage=sm)
+        tracker = SessionTokenTracker(db=sm.db)
         return tracker.get_usage_summary(days=days, project_id=project_id)
 
     @router.post("/statusline")
@@ -347,6 +356,8 @@ def register_core_routes(
         """
         try:
             body = await request.json()
+        except ClientDisconnect:
+            return {"status": "ok", "warning": "client_disconnected"}
         except (ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Invalid JSON") from None
 
@@ -360,6 +371,34 @@ def register_core_routes(
             # Session may not be registered yet (first ~1s of updates)
             return {"status": "ok", "warning": "session_not_found"}
 
+        now = datetime.now(UTC)
+        prune_trackers(now)
+        previous = record_statusline_seen(session.id, now)
+        if previous is not None:
+            gap_ms = int((now - previous).total_seconds() * 1000)
+            if gap_ms >= STATUSLINE_GAP_WARNING_THRESHOLD_MS:
+                activity_ts = last_session_activity(session.id)
+                if activity_ts is not None and activity_ts > previous:
+                    logger.warning(
+                        "statusline_usage_gap session_id=%s gap_ms=%s threshold_ms=%s "
+                        "last_activity_ms_ago=%s",
+                        session.id,
+                        gap_ms,
+                        STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                        int((now - activity_ts).total_seconds() * 1000),
+                    )
+                    inc_counter(
+                        "statusline_usage_gap_warnings_total",
+                        attributes={"source": "claude"},
+                    )
+                else:
+                    logger.debug(
+                        "statusline_usage_gap_quiet session_id=%s gap_ms=%s threshold_ms=%s",
+                        session.id,
+                        gap_ms,
+                        STATUSLINE_GAP_WARNING_THRESHOLD_MS,
+                    )
+
         sm.update_usage(
             session_id=session.id,
             input_tokens=body.get("input_tokens", 0),
@@ -369,8 +408,53 @@ def register_core_routes(
             context_window=body.get("context_window_size"),
             model=body.get("model_id"),
         )
+        inc_counter("statusline_posts_succeeded_total", attributes={"source": "claude"})
+
+        ws_server = server.services.websocket_server
+        if ws_server is not None:
+            broadcast_result = ws_server.broadcast_session_usage_updated(
+                build_session_usage_payload(
+                    session_id=session.id,
+                    project_id=session.project_id,
+                    model=body.get("model_id") if isinstance(body.get("model_id"), str) else None,
+                    context_window=(
+                        body.get("context_window_size")
+                        if isinstance(body.get("context_window_size"), int)
+                        else None
+                    ),
+                    totals={
+                        "input_tokens": int(body.get("input_tokens", 0) or 0),
+                        "output_tokens": int(body.get("output_tokens", 0) or 0),
+                        "cache_creation_tokens": int(body.get("cache_creation_tokens", 0) or 0),
+                        "cache_read_tokens": int(body.get("cache_read_tokens", 0) or 0),
+                    },
+                    updated_at=now,
+                )
+            )
+            if inspect.isawaitable(broadcast_result):
+                await broadcast_result
 
         return {"status": "ok"}
+
+    @router.get("/{session_id}/token-events")
+    async def get_session_token_events(
+        session_id: str,
+        limit: int = Query(500, ge=1, le=2000),
+        since: str | None = Query(None),
+    ) -> dict[str, Any]:
+        """Return recent token events for a session."""
+        sm = get_session_manager()
+        session = sm.get(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        store = TokenEventStore(sm.db)
+        events = store.list_session_events(session_id, limit=limit, since=since)
+        return {
+            "session_id": session_id,
+            "events": events,
+            "count": len(events),
+        }
 
     @router.get("")
     async def list_sessions(

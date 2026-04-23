@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from gobby.hooks.events import HookEvent
+from gobby.skills.formatting import skill_fetch_directive
 
 
 def run_coro_blocking(
@@ -165,10 +166,7 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
     elif tool == "get_skill":
         skill = result.get("skill") or result.get("result", {}).get("skill") or {}
         name = skill.get("name", "unknown")
-        content = skill.get("content", "")
-        if content:
-            return f'<skill name="{name}">\n{content}\n</skill>'
-        return ""
+        return skill_fetch_directive(name) if name != "unknown" else ""
 
     else:
         return f"**{tool} result:**\n```json\n{json.dumps(result, indent=2, default=str)}\n```"
@@ -252,45 +250,25 @@ def dispatch_mcp_calls(
             *,
             _sid: str = _event_session_id,
         ) -> dict[str, Any] | None:
-            # Set project + session context for this dispatch path.
-            # Previously missing — tools called by rules got None from
-            # get_project_context() and had no session ContextVar.
             from gobby.utils.session_context import (
-                SessionContext,
-                reset_session_context,
-                set_session_context,
+                reset_seeded_contexts,
+                resolve_and_seed_contexts,
             )
 
-            session_token = None
-            project_token = None
+            proxy = _get_proxy()
+            session_manager = proxy.session_manager if proxy else None
+
+            tokens = resolve_and_seed_contexts(
+                session_ref=_sid or None,
+                session_manager=session_manager,
+                project_ref=None,
+                db=(session_manager.db if session_manager else None),
+            )
             try:
-                if _sid:
-                    session_token = set_session_context(SessionContext(session_id=_sid))
-                    # Set project context from session (fixes pre-existing gap)
-                    try:
-                        proxy = _get_proxy()
-                        if proxy and hasattr(proxy, "_mcp_manager"):
-                            mgr = proxy._mcp_manager
-                            if hasattr(mgr, "session_manager") and mgr.session_manager:
-                                from gobby.utils.project_context import (
-                                    set_project_context_from_session,
-                                )
-
-                                project_token = set_project_context_from_session(
-                                    _sid,
-                                    mgr.session_manager,
-                                    mgr.session_manager.db,
-                                )
-                    except Exception as ctx_err:
-                        logger.debug(
-                            f"dispatch_mcp_calls: failed to set project context: {ctx_err}"
-                        )
-
                 # Backfill project_path from ContextVar if not already set.
                 # The arg injection at call-site defaults to None when event
-                # metadata lacks project_path (which is always). Now that
-                # set_project_context_from_session has populated the ContextVar,
-                # we can resolve the real path.
+                # metadata lacks project_path (which is always). Now that the
+                # helper has populated the ContextVar, we can resolve the path.
                 if not args.get("project_path"):
                     from gobby.utils.project_context import _current_project_context
 
@@ -298,11 +276,11 @@ def dispatch_mcp_calls(
                     if ctx and ctx.get("project_path"):
                         args["project_path"] = ctx["project_path"]
 
-                proxy = _get_proxy()
                 if not proxy:
                     logger.warning("dispatch_mcp_calls: tool_proxy_getter returned None")
                     return {"success": False, "error": "tool_proxy_getter returned None"}
 
+                resolved_sid = tokens.resolved_session_id
                 # Proxy self-routing: _proxy/* calls route to ToolProxyService
                 # methods directly instead of going through call_tool dispatch
                 if s == "_proxy":
@@ -312,6 +290,7 @@ def dispatch_mcp_calls(
                         s,
                         t,
                         args,
+                        session_id=resolved_sid,
                         strip_unknown=True,
                         enforce_workflow=False,
                     )
@@ -325,12 +304,7 @@ def dispatch_mcp_calls(
                 logger.error(f"dispatch_mcp_calls: {s}/{t} failed: {exc}", exc_info=True)
                 return {"success": False, "error": str(exc)}
             finally:
-                if session_token is not None:
-                    reset_session_context(session_token)
-                if project_token is not None:
-                    from gobby.utils.project_context import reset_project_context
-
-                    reset_project_context(project_token)
+                reset_seeded_contexts(tokens)
 
         # If we need to capture the result, always run blocking
         if needs_capture:

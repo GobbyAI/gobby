@@ -15,7 +15,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition
-from gobby.workflows.rule_engine import RuleEngine
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 
@@ -573,6 +573,244 @@ class TestStepTransitions:
         assert "finished" in response.context
         assert "Call kill_agent to terminate." in response.context
 
+    @pytest.mark.asyncio
+    async def test_on_mcp_success_handler_when_gates_variable_update(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Handler-level when clauses should gate on_mcp_success variable updates."""
+        workflow = {
+            "name": "skill-gate-workflow",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {"skill_loaded": False},
+            "steps": [
+                {
+                    "name": "load",
+                    "allowed_tools": "all",
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-skills",
+                            "tool": "get_skill",
+                            "when": "tool_input.name == 'plan-draft'",
+                            "action": "set_variable",
+                            "variable": "skill_loaded",
+                            "value": True,
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(db, manager, instance_mgr, current_step="load", workflow_data=workflow)
+
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-skills",
+                    "tool_name": "get_skill",
+                    "arguments": {"name": "plan-review"},
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "skill-gate-workflow")
+        assert instance is not None
+        assert instance.variables.get("skill_loaded") is False
+
+        matching_event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-skills",
+                    "tool_name": "get_skill",
+                    "arguments": {"name": "plan-draft"},
+                },
+            },
+        )
+
+        await engine.evaluate(matching_event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "skill-gate-workflow")
+        assert instance is not None
+        assert instance.variables.get("skill_loaded") is True
+
+    @pytest.mark.asyncio
+    async def test_session_var_does_not_shadow_instance_var_for_transition(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Session-scoped variables must NOT drive workflow transitions.
+
+        Regression for session #3277: the parent planner handed a claimed
+        task to the spawned plan-adversary, which made
+        _session_start.py write ``task_claimed=True`` into the child's
+        session variables. Before the fix, the merge order in
+        ``_process_step_after_tool`` let that session value shadow the
+        instance's own ``task_claimed=False``, firing the
+        ``claim -> implement`` transition on the adversary's first
+        successful MCP tool — without the workflow's own
+        ``on_mcp_success`` handler for ``claim_task`` ever running.
+        """
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        # Confirm the instance starts with task_claimed=False.
+        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        assert instance is not None
+        assert instance.variables.get("task_claimed") is False
+
+        # Simulate the session-start handoff: a session-scoped variable
+        # with the same name as a workflow step_variable, pre-set to True
+        # before the workflow ever runs its own handler.
+        variables: dict[str, Any] = {"task_claimed": True}
+
+        # Call a tool that does NOT match the workflow's claim_task
+        # handler — so no handler can legitimately flip task_claimed.
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "get_task",
+                },
+            },
+        )
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        assert instance is not None
+        # Must stay in claim: instance.variables wins over session vars.
+        assert instance.current_step == "claim"
+        assert instance.variables.get("task_claimed") is False
+
+    @pytest.mark.asyncio
+    async def test_handler_set_instance_var_transitions_despite_session_false(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Workflow-local handler state must transition even when session var is False.
+
+        Inverse direction of the precedence fix: after the workflow's own
+        ``on_mcp_success`` handler sets ``instance.variables['task_claimed']``
+        to True, the transition must fire even if a session-scoped variable
+        with the same name is False. Confirms the spread order doesn't
+        flip the other way and break the happy path.
+        """
+        _setup_step_workflow(db, manager, instance_mgr, current_step="claim")
+        variables: dict[str, Any] = {"task_claimed": False}
+
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "claim_task",
+                },
+            },
+        )
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "developer-workflow")
+        assert instance is not None
+        assert instance.current_step == "implement"
+        assert instance.variables.get("task_claimed") is True
+
+    @pytest.mark.asyncio
+    async def test_session_only_var_remains_readable_in_transition_when(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Session-only variables (not present in instance.variables) must stay readable.
+
+        The precedence flip must not hide session-level variables that the
+        instance doesn't claim. Workflows can still transition on genuinely
+        session-scoped signals (e.g. ``vars.stop_attempts``) as long as
+        there's no name collision with their own step_variables.
+        """
+        workflow = {
+            "name": "session-var-gated",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {"handler_var": False},  # no `kick` — session-only
+            "steps": [
+                {
+                    "name": "waiting",
+                    "allowed_tools": "all",
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-tasks",
+                            "tool": "get_task",
+                            "action": "set_variable",
+                            "variable": "handler_var",
+                            "value": True,
+                        }
+                    ],
+                    "transitions": [{"to": "done", "when": "vars.kick"}],
+                },
+                {"name": "done", "allowed_tools": "all"},
+            ],
+        }
+        _setup_step_workflow(
+            db, manager, instance_mgr, current_step="waiting", workflow_data=workflow
+        )
+        # Session-only variable (not in instance.variables) that the
+        # transition's `when` reads.
+        variables: dict[str, Any] = {"kick": True}
+
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "get_task",
+                },
+            },
+        )
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "session-var-gated")
+        assert instance is not None
+        assert instance.current_step == "done"
+
+    @pytest.mark.asyncio
+    async def test_send_keys_bypasses_step_allow_list(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Operator tool send_keys must bypass step MCP allow-lists.
+
+        Regression for the dogfood block on session #3277: the developer
+        tried to interrogate a stuck plan-adversary via
+        ``gobby-sessions:send_keys`` from the web app, but the adversary's
+        ``terminate`` step only whitelists ``gobby-agents:kill_agent``.
+        Operator/debug channels must be exempt so humans can always reach
+        a running session regardless of its workflow step.
+        """
+        _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "send_keys",
+                    "arguments": {"keys": "ls\n"},
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        assert response.decision == "allow", (
+            f"send_keys must bypass terminate's narrow allow-list; "
+            f"got decision={response.decision!r} reason={response.reason!r}"
+        )
+
 
 # Workflow with on_mcp_error handlers for testing app-level failure routing
 _MERGE_WORKFLOW = {
@@ -785,6 +1023,80 @@ class TestToolOutputRouting:
         assert instance is not None
         assert instance.variables.get("has_conflicts") is True
         assert instance.current_step == "resolve_conflicts"
+
+    @pytest.mark.asyncio
+    async def test_on_mcp_error_handler_when_gates_variable_update(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Handler-level when clauses should gate on_mcp_error variable updates."""
+        workflow = {
+            "name": "merge-when-workflow",
+            "version": "1.0",
+            "enabled": False,
+            "variables": {"has_conflicts": False},
+            "steps": [
+                {
+                    "name": "merge",
+                    "allowed_tools": "all",
+                    "on_mcp_error": [
+                        {
+                            "server": "gobby-worktrees",
+                            "tool": "merge_worktree",
+                            "when": "tool_output.result.has_conflicts",
+                            "action": "set_variable",
+                            "variable": "has_conflicts",
+                            "value": True,
+                        }
+                    ],
+                }
+            ],
+        }
+        _setup_step_workflow(
+            db, manager, instance_mgr, current_step="merge", workflow_data=workflow
+        )
+
+        event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-worktrees",
+                    "tool_name": "merge_worktree",
+                },
+                "tool_output": {
+                    "success": True,
+                    "result": {"success": False, "has_conflicts": False},
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "merge-when-workflow")
+        assert instance is not None
+        assert instance.variables.get("has_conflicts") is False
+
+        matching_event = _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-worktrees",
+                    "tool_name": "merge_worktree",
+                },
+                "tool_output": {
+                    "success": True,
+                    "result": {"success": False, "has_conflicts": True},
+                },
+            },
+        )
+
+        await engine.evaluate(matching_event, session_id="test-session", variables=variables)
+
+        instance = instance_mgr.get_instance("test-session", "merge-when-workflow")
+        assert instance is not None
+        assert instance.variables.get("has_conflicts") is True
 
 
 @pytest.mark.unit

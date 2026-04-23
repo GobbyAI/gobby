@@ -15,6 +15,12 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.servers.websocket.chat import ChatMixin
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -54,11 +60,21 @@ def host() -> ChatMixinHost:
     return ChatMixinHost()
 
 
+@pytest.fixture
+def rules_db(tmp_path) -> LocalDatabase:
+    db_path = tmp_path / "test_fire_lifecycle_parity.db"
+    database = LocalDatabase(db_path)
+    run_migrations(database)
+    return database
+
+
 def _make_session(db_session_id: str = "sess-123", seq_num: int = 42) -> MagicMock:
     session = MagicMock()
     session.db_session_id = db_session_id
     session.seq_num = seq_num
     session.project_path = "/tmp/project"
+    session.project_id = "project-123"
+    session.provider = "claude"
     return session
 
 
@@ -541,6 +557,41 @@ class TestFireLifecycleRewriteInput:
 
         assert result is not None
         assert "modified_input" not in result
+
+
+# ---------------------------------------------------------------------------
+# Real Rule Path
+# ---------------------------------------------------------------------------
+
+
+class TestFireLifecycleRequireUvRule:
+    """_fire_lifecycle should use real synced rules for shell command policy."""
+
+    @pytest.mark.asyncio
+    async def test_real_synced_require_uv_blocks_shell_alias_without_modified_input(
+        self, host: ChatMixinHost, rules_db: LocalDatabase
+    ) -> None:
+        """Web chat normalizes exec_command to Bash and returns a plain block."""
+        sync_bundled_rules(rules_db, get_bundled_rules_path())
+        SessionVariableManager(rules_db).merge_variables("sess-123", {"require_uv": True})
+
+        host._chat_sessions["conv-1"] = _make_session()
+        host.workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(rules_db))
+
+        result = await host._fire_lifecycle(
+            "conv-1",
+            HookEventType.BEFORE_TOOL,
+            {"tool_name": "exec_command", "tool_input": {"command": "python script.py"}},
+        )
+
+        assert result is not None
+        assert result["decision"] == "block"
+        assert result["reason"] == (
+            "Rule enforced by Gobby: [require-uv]\n"
+            "Bare python/pip is not permitted in this repo. Use uv instead."
+        )
+        assert "modified_input" not in result
+        assert "auto_approve" not in result
 
 
 # ---------------------------------------------------------------------------

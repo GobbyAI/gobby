@@ -17,9 +17,10 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.session_types import HookSessionManager
+
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import LocalSessionManager
     from gobby.storage.worktrees import LocalWorktreeManager
 
 
@@ -39,7 +40,7 @@ class SessionCoordinator:
 
     def __init__(
         self,
-        session_storage: LocalSessionManager | None = None,
+        session_storage: HookSessionManager | None = None,
         message_processor: Any | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
@@ -50,14 +51,14 @@ class SessionCoordinator:
         Initialize SessionCoordinator.
 
         Args:
-            session_storage: LocalSessionManager for session queries
+            session_storage: SessionManager for session queries
             message_processor: SessionMessageProcessor for message registration
             agent_run_manager: LocalAgentRunManager for agent run completion
             worktree_manager: LocalWorktreeManager for worktree release
             logger: Optional logger instance
             completion_registry: CompletionEventRegistry for notifying on agent completion
         """
-        self._session_storage = session_storage
+        self._session_manager = session_storage
         self._message_processor = message_processor
         self._agent_run_manager = agent_run_manager
         self._worktree_manager = worktree_manager
@@ -209,13 +210,13 @@ class SessionCoordinator:
         Returns:
             Number of sessions successfully re-registered
         """
-        if not self._message_processor or not self._session_storage:
+        if not self._message_processor or not self._session_manager:
             return 0
 
         try:
             # Query active and paused sessions from storage
-            active_sessions = self._session_storage.list(status="active", limit=limit)
-            paused_sessions = self._session_storage.list(status="paused", limit=limit)
+            active_sessions = self._session_manager.list(status="active", limit=limit)
+            paused_sessions = self._session_manager.list(status="paused", limit=limit)
             all_sessions = active_sessions + paused_sessions
             registered_count = 0
 
@@ -267,13 +268,19 @@ class SessionCoordinator:
         from the previous run, which causes _inject_agent_instructions_if_needed
         to skip re-injecting instructions on the next before_agent.
         """
-        if not self._session_storage:
+        if not self._session_manager:
             return
         try:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            sv_mgr = SessionVariableManager(self._session_storage.db)
-            sv_mgr.set_variable(session_id, "_agent_context_injected", False)
+            sv_mgr = SessionVariableManager(self._session_manager.db)
+            sv_mgr.merge_variables(
+                session_id,
+                {
+                    "_agent_context_injected": False,
+                    "_agent_identity_reinject": False,
+                },
+            )
         except Exception as e:
             self.logger.warning(
                 f"Failed to reset deferred injection flags for session {session_id}: {e}"
@@ -389,7 +396,7 @@ class SessionCoordinator:
                 try:
                     import subprocess
 
-                    from gobby.agents.tmux.config import TmuxConfig
+                    from gobby.config.tmux import TmuxConfig
 
                     tmux_cfg = TmuxConfig()
                     cmd = [tmux_cfg.command]
@@ -414,7 +421,7 @@ class SessionCoordinator:
                 try:
                     import subprocess
 
-                    from gobby.agents.tmux.config import TmuxConfig
+                    from gobby.config.tmux import TmuxConfig
 
                     tmux_cfg = TmuxConfig()
                     kill_cmd = [tmux_cfg.command]
@@ -445,7 +452,7 @@ class SessionCoordinator:
                     self.logger.debug(f"Failed to flush session stats for {session_id}: {e}")
 
                 # Re-fetch session from DB to get updated stats
-                refreshed = self._session_storage.get(session_id) if self._session_storage else None
+                refreshed = self._session_manager.get(session_id) if self._session_manager else None
                 if refreshed:
                     session = refreshed
 

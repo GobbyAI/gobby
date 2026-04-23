@@ -317,16 +317,33 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             for name in hub_names:
                 try:
                     config = server.hub_manager.get_config(name)
-                    hubs.append(
-                        {
-                            "name": name,
-                            "type": config.type,
-                            "base_url": config.base_url,
-                            "repo": config.repo,
-                        }
-                    )
                 except KeyError:
-                    pass
+                    # Hub name reported by list_hubs but config missing — skip
+                    # silently so the rest of the endpoint still renders.
+                    continue
+                entry: dict[str, Any] = {
+                    "name": name,
+                    "type": config.type,
+                    "base_url": config.base_url,
+                    "repo": config.repo,
+                }
+                # auth_status is expected to be a local config/API-key lookup.
+                # Keep the UI resilient to unexpected runtime failures here, while
+                # surfacing programmer errors instead of degrading them away.
+                try:
+                    entry.update(server.hub_manager.auth_status(name))
+                except (TypeError, AttributeError, ValueError):
+                    raise
+                except Exception as auth_exc:
+                    logger.warning(
+                        "auth_status failed for hub %r (%s): %s",
+                        name,
+                        type(auth_exc).__name__,
+                        auth_exc,
+                    )
+                    entry["auth_configured"] = None
+                    entry["auth_key_name"] = None
+                hubs.append(entry)
             return {"hubs": hubs}
         except Exception as e:
             logger.error(f"Failed to list hubs: {e}")
@@ -340,7 +357,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         """Search for skills across configured hubs."""
         if server.hub_manager is None:
-            return {"query": q, "results": [], "count": 0}
+            return {"query": q, "results": [], "count": 0, "hub_errors": {}}
         try:
             hub_names = [hub_name] if hub_name else None
             results, errors = await server.hub_manager.search_all(
@@ -352,9 +369,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 "query": q,
                 "results": results,
                 "count": len(results),
+                "hub_errors": errors,
             }
-            if errors:
-                response["hub_errors"] = errors
             return response
         except Exception as e:
             logger.error(f"Failed to search hubs: {e}")

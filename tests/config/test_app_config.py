@@ -612,6 +612,44 @@ class TestLoadConfig:
                 config_store=DummyConfigStore(),
             )
 
+    def test_load_config_migrates_memory_kg_keys_from_db(self, temp_dir: Path) -> None:
+        """Legacy memory.kg_provider/kg_model DB keys migrate to memory.kg.*."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "memory.kg_provider": "codex",
+                    "memory.kg_model": "gpt-5-mini",
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.memory.kg.provider == "codex"
+        assert config.memory.kg.model == "gpt-5-mini"
+
+    def test_load_config_drops_removed_dead_sections(self, temp_dir: Path) -> None:
+        """Removed review/task_description/enrichment sections are ignored from DB config."""
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "review.model": "opus",
+                    "task_description.enabled": False,
+                    "gobby-tasks.enrichment.enabled": False,
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert not hasattr(config, "review")
+        assert not hasattr(config, "task_description")
+        assert not hasattr(config.gobby_tasks, "enrichment")
+
 
 class TestBootstrapConfig:
     """Tests for bootstrap configuration loading."""
@@ -850,6 +888,7 @@ class TestTaskExpansionConfig:
         assert config.enabled is True
         assert config.provider == "claude"
         assert config.model == "opus"  # Uses opus for complex task expansion
+        assert config.tier == "high"
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -862,6 +901,7 @@ class TestTaskValidationConfig:
         assert config.enabled is True
         assert config.provider == "claude"
         assert config.model == "sonnet"
+        assert config.tier == "mid"
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -927,6 +967,8 @@ class TestMemoryConfig:
         assert config.backend == "local"
         assert config.crossref_threshold == 0.3
         assert config.access_debounce_seconds == 60
+        assert config.kg.provider == "claude"
+        assert config.kg.model == "haiku"
 
     def test_crossref_threshold_validation(self) -> None:
         """Test crossref_threshold validation."""

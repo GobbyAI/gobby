@@ -118,6 +118,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Security and lint
 
+#### Workflow and agent definition validation
+
+- Tighten agent definition validation for `model`, `reasoning_effort`,
+  `reasoning_required`, `fallback_agent`, `api_base`, and `api_token`
+- Stop coercing loosely-typed YAML values for those fields; values must now be
+  valid strings or booleans at parse time
+- Migration tip: quote numeric/string-like values and convert boolean-like
+  strings such as `"false"` to explicit YAML booleans such as `false`
+
 - Remove the insecure inbox jitter RNG (#11967)
 - Lazily export package symbols so import-time side effects stay bounded (#11965)
 - Resolve strict mypy errors (#11969)

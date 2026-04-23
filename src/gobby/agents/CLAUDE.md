@@ -47,7 +47,6 @@ This directory implements agent spawning, process management, isolation, and lif
 ### Other
 - `constants.py` — Agent-related constants (depth limits, timeouts)
 - `sandbox.py` — Sandbox configuration for agent processes
-- `codex_session.py` — Codex CLI session adapter
 
 ## Agent Spawn Flow
 

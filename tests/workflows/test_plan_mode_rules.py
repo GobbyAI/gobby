@@ -1,7 +1,7 @@
 """Tests for plan-mode rules.
 
 Verifies plan-mode detection (enter/exit via observer + rules),
-skill injection, mode_level tracking, and session_start reset.
+skill loading directives, mode_level tracking, and session_start reset.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.sync import sync_bundled_rules
+from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +34,7 @@ def manager(db: LocalDatabase) -> LocalWorkflowDefinitionManager:
 
 def _sync_bundled(db):
     """Sync bundled rules from the real rules directory."""
-    from gobby.workflows.sync import get_bundled_rules_path
+    from gobby.workflows.sync_rules import get_bundled_rules_path
 
     result = sync_bundled_rules(db, get_bundled_rules_path())
     # Mark templates as installed so get_by_name() finds them
@@ -43,6 +43,7 @@ def _sync_bundled(db):
 
 
 PLAN_MODE_RULES = {
+    "block-writes-outside-plan-artifact",
     "handle-plan-mode-entry",
     "handle-plan-mode-exit",
     "reset-plan-mode-on-session-start",
@@ -80,7 +81,7 @@ class TestPlanModeSync:
             if row.name in PLAN_MODE_RULES:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 for effect in body.resolved_effects:
-                    assert effect.type in {"set_variable", "load_skill"}
+                    assert effect.type in {"block", "set_variable", "load_skill"}
 
     def test_inject_plan_skill_rule_deleted(self, db, manager) -> None:
         """inject-plan-skill (redundant duplicate) should not exist after sync."""
@@ -92,7 +93,7 @@ class TestPlanModeSync:
 
 
 class TestHandlePlanModeEntry:
-    """Verify handle-plan-mode-entry: turn_start, skill injection only."""
+    """Verify handle-plan-mode-entry: turn_start, skill directive only."""
 
     def test_fires_on_turn_start_with_plan_mode_guard(self, db, manager) -> None:
         """Should fire on turn_start when plan_mode is set."""
@@ -105,22 +106,19 @@ class TestHandlePlanModeEntry:
         assert body.event.value == "turn_start"
         assert body.when is not None
         assert "plan_mode" in body.when
-        assert "plan_skill_loaded" in body.when
+        assert "skill_loaded('plan')" in body.when
 
-    def test_effects_load_skill_and_set_guard(self, db, manager) -> None:
-        """Should load plan skill and set plan_skill_loaded guard."""
+    def test_effects_load_skill_without_setting_guard(self, db, manager) -> None:
+        """Should emit plan skill directive without marking it loaded."""
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-entry")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         effects = body.resolved_effects
-        assert len(effects) == 2
+        assert len(effects) == 1
         assert effects[0].type == "load_skill"
         assert effects[0].skill == "plan"
-        assert effects[1].type == "set_variable"
-        assert effects[1].variable == "plan_skill_loaded"
-        assert effects[1].value is True
 
 
 class TestHandlePlanModeExit:
@@ -139,19 +137,17 @@ class TestHandlePlanModeExit:
         assert "ExitPlanMode" in body.when
         assert "is_failure" in body.when
 
-    def test_clears_plan_mode_and_skill_loaded(self, db, manager) -> None:
-        """Should clear plan_mode and plan_skill_loaded on approved exit."""
+    def test_clears_plan_mode_only(self, db, manager) -> None:
+        """Should clear plan_mode on approved exit."""
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-exit")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         effects = body.resolved_effects
-        assert len(effects) == 2
+        assert len(effects) == 1
         assert effects[0].variable == "plan_mode"
         assert effects[0].value is False
-        assert effects[1].variable == "plan_skill_loaded"
-        assert effects[1].value is False
 
 
 class TestResetPlanModeOnSessionStart:

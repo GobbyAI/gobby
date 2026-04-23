@@ -65,6 +65,14 @@ class TelemetryMetrics:
             "session_registrations_total",
             "Total number of session registration requests",
         )
+        self._register_counter(
+            "statusline_posts_succeeded_total",
+            "Total number of successful statusline usage posts",
+        )
+        self._register_counter(
+            "statusline_usage_gap_warnings_total",
+            "Total number of statusline usage gap warnings",
+        )
 
         # Memory operation metrics
         self._register_counter(

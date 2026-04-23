@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Any
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.registries import setup_internal_registries
-from gobby.mcp_proxy.semantic_search import DEFAULT_EMBEDDING_MODEL, SemanticToolSearch
+from gobby.mcp_proxy.semantic_search import (
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_EMBEDDING_MODEL,
+    SemanticToolSearch,
+)
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
 from gobby.telemetry.instruments import inc_counter
 
@@ -28,6 +32,8 @@ if TYPE_CHECKING:
     from gobby.utils.tool_metrics import ToolMetricsManager
 
 logger = logging.getLogger(__name__)
+
+_STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS = 2.0
 
 
 class HTTPServer:
@@ -153,7 +159,7 @@ class HTTPServer:
             db=services.mcp_db_manager.db if services.mcp_db_manager else None,
             sync_manager=services.task_sync_manager,
             task_validator=services.task_validator,
-            local_session_manager=services.session_manager,
+            session_manager=services.session_manager,
             metrics_manager=services.metrics_manager,
             llm_service=services.llm_service,
             agent_runner=services.agent_runner,
@@ -210,10 +216,14 @@ class HTTPServer:
                     _emb_cfg.api_key if _emb_cfg and _emb_cfg.api_key else openai_api_key
                 ),
                 embedding_model=_emb_cfg.model if _emb_cfg else DEFAULT_EMBEDDING_MODEL,
+                embedding_dim=_emb_cfg.dim if _emb_cfg else DEFAULT_EMBEDDING_DIM,
                 api_base=_emb_cfg.api_base if _emb_cfg else None,
                 vector_store=getattr(services, "vector_store", None),
             )
-            logger.debug("Semantic tool search initialized")
+            logger.debug(
+                "Semantic tool search initialized (dim=%s)",
+                _emb_cfg.dim if _emb_cfg else DEFAULT_EMBEDDING_DIM,
+            )
 
         # Create fallback resolver for alternative tool suggestions on error
         fallback_resolver = None
@@ -345,6 +355,61 @@ class HTTPServer:
             return self._tools_handler.tool_proxy
         return None
 
+    async def _terminate_streamable_http_sessions(self) -> None:
+        """Best-effort termination of active FastMCP Streamable HTTP sessions."""
+        if self._mcp_server is None:
+            return
+
+        try:
+            session_manager = self._mcp_server.session_manager
+        except (AttributeError, RuntimeError):
+            return
+
+        server_instances = getattr(session_manager, "_server_instances", None)
+        if not isinstance(server_instances, dict) or not server_instances:
+            return
+
+        transports = list(server_instances.values())
+        logger.debug(
+            "Terminating %d active Streamable HTTP session(s)",
+            len(transports),
+        )
+        pending: list[tuple[Any, asyncio.Task[None]]] = []
+        for transport in transports:
+            terminate = getattr(transport, "terminate", None)
+            if not callable(terminate):
+                continue
+            pending.append((transport, asyncio.create_task(terminate())))
+
+        results = await asyncio.gather(
+            *(
+                asyncio.wait_for(
+                    task,
+                    timeout=_STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
+                )
+                for _transport, task in pending
+            ),
+            return_exceptions=True,
+        )
+
+        # asyncio.wait_for cancels the inner task on timeout, and gather has
+        # already awaited completion with return_exceptions=True. We only need
+        # to classify results for logging — no secondary cancellation pass or
+        # lingering cleanup is required.
+        for (transport, _task), result in zip(pending, results, strict=False):
+            if isinstance(result, TimeoutError):
+                logger.warning(
+                    "Timed out terminating Streamable HTTP session %s after %.1fs",
+                    getattr(transport, "mcp_session_id", "<unknown>"),
+                    _STREAMABLE_HTTP_TERMINATE_TIMEOUT_SECONDS,
+                )
+            elif isinstance(result, Exception):
+                logger.warning(
+                    "Failed to terminate Streamable HTTP session %s: %s",
+                    getattr(transport, "mcp_session_id", "<unknown>"),
+                    result,
+                )
+
     def resolve_project_id(self, project_id: str | None, cwd: str | None) -> str:
         """
         Resolve project_id from cwd if not provided.
@@ -428,6 +493,15 @@ class HTTPServer:
                             "All background tasks cancelled",
                             extra={"completed": completed_count},
                         )
+
+            try:
+                await self._terminate_streamable_http_sessions()
+            except Exception as exc:
+                logger.warning(
+                    "Error terminating Streamable HTTP sessions during shutdown: %s",
+                    exc,
+                    exc_info=True,
+                )
 
             # Disconnect all MCP servers
             if self.services.mcp_manager:

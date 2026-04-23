@@ -17,7 +17,7 @@ from gobby.mcp_proxy.tools.worktrees._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
 if TYPE_CHECKING:
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.worktrees.git import WorktreeGitManager
@@ -27,7 +27,7 @@ def create_worktrees_registry(
     worktree_storage: LocalWorktreeManager,
     git_manager: WorktreeGitManager | None = None,
     project_id: str | None = None,
-    session_manager: LocalSessionManager | None = None,
+    session_manager: SessionManager | None = None,
     task_manager: LocalTaskManager | None = None,
 ) -> InternalToolRegistry:
     """Create a worktree tool registry with all worktree-related tools.

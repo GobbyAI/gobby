@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.cron_models import CronJob
     from gobby.storage.pipelines import LocalPipelineExecutionManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks._manager import LocalTaskManager
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class PipelineHeartbeat:
         agent_run_manager: LocalAgentRunManager,
         stall_threshold_seconds: float = 120.0,
         task_manager: LocalTaskManager | None = None,
-        session_manager: LocalSessionManager | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         self._execution_manager = execution_manager
         self._agent_run_manager = agent_run_manager

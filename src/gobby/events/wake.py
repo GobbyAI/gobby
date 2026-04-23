@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class WakeDispatcher:
 
     def __init__(
         self,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         ism_manager: InterSessionMessageManager,
         tmux_sender: TmuxSender | None = None,
         tmux_pane_sender: TmuxPaneSender | None = None,

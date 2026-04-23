@@ -31,7 +31,8 @@ from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
 from gobby.search.embeddings import (
     generate_embedding,
     generate_embeddings,
-    is_embedding_available,
+    is_embedding_configured,
+    is_embedding_reachable,
 )
 
 # FTS5 backend
@@ -57,5 +58,6 @@ __all__ = [
     # Embedding utilities
     "generate_embedding",
     "generate_embeddings",
-    "is_embedding_available",
+    "is_embedding_configured",
+    "is_embedding_reachable",
 ]

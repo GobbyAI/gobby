@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._merge_state import is_branch_ancestor
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,15 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         f"{pop_result.stderr or pop_result.stdout}"
                     )
 
+        async def _source_is_merged_into_target() -> bool:
+            return await asyncio.to_thread(
+                is_branch_ancestor,
+                resolved_git_mgr,
+                effective_source,
+                merge_target,
+                cwd=wt_path,
+            )
+
         try:
             merge_result = await asyncio.to_thread(
                 resolved_git_mgr._run_git,
@@ -213,7 +223,9 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                             timeout=30,
                         )
                         if commit_result.returncode == 0:
-                            ctx.worktree_storage.mark_merged(worktree_id)
+                            git_merged = await _source_is_merged_into_target()
+                            if git_merged:
+                                ctx.worktree_storage.mark_merged(worktree_id)
                             return {
                                 "success": True,
                                 "message": (
@@ -222,6 +234,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                                 "worktree_path": wt_path,
                                 "source_branch": effective_source,
                                 "target_branch": merge_target,
+                                "merged": git_merged,
                                 "pushed": False,
                                 "auto_resolved": conflicted_files,
                             }
@@ -254,9 +267,6 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "error": merge_output.strip(),
                 }
 
-            # Mark as merged in storage
-            ctx.worktree_storage.mark_merged(worktree_id)
-
             # Step 4 (optional): Push source branch to origin as target
             if push:
                 push_result = await asyncio.to_thread(
@@ -274,13 +284,47 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "source_branch": effective_source,
                         "target_branch": merge_target,
                     }
+                fetch_target = await asyncio.to_thread(
+                    resolved_git_mgr._run_git,
+                    ["fetch", "origin", merge_target],
+                    cwd=wt_path,
+                    timeout=60,
+                )
+                if fetch_target.returncode != 0:
+                    logger.warning(
+                        "Fetch after push failed in worktree (non-fatal): %s",
+                        fetch_target.stderr.strip(),
+                    )
+
+            git_merged = await _source_is_merged_into_target()
+            if git_merged:
+                ctx.worktree_storage.mark_merged(worktree_id)
+            elif push:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Push succeeded, but branch '{effective_source}' is not an ancestor "
+                        f"of '{merge_target}'"
+                    ),
+                    "merge_succeeded": True,
+                    "push_succeeded": True,
+                    "merged": False,
+                    "worktree_path": wt_path,
+                    "source_branch": effective_source,
+                    "target_branch": merge_target,
+                }
 
             result = {
                 "success": True,
-                "message": f"Merged and {'pushed' if push else 'ready to push'}",
+                "message": (
+                    f"Merged and {'pushed' if push else 'ready to push'}"
+                    if git_merged
+                    else "Worktree branch synced with target; target branch not updated"
+                ),
                 "worktree_path": wt_path,
                 "source_branch": effective_source,
                 "target_branch": merge_target,
+                "merged": git_merged,
                 "pushed": push,
             }
             if not push:

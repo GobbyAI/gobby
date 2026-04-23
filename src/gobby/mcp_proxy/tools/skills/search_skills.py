@@ -72,7 +72,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
     @registry.tool(
         name="search_skills",
-        description="Search for skills by query. Returns ranked results with relevance scores. Supports filtering by category and tags.",
+        description="Search for skills by query. Returns ranked results with relevance scores. Supports filtering by category and tags. Internal methodology skills (frontmatter `internal: true`) are hidden by default; pass include_internal=true to include them.",
     )
     async def search_skills(
         query: str,
@@ -81,6 +81,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
         tags_all: list[str] | None = None,
         top_k: int = 10,
         session_id: str | None = None,
+        include_internal: bool = False,
     ) -> dict[str, Any]:
         """
         Search for skills by natural language query.
@@ -93,6 +94,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             tags_any: Optional tags filter - match any of these tags
             tags_all: Optional tags filter - match all of these tags
             top_k: Maximum results to return (default 10)
+            include_internal: If True, include skills flagged `internal: true` in
+                frontmatter. Default False hides them — they are shared-methodology
+                skills invoked by other skills via get_skill(name=...), not user-facing.
 
         Returns:
             Dict with success status and ranked search results
@@ -131,8 +135,11 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             # Ensure index is fresh before searching (run in thread to avoid blocking event loop)
             await asyncio.to_thread(indexer.ensure_fresh)
 
-            # Perform search
-            results = await ctx.search.search_async(query=query, top_k=top_k, filters=filters)
+            # Over-fetch when we'll post-filter internal skills, so top_k survives the trim.
+            search_top_k = top_k * 3 if not include_internal else top_k
+            results = await ctx.search.search_async(
+                query=query, top_k=search_top_k, filters=filters
+            )
 
             # Surface clear error when index was never built (startup failure)
             if not results and not ctx.search.index_attempted:
@@ -144,6 +151,17 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             # Batch-fetch skills to avoid N+1 queries
             skill_ids = [r.skill_id for r in results]
             skills_by_id = {s.id: s for s in ctx.storage.get_skills_by_ids(skill_ids)}
+
+            if not include_internal:
+                # Keep a result when its skill is unknown (best-effort) OR not
+                # flagged internal. Rewritten from a double-negative walrus
+                # comprehension so the intent reads top-to-bottom.
+                filtered_results = []
+                for r in results:
+                    skill = skills_by_id.get(r.skill_id)
+                    if skill is None or not skill.is_internal():
+                        filtered_results.append(r)
+                results = filtered_results[:top_k]
 
             # Format results with skill metadata
             result_list = []

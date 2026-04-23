@@ -11,15 +11,12 @@ Contains session-related Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
-from typing import Literal
-
 from pydantic import BaseModel, Field, field_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig, ModelTier
 
 __all__ = [
     "ChatHistoryConfig",
-    "ContextCompressionConfig",
     "ContextInjectionConfig",
     "DigestConfig",
     "SessionSummaryConfig",
@@ -93,26 +90,6 @@ class ContextInjectionConfig(BaseModel):
         if v <= 0:
             raise ValueError("Value must be positive")
         return v
-
-
-class ContextCompressionConfig(BaseModel):
-    """Context compression settings for additionalContext injection.
-
-    Controls prose compression via ``gsqz input`` before the 9,950-char
-    truncation limit.  Compression is injection-time only — stored content
-    (memories, embeddings, FTS indexes) is never modified.
-    """
-
-    enabled: bool = Field(
-        default=True,
-        description="Enable prose compression before context truncation",
-    )
-    level: Literal["lite", "standard", "aggressive"] = Field(
-        default="standard",
-        description="Compression aggressiveness: "
-        "'lite' (articles only), 'standard' (articles + filler), "
-        "'aggressive' (maximum compression)",
-    )
 
 
 class SessionSummaryConfig(FeatureDefaultConfig):

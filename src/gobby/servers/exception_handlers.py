@@ -8,6 +8,7 @@ import logging
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.requests import ClientDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,23 @@ def register_exception_handlers(app: FastAPI) -> None:
         # so proper status codes (404, 422, etc.) are returned
         if isinstance(exc, HTTPException):
             raise exc
+
+        if isinstance(exc, ClientDisconnect):
+            logger.debug(
+                "Client disconnected before HTTP response completed",
+                extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "client": request.client.host if request.client else None,
+                },
+            )
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "ok",
+                    "warning": "client_disconnected",
+                },
+            )
 
         logger.error(
             f"Unhandled exception in HTTP server: {exc}",

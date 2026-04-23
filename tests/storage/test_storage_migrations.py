@@ -7,85 +7,91 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import (
     BASELINE_VERSION,
     MIGRATIONS,
-    _migrate_expansion_runs,
+    MigrationUnsupportedError,
+    _run_migration_list,
     get_current_version,
     run_migrations,
 )
 from gobby.storage.sessions import SYSTEM_SESSION_ID
-from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
-# Calculate expected version after all migrations
-EXPECTED_FINAL_VERSION = max(
-    BASELINE_VERSION,
-    max((m[0] for m in MIGRATIONS), default=BASELINE_VERSION),
-)
+
+def _table_exists(db: LocalDatabase, table: str) -> bool:
+    row = db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+    return row is not None
 
 
-def test_migrations_fresh_db(tmp_path) -> None:
-    """Test running migrations on a fresh database.
+def _column_names(db: LocalDatabase, table: str) -> set[str]:
+    return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table})")}
 
-    With the baseline schema architecture:
-    - Fresh databases get BASELINE_SCHEMA applied directly (counts as 1 migration)
-    - Plus any incremental migrations beyond the baseline
-    - Final version is EXPECTED_FINAL_VERSION
-    """
+
+def _index_names(db: LocalDatabase, table: str) -> set[str]:
+    return {row["name"] for row in db.fetchall(f"PRAGMA index_list({table})")}
+
+
+def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
+    """Fresh databases apply the flattened launch baseline directly."""
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    # Initial state
+    assert BASELINE_VERSION == 219
+    assert MIGRATIONS == []
     assert get_current_version(db) == 0
 
-    # Run migrations
     applied = run_migrations(db)
 
-    # Fresh databases apply baseline schema + incremental migrations
-    expected_count = 1 + len([m for m in MIGRATIONS if m[0] > BASELINE_VERSION])
-    assert applied == expected_count
-
-    # Verify version reaches expected final version
-    current_version = get_current_version(db)
-    assert current_version == EXPECTED_FINAL_VERSION
-
-    # Check tables exist (sample check)
-    tables = [
-        "schema_version",
-        "projects",
-        "sessions",
-        "mcp_servers",
-        "tools",
-        "tasks",
-        "task_dependencies",
-        "session_tasks",
-        "memories",
-        "tool_embeddings",
-        "task_validation_history",
-        "workflow_definitions",
-    ]
-    for table in tables:
-        # Check if table exists in sqlite_master
-        row = db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
-        assert row is not None, f"Table {table} not created"
+    assert applied == 1
+    assert get_current_version(db) == 219
+    versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
+    assert versions == [219]
 
 
-def test_migrations_idempotency(tmp_path) -> None:
-    """Test that running migrations again does nothing."""
+def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
+    """Running migrations again on a 219 database does not add schema versions."""
     db_path = tmp_path / "idempotency.db"
     db = LocalDatabase(db_path)
 
     run_migrations(db)
-    initial_version = get_current_version(db)
-    assert initial_version == EXPECTED_FINAL_VERSION
 
-    # Run again
-    applied = run_migrations(db)
-    assert applied == 0
-    assert get_current_version(db) == initial_version
+    assert run_migrations(db) == 0
+    assert get_current_version(db) == 219
+    versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
+    assert versions == [219]
+
+
+def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
+    """SQL-string migrations should roll back all statements on failure."""
+    db_path = tmp_path / "atomic_migration.db"
+    db = LocalDatabase(db_path)
+    db.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+
+    with pytest.raises(sqlite3.OperationalError):
+        _run_migration_list(
+            db,
+            current_version=0,
+            migrations=[
+                (
+                    1,
+                    "Create temp table and fail",
+                    """
+                    CREATE TABLE temp_atomic (id INTEGER PRIMARY KEY);
+                    INSERT INTO temp_atomic (id) VALUES (1);
+                    INSERT INTO missing_table (id) VALUES (1);
+                    """,
+                )
+            ],
+        )
+
+    assert (
+        db.fetchone("SELECT name FROM sqlite_master WHERE type='table' AND name='temp_atomic'")
+        is None
+    )
+    assert db.fetchall("SELECT version FROM schema_version") == []
 
 
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:
-    """Existing databases self-heal the bootstrapped system session on startup."""
+    """Existing 219 databases self-heal the bootstrapped system session on startup."""
     db_path = tmp_path / "system_session_repair.db"
     db = LocalDatabase(db_path)
 
@@ -106,365 +112,190 @@ def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     assert repaired["title"] == "_system"
 
 
-def test_tasks_table_includes_claimed_by_session_id_on_fresh_db(tmp_path) -> None:
-    """Fresh baseline schema should include canonical task ownership."""
-    db_path = tmp_path / "tasks_claim_owner.db"
+@pytest.mark.parametrize("legacy_version", [1, 218])
+def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) -> None:
+    """Historical SQLite upgrades were dropped at the 219 launch baseline."""
+    db_path = tmp_path / f"legacy_{legacy_version}.db"
     db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
-    assert "claimed_by_session_id" in task_columns
-
-    task_indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(tasks)")}
-    assert "idx_tasks_claimed_session" in task_indexes
-
-
-def test_agent_runs_table_includes_claimed_session_id_on_fresh_db(tmp_path) -> None:
-    """Fresh baseline schema should include persisted agent run claim ownership."""
-    db_path = tmp_path / "agent_runs_claim_owner.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    agent_run_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
-    assert "claimed_session_id" in agent_run_columns
-
-
-def test_sessions_table_includes_title_source_on_fresh_db(tmp_path) -> None:
-    """Fresh baseline schema should include title provenance tracking."""
-    db_path = tmp_path / "sessions_title_source.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    session_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(sessions)")}
-    assert "title_source" in session_columns
-
-
-def test_tasks_claimed_session_fk_is_set_null_on_fresh_db(tmp_path) -> None:
-    """Fresh databases should end with ON DELETE SET NULL for canonical task ownership."""
-    db_path = tmp_path / "tasks_claim_owner_fk.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
-    claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
-    assert claimed_fk["on_delete"] == "SET NULL"
-
-
-def test_migration_211_adds_claimed_session_id_to_agent_runs(tmp_path) -> None:
-    """Migration 211 should add the claimed_session_id column to existing databases."""
-    db_path = tmp_path / "agent_runs_claim_owner_partial.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    db.connection.executescript("""
-        PRAGMA foreign_keys=OFF;
-        DROP TABLE IF EXISTS agent_runs_legacy;
-        CREATE TABLE agent_runs_legacy AS
-        SELECT
-            id,
-            parent_session_id,
-            child_session_id,
-            workflow_name,
-            agent_name,
-            provider,
-            model,
-            status,
-            prompt,
-            result,
-            error,
-            tool_calls_count,
-            turns_used,
-            started_at,
-            completed_at,
-            created_at,
-            updated_at,
-            sdk_session_id,
-            continuation_prompt,
-            task_id,
-            pid,
-            tmux_session_name,
-            worktree_id,
-            clone_id,
-            timeout_seconds
-        FROM agent_runs;
-        DROP TABLE agent_runs;
-        CREATE TABLE agent_runs (
-            id TEXT PRIMARY KEY,
-            parent_session_id TEXT NOT NULL REFERENCES sessions(id),
-            child_session_id TEXT REFERENCES sessions(id),
-            workflow_name TEXT,
-            agent_name TEXT,
-            provider TEXT NOT NULL,
-            model TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            prompt TEXT NOT NULL,
-            result TEXT,
-            error TEXT,
-            tool_calls_count INTEGER DEFAULT 0,
-            turns_used INTEGER DEFAULT 0,
-            started_at TEXT,
-            completed_at TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            sdk_session_id TEXT,
-            continuation_prompt TEXT,
-            task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
-            pid INTEGER,
-            tmux_session_name TEXT,
-            worktree_id TEXT,
-            clone_id TEXT,
-            timeout_seconds REAL
-        );
-        INSERT INTO agent_runs
-        SELECT * FROM agent_runs_legacy;
-        DROP TABLE agent_runs_legacy;
-        PRAGMA foreign_keys=ON;
-    """)
-    db.execute("DELETE FROM schema_version")
-    db.execute("INSERT INTO schema_version (version) VALUES (210)")
-
-    applied = run_migrations(db)
-
-    assert applied == EXPECTED_FINAL_VERSION - 210
-    agent_run_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(agent_runs)")}
-    assert "claimed_session_id" in agent_run_columns
-
-
-def test_migration_212_updates_tasks_claimed_session_fk(tmp_path) -> None:
-    """Migration 212 should rebuild tasks with ON DELETE SET NULL ownership semantics."""
-    db_path = tmp_path / "tasks_claim_owner_fk_partial.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    db.execute("DELETE FROM schema_version")
-    db.execute("INSERT INTO schema_version (version) VALUES (211)")
-
-    db.connection.executescript("""
-        PRAGMA foreign_keys=OFF;
-        DROP TABLE IF EXISTS tasks_legacy;
-        CREATE TABLE tasks_legacy AS
-        SELECT
-            id, project_id, parent_task_id, created_in_session_id, claimed_by_session_id,
-            lifecycle_stage, closed_in_session_id, closed_commit_sha, closed_at, title,
-            description, status, priority, task_type, assignee, labels, closed_reason,
-            compacted_at, validation_status, validation_feedback, validation_override_reason,
-            category, validation_criteria, validation_fail_count, dispatch_failure_count,
-            commits, escalated_at, escalation_reason, github_issue_number, github_pr_number,
-            github_repo, linear_issue_id, linear_team_id, seq_num, path_cache,
-            start_date, due_date, created_at, updated_at
-        FROM tasks;
-        DROP TABLE tasks;
-        CREATE TABLE tasks (
-            id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL REFERENCES projects(id),
-            parent_task_id TEXT REFERENCES tasks(id),
-            created_in_session_id TEXT REFERENCES sessions(id),
-            claimed_by_session_id TEXT REFERENCES sessions(id),
-            lifecycle_stage TEXT CHECK(lifecycle_stage IN ('in_progress', 'needs_review', 'review_approved')),
-            closed_in_session_id TEXT REFERENCES sessions(id),
-            closed_commit_sha TEXT,
-            closed_at TEXT,
-            title TEXT NOT NULL,
-            description TEXT,
-            status TEXT DEFAULT 'open',
-            priority INTEGER DEFAULT 2,
-            task_type TEXT DEFAULT 'task',
-            assignee TEXT,
-            labels TEXT,
-            closed_reason TEXT,
-            compacted_at TEXT,
-            validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
-            validation_feedback TEXT,
-            validation_override_reason TEXT,
-            category TEXT,
-            validation_criteria TEXT,
-            validation_fail_count INTEGER DEFAULT 0,
-            dispatch_failure_count INTEGER DEFAULT 0,
-            commits TEXT,
-            escalated_at TEXT,
-            escalation_reason TEXT,
-            github_issue_number INTEGER,
-            github_pr_number INTEGER,
-            github_repo TEXT,
-            linear_issue_id TEXT,
-            linear_team_id TEXT,
-            seq_num INTEGER,
-            path_cache TEXT,
-            start_date TEXT,
-            due_date TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        INSERT INTO tasks
-        SELECT * FROM tasks_legacy;
-        DROP TABLE tasks_legacy;
-        PRAGMA foreign_keys=ON;
-    """)
-
-    applied = run_migrations(db)
-
-    assert applied == EXPECTED_FINAL_VERSION - 211
-    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
-    claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
-    assert claimed_fk["on_delete"] == "SET NULL"
-
-
-def test_migrate_expansion_runs_drops_legacy_task_fields_without_backfill(tmp_path) -> None:
-    """Legacy task-level expansion blobs are dropped instead of mapped to expansion_runs."""
-    db_path = tmp_path / "expansion_runs_audit.db"
-    db = LocalDatabase(db_path)
-    run_migrations(db)
-
     db.execute(
         """
-        INSERT INTO projects (id, name, repo_path, created_at, updated_at)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'))
-        """,
-        ("proj-1", "test-project", "/tmp/test-project"),
-    )
-    manager = LocalTaskManager(db)
-    task = manager.create_task(project_id="proj-1", title="Legacy expansion task")
-
-    db.execute("ALTER TABLE tasks ADD COLUMN expansion_context TEXT")
-    db.execute("ALTER TABLE tasks ADD COLUMN expansion_status TEXT")
-    db.execute(
-        """
-        UPDATE tasks
-        SET expansion_context = ?, expansion_status = ?
-        WHERE id = ?
-        """,
-        (
-            '{"research_findings":["legacy"],"validation_criteria":"old"}',
-            "completed",
-            task.id,
-        ),
-    )
-
-    _migrate_expansion_runs(db)
-
-    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
-    assert "expansion_context" not in task_columns
-    assert "expansion_status" not in task_columns
-
-    count_row = db.fetchone("SELECT COUNT(*) AS count FROM expansion_runs")
-    assert count_row is not None
-    assert count_row["count"] == 0
-
-
-def test_migration_208_recovers_when_column_exists_but_version_does_not(tmp_path) -> None:
-    """Migration 208 should heal partial application without duplicate-column failure."""
-    db_path = tmp_path / "tasks_claim_owner_partial.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    project_id = "00000000-0000-0000-0000-000000060887"
-    session_id = "session-208"
-    task_id = "task-208"
-    db.execute(
-        """
-        INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        """,
-        (session_id, "ext-208", "machine-208", "codex", project_id),
-    )
-    db.execute(
-        """
-        INSERT INTO tasks (
-            id, project_id, title, assignee, created_at, updated_at, claimed_by_session_id
-        ) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), NULL)
-        """,
-        (task_id, project_id, "partial migration task", session_id),
-    )
-
-    db.execute("DROP INDEX IF EXISTS idx_tasks_claimed_session")
-    db.execute("DELETE FROM schema_version")
-    db.execute("INSERT INTO schema_version (version) VALUES (207)")
-
-    applied = run_migrations(db)
-
-    # Seeded at 207; baseline now advances through 208, 209, 210.
-    assert applied == EXPECTED_FINAL_VERSION - 207
-    assert get_current_version(db) == EXPECTED_FINAL_VERSION
-    task_row = db.fetchone(
-        "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
-        (task_id,),
-    )
-    assert task_row is not None
-    assert task_row["claimed_by_session_id"] == session_id
-
-    task_indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(tasks)")}
-    assert "idx_tasks_claimed_session" in task_indexes
-
-
-def test_migration_208_backfills_despite_legacy_orphaned_task_foreign_keys(tmp_path) -> None:
-    """Migration 208 should recover even when legacy task rows violate older FKs."""
-    db_path = tmp_path / "tasks_claim_owner_orphaned.db"
-    db = LocalDatabase(db_path)
-
-    run_migrations(db)
-
-    project_id = "00000000-0000-0000-0000-000000060887"
-    session_id = "session-208-valid"
-    task_id = "task-208-orphaned"
-    db.execute(
-        """
-        INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        """,
-        (session_id, "ext-208-valid", "machine-208", "codex", project_id),
-    )
-
-    db.execute("PRAGMA foreign_keys=OFF")
-    try:
-        db.execute(
-            """
-            INSERT INTO tasks (
-                id,
-                project_id,
-                title,
-                assignee,
-                created_in_session_id,
-                created_at,
-                updated_at,
-                claimed_by_session_id
-            ) VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'), NULL)
-            """,
-            (task_id, project_id, "orphaned task", session_id, "missing-session"),
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
-    finally:
-        db.execute("PRAGMA foreign_keys=ON")
-
-    db.execute("DROP INDEX IF EXISTS idx_tasks_claimed_session")
-    db.execute("DELETE FROM schema_version")
-    db.execute("INSERT INTO schema_version (version) VALUES (207)")
-
-    applied = run_migrations(db)
-
-    # Seeded at 207; baseline now advances through 208, 209, 210.
-    assert applied == EXPECTED_FINAL_VERSION - 207
-    task_row = db.fetchone(
-        "SELECT claimed_by_session_id FROM tasks WHERE id = ?",
-        (task_id,),
+        """
     )
-    assert task_row is not None
-    assert task_row["claimed_by_session_id"] == session_id
+    db.execute("INSERT INTO schema_version (version) VALUES (?)", (legacy_version,))
+
+    with pytest.raises(MigrationUnsupportedError) as exc_info:
+        run_migrations(db)
+
+    message = str(exc_info.value)
+    assert f"Database version {legacy_version}" in message
+    assert "SQLite launch baseline 219" in message
+    assert "~/.gobby/gobby-hub.db" in message
+
+
+def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
+    """A DB from a newer build should not be modified by this migration runner."""
+    db_path = tmp_path / "future.db"
+    db = LocalDatabase(db_path)
+    db.execute(
+        """
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    db.execute("INSERT INTO schema_version (version) VALUES (220)")
+
+    assert run_migrations(db) == 0
+    assert get_current_version(db) == 220
+    assert not _table_exists(db, "projects")
+
+
+def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
+    """The 219 baseline includes representative storage domains."""
+    db_path = tmp_path / "baseline_tables.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    expected_tables = {
+        "schema_version",
+        "projects",
+        "sessions",
+        "agent_runs",
+        "tasks",
+        "task_dependencies",
+        "session_tasks",
+        "expansion_runs",
+        "pending_interactions",
+        "token_events",
+        "config_store",
+        "memories",
+        "skills",
+        "workflow_definitions",
+        "code_symbols",
+        "code_calls",
+        "code_content_chunks",
+        "checkpoints",
+        "chat_messages",
+        "comms_messages",
+    }
+    missing = {table for table in expected_tables if not _table_exists(db, table)}
+    assert missing == set()
+
+
+def test_flattened_baseline_launch_columns(tmp_path) -> None:
+    """The 219 baseline exposes the canonical post-flattening columns."""
+    db_path = tmp_path / "baseline_columns.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    assert {
+        "claimed_session_id",
+        "agent_name",
+        "requested_reasoning_effort",
+        "effective_reasoning_effort",
+        "reasoning_required",
+        "reasoning_status",
+        "reasoning_message",
+    }.issubset(_column_names(db, "agent_runs"))
+    assert {"title_source", "sandbox_enabled", "sandbox_policy_hash"}.issubset(
+        _column_names(db, "sessions")
+    )
+    assert {"claimed_by_session_id", "lifecycle_stage", "dispatch_failure_count"}.issubset(
+        _column_names(db, "tasks")
+    )
+    assert {"graph_synced", "graph_sync_attempted_at"}.issubset(
+        _column_names(db, "code_indexed_files")
+    )
+    assert {"callee_target_kind", "callee_symbol_id", "callee_name"}.issubset(
+        _column_names(db, "code_calls")
+    )
+    assert {"model_family", "cache_creation_tokens", "cache_read_tokens"}.issubset(
+        _column_names(db, "token_events")
+    )
+
+    assert "expansion_context" not in _column_names(db, "tasks")
+    assert "expansion_status" not in _column_names(db, "tasks")
+    assert "input_token_usd_per_1m" not in _column_names(db, "model_costs")
+    assert "output_token_usd_per_1m" not in _column_names(db, "model_costs")
+
+
+def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
+    """The 219 baseline includes indexes and FK semantics formerly added by migrations."""
+    db_path = tmp_path / "baseline_indexes.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    assert {
+        "idx_tasks_claimed_session",
+        "idx_tasks_lifecycle_stage",
+        "idx_tasks_closed_session",
+    }.issubset(_index_names(db, "tasks"))
+    assert {"idx_sessions_prune_status_updated_at", "idx_sessions_parent_session"}.issubset(
+        _index_names(db, "sessions")
+    )
+    assert "idx_memories_source_session" in _index_names(db, "memories")
+    assert "idx_token_events_dedup" in _index_names(db, "token_events")
+    assert "idx_cc_target" in _index_names(db, "code_calls")
+
+    rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
+    claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
+    assert claimed_fk["on_delete"] == "SET NULL"
+
+    pending_index = db.fetchone(
+        """
+        SELECT sql
+          FROM sqlite_master
+         WHERE type = 'index'
+           AND name = 'idx_pending_interactions_active'
+        """
+    )
+    assert pending_index is not None
+    assert "WHERE status = 'pending'" in pending_index["sql"]
+
+
+def test_flattened_baseline_fts_tables_and_triggers(tmp_path) -> None:
+    """Fresh bootstrap creates baseline FTS virtual tables and sync triggers."""
+    db_path = tmp_path / "baseline_fts.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    for table in (
+        "code_symbols_fts",
+        "code_content_fts",
+        "tasks_fts",
+        "skills_fts",
+        "memories_fts",
+    ):
+        assert _table_exists(db, table), f"{table} missing"
+
+    trigger_names = {
+        row["name"] for row in db.fetchall("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+    }
+    expected_triggers = {
+        "code_symbols_ai",
+        "code_content_ai",
+        "tasks_fts_ai",
+        "memories_fts_ai",
+    }
+    assert expected_triggers.issubset(trigger_names)
+    assert "memories_fts_au" in trigger_names
 
 
 def test_get_current_version_error(tmp_path) -> None:
-    """Test get_current_version handles errors (e.g. missing table)."""
+    """get_current_version treats missing or unreadable schema metadata as version 0."""
     db_path = tmp_path / "error.db"
     db = LocalDatabase(db_path)
 
-    # schema_version doesn't exist yet
     assert get_current_version(db) == 0
 
-    # Mock execute to raise exception even if table exists logic was reached
     with patch.object(db, "fetchone", side_effect=sqlite3.OperationalError("Boom")):
         assert get_current_version(db) == 0

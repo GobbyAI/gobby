@@ -82,6 +82,51 @@ The practical split now is:
 - `apply_persona` for current-session application
 - `spawn_agent` / `dispatch_batch` for child-session execution
 
+### Validation Tightening In `v0.4.0`
+
+The agent definition schema now validates several execution fields more
+strictly. The following fields must already be the correct YAML types and are no
+longer coerced from loosely-typed values:
+
+- `model`
+- `reasoning_effort`
+- `reasoning_required`
+- `fallback_agent`
+- `api_base`
+- `api_token`
+
+Practical impact:
+
+- values that used to be accepted after implicit coercion now fail validation
+- string fields must be real YAML strings
+- `reasoning_required` must be a real YAML boolean (`true` / `false`)
+
+Before:
+
+```yaml
+model: 1234
+reasoning_effort: 2
+reasoning_required: "false"
+fallback_agent: 0
+api_base: 12345
+api_token: false
+```
+
+After:
+
+```yaml
+model: "1234"
+reasoning_effort: "medium"
+reasoning_required: false
+fallback_agent: "backup-agent"
+api_base: "http://localhost:1234/v1"
+api_token: "${LM_STUDIO_API_KEY}"
+```
+
+If you have older YAML that relied on coercion, quote string-like values and
+convert boolean-like strings to explicit YAML booleans. This validation is
+enforced by the current `AgentDefinitionBody` field types and validator logic.
+
 ## Minimal Example
 
 ```yaml

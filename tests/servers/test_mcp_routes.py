@@ -34,7 +34,7 @@ from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -45,9 +45,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def session_storage(temp_db: LocalDatabase) -> LocalSessionManager:
+def session_storage(temp_db: LocalDatabase) -> SessionManager:
     """Create session storage."""
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_project(project_storage: LocalProjectManager, temp_dir: Path) -> dict[s
 
 
 @pytest.fixture
-def basic_http_server(session_storage: LocalSessionManager) -> HTTPServer:
+def basic_http_server(session_storage: SessionManager) -> HTTPServer:
     """Create a basic HTTP server instance for testing."""
     mock_config = MagicMock()
     mock_config.logging.max_size_mb = 10
@@ -282,7 +282,7 @@ class TestListMCPTools:
         assert data["success"] is False
         assert "MCP manager not available" in data["error"]
 
-    def test_list_tools_internal_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_list_tools_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test listing tools from internal server."""
         server = create_http_server(
             port=60887,
@@ -303,7 +303,7 @@ class TestListMCPTools:
         assert "response_time_ms" in data
 
     def test_list_tools_records_session_discovery_state(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Session header should drive listed_servers tracking for discovery routes."""
         server = create_http_server(
@@ -327,9 +327,35 @@ class TestListMCPTools:
             session_id="123e4567-e89b-12d3-a456-426614174000",
         )
 
-    def test_list_tools_internal_server_fallthrough(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_list_tools_emits_proxy_after_tool(self, session_storage: SessionManager) -> None:
+        """Successful list_tools should emit the synthetic proxy AFTER_TOOL event."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        registry = FakeInternalRegistry(name="gobby-tasks")
+        server._internal_manager = FakeInternalManager([registry])
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
+
+        with TestClient(server.app) as client:
+            response = client.get(
+                "/api/mcp/gobby-tasks/tools",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+            )
+
+        assert response.status_code == 200
+        result = response.json()
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+            tool_name="list_tools",
+            tool_input={"server_name": "gobby-tasks"},
+            result=result,
+            is_failure=False,
+        )
+
+    def test_list_tools_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test listing tools falls through to MCP manager when internal registry not found."""
         server = create_http_server(
             port=60887,
@@ -348,7 +374,7 @@ class TestListMCPTools:
         assert "MCP manager not available" in data["error"]
 
     def test_list_tools_external_server_not_configured(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test listing tools from non-configured external server."""
         server = create_http_server(
@@ -364,7 +390,7 @@ class TestListMCPTools:
         assert response.status_code == 404
         assert "Unknown MCP server" in response.json()["detail"]["error"]
 
-    def test_list_tools_external_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_list_tools_external_server_success(self, session_storage: SessionManager) -> None:
         """Test listing tools from external server."""
         server = create_http_server(
             port=60887,
@@ -390,7 +416,7 @@ class TestListMCPTools:
         assert data["tools"][0]["name"] == "external-tool"
 
     def test_list_tools_external_server_connection_failure(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test listing tools when external server connection fails."""
         server = create_http_server(
@@ -413,7 +439,7 @@ class TestListMCPTools:
         assert "connection failed" in data["error"]
 
     def test_list_tools_external_server_list_tools_failure(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test handling of list_tools failure from external server."""
         server = create_http_server(
@@ -440,7 +466,7 @@ class TestListMCPTools:
         assert data["success"] is False
         assert "Failed to list tools" in data["error"]
 
-    def test_list_tools_with_input_schema_dict(self, session_storage: LocalSessionManager) -> None:
+    def test_list_tools_with_input_schema_dict(self, session_storage: SessionManager) -> None:
         """Test listing tools with inputSchema as dict."""
         server = create_http_server(
             port=60887,
@@ -471,9 +497,7 @@ class TestListMCPTools:
         data = response.json()
         assert data["tools"][0]["inputSchema"]["type"] == "object"
 
-    def test_list_tools_with_input_schema_model_dump(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_list_tools_with_input_schema_model_dump(self, session_storage: SessionManager) -> None:
         """Test listing tools with inputSchema having model_dump method."""
         server = create_http_server(
             port=60887,
@@ -525,9 +549,7 @@ class TestListMCPServers:
         assert data["connected"] == 0
         assert data["servers"] == []
 
-    def test_list_servers_with_internal_registries(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_list_servers_with_internal_registries(self, session_storage: SessionManager) -> None:
         """Test listing servers includes internal registries."""
         server = create_http_server(
             port=60887,
@@ -550,7 +572,7 @@ class TestListMCPServers:
         assert data["connected"] == 2
         assert all(s["transport"] == "internal" for s in data["servers"])
 
-    def test_list_servers_with_external_servers(self, session_storage: LocalSessionManager) -> None:
+    def test_list_servers_with_external_servers(self, session_storage: SessionManager) -> None:
         """Test listing servers includes external MCP servers."""
         server = create_http_server(
             port=60887,
@@ -574,9 +596,7 @@ class TestListMCPServers:
         assert data["servers"][0]["name"] == "external-server"
         assert data["servers"][0]["transport"] == "http"
 
-    def test_list_servers_with_disconnected_servers(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_list_servers_with_disconnected_servers(self, session_storage: SessionManager) -> None:
         """Test listing servers shows disconnected servers."""
         server = create_http_server(
             port=60887,
@@ -599,7 +619,7 @@ class TestListMCPServers:
         assert data["connected"] == 0
         assert data["servers"][0]["state"] == "disconnected"
 
-    def test_list_servers_with_unknown_health(self, session_storage: LocalSessionManager) -> None:
+    def test_list_servers_with_unknown_health(self, session_storage: SessionManager) -> None:
         """Test listing servers handles servers with no health info."""
         server = create_http_server(
             port=60887,
@@ -619,7 +639,7 @@ class TestListMCPServers:
         data = response.json()
         assert data["servers"][0]["state"] == "unknown"
 
-    def test_list_servers_error_handling(self, session_storage: LocalSessionManager) -> None:
+    def test_list_servers_error_handling(self, session_storage: SessionManager) -> None:
         """Test listing servers handles errors gracefully."""
         server = create_http_server(
             port=60887,
@@ -655,7 +675,7 @@ class TestListAllMCPTools:
         assert "tools" in data
         assert "response_time_ms" in data
 
-    def test_list_all_tools_with_server_filter(self, session_storage: LocalSessionManager) -> None:
+    def test_list_all_tools_with_server_filter(self, session_storage: SessionManager) -> None:
         """Test listing tools filtered by server."""
         server = create_http_server(
             port=60887,
@@ -677,7 +697,7 @@ class TestListAllMCPTools:
         assert "gobby-tasks" in data["tools"]
         assert "gobby-memory" not in data["tools"]
 
-    def test_list_all_tools_with_metrics(self, session_storage: LocalSessionManager) -> None:
+    def test_list_all_tools_with_metrics(self, session_storage: SessionManager) -> None:
         """Test listing tools with metrics included."""
         server = create_http_server(
             port=60887,
@@ -719,9 +739,7 @@ class TestListAllMCPTools:
         if list_tasks_tool:
             assert list_tasks_tool["call_count"] == 10
 
-    def test_list_all_tools_external_server_disabled(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_list_all_tools_external_server_disabled(self, session_storage: SessionManager) -> None:
         """Test listing tools skips disabled external servers."""
         server = create_http_server(
             port=60887,
@@ -743,9 +761,7 @@ class TestListAllMCPTools:
         # Tools list should be empty for disabled server
         assert data["tools"].get("disabled-server") == []
 
-    def test_list_all_tools_external_server_failure(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_list_all_tools_external_server_failure(self, session_storage: SessionManager) -> None:
         """Test listing tools handles external server failure."""
         server = create_http_server(
             port=60887,
@@ -782,7 +798,7 @@ class TestGetToolSchema:
         assert response.status_code == 400
         assert "server_name, tool_name" in response.json()["detail"]["error"]
 
-    def test_get_schema_internal_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_get_schema_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test getting schema from internal server."""
         server = create_http_server(
             port=60887,
@@ -807,10 +823,15 @@ class TestGetToolSchema:
         assert data["server"] == "gobby-tasks"
         assert "inputSchema" in data
 
-    def test_get_schema_records_session_discovery_state(
-        self, session_storage: LocalSessionManager
+    def test_get_schema_emits_after_tool_with_session_header(
+        self, session_storage: SessionManager
     ) -> None:
-        """Session header should drive unlocked_tools tracking for schema lookups."""
+        """Session header should propagate to the synthetic AFTER_TOOL event.
+
+        ``unlocked_tools`` is now owned by the ``track-schema-lookup`` rule
+        firing off this synthetic event (no direct mutation), so the test
+        asserts the dispatch carries the session id.
+        """
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -822,6 +843,7 @@ class TestGetToolSchema:
             ]
         )
         server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -831,14 +853,93 @@ class TestGetToolSchema:
             )
 
         assert response.status_code == 200
-        server._tools_handler.tool_proxy.record_unlocked_tool.assert_called_once_with(
-            "gobby-tasks",
-            "list_tasks",
+        result = response.json()
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
             session_id="123e4567-e89b-12d3-a456-426614174000",
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            result=result,
+            is_failure=False,
+        )
+
+    def test_get_schema_emits_proxy_after_tool(self, session_storage: SessionManager) -> None:
+        """Successful get_tool_schema should emit the synthetic proxy AFTER_TOOL event."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(name="gobby-tasks"),
+            ]
+        )
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/schema",
+                headers={"X-Gobby-Session-Id": "123e4567-e89b-12d3-a456-426614174000"},
+                json={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            )
+
+        assert response.status_code == 200
+        result = response.json()
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
+            session_id="123e4567-e89b-12d3-a456-426614174000",
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            result=result,
+            is_failure=False,
+        )
+
+    def test_get_schema_resolves_numeric_body_session_ref_via_header_session_project(
+        self,
+        session_storage: SessionManager,
+        project_storage: LocalProjectManager,
+        temp_dir: Path,
+    ) -> None:
+        """A body #N session ref should inherit project scope from the header session."""
+        project = project_storage.create(name="test-project", repo_path=str(temp_dir))
+        session = session_storage.register(
+            external_id="external-session-1",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project.id,
+        )
+
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager([FakeInternalRegistry(name="gobby-tasks")])
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool = AsyncMock()
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/mcp/tools/schema",
+                headers={"X-Gobby-Session-Id": session.id},
+                json={
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                    "session_id": f"#{session.seq_num}",
+                },
+            )
+
+        assert response.status_code == 200
+        server._tools_handler.tool_proxy.emit_synthetic_proxy_after_tool.assert_awaited_once_with(
+            session_id=session.id,
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "list_tasks"},
+            result=response.json(),
+            is_failure=False,
         )
 
     def test_get_schema_internal_server_tool_not_found(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test getting schema for non-existent tool on internal server."""
         server = create_http_server(
@@ -868,7 +969,7 @@ class TestGetToolSchema:
         assert response.status_code == 503
         assert "MCP manager not available" in response.json()["detail"]["error"]
 
-    def test_get_schema_external_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_get_schema_external_server_success(self, session_storage: SessionManager) -> None:
         """Test getting schema from external server."""
         server = create_http_server(
             port=60887,
@@ -896,7 +997,7 @@ class TestGetToolSchema:
         assert data["name"] == "get_item"
         assert data["inputSchema"]["type"] == "object"
 
-    def test_get_schema_external_server_failure(self, session_storage: LocalSessionManager) -> None:
+    def test_get_schema_external_server_failure(self, session_storage: SessionManager) -> None:
         """Test getting schema when external server fails."""
         server = create_http_server(
             port=60887,
@@ -934,7 +1035,7 @@ class TestCallMCPTool:
         assert "server_name" in response.json()["detail"]["error"]
 
     def test_call_tool_tool_proxy_failure_is_flattened(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """ToolProxy failures should stay flat at the HTTP boundary."""
         server = create_http_server(
@@ -972,7 +1073,7 @@ class TestCallMCPTool:
         assert "result" not in data
         assert "response_time_ms" in data
 
-    def test_call_tool_internal_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_call_tool_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server."""
         server = create_http_server(
             port=60887,
@@ -1001,7 +1102,7 @@ class TestCallMCPTool:
         assert data["result"] == {"tool": "list_tasks"}
         assert "response_time_ms" in data
 
-    def test_call_tool_internal_server_failure(self, session_storage: LocalSessionManager) -> None:
+    def test_call_tool_internal_server_failure(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server with error."""
         server = create_http_server(
             port=60887,
@@ -1040,7 +1141,7 @@ class TestCallMCPTool:
         )
         assert response.status_code == 503
 
-    def test_call_tool_external_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_call_tool_external_server_success(self, session_storage: SessionManager) -> None:
         """Test calling tool on external server."""
         server = create_http_server(
             port=60887,
@@ -1067,7 +1168,7 @@ class TestCallMCPTool:
         assert data["success"] is True
         assert data["result"] == {"data": [1, 2, 3]}
 
-    def test_call_tool_external_server_failure(self, session_storage: LocalSessionManager) -> None:
+    def test_call_tool_external_server_failure(self, session_storage: SessionManager) -> None:
         """Test calling tool on external server with error."""
         server = create_http_server(
             port=60887,
@@ -1106,7 +1207,7 @@ class TestAddMCPServer:
         assert response.status_code == 400
         assert "transport" in response.json()["detail"]["error"]
 
-    def test_add_server_no_project_context(self, session_storage: LocalSessionManager) -> None:
+    def test_add_server_no_project_context(self, session_storage: SessionManager) -> None:
         """Test adding server without project context."""
         server = create_http_server(
             port=60887,
@@ -1131,7 +1232,7 @@ class TestAddMCPServer:
         assert response.status_code == 400
         assert "No current project" in response.json()["detail"]["error"]
 
-    def test_add_server_no_mcp_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_add_server_no_mcp_manager(self, session_storage: SessionManager) -> None:
         """Test adding server when MCP manager not available."""
         server = create_http_server(
             port=60887,
@@ -1160,7 +1261,7 @@ class TestAddMCPServer:
         assert data["success"] is False
         assert "MCP manager not available" in data["error"]
 
-    def test_add_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_add_server_success(self, session_storage: SessionManager) -> None:
         """Test adding server successfully."""
         server = create_http_server(
             port=60887,
@@ -1193,7 +1294,7 @@ class TestAddMCPServer:
         assert data["success"] is True
         assert "new-server" in data["message"]
 
-    def test_add_server_with_all_options(self, session_storage: LocalSessionManager) -> None:
+    def test_add_server_with_all_options(self, session_storage: SessionManager) -> None:
         """Test adding server with all configuration options."""
         server = create_http_server(
             port=60887,
@@ -1227,7 +1328,7 @@ class TestAddMCPServer:
         assert response.status_code == 200
         mcp_manager.add_server.assert_called_once()
 
-    def test_add_server_validation_error(self, session_storage: LocalSessionManager) -> None:
+    def test_add_server_validation_error(self, session_storage: SessionManager) -> None:
         """Test adding server with validation error."""
         server = create_http_server(
             port=60887,
@@ -1274,7 +1375,7 @@ class TestRemoveMCPServer:
         assert data["success"] is False
         assert "MCP manager not available" in data["error"]
 
-    def test_remove_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_remove_server_success(self, session_storage: SessionManager) -> None:
         """Test removing server successfully."""
         server = create_http_server(
             port=60887,
@@ -1293,7 +1394,7 @@ class TestRemoveMCPServer:
         data = response.json()
         assert data["success"] is True
 
-    def test_remove_server_not_found(self, session_storage: LocalSessionManager) -> None:
+    def test_remove_server_not_found(self, session_storage: SessionManager) -> None:
         """Test removing non-existent server."""
         server = create_http_server(
             port=60887,
@@ -1327,7 +1428,7 @@ class TestImportMCPServer:
         assert response.status_code == 400
         assert "at least one" in response.json()["detail"]["error"]
 
-    def test_import_server_no_project_context(self, session_storage: LocalSessionManager) -> None:
+    def test_import_server_no_project_context(self, session_storage: SessionManager) -> None:
         """Test importing server without project context."""
         server = create_http_server(
             port=60887,
@@ -1367,7 +1468,7 @@ class TestRecommendMCPTools:
         assert response.status_code == 400
         assert "task_description" in response.json()["detail"]["error"]
 
-    def test_recommend_tools_no_handler(self, session_storage: LocalSessionManager) -> None:
+    def test_recommend_tools_no_handler(self, session_storage: SessionManager) -> None:
         """Test recommending tools when handler not available."""
         server = create_http_server(
             port=60887,
@@ -1386,7 +1487,7 @@ class TestRecommendMCPTools:
         assert data["success"] is False
         assert "not initialized" in data["error"]
 
-    def test_recommend_tools_with_handler(self, session_storage: LocalSessionManager) -> None:
+    def test_recommend_tools_with_handler(self, session_storage: SessionManager) -> None:
         """Test recommending tools with tools handler."""
         server = create_http_server(
             port=60887,
@@ -1418,7 +1519,7 @@ class TestRecommendMCPTools:
         assert len(data["recommendations"]) == 1
 
     def test_recommend_tools_semantic_mode_project_resolution_failure(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test recommending tools with semantic mode when project resolution fails."""
         server = create_http_server(
@@ -1463,9 +1564,7 @@ class TestSearchMCPTools:
         assert response.status_code == 400
         assert "query" in response.json()["detail"]["error"]
 
-    def test_search_tools_project_resolution_failure(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_search_tools_project_resolution_failure(self, session_storage: SessionManager) -> None:
         """Test searching tools when project resolution fails."""
         server = create_http_server(
             port=60887,
@@ -1491,7 +1590,7 @@ class TestSearchMCPTools:
         assert data["success"] is False
         assert "No project" in data["error"]
 
-    def test_search_tools_no_semantic_search(self, session_storage: LocalSessionManager) -> None:
+    def test_search_tools_no_semantic_search(self, session_storage: SessionManager) -> None:
         """Test searching tools when semantic search not configured."""
         server = create_http_server(
             port=60887,
@@ -1513,7 +1612,7 @@ class TestSearchMCPTools:
         assert data["success"] is False
         assert "not configured" in data["error"]
 
-    def test_search_tools_success(self, session_storage: LocalSessionManager) -> None:
+    def test_search_tools_success(self, session_storage: SessionManager) -> None:
         """Test searching tools successfully."""
         server = create_http_server(
             port=60887,
@@ -1564,9 +1663,7 @@ class TestSearchMCPTools:
 class TestEmbedMCPTools:
     """Tests for POST /mcp/tools/embed endpoint."""
 
-    def test_embed_tools_project_resolution_failure(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_embed_tools_project_resolution_failure(self, session_storage: SessionManager) -> None:
         """Test embedding tools when project resolution fails."""
         server = create_http_server(
             port=60887,
@@ -1591,7 +1688,7 @@ class TestEmbedMCPTools:
         data = response.json()
         assert data["success"] is False
 
-    def test_embed_tools_no_semantic_search(self, session_storage: LocalSessionManager) -> None:
+    def test_embed_tools_no_semantic_search(self, session_storage: SessionManager) -> None:
         """Test embedding tools when semantic search not configured."""
         server = create_http_server(
             port=60887,
@@ -1613,7 +1710,7 @@ class TestEmbedMCPTools:
         assert data["success"] is False
         assert "not configured" in data["error"]
 
-    def test_embed_tools_success(self, session_storage: LocalSessionManager) -> None:
+    def test_embed_tools_success(self, session_storage: SessionManager) -> None:
         """Test embedding tools successfully."""
         server = create_http_server(
             port=60887,
@@ -1661,7 +1758,7 @@ class TestGetMCPStatus:
         assert data["total_servers"] == 0
         assert data["connected_servers"] == 0
 
-    def test_get_status_with_internal_servers(self, session_storage: LocalSessionManager) -> None:
+    def test_get_status_with_internal_servers(self, session_storage: SessionManager) -> None:
         """Test getting status includes internal servers."""
         server = create_http_server(
             port=60887,
@@ -1683,7 +1780,7 @@ class TestGetMCPStatus:
         assert data["connected_servers"] == 1
         assert data["cached_tools"] == 2  # 2 tools in registry
 
-    def test_get_status_with_external_servers(self, session_storage: LocalSessionManager) -> None:
+    def test_get_status_with_external_servers(self, session_storage: SessionManager) -> None:
         """Test getting status includes external servers."""
         server = create_http_server(
             port=60887,
@@ -1725,7 +1822,7 @@ class TestMCPProxy:
         assert response.status_code == 400
         assert "Invalid JSON" in response.json()["detail"]["error"]
 
-    def test_proxy_internal_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_proxy_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test proxy to internal server."""
         server = create_http_server(
             port=60887,
@@ -1749,7 +1846,7 @@ class TestMCPProxy:
         assert data["success"] is True
         assert data["result"] == {"tool": "list_tasks"}
 
-    def test_proxy_internal_server_fallthrough(self, session_storage: LocalSessionManager) -> None:
+    def test_proxy_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test proxy falls through to MCP manager when no internal manager."""
         server = create_http_server(
             port=60887,
@@ -1767,7 +1864,7 @@ class TestMCPProxy:
         # Returns 503 because mcp_manager is None
         assert response.status_code == 503
 
-    def test_proxy_internal_server_tool_error(self, session_storage: LocalSessionManager) -> None:
+    def test_proxy_internal_server_tool_error(self, session_storage: SessionManager) -> None:
         """Test proxy to internal server with tool error."""
         server = create_http_server(
             port=60887,
@@ -1798,7 +1895,7 @@ class TestMCPProxy:
         )
         assert response.status_code == 503
 
-    def test_proxy_external_server_success(self, session_storage: LocalSessionManager) -> None:
+    def test_proxy_external_server_success(self, session_storage: SessionManager) -> None:
         """Test proxy to external server."""
         server = create_http_server(
             port=60887,
@@ -1821,9 +1918,7 @@ class TestMCPProxy:
         assert data["success"] is True
         assert data["result"] == {"items": [1, 2, 3]}
 
-    def test_proxy_external_server_tool_not_found(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_proxy_external_server_tool_not_found(self, session_storage: SessionManager) -> None:
         """Test proxy when tool not found on external server."""
         server = create_http_server(
             port=60887,
@@ -1843,7 +1938,7 @@ class TestMCPProxy:
 
         assert response.status_code == 404
 
-    def test_proxy_external_server_error(self, session_storage: LocalSessionManager) -> None:
+    def test_proxy_external_server_error(self, session_storage: SessionManager) -> None:
         """Test proxy when external server returns error."""
         server = create_http_server(
             port=60887,
@@ -1873,7 +1968,7 @@ class TestRefreshMCPTools:
     """Tests for POST /mcp/refresh endpoint."""
 
     def test_refresh_tools_project_resolution_failure(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Test refreshing tools when project resolution fails."""
         server = create_http_server(
@@ -1899,7 +1994,7 @@ class TestRefreshMCPTools:
         data = response.json()
         assert data["success"] is False
 
-    def test_refresh_tools_no_mcp_db_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_refresh_tools_no_mcp_db_manager(self, session_storage: SessionManager) -> None:
         """Test refreshing tools when MCP DB manager not configured."""
         server = create_http_server(
             port=60887,
@@ -1921,9 +2016,7 @@ class TestRefreshMCPTools:
         assert data["success"] is False
         assert "not configured" in data["error"]
 
-    def test_refresh_tools_with_internal_servers(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_refresh_tools_with_internal_servers(self, session_storage: SessionManager) -> None:
         """Test refreshing tools with internal servers."""
         server = create_http_server(
             port=60887,
@@ -1970,7 +2063,7 @@ class TestRefreshMCPTools:
         assert data["success"] is True
         assert data["stats"]["servers_processed"] == 1
 
-    def test_refresh_tools_force_mode(self, session_storage: LocalSessionManager) -> None:
+    def test_refresh_tools_force_mode(self, session_storage: SessionManager) -> None:
         """Test refreshing tools with force mode."""
         server = create_http_server(
             port=60887,
@@ -2021,7 +2114,7 @@ class TestCodeExecutionEndpoints:
     """Tests for /code/execute and /code/process-dataset endpoints."""
 
     @pytest.fixture
-    def code_server(self, session_storage: LocalSessionManager) -> HTTPServer:
+    def code_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for code endpoint tests."""
         return create_http_server(
             port=60887,
@@ -2095,7 +2188,7 @@ class TestHooksEndpoints:
         assert response.status_code == 400
         assert "source" in response.json()["detail"]
 
-    def test_execute_hook_unsupported_source(self, session_storage: LocalSessionManager) -> None:
+    def test_execute_hook_unsupported_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with unsupported source."""
         server = create_http_server(
             port=60887,
@@ -2116,7 +2209,7 @@ class TestHooksEndpoints:
         assert response.status_code == 400
         assert "Unsupported source" in response.json()["detail"]
 
-    def test_execute_hook_no_hook_manager(self, session_storage: LocalSessionManager) -> None:
+    def test_execute_hook_no_hook_manager(self, session_storage: SessionManager) -> None:
         """Test execute hook when hook manager not initialized."""
         # Create server without HookManager patch so hook_manager is not set
         server = create_http_server(
@@ -2134,7 +2227,7 @@ class TestHooksEndpoints:
         assert response.status_code == 503
         assert "HookManager not initialized" in response.json()["detail"]
 
-    def test_execute_hook_claude_source(self, session_storage: LocalSessionManager) -> None:
+    def test_execute_hook_claude_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with Claude source."""
         server = create_http_server(
             port=60887,
@@ -2164,9 +2257,7 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         assert response.json()["continue"] is True
 
-    def test_execute_hook_claude_envelope_source(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
         server = create_http_server(
             port=60887,
@@ -2205,7 +2296,7 @@ class TestHooksEndpoints:
             "input_data": {"session_id": "claude-envelope"},
         }
 
-    def test_execute_hook_gemini_source(self, session_storage: LocalSessionManager) -> None:
+    def test_execute_hook_gemini_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with Gemini source."""
         server = create_http_server(
             port=60887,
@@ -2243,7 +2334,7 @@ class TestHooksEndpoints:
     )
     def test_execute_hook_normalizes_provider_pre_tool_use_for_hold_open(
         self,
-        session_storage: LocalSessionManager,
+        session_storage: SessionManager,
         source: str,
         hook_type: str,
         adapter_patch: str,
@@ -2288,7 +2379,7 @@ class TestHooksEndpoints:
         assert args[2] == "PreToolUse"
         assert args[4] == source
 
-    def test_execute_hook_codex_source(self, session_storage: LocalSessionManager) -> None:
+    def test_execute_hook_codex_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with Codex source uses CodexHooksAdapter."""
         server = create_http_server(
             port=60887,
@@ -2300,7 +2391,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2324,9 +2415,7 @@ class TestHooksEndpoints:
             "input_data": {"session_id": "test-123", "cwd": "/tmp"},
         }
 
-    def test_execute_hook_codex_envelope_source(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_execute_hook_codex_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Codex requests should normalize before adapter dispatch."""
         server = create_http_server(
             port=60887,
@@ -2338,7 +2427,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2366,7 +2455,7 @@ class TestHooksEndpoints:
         }
 
     def test_execute_hook_rejects_unsupported_envelope_schema_version(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Envelope requests with an unknown schema version should fail fast."""
         server = create_http_server(
@@ -2390,9 +2479,7 @@ class TestHooksEndpoints:
         assert response.status_code == 400
         assert "Unsupported schema_version" in response.json()["detail"]
 
-    def test_execute_hook_envelope_requires_source(
-        self, session_storage: LocalSessionManager
-    ) -> None:
+    def test_execute_hook_envelope_requires_source(self, session_storage: SessionManager) -> None:
         """Envelope requests still require source after normalization."""
         server = create_http_server(
             port=60887,
@@ -2415,7 +2502,7 @@ class TestHooksEndpoints:
         assert response.json()["detail"] == "source required"
 
     def test_execute_hook_envelope_requires_hook_type(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Envelope requests still require hook_type after normalization."""
         server = create_http_server(
@@ -2439,7 +2526,7 @@ class TestHooksEndpoints:
         assert response.json()["detail"] == "hook_type required"
 
     def test_execute_hook_envelope_critical_metadata_does_not_change_payload(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Critical metadata is observational and must not affect normalized hook handling."""
         server = create_http_server(
@@ -2490,7 +2577,7 @@ class TestHooksEndpoints:
         ]
 
     def test_execute_hook_envelope_headers_do_not_override_http_headers(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Ingress must trust actual HTTP headers over the embedded envelope copy."""
         server = create_http_server(
@@ -2534,7 +2621,7 @@ class TestHooksEndpoints:
         assert mock_hold_open.await_args.args[1] == "real-session"
 
     def test_execute_hook_logs_enqueued_at_for_envelope_requests(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Envelope metadata should be surfaced in structured route logging."""
         server = create_http_server(
@@ -2577,7 +2664,7 @@ class TestHooksEndpoints:
         assert matching_logs[0].kwargs["extra"]["enqueued_at"] == "2026-04-16T12:34:56Z"
 
     def test_execute_hook_codex_uses_hooks_adapter_not_app_server_adapter(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Regression: Codex HTTP hooks must use CodexHooksAdapter even when
         the app-server CodexAdapter is connected.
@@ -2598,7 +2685,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockHooksAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockHooksAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {"continue": True}
@@ -2621,7 +2708,7 @@ class TestHooksEndpoints:
         ws_adapter.handle_native.assert_not_called()
 
     def test_execute_hook_codex_stop_block_propagates(
-        self, session_storage: LocalSessionManager
+        self, session_storage: SessionManager
     ) -> None:
         """Codex Stop hook block decisions must propagate through the HTTP response."""
         server = create_http_server(
@@ -2634,7 +2721,7 @@ class TestHooksEndpoints:
 
         with (
             TestClient(server.app) as client,
-            patch("gobby.adapters.codex_impl.adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
         ):
             mock_adapter = MagicMock()
             mock_adapter.handle_native.return_value = {
@@ -2693,7 +2780,7 @@ class TestWebhooksEndpoints:
     """Tests for /webhooks endpoints."""
 
     @pytest.fixture
-    def webhooks_server(self, session_storage: LocalSessionManager) -> HTTPServer:
+    def webhooks_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for webhooks tests."""
         return create_http_server(
             port=60887,

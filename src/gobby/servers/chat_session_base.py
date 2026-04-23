@@ -50,6 +50,10 @@ class ChatSessionProtocol(Protocol):
     _on_approved_tools_persist: Callable[[set[str]], None] | None
     _approved_tools: set[str]
     _plan_file_path: str | None
+    _last_plan_content: str | None
+    _pending_plan_content: str | None
+    _pending_plan_allowed_prompts: list[str] | None
+    _pending_post_plan_mode: str | None
     _pending_agent_name: str | None
     _plan_approval_completed: bool
     _context_window_overrides: dict[str, int]

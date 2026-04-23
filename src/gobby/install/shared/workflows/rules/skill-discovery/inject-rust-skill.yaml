@@ -2,25 +2,16 @@ tags: [skill-discovery, context, gobby, default]
 
 rules:
   inject-rust-skill:
-    description: "Block first Rust write/edit, inject rust coding standards"
+    description: "Block first Rust write/edit, require rust coding standards"
     event: before_tool
     enabled: true
     priority: 30
     when: >
-      'rust' not in variables.get('injected_skills', [])
-      and event.data.get('tool_name') in ('Write', 'Edit')
-      and tool_input.get('file_path', '').endswith('.rs')
+      not skill_loaded('rust')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith('.rs')
     effects:
       - type: block
         reason: >
           One-time nudge: this Rust edit should follow the repo's Rust conventions.
-          See the injected rust skill below for the default standards before continuing.
-      - type: mcp_call
-        server: gobby-skills
-        tool: get_skill
-        arguments:
-          name: rust
-        inject_result: true
-      - type: set_variable
-        variable: injected_skills
-        value: "variables.get('injected_skills', []) + ['rust']"
+          Call get_skill(name="rust") on gobby-skills, then continue.

@@ -68,7 +68,7 @@ def cancel_run(runner: AgentRunner, run_id: str) -> bool:
 
     # Also mark session as cancelled
     if run.child_session_id:
-        runner._session_storage.update_status(run.child_session_id, "cancelled")
+        runner._session_manager.update_status(run.child_session_id, "cancelled")
 
     runner.logger.info(f"Cancelled agent run {run_id}")
 
@@ -108,7 +108,7 @@ def complete_run(runner: AgentRunner, run_id: str, result: str | None = None) ->
     tool_calls_count = run.tool_calls_count or 0
     turns_used = run.turns_used or 0
     if run.child_session_id and (tool_calls_count == 0 or turns_used == 0):
-        session = runner._session_storage.get(run.child_session_id)
+        session = runner._session_manager.get(run.child_session_id)
         if session:
             tool_calls_count = getattr(session, "tool_call_count", 0) or tool_calls_count
             turns_used = getattr(session, "turn_count", 0) or turns_used

@@ -14,8 +14,8 @@ import signal
 import time
 from dataclasses import dataclass, field
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -331,11 +331,16 @@ class TmuxSessionManager:
             "list-panes",
             "-a",
             "-F",
-            "#{pane_id}",
+            "#{pane_id}\t#{pane_dead}",
         )
         if rc != 0:
             return set()
-        return {line.strip() for line in stdout.splitlines() if line.strip()}
+        pane_ids: set[str] = set()
+        for line in stdout.splitlines():
+            pane_id, _separator, pane_dead = line.strip().partition("\t")
+            if pane_id and pane_dead != "1":
+                pane_ids.add(pane_id)
+        return pane_ids
 
     async def has_session(self, name: str) -> bool:
         """Check whether a session with *name* exists."""

@@ -1,22 +1,11 @@
-"""
-E2E tests for autonomous mode (ConductorLoop).
+"""E2E tests for autonomous task-readiness flows.
 
-Tests verify:
-1. Conductor start/stop endpoints exist
-2. Budget status tools are available (get_budget_status, list_ready_tasks)
-3. Conductor lifecycle: start → status → stop
-4. Autonomous spawning gate: tasks + budget + readiness
-5. Throttling when budget is exceeded
-
-Test scenario:
-1. Create ready tasks (epic with subtasks)
-2. Verify budget allows spawning (over_budget: false)
-3. Verify ready tasks are detected
-4. Set high usage to exceed budget
-5. Verify spawn would be blocked (over_budget: true)
+These tests verify the surrounding infrastructure for autonomous scheduling:
+- usage reporting remains available
+- ready tasks can be discovered
+- task suggestion returns runnable work
 
 Note: Full agent auto-spawning requires LLM API keys which are disabled in E2E tests.
-These tests verify the infrastructure (tools, budget tracking, task readiness) is correct.
 """
 
 import uuid
@@ -42,22 +31,17 @@ def unwrap_result(result: dict) -> dict:
 class TestAutonomousModeToolsAvailability:
     """Tests to verify autonomous mode tools are properly registered."""
 
-    def test_budget_tools_are_registered(
+    def test_usage_tools_are_registered(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
     ) -> None:
-        """Verify budget management tools are available on gobby-metrics server."""
+        """Verify usage reporting tools are available on gobby-metrics."""
         tools = mcp_client.list_tools(server_name="gobby-metrics")
         tool_names = [t["name"] for t in tools]
 
-        expected_tools = [
-            "get_usage_report",
-            "get_budget_status",
-        ]
-
-        for tool in expected_tools:
-            assert tool in tool_names, f"Missing tool: {tool}"
+        assert "get_usage_report" in tool_names, "Missing get_usage_report"
+        assert "get_budget_status" not in tool_names
 
     def test_agent_tools_are_registered(
         self,
@@ -72,32 +56,28 @@ class TestAutonomousModeToolsAvailability:
         assert "spawn_agent" in agent_tool_names, "Missing spawn_agent tool"
 
 
-class TestConductorLifecycle:
-    """Tests for conductor start → status → stop lifecycle."""
+class TestAutonomousQueries:
+    """Tests for autonomous-facing query tools."""
 
-    def test_get_budget_status_returns_structure(
+    def test_get_usage_report_returns_structure(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
     ) -> None:
-        """Test get_budget_status returns correct budget structure."""
+        """Test get_usage_report returns the expected usage structure."""
         raw_result = mcp_client.call_tool(
             server_name="gobby-metrics",
-            tool_name="get_budget_status",
+            tool_name="get_usage_report",
             arguments={},
         )
         result = unwrap_result(raw_result)
 
-        # Should return budget structure
-        assert "error" not in result, f"get_budget_status failed: {result}"
-        budget = result.get("budget", {})
+        assert "error" not in result, f"get_usage_report failed: {result}"
+        usage = result.get("usage", {})
 
-        # Verify expected fields
-        assert "daily_budget_tokens" in budget, f"Missing daily_budget_tokens: {result}"
-        assert "used_today_tokens" in budget, f"Missing used_today_tokens: {result}"
-        assert "remaining_tokens" in budget, f"Missing remaining_tokens: {result}"
-        assert "percentage_used" in budget, f"Missing percentage_used: {result}"
-        assert "over_budget" in budget, f"Missing over_budget: {result}"
+        assert "total_input_tokens" in usage, f"Missing total_input_tokens: {result}"
+        assert "total_output_tokens" in usage, f"Missing total_output_tokens: {result}"
+        assert "session_count" in usage, f"Missing session_count: {result}"
 
     def test_list_ready_tasks_returns_structure(
         self,
@@ -119,21 +99,17 @@ class TestConductorLifecycle:
 
 
 class TestAutonomousSpawningGate:
-    """Tests for the autonomous spawning gate (tasks + budget + readiness)."""
+    """Tests for the autonomous scheduling gate (task readiness)."""
 
-    def test_autonomous_gate_with_ready_tasks_and_budget(
+    def test_autonomous_gate_with_ready_tasks(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Test that ready tasks and available budget allow spawning.
+        """Test that ready tasks are discovered for autonomous scheduling.
 
-        This tests the "gate" for autonomous mode:
-        - Tasks exist and are ready (no blockers)
-        - Budget is not exceeded
-
-        Note: Actual auto-spawn not tested (requires LLM keys).
+        Note: Actual auto-spawn is not tested here.
         """
         # Setup - register project and session
         project_result = cli_events.register_test_project(
@@ -201,29 +177,7 @@ class TestAutonomousSpawningGate:
         ready_ids = [t["id"] for t in ready_tasks]
         for subtask_id in subtask_ids:
             assert subtask_id in ready_ids, f"Subtask {subtask_id} should be ready"
-
-        # Verify budget allows spawning (using low usage)
-        usage_result = cli_events.set_session_usage(
-            session_id=session_id,
-            input_tokens=1000,
-            output_tokens=500,
-        )
-        assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
-
-        # Check budget status
-        raw_result = mcp_client.call_tool(
-            server_name="gobby-metrics",
-            tool_name="get_budget_status",
-            arguments={},
-        )
-        result = unwrap_result(raw_result)
-
-        assert "error" not in result, f"get_budget_status failed: {result}"
-        budget = result.get("budget", {})
-        assert budget.get("over_budget") is False, f"Should not be over budget: {budget}"
-
-        # Gate check passes: ready tasks exist AND budget is available
-        # In autonomous mode, this would trigger agent spawning
+        # Gate check passes: ready tasks exist and are eligible for scheduling
 
     def test_suggest_next_task_returns_ready_task(
         self,
@@ -297,112 +251,3 @@ class TestAutonomousSpawningGate:
             f"Suggestion should refer to created task {task_id}, "
             f"but got {suggested_id}. Full suggestion: {suggestion}"
         )
-
-
-@pytest.mark.skip(reason="Flaky: daemon_instance startup timeout in CI (gobby-#11281)")
-class TestAutonomousThrottling:
-    """Tests for autonomous mode throttling based on budget."""
-
-    def test_budget_exceeded_blocks_spawning(
-        self,
-        daemon_instance: DaemonInstance,
-        mcp_client: MCPTestClient,
-        cli_events: CLIEventSimulator,
-    ) -> None:
-        """Test that exceeding budget would block autonomous spawning.
-
-        Config has:
-        - daily_budget_tokens: 10_000_000
-        - throttle_threshold: 0.9 (90%)
-
-        So spawning is blocked when token usage >= 9_000_000
-        """
-        # Setup - register project and session
-        project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
-            name="E2E Test Project",
-            repo_path=str(daemon_instance.project_dir),
-        )
-        assert project_result["status"] in ["success", "already_exists"]
-
-        session_external_id = f"throttle-{uuid.uuid4().hex[:8]}"
-        session_result = cli_events.register_session(
-            external_id=session_external_id,
-            machine_id="test-machine",
-            source="Claude Code",
-            cwd=str(daemon_instance.project_dir),
-        )
-        session_id = session_result["id"]
-        mcp_client.session_id = session_id
-
-        # Set high usage (exceeds 10M token budget)
-        usage_result = cli_events.set_session_usage(
-            session_id=session_id,
-            input_tokens=6_000_000,
-            output_tokens=5_000_000,
-        )
-        assert usage_result["status"] == "success", f"Failed to set usage: {usage_result}"
-
-        # Check budget status
-        raw_result = mcp_client.call_tool(
-            server_name="gobby-metrics",
-            tool_name="get_budget_status",
-            arguments={},
-        )
-        result = unwrap_result(raw_result)
-
-        assert "error" not in result, f"get_budget_status failed: {result}"
-        budget = result.get("budget", {})
-        assert budget.get("over_budget") is True, f"Should be over budget: {budget}"
-
-        # In autonomous mode, this would block agent spawning
-        # The conductor loop checks can_spawn_agent() which returns False when over_budget
-
-    def test_budget_status_can_still_be_queried_when_over_budget(
-        self,
-        daemon_instance: DaemonInstance,
-        mcp_client: MCPTestClient,
-        cli_events: CLIEventSimulator,
-    ) -> None:
-        """Test that budget status tools still work when budget is exceeded."""
-        # Setup
-        project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
-            name="E2E Test Project",
-            repo_path=str(daemon_instance.project_dir),
-        )
-        assert project_result["status"] in ["success", "already_exists"]
-
-        session_external_id = f"query-over-{uuid.uuid4().hex[:8]}"
-        session_result = cli_events.register_session(
-            external_id=session_external_id,
-            machine_id="test-machine",
-            source="Claude Code",
-            cwd=str(daemon_instance.project_dir),
-        )
-        session_id = session_result["id"]
-        mcp_client.session_id = session_id
-
-        # Set very high usage
-        cli_events.set_session_usage(
-            session_id=session_id,
-            input_tokens=6_000_000,
-            output_tokens=5_000_000,
-        )
-
-        # Both budget status and usage report should still work
-        budget_result = mcp_client.call_tool(
-            server_name="gobby-metrics",
-            tool_name="get_budget_status",
-            arguments={},
-        )
-        budget = unwrap_result(budget_result)
-        assert budget.get("success") is True, f"Budget status should work: {budget}"
-
-        usage_result = mcp_client.call_tool(
-            server_name="gobby-metrics",
-            tool_name="get_usage_report",
-            arguments={"days": 1},
-        )
-        usage = unwrap_result(usage_result)
-        assert usage.get("success") is True, f"Usage report should work: {usage}"

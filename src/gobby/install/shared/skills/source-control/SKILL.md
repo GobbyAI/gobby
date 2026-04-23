@@ -1,8 +1,8 @@
 ---
 name: source-control
-description: Commit message format, task close workflow, and release PR process. Use when ready to commit, closing tasks, or pushing a release.
+description: Commit message format and release PR process. Use when ready to commit or push a release; use task-transitions for task close/review gates.
 category: core
-triggers: commit, git commit, commit changes, close task, close, release, push release, create pr, pull request
+triggers: commit, git commit, commit changes, release, push release, create pr, pull request
 metadata:
   gobby:
     audience: all
@@ -12,11 +12,14 @@ metadata:
 
 # Source Control - Commits, Closes, and Releases
 
-This skill covers commit message format, task close workflow, and the release PR process.
+This skill covers commit message format and the release PR process.
+
+Use the `task-transitions` skill for task lifecycle transitions such as `close_task`,
+`mark_task_needs_review`, validation gates, and commit SHA requirements.
 
 ---
 
-## Part 1: Commit and Close Workflow
+## Part 1: Commit Workflow
 
 ### Step 1: Stage Changes
 
@@ -34,18 +37,11 @@ git commit -m "[project-#N] type: description"
 
 Use the `project-#N` format (e.g., `[gobby-#123]`) — the hyphen before `#` is required.
 
-### Step 3: Close the Task
+### Step 3: Task Transitions (close_task, review, validation)
 
-**If your agent instructions specify a different post-commit procedure** (e.g., `mark_task_needs_review` instead of `close_task`), **follow your agent instructions** — they take priority over this skill.
-
-Otherwise, for standard sessions:
-
-```python
-call_tool("gobby-tasks", "close_task", {
-    "task_id": "<task-id>",
-    "commit_sha": "<commit-sha>"
-})
-```
+After committing, follow the `task-transitions` skill for the correct task lifecycle
+action (`close_task`, `mark_task_needs_review`, review approval, validation gates, and
+memory review).
 
 ## Commit Message Format
 
@@ -75,50 +71,19 @@ call_tool("gobby-tasks", "close_task", {
 [gobby-#12] test: add unit tests for auth module
 ```
 
-## Closing Without Commits
-
-For tasks that don't require code changes (research, planning, obsolete tasks):
-
-```python
-call_tool("gobby-tasks", "close_task", {
-    "task_id": "<task-id>",
-    "reason": "obsolete"  # or "already_implemented", "duplicate", "wont_fix", "out_of_repo"
-})
-```
-
 ## Common Mistakes
 
-### Wrong: Close Before Commit
+### Wrong: Commit Without Task Reference
 
-```python
-# This will fail — no commit_sha
-call_tool("gobby-tasks", "close_task", {"task_id": "abc"})
+```bash
+git commit -m "fix: implement feature"
 ```
 
-### Right: Commit First, Then Close
+### Right: Include the Task in the Commit Message
 
 ```bash
 git commit -m "[gobby-#42] feat: implement feature"
 ```
-
-```python
-call_tool("gobby-tasks", "close_task", {
-    "task_id": "#42",
-    "commit_sha": "a1b2c3d"
-})
-```
-
-## Task Lifecycle
-
-```
-open → in_progress → review → closed
-```
-
-Tasks may enter `review` status instead of `closed` when:
-- Task has `requires_user_review=true`
-- Validation criteria fail
-
-User must explicitly close reviewed tasks.
 
 ---
 

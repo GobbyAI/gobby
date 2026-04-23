@@ -49,14 +49,14 @@ class TestInterSessionMessageDataclass:
         """Test that InterSessionMessage.from_row creates instance from DB row."""
         from gobby.storage.inter_session_messages import InterSessionMessage
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         # Create project first (needed for foreign key)
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
         # Create sessions (needed for foreign key)
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent-ext",
             machine_id="machine-1",
@@ -213,13 +213,13 @@ class TestInterSessionMessageManagerCreateMessage:
             InterSessionMessageManager,
         )
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         # Setup project and sessions
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -247,12 +247,12 @@ class TestInterSessionMessageManagerCreateMessage:
         """Test that created message is persisted to database."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -276,12 +276,12 @@ class TestInterSessionMessageManagerCreateMessage:
         """Test that priority defaults to 'normal' if not specified."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -306,12 +306,12 @@ class TestInterSessionMessageManagerGetMessages:
         """Test that get_messages returns a list of messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -339,12 +339,12 @@ class TestInterSessionMessageManagerGetMessages:
         """Test that get_messages only returns messages for specified recipient."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -367,12 +367,12 @@ class TestInterSessionMessageManagerGetMessages:
         """Test that get_messages with unread_only=True filters read messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -402,12 +402,12 @@ class TestInterSessionMessageManagerMarkRead:
         """Test that mark_read sets the read_at timestamp."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -434,12 +434,12 @@ class TestInterSessionMessageManagerMarkRead:
             InterSessionMessageManager,
         )
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -465,12 +465,12 @@ class TestInterSessionMessageManagerGetMessage:
             InterSessionMessageManager,
         )
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         parent = session_mgr.register(
             external_id="parent", machine_id="m1", source="claude", project_id=project.id
         )
@@ -505,12 +505,12 @@ class TestInterSessionMessageManagerListMessages:
         """Create project, sessions, manager, and seed messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager
         from gobby.storage.projects import LocalProjectManager
-        from gobby.storage.sessions import LocalSessionManager
+        from gobby.storage.sessions import SessionManager
 
         project_mgr = LocalProjectManager(temp_db)
         project = project_mgr.create(name="test-project", repo_path="/tmp/test")
 
-        session_mgr = LocalSessionManager(temp_db)
+        session_mgr = SessionManager(temp_db)
         s_alpha = session_mgr.register(
             external_id="alpha", machine_id="m1", source="claude", project_id=project.id
         )

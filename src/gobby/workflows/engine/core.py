@@ -6,6 +6,7 @@ rewrite_input, load_skill.
 """
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,8 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
 
+_RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
+
 _TURN_START_EVENT_VALUES = frozenset(
     {
         HookEventType.BEFORE_AGENT.value,
@@ -45,6 +48,7 @@ _TURN_END_EVENT_VALUES = frozenset(
     {
         HookEventType.AFTER_AGENT.value,
         HookEventType.STOP.value,
+        HookEventType.STOP_FAILURE.value,
     }
 )
 
@@ -128,6 +132,93 @@ def _is_write_like_event_data(event_data: dict[str, Any]) -> bool:
     )
 
 
+def _block_tool_name(event: HookEvent) -> str:
+    """Return tool identity used in structured block logs."""
+    tool_name = _get_tool_identity(event.data)
+    return tool_name or "-"
+
+
+def _extract_rule_name(reason: str | None) -> str | None:
+    """Extract rule name from a standard Gobby block reason prefix."""
+    if not reason:
+        return None
+    match = _RULE_REASON_RE.match(reason)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _block_source_for_rule(rule_name: str) -> str:
+    """Map block rule names onto observability source labels."""
+    if rule_name in {"agent-tool-enforcement", "step-tool-enforcement"}:
+        return "step-enforcement"
+    return "rule"
+
+
+def _warn_block_fallback(
+    *,
+    session_id: str,
+    event: HookEvent,
+    source: str,
+    rule_name: str,
+    detail: str,
+) -> None:
+    """Emit a warning when block handling has to synthesize a reason."""
+    logger.warning(
+        "BLOCK fallback session=%s event=%s tool=%s source=%s rule=%s detail=%s",
+        session_id,
+        _event_value(event.event_type),
+        _block_tool_name(event),
+        source,
+        rule_name,
+        detail,
+    )
+
+
+def _ensure_block_reason(
+    *,
+    session_id: str,
+    event: HookEvent,
+    source: str,
+    rule_name: str,
+    reason: str | None,
+    fallback_reason: str,
+    warn_detail: str,
+) -> str:
+    """Return a non-empty block reason, warning when fallback text is required."""
+    cleaned = (reason or "").strip()
+    if cleaned:
+        return cleaned
+    _warn_block_fallback(
+        session_id=session_id,
+        event=event,
+        source=source,
+        rule_name=rule_name,
+        detail=warn_detail,
+    )
+    return fallback_reason
+
+
+def _log_block(
+    *,
+    session_id: str,
+    event: HookEvent,
+    source: str,
+    rule_name: str,
+    reason: str,
+) -> None:
+    """Emit structured block log for observability and downstream debugging."""
+    logger.info(
+        "BLOCK session=%s event=%s tool=%s source=%s rule=%s reason=%s",
+        session_id,
+        _event_value(event.event_type),
+        _block_tool_name(event),
+        source,
+        rule_name,
+        reason,
+    )
+
+
 class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
     """Single-pass rule evaluation engine.
 
@@ -141,6 +232,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         skill_manager: Any | None = None,
         metrics_event_store: "MetricsEventStore | None" = None,
         mcp_dispatcher: Any | None = None,
+        runner: Any | None = None,
+        completion_registry: Any | None = None,
+        task_manager: Any | None = None,
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
@@ -148,6 +242,9 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         self._skill_manager = skill_manager
         self._event_store = metrics_event_store
         self._mcp_dispatcher = mcp_dispatcher
+        self._runner = runner
+        self._completion_registry = completion_registry
+        self._task_manager = task_manager
 
     async def evaluate(
         self,
@@ -172,6 +269,48 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
             attributes={"event_type": str(event.event_type), "session_id": session_id},
         ) as span:
             try:
+
+                def finalize_response(
+                    response: HookResponse,
+                    *,
+                    source: str | None = None,
+                    rule_name: str | None = None,
+                    fallback_reason: str | None = None,
+                    warn_detail: str = "block response omitted reason",
+                ) -> HookResponse:
+                    """Normalize block responses, log them, and attach tracing fields."""
+                    if response.decision == "block":
+                        resolved_rule_name = (
+                            rule_name or _extract_rule_name(response.reason) or "rule-engine-block"
+                        )
+                        resolved_source = source or _block_source_for_rule(resolved_rule_name)
+                        resolved_fallback = fallback_reason or (
+                            f"Rule enforced by Gobby: [{resolved_rule_name}]\n"
+                            "Gobby blocked this event without providing a reason. "
+                            "This is a bug."
+                        )
+                        response.reason = _ensure_block_reason(
+                            session_id=session_id,
+                            event=event,
+                            source=resolved_source,
+                            rule_name=resolved_rule_name,
+                            reason=response.reason,
+                            fallback_reason=resolved_fallback,
+                            warn_detail=warn_detail,
+                        )
+                        _log_block(
+                            session_id=session_id,
+                            event=event,
+                            source=resolved_source,
+                            rule_name=resolved_rule_name,
+                            reason=response.reason,
+                        )
+                    if span.is_recording():
+                        span.set_attribute("final_decision", response.decision)
+                        if response.reason:
+                            span.set_attribute("block_reason", response.reason)
+                    return response
+
                 if isinstance(event.data, dict):
                     normalize_tool_fields(event.data)
 
@@ -223,10 +362,11 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                                         "and take a DIFFERENT action to resolve the underlying issue first."
                                     ),
                                 )
-                                if span.is_recording():
-                                    span.set_attribute("final_decision", resp.decision)
-                                    span.set_attribute("block_reason", resp.reason)
-                                return resp
+                                return finalize_response(
+                                    resp,
+                                    source="rule",
+                                    rule_name="consecutive-tool-block",
+                                )
                         else:
                             # Different tool — reset counter, let it through to rule evaluation
                             variables["consecutive_tool_blocks"] = 0
@@ -290,10 +430,17 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
-                        if span.is_recording():
-                            span.set_attribute("final_decision", agent_block.decision)
-                            span.set_attribute("block_reason", agent_block.reason)
-                        return agent_block
+                        return finalize_response(
+                            agent_block,
+                            source="step-enforcement",
+                            rule_name="agent-tool-enforcement",
+                            fallback_reason=(
+                                "Rule enforced by Gobby: [agent-tool-enforcement]\n"
+                                "Agent-level tool enforcement blocked this tool for the "
+                                "current session."
+                            ),
+                            warn_detail="agent-level enforcement returned an empty reason",
+                        )
 
                 # 4c. Step-level tool enforcement (preempts declarative rules)
                 if is_before_tool:
@@ -303,15 +450,22 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
-                        if span.is_recording():
-                            span.set_attribute("final_decision", step_block.decision)
-                            span.set_attribute("block_reason", step_block.reason)
-                        return step_block
+                        return finalize_response(
+                            step_block,
+                            source="step-enforcement",
+                            rule_name="step-tool-enforcement",
+                            fallback_reason=(
+                                "Rule enforced by Gobby: [step-tool-enforcement]\n"
+                                "Current workflow step blocked this tool for the "
+                                "active session."
+                            ),
+                            warn_detail="step enforcement returned an empty reason",
+                        )
 
                 # 4c. Step workflow transition processing (after successful MCP tool calls)
                 _step_transition_msg: str | None = None
                 if is_after_tool:
-                    _step_transition_msg = self._process_step_after_tool(
+                    _step_transition_msg = await self._process_step_after_tool(
                         event, session_id, variables
                     )
 
@@ -397,11 +551,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     else:
                         resp = HookResponse(decision="allow", context=_no_rules_ctx, metadata=meta)
 
-                    if span.is_recording():
-                        span.set_attribute("final_decision", resp.decision)
-                        if resp.reason:
-                            span.set_attribute("block_reason", resp.reason)
-                    return resp
+                    return finalize_response(resp)
 
                 # Auto-manage tool_block_pending on after_tool before rule eval.
                 if is_after_tool:
@@ -496,7 +646,18 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if deferred_block is not None:
                         if self._effect_matches_event(deferred_block, event):
                             rule_blocked = True
-                            block_reason = deferred_block.reason or "Blocked by rule"
+                            block_reason = _ensure_block_reason(
+                                session_id=session_id,
+                                event=event,
+                                source="rule",
+                                rule_name=_row.name,
+                                reason=deferred_block.reason,
+                                fallback_reason=(
+                                    "Rule block effect omitted a reason. Update the rule "
+                                    "definition to explain why the event was blocked."
+                                ),
+                                warn_detail="rule block effect omitted a reason",
+                            )
                             block_reason = self._render_template(block_reason, ctx, allowed_funcs)
                             block_reason = f"Rule enforced by Gobby: [{_row.name}]\n{block_reason}"
                             # Track the blocked tool so repeated retries can escalate,
@@ -539,39 +700,69 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     modified_input = rewrite_meta.get("input_updates")
                     auto_approve = rewrite_meta.get("auto_approve", False)
 
+                permission_meta = variables.pop("_permission_response", None)
+                permission_decision: str | None = None
+                updated_permissions: list[dict[str, Any]] | None = None
+                if permission_meta and isinstance(permission_meta, dict):
+                    if permission_meta.get("input_updates") is not None:
+                        modified_input = permission_meta.get("input_updates")
+                    permission_decision = permission_meta.get("permission_decision")
+                    updated_permissions = permission_meta.get("updated_permissions")
+
+                watch_paths = variables.pop("_watch_paths", None)
+                worktree_path = variables.pop("_worktree_path", None)
+                retry = bool(variables.pop("_retry", False))
+                elicitation_meta = variables.pop("_elicitation", None)
+                elicitation_action: str | None = None
+                elicitation_content: dict[str, Any] | None = None
+                elicitation_error: str | None = None
+                if elicitation_meta and isinstance(elicitation_meta, dict):
+                    elicitation_action = elicitation_meta.get("action")
+                    elicitation_content = elicitation_meta.get("content")
+                    elicitation_error = elicitation_meta.get("error")
+
+                response_kwargs = {
+                    "metadata": meta,
+                    "modified_input": modified_input,
+                    "auto_approve": auto_approve,
+                    "permission_decision": permission_decision,
+                    "updated_permissions": updated_permissions,
+                    "retry": retry,
+                    "watch_paths": watch_paths,
+                    "worktree_path": worktree_path,
+                    "elicitation_action": elicitation_action,
+                    "elicitation_content": elicitation_content,
+                    "elicitation_error": elicitation_error,
+                }
+
                 if override_decision == "block":
                     resp = HookResponse(
                         decision="block",
                         reason=override_reason or "",
                         context=ctx_str,
-                        metadata=meta,
+                        **response_kwargs,
                     )
                 elif override_decision == "allow":
                     resp = HookResponse(
                         decision="allow",
                         context=ctx_str,
-                        metadata=meta,
-                        modified_input=modified_input,
-                        auto_approve=auto_approve,
+                        **response_kwargs,
                     )
                 elif block_reason:
                     resp = HookResponse(
                         decision="block",
                         reason=block_reason,
                         context=ctx_str,
-                        metadata=meta,
+                        **response_kwargs,
                     )
                 else:
                     resp = HookResponse(
                         decision="allow",
                         context=ctx_str,
-                        metadata=meta,
-                        modified_input=modified_input,
-                        auto_approve=auto_approve,
+                        **response_kwargs,
                     )
 
                 if span.is_recording():
-                    span.set_attribute("final_decision", resp.decision)
                     span.set_attribute(
                         "rules.evaluated",
                         [row.name for row, _ in rules],
@@ -581,9 +772,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             "rules.mcp_calls",
                             [f"{c.get('server')}/{c.get('tool')}" for c in mcp_calls],
                         )
-                    if resp.reason:
-                        span.set_attribute("block_reason", resp.reason)
-                return resp
+                return finalize_response(resp)
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)

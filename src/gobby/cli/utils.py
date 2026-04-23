@@ -14,7 +14,7 @@ import psutil
 from gobby.config.app import DaemonConfig, load_config
 from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ def get_active_session_id(db: LocalDatabase | None = None) -> str | None:
         # SELECT id FROM sessions WHERE status = 'active' ORDER BY updated_at DESC LIMIT 1
         # Using format compatible with the rest of the codebase (raw SQL) to avoid circular imports
         # if using session manager directly which might pull in other things.
-        # But we import LocalSessionManager at top, so let's use it if possible or raw SQL for speed.
+        # But we import SessionManager at top, so let's use it if possible or raw SQL for speed.
         row = db.fetchone(
             "SELECT id FROM sessions WHERE status = 'active' AND source != 'system' ORDER BY updated_at DESC LIMIT 1"
         )
@@ -186,7 +186,7 @@ def resolve_session_id(session_ref: str | None, project_id: str | None = None) -
             project_id = ctx.get("id") if ctx else None
 
         # Use SessionManager for resolution logic
-        manager = LocalSessionManager(db)
+        manager = SessionManager(db)
         try:
             return manager.resolve_session_reference(session_ref, project_id)
         except ValueError as e:

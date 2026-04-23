@@ -1,0 +1,42 @@
+/* ============================================
+   Pipelines Tab
+   ============================================ */
+.pipeline-exec-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+  gap: 0.5rem;
+}
+
+.pipeline-exec-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.pipeline-exec-row--active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.pipeline-running-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: pipeline-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pipeline-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.85);
+  }
+}

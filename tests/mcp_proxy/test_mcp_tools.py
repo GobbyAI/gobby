@@ -85,8 +85,8 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
     }
     mock_task_manager.get_task.return_value = mock_task
 
-    # Mock LocalSessionManager so resolve_project_from_session resolves correctly
-    with patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager:
+    # Mock SessionManager so resolve_project_from_session resolves correctly
+    with patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager:
         mock_session_manager = MagicMock()
         mock_session_manager.resolve_session_reference.return_value = "test-session"
         # resolve_project_from_session looks up the session to get project_id
@@ -137,8 +137,8 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
     }
     mock_task_manager.get_task.return_value = mock_task
 
-    # Mock LocalSessionManager so resolve_project_from_session resolves correctly
-    with patch("gobby.mcp_proxy.tools.tasks._context.LocalSessionManager") as MockSessionManager:
+    # Mock SessionManager so resolve_project_from_session resolves correctly
+    with patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager:
         mock_session_manager = MagicMock()
         mock_session_manager.resolve_session_reference.return_value = "session-abc123"
         mock_session = MagicMock()

@@ -21,9 +21,17 @@ def test_app():
     return app, server_mock
 
 
+@pytest.mark.unit
 def test_usage_no_filters(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
+    db.fetchone.return_value = {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_read_tokens": 10,
+        "cache_creation_tokens": 5,
+        "session_count": 2,
+    }
 
     def fetchall_mock(query, params):
         if "GROUP BY source" in query:
@@ -37,10 +45,10 @@ def test_usage_no_filters(test_app):
                     "session_count": 2,
                 }
             ]
-        if "GROUP BY model" in query:
+        if "GROUP BY model_family" in query:
             return [
                 {
-                    "model": "gpt-4",
+                    "model_family": "gpt-4",
                     "input_tokens": 100,
                     "output_tokens": 50,
                     "cache_read_tokens": 10,
@@ -72,9 +80,11 @@ def test_usage_no_filters(test_app):
     assert data["by_model"]["gpt-4"]["session_count"] == 2
 
 
+@pytest.mark.unit
 def test_usage_with_filters_and_fallback(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
+    db.fetchone.return_value = None
 
     def fetchall_mock(query, params):
         if "GROUP BY source" in query:
@@ -88,10 +98,10 @@ def test_usage_with_filters_and_fallback(test_app):
                     "session_count": 1,
                 }
             ]
-        if "GROUP BY model" in query:
+        if "GROUP BY model_family" in query:
             return [
                 {
-                    "model": None,
+                    "model_family": None,
                     "input_tokens": 10,
                     "output_tokens": 5,
                     "cache_read_tokens": 0,
@@ -113,11 +123,13 @@ def test_usage_with_filters_and_fallback(test_app):
     assert data["totals"]["input_tokens"] == 0  # because empty rows returned
 
 
+@pytest.mark.unit
 def test_usage_exceptions(test_app):
     app, server_mock = test_app
     db = server_mock.services.database
 
     db.fetchall.side_effect = sqlite3.Error("DB error")
+    db.fetchone.side_effect = sqlite3.Error("DB error")
 
     client = TestClient(app)
     response = client.get("/usage")

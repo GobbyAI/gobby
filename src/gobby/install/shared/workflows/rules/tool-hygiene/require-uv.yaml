@@ -2,24 +2,13 @@ tags: [tool-hygiene, enforcement, python, gobby, default]
 
 rules:
   require-uv:
-    description: "Rewrite bare python/pip to use uv"
+    description: "Block bare python/pip; require uv"
     event: before_tool
     enabled: true
     priority: 50
-    when: >
-      variables.get('require_uv')
-      and event.data.get('tool_name') == 'Bash'
+    when: "variables.get('require_uv')"
     effects:
-      - type: inject_context
+      - type: block
+        tools: [Bash]
         command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:3(?:\\.\\d+)?)?\\b)"
-        template: |
-          Gobby rewrote your command to use `uv`. Bare python/pip is not allowed in this project.
-          Use `uv run python` or `uv pip` directly next time.
-      - type: rewrite_input
-        command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:3(?:\\.\\d+)?)?\\b)"
-        input_updates:
-          command: >
-            {{ event.data.tool_input.command
-               | regex_replace('(^|(?<=[;&|]))(\s*)(?:sudo\s+)?pip3?\b', '\1\2uv pip')
-               | regex_replace('(^|(?<=[;&|]))(\s*)(?:sudo\s+)?python(?:3(?:\.\d+)?)?\b', '\1\2uv run python') }}
-        auto_approve: true
+        reason: "Bare python/pip is not permitted in this repo. Use uv instead."

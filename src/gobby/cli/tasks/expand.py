@@ -12,7 +12,7 @@ from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.config.app import load_config
 from gobby.llm import LLMService
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.tasks.expansion_service import ExpansionService
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -37,7 +37,7 @@ def _resolve_cli_session_id(raw_session_id: str | None) -> str | None:
     if not session_ref:
         return None
     task_manager = get_task_manager()
-    session_manager = LocalSessionManager(task_manager.db)
+    session_manager = SessionManager(task_manager.db)
     project_ctx = get_project_context(cwd=Path.cwd())
     project_id = project_ctx.get("id") if project_ctx else None
     try:

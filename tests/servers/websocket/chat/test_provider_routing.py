@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.config.features import ChatConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat._session import ChatSessionMixin
 
@@ -121,6 +123,29 @@ class TestPendingProviderOverride:
         session = await _create_session_for_provider(mixin, provider=None)
 
         assert session.provider == "gemini"
+
+    @pytest.mark.asyncio
+    async def test_daemon_chat_provider_used_when_request_has_no_provider(self) -> None:
+        """Daemon chat.provider supplies the default web-chat backend."""
+        mixin = _make_mixin(
+            daemon_config=DaemonConfig(chat=ChatConfig(provider="codex", model="gpt-5")),
+        )
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+
+        session = await _create_session_for_provider(mixin, provider=None)
+
+        assert session.provider == "codex"
+        mixin.web_chat_runtime_manager.create_session.assert_called_once()
+        assert mixin.web_chat_runtime_manager.create_session.call_args.kwargs["provider"] == "codex"
 
 
 class TestSessionRegistration:

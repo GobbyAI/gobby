@@ -166,27 +166,26 @@ class TestVoiceRoutes:
         data = response.json()
         assert data["whisper_model"] == "small"
 
-    def test_status_reports_voxcpm_capabilities(
+    def test_status_reports_missing_chatterbox_reference_audio(
         self, client: TestClient, server_with_voice: MagicMock, tmp_path: Path
     ) -> None:
-        ref = tmp_path / "reference.wav"
-        ref.write_bytes(b"RIFF" + b"\x00" * 100)
         server_with_voice.config.voice = VoiceConfig(
             enabled=True,
             tts_enabled=True,
-            tts_provider="voxcpm",
-            tts_reference_audio=str(ref),
-            tts_reference_text="Reference transcript",
+            tts_provider="chatterbox",
+            tts_reference_audio=str(tmp_path / "missing-reference.wav"),
         )
 
-        with patch.dict("sys.modules", {"faster_whisper": MagicMock(), "voxcpm": MagicMock()}):
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": MagicMock(), "chatterbox": MagicMock()},
+        ):
             response = client.get("/api/voice/status")
 
         data = response.json()
-        assert data["tts_provider"] == "voxcpm"
-        assert data["tts_available"] is True
-        assert data["tts_capabilities"]["supports_reference_text"] is True
-        assert data["tts_reference_text_configured"] is True
+        assert data["tts_provider"] == "chatterbox"
+        assert data["tts_available"] is False
+        assert "reference audio not found" in data["tts_reason"]
 
     # -----------------------------------------------------------------
     # POST /api/voice/transcribe

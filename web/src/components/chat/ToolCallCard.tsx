@@ -52,6 +52,16 @@ interface AskUserQuestionItem {
   multiSelect: boolean
 }
 
+// Shared <pre> styles used across tool-result fallbacks and error blocks.
+// Extracted so the long className lists don't drift between call-sites
+// (three result-fallback places and two error-block places).
+const TOOL_RESULT_PRE_CLASS =
+  'bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto ' +
+  'overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs'
+const TOOL_ERROR_PRE_CLASS =
+  'bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words ' +
+  'overflow-x-hidden text-destructive-foreground'
+
 const highlighterTheme = {
   ...oneDark,
   'pre[class*="language-"]': {
@@ -249,6 +259,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             PreTag="div"
             showLineNumbers
             startingLineNumber={parsed.startLine}
+            wrapLongLines
             lineNumberStyle={{
               minWidth: '2.5em',
               paddingRight: '1em',
@@ -260,7 +271,10 @@ function ToolResultContent({ call }: { call: ToolCall }) {
               margin: 0,
               borderRadius: 0,
               maxHeight: '24rem',
-              overflow: 'auto',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              whiteSpace: 'pre-wrap',
+              overflowWrap: 'anywhere',
             }}
           >
             {parsed.content}
@@ -293,8 +307,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
                   PreTag="div"
                   showLineNumbers
                   startingLineNumber={startLine}
+                  wrapLongLines
                   lineNumberStyle={lineNumberStyle}
-                  customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+                  customStyle={{
+                    margin: 0,
+                    borderRadius: '0.25rem',
+                    maxHeight: '24rem',
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                  }}
                 >
                   {content}
                 </SyntaxHighlighter>
@@ -325,7 +348,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
         {exitCode !== 0 && (
           <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
         )}
-        <pre className="bg-muted rounded p-2 overflow-x-auto text-foreground max-h-96 overflow-y-auto font-mono text-xs">
+        <pre className={TOOL_RESULT_PRE_CLASS}>
           {resultStr}
         </pre>
       </div>
@@ -350,12 +373,21 @@ function ToolResultContent({ call }: { call: ToolCall }) {
       style={highlighterTheme}
       language="json"
       PreTag="div"
-      customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
+      wrapLongLines
+      customStyle={{
+        margin: 0,
+        borderRadius: '0.25rem',
+        maxHeight: '24rem',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        whiteSpace: 'pre-wrap',
+        overflowWrap: 'anywhere',
+      }}
     >
       {resultStr}
     </SyntaxHighlighter>
   ) : (
-    <pre className="bg-muted rounded p-2 overflow-x-auto text-foreground max-h-96 overflow-y-auto font-mono text-xs">
+    <pre className={TOOL_RESULT_PRE_CLASS}>
       {resultStr}
     </pre>
   )
@@ -451,7 +483,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           {call.status === 'error' && call.error && (
             <div>
               <div className="text-destructive-foreground mb-1 font-medium">Error</div>
-              <pre className="bg-destructive/30 rounded p-2 overflow-x-auto text-destructive-foreground">
+              <pre className={TOOL_ERROR_PRE_CLASS}>
                 {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
               </pre>
             </div>
@@ -776,7 +808,7 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
           {call.status === 'error' && call.error && (
             <div>
               <div className="text-destructive-foreground mb-1 font-medium mt-2">Error</div>
-              <pre className="bg-destructive/30 rounded p-2 overflow-x-auto text-destructive-foreground">
+              <pre className={TOOL_ERROR_PRE_CLASS}>
                 {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
               </pre>
             </div>

@@ -2,14 +2,11 @@ tags: [plan-mode, state-tracking, gobby, default]
 
 rules:
   handle-plan-mode-entry:
-    description: "Inject plan skill when plan mode is active"
+    description: "Prompt for plan skill when plan mode is active"
     event: turn_start
     enabled: true
     priority: 10
-    when: "variables.get('plan_mode') and not variables.get('plan_skill_loaded')"
+    when: "variables.get('plan_mode') and not skill_loaded('plan')"
     effects:
       - type: load_skill
         skill: plan
-      - type: set_variable
-        variable: plan_skill_loaded
-        value: true

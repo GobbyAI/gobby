@@ -1,6 +1,7 @@
 name: default
-description: Baseline agent — loads all default-tagged rules, all skills available, inherits provider from CLI
+description: Baseline agent — loads default-tagged rules; skills load on demand via rules
 sources: [claude, gemini, qwen, codex]
+surfaces: [spawn, persona]
 provider: inherit
 timeout: 0
 max_turns: 0
@@ -60,12 +61,16 @@ instructions: |
 blocked_mcp_tools:
   - "gobby-tasks:mark_task_needs_review"
   - "gobby-tasks:mark_task_review_approved"
+  - "gobby-tasks:mark_task_review_rejected"
 
 workflows:
   rule_selectors:
     include:
       - "tag:default"
   skill_selectors:
-    include: []  # No skills auto-injected; on-demand via get_skill() MCP
+    include: []
+    # Skills load on demand via rules (brevity on first turn, code-index on
+    # first code read/search, etc.). Keep the default agent lean — other skills
+    # stay on-demand via get_skill(name="...") on gobby-skills.
   # variable_selectors intentionally omitted (null) — all enabled session defaults apply.
   variables: {}

@@ -9,6 +9,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
+from gobby.mcp_proxy.tools.worktrees._merge_state import worktree_dict_with_git_merge_state
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         return {
             "success": True,
-            "worktree": worktree.to_dict(),
+            "worktree": worktree_dict_with_git_merge_state(worktree, ctx.git_manager),
             "git_status": git_status,
         }
 
@@ -168,6 +169,9 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not worktree:
             return {"success": True, "worktree": None}
 
-        return {"success": True, "worktree": worktree.to_dict()}
+        return {
+            "success": True,
+            "worktree": worktree_dict_with_git_merge_state(worktree, ctx.git_manager),
+        }
 
     return registry

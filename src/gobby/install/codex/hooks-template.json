@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=codex --type=SessionStart"
+            "command": "ghook --gobby-owned --cli=codex --type=SessionStart"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=codex --type=UserPromptSubmit"
+            "command": "ghook --gobby-owned --cli=codex --type=UserPromptSubmit"
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=codex --type=PreToolUse"
+            "command": "ghook --gobby-owned --cli=codex --type=PreToolUse"
           }
         ]
       }
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=codex --type=PostToolUse"
+            "command": "ghook --gobby-owned --cli=codex --type=PostToolUse"
           }
         ]
       }
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run \"$HOOKS_DIR/hook_dispatcher.py\" --cli=codex --type=Stop"
+            "command": "ghook --gobby-owned --cli=codex --type=Stop"
           }
         ]
       }

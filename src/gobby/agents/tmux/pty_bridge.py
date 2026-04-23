@@ -19,7 +19,7 @@ import termios
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from gobby.agents.tmux.config import TmuxConfig
+from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 

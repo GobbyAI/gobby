@@ -18,6 +18,7 @@ import pytest
 from gobby.cli.install_setup import (
     _GHOOK_BIN_NAME,
     _GHOOK_INSTALL_METHOD_ENV,
+    _GHOOK_INSTALL_SIDECAR,
     _GHOOK_INSTALL_VERSION_ENV,
     _GHOOK_VERSION_STAMP,
     _get_installed_ghook_version,
@@ -31,6 +32,8 @@ from gobby.cli.install_setup import (
 )
 
 pytestmark = pytest.mark.unit
+
+_FIXED_INSTALLED_AT = "2026-04-22T18:30:00Z"
 
 
 def _make_tarball(bin_name: str = "ghook") -> io.BytesIO:
@@ -52,6 +55,19 @@ def _make_zip(bin_name: str = "ghook.exe") -> io.BytesIO:
         archive.writestr(bin_name, b"fake-ghook")
     buf.seek(0)
     return buf
+
+
+def _write_fake_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
+    """Create a fake ghook binary in the install bin directory."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    binary = bin_dir / name
+    binary.write_bytes(b"#!/bin/sh\necho fake-ghook\n")
+    return binary
+
+
+def _read_ghook_sidecar(bin_dir: Path) -> dict[str, object]:
+    """Load the ghook install provenance sidecar."""
+    return json.loads((bin_dir / _GHOOK_INSTALL_SIDECAR).read_text())
 
 
 class TestGetLatestGhookVersion:
@@ -103,7 +119,7 @@ class TestInstallGhookFromGithub:
             patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
             patch(
                 "gobby.cli.install_setup._resolve_latest_release_tag",
-                return_value="gobby-hooks-v0.1.1",
+                return_value="ghook-v0.1.1",
             ),
         ):
             assert _install_ghook_from_github(tmp_path, "aarch64-apple-darwin") is True
@@ -121,7 +137,7 @@ class TestInstallGhookFromGithub:
         url_called = mock_urlopen.call_args[0][0]
         if hasattr(url_called, "full_url"):
             url_called = url_called.full_url
-        assert "gobby-hooks-v0.1.1" in url_called
+        assert "ghook-v0.1.1" in url_called
 
     def test_windows_zip_asset(self, tmp_path: Path) -> None:
         archive = _make_zip("ghook.exe")
@@ -134,7 +150,7 @@ class TestInstallGhookFromGithub:
             patch("gobby.cli.install_setup.urlopen", return_value=mock_resp),
             patch(
                 "gobby.cli.install_setup._resolve_latest_release_tag",
-                return_value="gobby-hooks-v0.1.1",
+                return_value="ghook-v0.1.1",
             ),
             patch("gobby.cli.install_setup._GHOOK_BIN_NAME", "ghook.exe"),
         ):
@@ -191,23 +207,51 @@ class TestInstallGhook:
         ):
             yield
 
-    def test_fresh_install_github(self, tmp_path: Path, _patch_platform: None) -> None:
+    @pytest.fixture()
+    def _fixed_installed_at(self):
+        with patch(
+            "gobby.cli.install_setup._ghook_installed_at_utc",
+            return_value=_FIXED_INSTALLED_AT,
+        ):
+            yield
+
+    def test_fresh_install_github(
+        self,
+        tmp_path: Path,
+        _patch_platform: None,
+        _fixed_installed_at: None,
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def install_from_github_side_effect(*args: object, **kwargs: object) -> bool:
+            _write_fake_ghook_binary(bin_dir)
+            return True
+
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
-            patch("gobby.cli.install_setup._install_ghook_from_github", return_value=True),
+            patch(
+                "gobby.cli.install_setup._install_ghook_from_github",
+                side_effect=install_from_github_side_effect,
+            ),
             patch("gobby.cli.install_setup._probe_ghook_version", return_value="0.1.1"),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
         ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "ghook").write_bytes(b"\x00")
-
             result = _install_ghook()
 
         assert result["installed"] is True
         assert result["method"] == "github"
         assert result["version"] == "0.1.1"
+        assert _read_ghook_sidecar(bin_dir) == {
+            "install_method": "github-release",
+            "install_source_url": (
+                "https://github.com/GobbyAI/gobby-cli/releases/download/"
+                "ghook-v0.1.1/ghook-aarch64-apple-darwin.tar.gz"
+            ),
+            "installed_version": "0.1.1",
+            "installed_at": _FIXED_INSTALLED_AT,
+        }
+        assert (bin_dir / _GHOOK_INSTALL_SIDECAR).stat().st_mode & 0o777 == 0o644
 
     def test_already_up_to_date(self, tmp_path: Path, _patch_platform: None) -> None:
         bin_dir = tmp_path / ".gobby" / "bin"
@@ -245,65 +289,266 @@ class TestInstallGhook:
         assert result["version"] == "0.1.0"
 
     def test_method_override_github(self, tmp_path: Path, _patch_platform: None) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def install_from_github_side_effect(*args: object, **kwargs: object) -> bool:
+            _write_fake_ghook_binary(bin_dir)
+            return True
+
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
-            patch("gobby.cli.install_setup._install_ghook_from_github", return_value=True),
+            patch(
+                "gobby.cli.install_setup._install_ghook_from_github",
+                side_effect=install_from_github_side_effect,
+            ),
             patch("gobby.cli.install_setup._install_ghook_from_cargo_binstall") as mock_binstall,
             patch("gobby.cli.install_setup._install_ghook_from_cargo_install") as mock_install,
             patch("gobby.cli.install_setup._probe_ghook_version", return_value="0.1.1"),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
             patch.dict("os.environ", {_GHOOK_INSTALL_METHOD_ENV: "github"}),
         ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "ghook").write_bytes(b"\x00")
-
             result = _install_ghook(force=True)
 
         mock_binstall.assert_not_called()
         mock_install.assert_not_called()
         assert result["method"] == "github"
 
-    def test_method_override_cargo_binstall(self, tmp_path: Path, _patch_platform: None) -> None:
+    def test_method_override_cargo_binstall(
+        self,
+        tmp_path: Path,
+        _patch_platform: None,
+        _fixed_installed_at: None,
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def subprocess_run_side_effect(
+            cmd: list[str],
+            capture_output: bool,
+            text: bool,
+            timeout: int,
+        ) -> MagicMock:
+            if cmd[0] == "cargo-binstall":
+                _write_fake_ghook_binary(bin_dir)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[0] == str(bin_dir / "ghook") and cmd[1:] == ["--version"]:
+                return MagicMock(returncode=0, stdout="ghook 0.1.1\n", stderr="")
+            raise AssertionError(f"unexpected subprocess.run command: {cmd}")
+
+        def which_side_effect(tool: str) -> str | None:
+            if tool == "cargo-binstall":
+                return "/usr/bin/cargo-binstall"
+            return None
+
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
             patch("gobby.cli.install_setup._install_ghook_from_github") as mock_github,
-            patch("gobby.cli.install_setup._install_ghook_from_cargo_binstall", return_value=True),
-            patch("gobby.cli.install_setup._probe_ghook_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup.shutil.which", side_effect=which_side_effect),
+            patch("gobby.cli.install_setup.subprocess.run", side_effect=subprocess_run_side_effect),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
             patch.dict("os.environ", {_GHOOK_INSTALL_METHOD_ENV: "cargo-binstall"}),
         ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "ghook").write_bytes(b"\x00")
-
+            mock_github.return_value = False
             result = _install_ghook(force=True)
 
         mock_github.assert_not_called()
         assert result["method"] == "cargo-binstall"
+        assert _read_ghook_sidecar(bin_dir) == {
+            "install_method": "crates-binstall",
+            "install_source_url": "https://crates.io/crates/gobby-hooks/0.1.1",
+            "installed_version": "0.1.1",
+            "installed_at": _FIXED_INSTALLED_AT,
+        }
 
-    def test_method_override_cargo_install(self, tmp_path: Path, _patch_platform: None) -> None:
+    def test_method_override_cargo_install(
+        self,
+        tmp_path: Path,
+        _patch_platform: None,
+        _fixed_installed_at: None,
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def subprocess_run_side_effect(
+            cmd: list[str],
+            capture_output: bool,
+            text: bool,
+            timeout: int,
+        ) -> MagicMock:
+            if cmd[:2] == ["cargo", "install"]:
+                _write_fake_ghook_binary(bin_dir)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[0] == str(bin_dir / "ghook") and cmd[1:] == ["--version"]:
+                return MagicMock(returncode=0, stdout="ghook 0.1.1\n", stderr="")
+            raise AssertionError(f"unexpected subprocess.run command: {cmd}")
+
+        def which_side_effect(tool: str) -> str | None:
+            if tool == "cargo":
+                return "/usr/bin/cargo"
+            return None
+
         with (
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
             patch("gobby.cli.install_setup._install_ghook_from_github") as mock_github,
             patch("gobby.cli.install_setup._install_ghook_from_cargo_binstall") as mock_binstall,
-            patch("gobby.cli.install_setup._install_ghook_from_cargo_install", return_value=True),
-            patch("gobby.cli.install_setup._probe_ghook_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup.shutil.which", side_effect=which_side_effect),
+            patch("gobby.cli.install_setup.subprocess.run", side_effect=subprocess_run_side_effect),
             patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
             patch.dict("os.environ", {_GHOOK_INSTALL_METHOD_ENV: "cargo-install"}),
         ):
-            bin_dir = tmp_path / ".gobby" / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            (bin_dir / "ghook").write_bytes(b"\x00")
-
+            mock_github.return_value = False
+            mock_binstall.return_value = False
             result = _install_ghook(force=True)
 
         mock_github.assert_not_called()
         mock_binstall.assert_not_called()
         assert result["method"] == "cargo-install"
+        assert _read_ghook_sidecar(bin_dir) == {
+            "install_method": "cargo-install",
+            "install_source_url": None,
+            "installed_version": "0.1.1",
+            "installed_at": _FIXED_INSTALLED_AT,
+        }
+
+    def test_github_fails_then_cargo_binstall_writes_sidecar(
+        self,
+        tmp_path: Path,
+        _patch_platform: None,
+        _fixed_installed_at: None,
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def subprocess_run_side_effect(
+            cmd: list[str],
+            capture_output: bool,
+            text: bool,
+            timeout: int,
+        ) -> MagicMock:
+            if cmd[0] == "cargo-binstall":
+                _write_fake_ghook_binary(bin_dir)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[0] == str(bin_dir / "ghook") and cmd[1:] == ["--version"]:
+                return MagicMock(returncode=0, stdout="ghook 0.1.1\n", stderr="")
+            raise AssertionError(f"unexpected subprocess.run command: {cmd}")
+
+        def which_side_effect(tool: str) -> str | None:
+            if tool == "cargo-binstall":
+                return "/usr/bin/cargo-binstall"
+            return None
+
+        with (
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup._install_ghook_from_github", return_value=False),
+            patch("gobby.cli.install_setup.shutil.which", side_effect=which_side_effect),
+            patch("gobby.cli.install_setup.subprocess.run", side_effect=subprocess_run_side_effect),
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+        ):
+            result = _install_ghook(force=True)
+
+        assert result["installed"] is True
+        assert result["method"] == "cargo-binstall"
+        assert _read_ghook_sidecar(bin_dir) == {
+            "install_method": "crates-binstall",
+            "install_source_url": "https://crates.io/crates/gobby-hooks/0.1.1",
+            "installed_version": "0.1.1",
+            "installed_at": _FIXED_INSTALLED_AT,
+        }
+
+    def test_github_and_cargo_binstall_fail_then_cargo_install_writes_sidecar(
+        self,
+        tmp_path: Path,
+        _patch_platform: None,
+        _fixed_installed_at: None,
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def subprocess_run_side_effect(
+            cmd: list[str],
+            capture_output: bool,
+            text: bool,
+            timeout: int,
+        ) -> MagicMock:
+            if cmd[0] == "cargo-binstall":
+                return MagicMock(returncode=1, stdout="", stderr="download failed")
+            if cmd[:2] == ["cargo", "install"]:
+                _write_fake_ghook_binary(bin_dir)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if cmd[0] == str(bin_dir / "ghook") and cmd[1:] == ["--version"]:
+                return MagicMock(returncode=0, stdout="ghook 0.1.1\n", stderr="")
+            raise AssertionError(f"unexpected subprocess.run command: {cmd}")
+
+        def which_side_effect(tool: str) -> str | None:
+            if tool == "cargo-binstall":
+                return "/usr/bin/cargo-binstall"
+            if tool == "cargo":
+                return "/usr/bin/cargo"
+            return None
+
+        with (
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup._install_ghook_from_github", return_value=False),
+            patch("gobby.cli.install_setup.shutil.which", side_effect=which_side_effect),
+            patch("gobby.cli.install_setup.subprocess.run", side_effect=subprocess_run_side_effect),
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+            patch("gobby.cli.install_setup.click"),
+        ):
+            result = _install_ghook(force=True)
+
+        assert result["installed"] is True
+        assert result["method"] == "cargo-install"
+        assert _read_ghook_sidecar(bin_dir) == {
+            "install_method": "cargo-install",
+            "install_source_url": None,
+            "installed_version": "0.1.1",
+            "installed_at": _FIXED_INSTALLED_AT,
+        }
+
+    def test_sidecar_write_failure_logs_warning_and_install_still_succeeds(
+        self,
+        tmp_path: Path,
+        _patch_platform: None,
+        _fixed_installed_at: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        bin_dir = tmp_path / ".gobby" / "bin"
+
+        def install_from_github_side_effect(*args: object, **kwargs: object) -> bool:
+            _write_fake_ghook_binary(bin_dir)
+            return True
+
+        real_os_chmod = __import__("os").chmod
+
+        def chmod_side_effect(
+            path: str | bytes | Path,
+            mode: int,
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            if Path(path).name == _GHOOK_INSTALL_SIDECAR:
+                raise PermissionError("sidecar chmod blocked")
+            real_os_chmod(path, mode, *args, **kwargs)
+
+        with (
+            patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
+            patch("gobby.cli.install_setup._get_latest_ghook_version", return_value="0.1.1"),
+            patch(
+                "gobby.cli.install_setup._install_ghook_from_github",
+                side_effect=install_from_github_side_effect,
+            ),
+            patch("gobby.cli.install_setup._probe_ghook_version", return_value="0.1.1"),
+            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+            patch("gobby.cli.install_setup.os.chmod", side_effect=chmod_side_effect),
+            caplog.at_level("WARNING", logger="gobby.cli.install_setup"),
+        ):
+            result = _install_ghook(force=True)
+
+        assert result["installed"] is True
+        assert result["method"] == "github"
+        assert "failed writing install sidecar" in caplog.text
+        assert (bin_dir / _GHOOK_INSTALL_SIDECAR).exists()
 
     def test_all_methods_fail(self, tmp_path: Path, _patch_platform: None) -> None:
         with (

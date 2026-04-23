@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from gobby.adapters.codex_impl.adapter import CodexAdapter
+from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
 from gobby.hooks.hook_manager import HookManager
 from gobby.servers.exception_handlers import register_exception_handlers
 from gobby.utils.version import get_version
@@ -67,6 +67,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
             "message_processor": server.services.message_processor,
             "memory_sync_manager": server.services.memory_sync_manager,
             "task_sync_manager": server.services.task_sync_manager,
+            "agent_runner": server.services.agent_runner,
+            "completion_registry": server.services.completion_registry,
         }
 
         # Create code index trigger for post-edit incremental indexing
@@ -92,6 +94,14 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
             app.state.hook_manager = HookManager(**hook_manager_kwargs)
             server._hook_manager = app.state.hook_manager
+
+            # Back-link HookManager into SessionMessageProcessor so the processor
+            # can synthesize BEFORE_TOOL/AFTER_TOOL events from the Codex
+            # rollout tail (Codex's experimental hooks don't fire for MCP tool
+            # calls; the rule engine would otherwise never see them).
+            mp = server.services.message_processor
+            if mp is not None:
+                mp._hook_manager = app.state.hook_manager
         logger.debug("HookManager initialized in daemon")
 
         # Initialize PendingInteractionManager for web chat approval flows
@@ -284,7 +294,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
                 monitor = TmuxPaneMonitor(
                     session_end_callback=app.state.hook_manager._event_handlers.handle_session_end,
                     config=server.services.config.tmux,
-                    session_storage=app.state.hook_manager._session_storage,
+                    session_manager=app.state.hook_manager._session_manager,
                 )
                 set_tmux_pane_monitor(monitor)
                 await monitor.start()
@@ -296,7 +306,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
         try:
             from gobby.sessions.liveness_monitor import SessionLivenessMonitor
 
-            session_storage = app.state.hook_manager._session_storage
+            session_storage = app.state.hook_manager._session_manager
             liveness_monitor = SessionLivenessMonitor(
                 session_storage=session_storage,
                 dispatch_summaries_fn=getattr(

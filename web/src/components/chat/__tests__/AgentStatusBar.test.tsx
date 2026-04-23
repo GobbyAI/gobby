@@ -81,6 +81,33 @@ describe('AgentStatusBar', () => {
     expect(onDetach).not.toHaveBeenCalled()
   })
 
+  it('hides the session badge for null session types while keeping the state text', () => {
+    render(
+      <AgentStatusBar
+        viewingMeta={{
+          ref: '#91',
+          source: 'claude',
+          title: 'Observed Session',
+          status: 'active',
+          model: 'sonnet',
+          externalId: 'ext-91',
+          chatMode: 'accept_edits',
+          gitBranch: null,
+          contextWindow: null,
+          agentRunId: null,
+          workflowName: null,
+          agentName: null,
+          sessionType: null,
+        }}
+        interactionMode="observe"
+      />,
+    )
+
+    expect(screen.getByText('Watching live')).toBeInTheDocument()
+    expect(screen.queryByText('TMUX')).toBeNull()
+    expect(screen.queryByText('WEB')).toBeNull()
+  })
+
   it('shows only Detach while attached', () => {
     const onDetach = vi.fn()
 

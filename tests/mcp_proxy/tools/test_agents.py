@@ -6,6 +6,7 @@ This file tests the agent-related MCP tools:
 - get_agent_result: Get agent run result
 - list_agents: List agent runs for a session
 - stop_agent: Stop a running agent (DB only)
+- end_agent_run: Complete the caller's own agent run
 - kill_agent: Kill a running agent process
 - can_spawn_agent: Check if spawning is allowed
 - list_running_agents: List active agents from DB
@@ -103,6 +104,7 @@ class TestCreateAgentsRegistry:
             "get_agent_result",
             "list_agents",
             "stop_agent",
+            "end_agent_run",
             "kill_agent",
             "can_spawn_agent",
             "list_running_agents",
@@ -615,6 +617,64 @@ class TestKillAgent:
         assert result["success"] is True
 
 
+class TestEndAgentRun:
+    """Tests for end_agent_run MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_requires_active_session_context(self) -> None:
+        runner = _make_runner_with_run_storage()
+        registry = create_agents_registry(runner)
+
+        result = await registry._tools["end_agent_run"].func()
+
+        assert result["success"] is False
+        assert "No active session context" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_resolves_current_session_and_notifies_success(self) -> None:
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="sess-parent",
+        )
+        runner.run_storage.get_by_session.return_value = mock_run
+        runner.get_run.return_value = mock_run
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+
+        registry = create_agents_registry(runner, completion_registry=completion_registry)
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with session_context_for_test("sess-456"):
+            result = await registry._tools["end_agent_run"].func()
+
+        assert result == {"success": True, "run_id": "run-123", "status": "success"}
+        runner.complete_run.assert_called_once_with("run-123", result=None)
+        completion_registry.notify.assert_awaited_once_with(
+            "run-123",
+            {"status": "success", "run_id": "run-123"},
+            message="Agent run-123 completed",
+        )
+
+    @pytest.mark.asyncio
+    async def test_returns_error_when_session_has_no_agent_run(self) -> None:
+        runner = _make_runner_with_run_storage()
+        runner.get_run_id_by_session.return_value = None
+        registry = create_agents_registry(runner)
+
+        from gobby.utils.session_context import session_context_for_test
+
+        with session_context_for_test("sess-456"):
+            result = await registry._tools["end_agent_run"].func()
+
+        assert result["success"] is False
+        assert "No agent found for session sess-456" == result["error"]
+
+
 class TestKillAgentSelfTerminationViaRunId:
     """Tests for self-termination detection via run_id path using _context."""
 
@@ -648,7 +708,7 @@ class TestKillAgentSelfTerminationViaRunId:
 
         assert result["success"] is True
         # Should call complete_run (success), not cancel_run (cancelled)
-        runner.complete_run.assert_called_once_with("run-123")
+        runner.complete_run.assert_called_once_with("run-123", result=None)
         runner.cancel_run.assert_not_called()
 
     @pytest.mark.asyncio

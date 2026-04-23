@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from shutil import copy2, which
+from shutil import copy2
 from typing import Any
 
 from gobby.cli.utils import get_install_dir
@@ -123,7 +123,6 @@ def install_gemini(project_path: Path, mode: str = "global") -> dict[str, Any]:
         gobby_settings,
         cli_name="gemini",
         hooks_dir=hooks_dir,
-        uv_bin=which("uv") or "uv",
     )
 
     # Ensure hooks section exists

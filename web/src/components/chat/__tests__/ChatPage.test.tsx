@@ -6,12 +6,14 @@ import { ChatPage } from "../ChatPage";
 
 const {
   clearArtifactsSpy,
+  isPinnedState,
   scrollToBottomSpy,
   setIsPinnedSpy,
   togglePanelSpy,
   isMobileState,
 } = vi.hoisted(() => ({
   clearArtifactsSpy: vi.fn(),
+  isPinnedState: { value: false },
   scrollToBottomSpy: vi.fn(),
   setIsPinnedSpy: vi.fn(),
   togglePanelSpy: vi.fn(),
@@ -48,8 +50,6 @@ vi.mock("../ChatInput", () => ({
     currentModel,
     currentReasoning,
     providerPickerDisabledReason,
-    onToggleActivityPanel,
-    isActivityPanelPinned,
   }: {
     proxyDeliveryNotice?: string | null;
     disabled?: boolean;
@@ -63,8 +63,6 @@ vi.mock("../ChatInput", () => ({
     currentModel?: string;
     currentReasoning?: string;
     providerPickerDisabledReason?: string | null;
-    onToggleActivityPanel?: () => void;
-    isActivityPanelPinned?: boolean;
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
@@ -79,15 +77,6 @@ vi.mock("../ChatInput", () => ({
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
       <span data-testid="chat-input-reasoning">{currentReasoning ?? ""}</span>
       <span data-testid="chat-input-provider-disabled-reason">{providerPickerDisabledReason ?? ""}</span>
-      {onToggleActivityPanel && (
-        <button
-          type="button"
-          data-testid="chat-input-panel-toggle"
-          onClick={onToggleActivityPanel}
-        >
-          {isActivityPanelPinned ? "Hide panel" : "Show panel"}
-        </button>
-      )}
     </div>
   ),
 }));
@@ -106,23 +95,24 @@ vi.mock("../CommandPalette", () => ({
   CommandPalette: () => null,
 }));
 
-vi.mock("../ActiveSessionsModal", () => ({
-  ActiveSessionsModal: () => null,
-}));
-
 vi.mock("../../activity/ActivityPanel", () => ({
   ActivityPanel: ({
+    sessions,
     onSwapSession,
+    onResumeSession,
     chatSessionId,
     onApprovePlan,
     onRequestPlanChanges,
   }: {
+    sessions?: Array<{ id: string }>
     onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
+    onResumeSession?: (sessionId: string) => void
     chatSessionId?: string | null
     onApprovePlan?: () => void
     onRequestPlanChanges?: (feedback: string) => void
   }) => (
     <div data-testid="activity-panel">
+      <span data-testid="activity-panel-session-count">{sessions?.length ?? 0}</span>
       <span data-testid="activity-panel-chat-session-id">
         {chatSessionId ?? ""}
       </span>
@@ -151,6 +141,13 @@ vi.mock("../../activity/ActivityPanel", () => ({
         }
       >
         Swap Autonomous
+      </button>
+      <button
+        type="button"
+        data-testid="resume-activity-session"
+        onClick={() => onResumeSession?.("resume-target")}
+      >
+        Resume Session
       </button>
       <button
         type="button"
@@ -235,7 +232,7 @@ vi.mock("../../activity/useActivityPanel", () => ({
   useActivityPanel: () => ({
     activeTab: "artifacts",
     closeIfAutoOpened: vi.fn(),
-    isPinned: false,
+    isPinned: isPinnedState.value,
     panelWidth: 320,
     setActiveTab: vi.fn(),
     setIsPinned: setIsPinnedSpy,
@@ -314,8 +311,6 @@ function createConversations(): ConversationState {
     activeSessionId: null,
     onNewChat: vi.fn(),
     onSelectSession: vi.fn(),
-    agents: [],
-    onNavigateToAgent: vi.fn(),
   };
 }
 
@@ -334,6 +329,7 @@ describe("ChatPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     isMobileState.value = false;
+    isPinnedState.value = false;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -453,7 +449,7 @@ describe("ChatPage", () => {
       expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
         "true",
       );
-      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -467,6 +463,22 @@ describe("ChatPage", () => {
       statusBar.compareDocumentPosition(chatInput) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("keeps the lower status bar visible for regular web chat sessions", async () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+    });
   });
 
   it("locks CLI-owned footer controls while proxy-attached and shows attached session settings", async () => {
@@ -539,6 +551,88 @@ describe("ChatPage", () => {
     expect(
       screen.getByTestId("activity-panel-chat-session-id"),
     ).toHaveTextContent("terminal-2");
+  });
+
+  it("threads the shared session catalog into the activity panel and resumes with auto fallback", async () => {
+    const continueSessionInChat = vi.fn(async () => "continued-session");
+
+    await act(async () => {
+      render(
+        <ChatPage
+          chat={createChat({
+            dbSessionId: "web-main-1",
+            continueSessionInChat,
+          })}
+          conversations={createConversations()}
+          voice={createVoice()}
+          projectId="proj-1"
+          allProjectSessions={[
+            {
+              id: "session-1",
+              ref: "#11",
+              external_id: "ext-11",
+              source: "claude",
+              project_id: "proj-1",
+              title: "Session One",
+              status: "active",
+              model: "sonnet",
+              message_count: 1,
+              created_at: "2026-04-01T00:00:00Z",
+              updated_at: "2026-04-01T00:00:00Z",
+              seq_num: 11,
+              summary_markdown: null,
+              digest_markdown: null,
+              git_branch: "main",
+              usage_input_tokens: 0,
+              usage_output_tokens: 0,
+              had_edits: false,
+              agent_depth: 0,
+              chat_mode: null,
+              agent_run_id: null,
+              parent_session_id: null,
+              session_type: "web_chat",
+              terminal_context: null,
+            },
+            {
+              id: "session-2",
+              ref: "#12",
+              external_id: "ext-12",
+              source: "codex",
+              project_id: "proj-1",
+              title: "Session Two",
+              status: "expired",
+              model: "gpt-5.4",
+              message_count: 2,
+              created_at: "2026-04-02T00:00:00Z",
+              updated_at: "2026-04-02T00:00:00Z",
+              seq_num: 12,
+              summary_markdown: null,
+              digest_markdown: null,
+              git_branch: "main",
+              usage_input_tokens: 0,
+              usage_output_tokens: 0,
+              had_edits: false,
+              agent_depth: 0,
+              chat_mode: null,
+              agent_run_id: null,
+              parent_session_id: null,
+              session_type: "terminal",
+              terminal_context: null,
+            },
+          ]}
+        />,
+      );
+    });
+
+    expect(screen.getByTestId("activity-panel-session-count")).toHaveTextContent("2");
+
+    fireEvent.click(screen.getByTestId("resume-activity-session"));
+
+    await waitFor(() => {
+      expect(continueSessionInChat).toHaveBeenCalledWith("resume-target", "proj-1", {
+        fallbackContext: "auto",
+      });
+    });
   });
 
   it("hides the entire chat input pane while watching a swapped terminal", async () => {
@@ -700,6 +794,7 @@ describe("ChatPage", () => {
       model: "sonnet",
       reasoningEffort: "auto",
       chatMode: null,
+      fallbackContext: "auto",
     });
   });
 
@@ -734,7 +829,7 @@ describe("ChatPage", () => {
     });
   });
 
-  it("renders the activity-panel toggle inside the chat input when the input is visible", async () => {
+  it("renders the activity-panel toggle in the status bar when the chat input is visible", async () => {
     render(
       <ChatPage
         chat={createChat()}
@@ -744,10 +839,10 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("chat-input-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId("chat-input-panel-toggle"));
+    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -826,8 +921,27 @@ describe("ChatPage", () => {
     expect(setIsPinnedSpy).not.toHaveBeenCalled();
   });
 
-  it("closes the activity panel after plan changes are requested on mobile", async () => {
+  it("does not unpin on mobile when the activity panel is already unpinned", async () => {
     isMobileState.value = true;
+
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+    });
+
+    expect(setIsPinnedSpy).not.toHaveBeenCalled();
+  });
+
+  it("closes the activity panel after plan changes are requested on mobile when pinned", async () => {
+    isMobileState.value = true;
+    isPinnedState.value = true;
     const onRequestPlanChanges = vi.fn();
 
     render(

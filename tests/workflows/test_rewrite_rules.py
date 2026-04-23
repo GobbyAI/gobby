@@ -1,4 +1,4 @@
-"""Tests for rewrite_input rules: MCP nesting, skip_validation strip, require-uv, regex_replace."""
+"""Tests for rewrite_input rules and require-uv block regression coverage."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
-from gobby.workflows.rule_engine import RuleEngine
-from gobby.workflows.sync import get_bundled_rules_path, sync_bundled_rules
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
@@ -350,45 +350,37 @@ class TestShlexQuoteFilter:
         assert result == "''"
 
 
-REQUIRE_UV_COMMAND_PATTERN = (
-    r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
-)
+REQUIRE_UV_COMMAND_PATTERN = r"(^|(?<=[;&|]))\s*(?:sudo\s+)?(?:pip3?\b|python(?:3(?:\.\d+)?)?\b)"
+REQUIRE_UV_REASON = "Bare python/pip is not permitted in this repo. Use uv instead."
 
 
-class TestRequireUvRewrite:
-    """Tests for the require-uv rewrite rule pattern."""
+def _insert_require_uv_block_rule(manager: LocalWorkflowDefinitionManager) -> None:
+    _insert_rule(
+        manager,
+        "require-uv",
+        RuleDefinitionBody(
+            event=RuleEvent.BEFORE_TOOL,
+            when="variables.get('require_uv')",
+            effects=[
+                RuleEffect(
+                    type="block",
+                    tools=["Bash"],
+                    command_pattern=REQUIRE_UV_COMMAND_PATTERN,
+                    reason=REQUIRE_UV_REASON,
+                ),
+            ],
+        ),
+    )
+
+
+class TestRequireUvBlockRule:
+    """Tests for the require-uv block rule pattern."""
 
     @pytest.mark.asyncio
-    async def test_rewrites_bare_python(
+    async def test_blocks_bare_python(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        _insert_rule(
-            manager,
-            "require-uv",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when="variables.get('require_uv') and event.data.get('tool_name') == 'Bash'",
-                effects=[
-                    RuleEffect(
-                        type="inject_context",
-                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
-                        template="Gobby rewrote your command to use uv.",
-                    ),
-                    RuleEffect(
-                        type="rewrite_input",
-                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
-                        input_updates={
-                            "command": (
-                                "{{ event.data.tool_input.command"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?pip3?\\\\b', '\\\\1\\\\2uv pip')"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?python(?:3(?:\\\\.\\\\d+)?)?\\\\b', '\\\\1\\\\2uv run python') }}"
-                            ),
-                        },
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        _insert_require_uv_block_rule(manager)
 
         event = _make_event(
             data={
@@ -400,37 +392,16 @@ class TestRequireUvRewrite:
         engine = RuleEngine(db)
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
-        assert response.decision == "allow"
-        assert response.modified_input is not None
-        assert "uv run python" in response.modified_input["command"]
-        assert response.auto_approve is True
+        assert response.decision == "block"
+        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.modified_input is None
+        assert response.auto_approve is False
 
     @pytest.mark.asyncio
-    async def test_rewrites_shell_alias_via_normalized_bash(
+    async def test_blocks_shell_alias_via_normalized_bash(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        _insert_rule(
-            manager,
-            "require-uv",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when="variables.get('require_uv') and event.data.get('tool_name') == 'Bash'",
-                effects=[
-                    RuleEffect(
-                        type="rewrite_input",
-                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
-                        input_updates={
-                            "command": (
-                                "{{ event.data.tool_input.command"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?pip3?\\\\b', '\\\\1\\\\2uv pip')"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?python(?:3(?:\\\\.\\\\d+)?)?\\\\b', '\\\\1\\\\2uv run python') }}"
-                            ),
-                        },
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        _insert_require_uv_block_rule(manager)
 
         event = _make_event(
             data={
@@ -442,38 +413,16 @@ class TestRequireUvRewrite:
         engine = RuleEngine(db)
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
-        assert response.decision == "allow"
-        assert response.modified_input is not None
-        assert "uv run python" in response.modified_input["command"]
-        assert response.auto_approve is True
+        assert response.decision == "block"
+        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.modified_input is None
 
     @pytest.mark.asyncio
     async def test_passthrough_uv_command(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """Commands already using uv should not trigger a rewrite at all."""
-        _insert_rule(
-            manager,
-            "require-uv",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when="variables.get('require_uv') and event.data.get('tool_name') == 'Bash'",
-                effects=[
-                    RuleEffect(
-                        type="rewrite_input",
-                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
-                        input_updates={
-                            "command": (
-                                "{{ event.data.tool_input.command"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?pip3?\\\\b', '\\\\1\\\\2uv pip')"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?python(?:3(?:\\\\.\\\\d+)?)?\\\\b', '\\\\1\\\\2uv run python') }}"
-                            ),
-                        },
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        """Commands already using uv should not block or rewrite."""
+        _insert_require_uv_block_rule(manager)
 
         event = _make_event(
             data={
@@ -489,32 +438,11 @@ class TestRequireUvRewrite:
         assert response.modified_input is None
 
     @pytest.mark.asyncio
-    async def test_compound_command(
+    async def test_compound_command_blocks(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """Compound commands should only rewrite the python/pip parts."""
-        _insert_rule(
-            manager,
-            "require-uv",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when="variables.get('require_uv') and event.data.get('tool_name') == 'Bash'",
-                effects=[
-                    RuleEffect(
-                        type="rewrite_input",
-                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
-                        input_updates={
-                            "command": (
-                                "{{ event.data.tool_input.command"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?pip3?\\\\b', '\\\\1\\\\2uv pip')"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?python(?:3(?:\\\\.\\\\d+)?)?\\\\b', '\\\\1\\\\2uv run python') }}"
-                            ),
-                        },
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        """Compound commands should block instead of rewriting python/pip parts."""
+        _insert_require_uv_block_rule(manager)
 
         event = _make_event(
             data={
@@ -526,39 +454,16 @@ class TestRequireUvRewrite:
         engine = RuleEngine(db)
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
-        assert response.decision == "allow"
-        assert response.modified_input is not None
-        cmd = response.modified_input["command"]
-        assert "echo hi" in cmd
-        assert "uv pip" in cmd
+        assert response.decision == "block"
+        assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
+        assert response.modified_input is None
 
     @pytest.mark.asyncio
-    async def test_non_python_command_no_rewrite(
+    async def test_non_python_command_no_block(
         self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        """Non-python Bash commands should not be rewritten."""
-        _insert_rule(
-            manager,
-            "require-uv",
-            RuleDefinitionBody(
-                event=RuleEvent.BEFORE_TOOL,
-                when="variables.get('require_uv') and event.data.get('tool_name') == 'Bash'",
-                effects=[
-                    RuleEffect(
-                        type="rewrite_input",
-                        command_pattern=REQUIRE_UV_COMMAND_PATTERN,
-                        input_updates={
-                            "command": (
-                                "{{ event.data.tool_input.command"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?pip3?\\\\b', '\\\\1\\\\2uv pip')"
-                                " | regex_replace('(^|(?<=[;&|]))(\\\\s*)(?:sudo\\\\s+)?python(?:3(?:\\\\.\\\\d+)?)?\\\\b', '\\\\1\\\\2uv run python') }}"
-                            ),
-                        },
-                        auto_approve=True,
-                    ),
-                ],
-            ),
-        )
+        """Non-python Bash commands should not block or rewrite."""
+        _insert_require_uv_block_rule(manager)
 
         event = _make_event(
             data={
@@ -571,7 +476,6 @@ class TestRequireUvRewrite:
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
         assert response.decision == "allow"
-        # Per-effect when blocks the rewrite since 'python'/'pip' not in command
         assert response.modified_input is None
 
 
@@ -613,3 +517,62 @@ class TestCompressBashOutputBundledRule:
         assert response.modified_input is not None
         assert "gsqz" in response.modified_input["command"]
         assert "echo ok" in response.modified_input["command"]
+
+
+class TestPermissionResponseEffects:
+    """set_permission_response and set_retry should preserve explicit empty/false values."""
+
+    @pytest.mark.asyncio
+    async def test_permission_response_keeps_empty_payloads(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "permission-clear",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[
+                    RuleEffect(
+                        type="set_permission_response",
+                        permission_decision="allow",
+                        input_updates={},
+                        updated_permissions=[],
+                    )
+                ],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
+            session_id="sess-1",
+            variables={},
+        )
+
+        assert response.decision == "allow"
+        assert response.permission_decision == "allow"
+        assert response.modified_input == {}
+        assert response.updated_permissions == []
+
+    @pytest.mark.asyncio
+    async def test_set_retry_preserves_explicit_false(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "no-retry",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="set_retry", retry=False)],
+            ),
+        )
+
+        engine = RuleEngine(db)
+        response = await engine.evaluate(
+            _make_event(data={"tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
+            session_id="sess-1",
+            variables={},
+        )
+
+        assert response.decision == "allow"
+        assert response.retry is False

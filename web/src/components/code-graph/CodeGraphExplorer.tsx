@@ -11,8 +11,8 @@ const CODE_GRAPH_LIMIT_MIN = 10
 const CODE_GRAPH_LIMIT_MAX = IS_IOS ? 100 : IS_MOBILE ? 200 : 1000
 const CODE_GRAPH_LIMIT_STEP = 10
 
-const DEFAULT_CHARGE = -200
-const DEFAULT_LINK_DIST = 80
+const DEFAULT_CHARGE = -120
+const DEFAULT_LINK_DIST = 60
 const DEFAULT_CENTER = 0.05
 
 interface CodeGraphExplorerProps {
@@ -32,6 +32,8 @@ const NODE_COLORS: Record<string, string> = {
   constant: '#f97316',
   variable: '#64748b',
   type: '#a78bfa',
+  unresolved: '#ef4444',
+  external: '#fb7185',
 }
 
 const EDGE_COLORS: Record<string, string> = {
@@ -216,7 +218,9 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
   // Build force data
   const forceData = useMemo(() => buildForceData(graphData), [graphData])
 
-  // Apply force parameters whenever data or physics values change
+  // Apply force parameters whenever data or physics values change, and reheat
+  // the simulation so a fresh batch of nodes actually spreads instead of
+  // collapsing into one super-cluster at the origin.
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
@@ -226,18 +230,8 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     if (IS_MOBILE) {
       try { fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2)) } catch (e) { console.warn('CodeGraphExplorer: setPixelRatio failed', e) }
     }
+    try { fg.d3ReheatSimulation() } catch { /* simulation may not be ready */ }
   }, [forceData, charge, linkDist, centerStrength])
-
-  // Reheat simulation only when physics sliders change (not on data load)
-  const physicsInitialized = useRef(false)
-  useEffect(() => {
-    if (!physicsInitialized.current) {
-      physicsInitialized.current = true
-      return
-    }
-    const fg = fgRef.current
-    if (fg) fg.d3ReheatSimulation()
-  }, [charge, linkDist, centerStrength])
 
   // Search
   const searchLower = searchQuery.toLowerCase()
@@ -251,7 +245,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     if (blastMode) {
       const opts = node.type === 'file'
         ? { filePath: node.id }
-        : { symbolName: node.name }
+        : { symbolId: node.id }
       const data = await fetchBlastRadius(projectId, opts)
       if (data) {
         const affected = new Set(data.nodes.map((n: any) => n.id))
@@ -377,8 +371,14 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       if (!blastData.has(srcId) || !blastData.has(tgtId)) return 'rgba(60,60,60,0.1)'
     }
     if (isSearchActive) {
-      const srcMatch = String(srcId).toLowerCase().includes(searchLower)
-      const tgtMatch = String(tgtId).toLowerCase().includes(searchLower)
+      const srcLabel = typeof link.source === 'object'
+        ? (link.source.name ?? link.source.id)
+        : link.source
+      const tgtLabel = typeof link.target === 'object'
+        ? (link.target.name ?? link.target.id)
+        : link.target
+      const srcMatch = String(srcLabel).toLowerCase().includes(searchLower)
+      const tgtMatch = String(tgtLabel).toLowerCase().includes(searchLower)
       if (!srcMatch && !tgtMatch) return 'rgba(60,60,60,0.15)'
     }
     return link.color || edgeColor(link.type) || 'rgba(120,120,120,0.4)'

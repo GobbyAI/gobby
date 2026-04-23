@@ -8,7 +8,7 @@ import pytest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 
 pytestmark = pytest.mark.unit
@@ -228,7 +228,7 @@ class TestGetSkillTool:
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
         # Create a session to track against
-        session_mgr = LocalSessionManager(populated_db)
+        session_mgr = SessionManager(populated_db)
         session = session_mgr.register(
             external_id="test-ext-id",
             machine_id="test-machine",
@@ -272,7 +272,7 @@ class TestGetSkillTool:
         """Test that calling get_skill twice with same session records only one row."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
 
-        session_mgr = LocalSessionManager(populated_db)
+        session_mgr = SessionManager(populated_db)
         session = session_mgr.register(
             external_id="test-ext-id",
             machine_id="test-machine",
@@ -305,3 +305,27 @@ class TestGetSkillTool:
         # Skill lookup should still succeed
         assert result["success"] is True
         assert result["skill"]["name"] == "git-commit"
+
+    @pytest.mark.asyncio
+    async def test_get_skill_resolves_internal_skill_by_name(
+        self, db: LocalDatabase, storage: LocalSkillManager
+    ) -> None:
+        """get_skill must still resolve internal skills — they're loaded by other skills."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        storage.create_skill(
+            name="plan-methodology",
+            description="Internal drafting methodology",
+            content="# Methodology\n\nInternal content.",
+            metadata={"internal": True},
+            enabled=True,
+        )
+
+        registry = create_skills_registry(db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="plan-methodology")
+
+        assert result["success"] is True
+        assert result["skill"]["name"] == "plan-methodology"
+        assert "Internal content." in result["skill"]["content"]

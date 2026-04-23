@@ -14,7 +14,7 @@ from tests.servers.conftest import create_http_server
 if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
     from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -24,7 +24,7 @@ class TestProjectRoutes:
 
     @pytest.fixture
     def client(
-        self, session_manager: LocalSessionManager, project_manager: LocalProjectManager
+        self, session_manager: SessionManager, project_manager: LocalProjectManager
     ) -> TestClient:
         """Create a test client with real session_manager and project_manager."""
         server = create_http_server(
@@ -126,7 +126,7 @@ class TestProjectRoutes:
         self,
         client: TestClient,
         real_project: dict,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
     ) -> None:
         """Project stats reflect actual session and task counts."""
         # Create a session for this project using register()

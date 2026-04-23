@@ -293,7 +293,7 @@ def e2e_project_dir() -> Generator[Path]:
 
         # Copy shared pipelines and agents for spawn_agent tests
         from gobby.agents.sync import get_bundled_agents_path
-        from gobby.workflows.sync import get_bundled_pipelines_path
+        from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 
         shared_pipelines = get_bundled_pipelines_path()
         if shared_pipelines.exists():
@@ -354,15 +354,6 @@ gobby_tasks:
 
 session_summary:
   summary_file_path: "{gobby_home}/session_summaries"
-
-conductor:
-  daily_budget_tokens: 10_000_000
-  warning_threshold: 0.8
-  throttle_threshold: 0.9
-  tracking_window_days: 7
-
-metrics:
-  daily_budget_tokens: 10_000_000
 """
 
     config_path.write_text(config_content)
@@ -667,7 +658,7 @@ class CLIEventSimulator:
     ) -> dict[str, Any]:
         """Set usage statistics for a test session.
 
-        This is for E2E testing of token budget throttling.
+        This is for E2E testing of usage reporting and related metrics surfaces.
         """
         payload = {
             "session_id": session_id,

@@ -49,14 +49,14 @@ def _make_session_obj(
 
 
 def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:
-    """Create a TmuxPaneMonitor with a mock session_storage that returns given active runs."""
+    """Create a TmuxPaneMonitor with a mock session manager."""
     mock_db = MagicMock()
-    mock_session_storage = MagicMock()
-    mock_session_storage.db = mock_db
+    mock_session_manager = MagicMock()
+    mock_session_manager.db = mock_db
     monitor = TmuxPaneMonitor(
         session_end_callback=callback,
         poll_interval=1.0,
-        session_storage=mock_session_storage,
+        session_manager=mock_session_manager,
     )
     return monitor
 

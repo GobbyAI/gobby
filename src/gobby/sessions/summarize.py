@@ -59,7 +59,7 @@ async def generate_session_summaries(
 
     Args:
         session_id: Platform session ID (UUID).
-        session_manager: LocalSessionManager instance.
+        session_manager: SessionManager instance.
         llm_service: LLM service for generating summaries.
         db: Database for prompt template loading.
         write_file: Write summary files to disk.

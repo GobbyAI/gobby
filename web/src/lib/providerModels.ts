@@ -448,12 +448,41 @@ function parseGeminiModelInfo(model: ProviderModelOption): ParsedModelInfo {
   };
 }
 
+function stripTrailingParentheticalGroups(value: string): string {
+  // Iterate instead of regex so nested trailing groups like "(foo (bar))" are stripped correctly.
+  let cleaned = value.trim();
+
+  while (cleaned.endsWith(")")) {
+    let depth = 0;
+    let matchingOpenIndex = -1;
+
+    for (let index = cleaned.length - 1; index >= 0; index -= 1) {
+      const char = cleaned[index];
+      if (char === ")") {
+        depth += 1;
+      } else if (char === "(") {
+        depth -= 1;
+        if (depth === 0) {
+          matchingOpenIndex = index;
+          break;
+        }
+      }
+    }
+
+    if (matchingOpenIndex < 0) {
+      break;
+    }
+
+    cleaned = cleaned.slice(0, matchingOpenIndex).trimEnd();
+  }
+
+  return cleaned;
+}
+
 function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
   const rawValue = model.value || model.label;
-  const authMatch = rawValue.match(/\(([^)]+)\)$/);
-  const authSuffix = authMatch?.[1] ? ` (${titleCase(authMatch[1].replace(/-/g, " "))})` : "";
-  const modelId = authMatch ? rawValue.slice(0, authMatch.index).trim() : rawValue;
-  const displayLabel = humanizeFallbackModelLabel(model.label || modelId) + authSuffix;
+  const modelId = stripTrailingParentheticalGroups(rawValue);
+  const displayLabel = humanizeFallbackModelLabel(modelId);
   const normalized = normalizeModelIdentifier(modelId) ?? "";
 
   let strengthRank = 0;

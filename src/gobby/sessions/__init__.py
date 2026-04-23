@@ -6,6 +6,6 @@ This package provides:
 - Transcript parsers: CLI-specific transcript parsing (Claude, Codex, Gemini, etc.)
 """
 
-from gobby.sessions.manager import SessionManager
+from gobby.storage.sessions import SessionManager
 
 __all__ = ["SessionManager"]

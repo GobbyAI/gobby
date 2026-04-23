@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { SessionSidebar } from '../SessionSidebar'
-import type { GobbySession } from '../../../hooks/useSessions'
+import type { GobbySession } from '../../../types/sessions'
 
 function createTestSession(overrides: Partial<GobbySession> = {}): GobbySession {
   return {
@@ -18,6 +18,7 @@ function createTestSession(overrides: Partial<GobbySession> = {}): GobbySession 
     updated_at: '2026-04-14T12:00:00Z',
     seq_num: null,
     summary_markdown: null,
+    digest_markdown: null,
     git_branch: null,
     usage_input_tokens: 0,
     usage_output_tokens: 0,

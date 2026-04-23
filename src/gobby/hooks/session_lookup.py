@@ -11,13 +11,13 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.hooks.session_types import HookSessionManager
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.hooks.session_coordinator import SessionCoordinator
-    from gobby.sessions.manager import SessionManager
     from gobby.storage.session_tasks import SessionTaskManager
 
 
@@ -27,13 +27,13 @@ class SessionLookupService:
     Handles:
     - Cache lookup via SessionManager
     - Database fallback with locking via SessionCoordinator
-    - Auto-registration of unknown sessions
+    - Auto-registration of unknown non-terminal sessions
     - Active task context enrichment
     """
 
     def __init__(
         self,
-        session_manager: SessionManager,
+        session_manager: HookSessionManager,
         session_coordinator: SessionCoordinator,
         session_task_manager: SessionTaskManager,
         get_machine_id: Callable[[], str],
@@ -53,7 +53,7 @@ class SessionLookupService:
         Looks up the platform session ID from the CLI's external_id via:
         1. SessionManager cache
         2. Database lookup with locking
-        3. Auto-registration if not found
+        3. Auto-registration if not found for non-terminal events
 
         Also enriches the event with active task context and stores
         the platform session ID in event metadata.
@@ -166,6 +166,18 @@ class SessionLookupService:
                                 recovered_session.source,
                             )
                             return platform_session_id
+
+                        if event.event_type == HookEventType.SESSION_END:
+                            self._logger.warning(
+                                "Skipping auto-registration for orphaned SESSION_END: "
+                                "external_id=%s not found in DB "
+                                "(machine_id=%s, project_id=%s, source=%s).",
+                                external_id,
+                                machine_id,
+                                project_id,
+                                event.source.value,
+                            )
+                            return None
 
                         # Auto-register session if not found
                         self._logger.warning(

@@ -9,7 +9,6 @@ This module provides operations for managing task lifecycle:
 """
 
 import json
-import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,8 +17,6 @@ from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._models import Task, TaskHasChildrenError, TaskHasDependentsError
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
-
-logger = logging.getLogger(__name__)
 
 
 def close_task(
@@ -68,19 +65,6 @@ def close_task(
         closed_commit_sha=closed_commit_sha,
         validation_override_reason=validation_override_reason,
     )
-    now = datetime.now(UTC).isoformat()
-
-    # Update any associated worktrees to merged status (outside transaction)
-    # This is best-effort and should not roll back the task close
-    try:
-        db.execute(
-            """UPDATE worktrees SET status = 'merged', updated_at = ?
-            WHERE task_id = ? AND status = 'active'""",
-            (now, task_id),
-        )
-    except Exception as wt_err:
-        # Worktree update is best-effort, don't fail task close
-        logger.debug(f"Failed to update worktree status for task {task_id}: {wt_err}")
 
 
 def reopen_task(
@@ -102,19 +86,6 @@ def reopen_task(
         ValueError: If task not found or already open
     """
     _reopen_task_transition(db, task_id, reason=reason)
-    now = datetime.now(UTC).isoformat()
-
-    # Reactivate any merged or abandoned worktrees for this task (outside transaction)
-    # This is best-effort and should not roll back the task reopen
-    try:
-        db.execute(
-            """UPDATE worktrees SET status = 'active', updated_at = ?
-            WHERE task_id = ? AND status IN ('merged', 'abandoned')""",
-            (now, task_id),
-        )
-    except Exception as wt_err:
-        # Worktree update is best-effort, don't fail task reopen
-        logger.debug(f"Failed to reactivate worktree for task {task_id}: {wt_err}")
 
 
 def add_label(db: DatabaseProtocol, task_id: str, label: str) -> Task:

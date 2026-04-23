@@ -109,6 +109,7 @@ class SkillSearch:
         embedding_model: str = "nomic-embed-text",
         embedding_api_base: str | None = None,
         embedding_api_key: str | None = None,
+        embedding_dim: int | None = None,
     ):
         """Initialize skill search.
 
@@ -119,6 +120,7 @@ class SkillSearch:
             embedding_model: Embedding model name (from EmbeddingsConfig)
             embedding_api_base: API base URL for embedding endpoint
             embedding_api_key: API key for embedding provider
+            embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
         """
         if config is None:
             config = SearchConfig(mode="auto")
@@ -141,6 +143,7 @@ class SkillSearch:
             embedding_model=embedding_model,
             embedding_api_base=embedding_api_base,
             embedding_api_key=embedding_api_key,
+            embedding_dim=embedding_dim,
         )
 
         # Rowid → skill_id mapping for contentless FTS5 results

@@ -11,6 +11,8 @@ from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
 
+_SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
+
 
 @pytest.fixture
 def mock_db():
@@ -30,7 +32,7 @@ def mock_config():
 
 @pytest.fixture
 def manager(mock_db, mock_config):
-    with patch("gobby.sessions.lifecycle.LocalSessionManager"):
+    with patch(_SESSION_MANAGER_PATCH):
         return SessionLifecycleManager(mock_db, mock_config)
 
 
@@ -73,10 +75,12 @@ class TestSessionLifecycleManager:
         manager.session_manager.pause_inactive_active_sessions.return_value = 2
         manager.session_manager.expire_orphaned_handoff_sessions.return_value = 1
         manager.session_manager.expire_stale_sessions.return_value = 3
+        manager.session_manager.expire_empty_sessions.return_value = 4
+        manager.session_manager.prune_empty_sessions.return_value = 5
 
         count = await manager._expire_stale_sessions()
 
-        assert count == 6
+        assert count == 15
         manager.session_manager.pause_inactive_active_sessions.assert_called_once_with(
             timeout_minutes=manager.config.active_session_pause_minutes
         )
@@ -86,6 +90,8 @@ class TestSessionLifecycleManager:
         manager.session_manager.expire_stale_sessions.assert_called_once_with(
             timeout_hours=manager.config.stale_session_timeout_hours
         )
+        manager.session_manager.expire_empty_sessions.assert_called_once_with(timeout_hours=2)
+        manager.session_manager.prune_empty_sessions.assert_called_once_with(min_age_hours=1)
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_none_found(self, manager):
@@ -693,6 +699,8 @@ class TestProcessSessionTranscriptTokenPreservation:
     @pytest.mark.asyncio
     async def test_zero_tokens_updates_when_existing_also_zero(self, tmp_path, manager):
         """When both transcript and existing are 0, update_usage is still called (nothing to preserve)."""
+        from gobby.sessions.transcripts.base import ParsedMessage
+
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
 
@@ -704,7 +712,9 @@ class TestProcessSessionTranscriptTokenPreservation:
         manager.session_manager.get.return_value = session
 
         with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
-            msg = MagicMock()
+            # spec=ParsedMessage so the lifecycle path's ParsedToolEvent filter
+            # (added when Codex MCP synthesis was wired) doesn't drop the mock.
+            msg = MagicMock(spec=ParsedMessage)
             msg.model = None
             msg.usage = None
             MockParser.return_value.parse_lines.return_value = [msg]

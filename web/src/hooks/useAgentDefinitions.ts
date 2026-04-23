@@ -9,6 +9,7 @@ export interface AgentDefInfo {
     provider?: string
     model?: string | null
     isolation?: string | null
+    surfaces?: string[] | null
   }
   source: string
   sources?: string[] | null
@@ -16,9 +17,19 @@ export interface AgentDefInfo {
   has_template_update?: boolean
 }
 
-export function useAgentDefinitions(projectId?: string | null, sourceFilter?: string) {
+interface UseAgentDefinitionsOptions {
+  sourceFilter?: string
+  surfaceFilter?: string
+}
+
+export function useAgentDefinitions(
+  projectId?: string | null,
+  options?: UseAgentDefinitionsOptions,
+) {
   const [definitions, setDefinitions] = useState<AgentDefInfo[]>([])
   const [loading, setLoading] = useState(false)
+  const sourceFilter = options?.sourceFilter
+  const surfaceFilter = options?.surfaceFilter
 
   const fetchDefs = useCallback(async () => {
     setLoading(true)
@@ -26,6 +37,7 @@ export function useAgentDefinitions(projectId?: string | null, sourceFilter?: st
       const searchParams = new URLSearchParams()
       if (projectId) searchParams.set('project_id', projectId)
       if (sourceFilter) searchParams.set('source_filter', sourceFilter)
+      if (surfaceFilter) searchParams.set('surface_filter', surfaceFilter)
       const qs = searchParams.toString()
       const params = qs ? `?${qs}` : ''
       const res = await fetch(`/api/agents/definitions${params}`)
@@ -38,7 +50,7 @@ export function useAgentDefinitions(projectId?: string | null, sourceFilter?: st
     } finally {
       setLoading(false)
     }
-  }, [projectId, sourceFilter])
+  }, [projectId, sourceFilter, surfaceFilter])
 
   useEffect(() => {
     fetchDefs()

@@ -89,9 +89,6 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
   return (
     <main className="projects-page">
       <div className="projects-page-header">
-        <div className="projects-page-title-row">
-          <h2 className="projects-page-title">Project</h2>
-        </div>
         <TabBar
           tabs={TABS}
           activeTab={activeTab}
@@ -109,7 +106,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
             </div>
           ))}
 
-        {activeTab === "files" && <FilesTab projectId={projectId ?? null} />}
+        {activeTab === "files" && <FilesTab projectId={projectId ?? null} layout="responsive-split" />}
 
         {activeTab === "graph" && (
           <CodeGraphExplorer projectId={projectId ?? null} />

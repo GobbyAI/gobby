@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.config.persistence import MemoryConfig
+from gobby.memory.identity import entity_key
 from gobby.memory.manager import MemoryManager
 
 pytestmark = pytest.mark.unit
@@ -29,11 +30,6 @@ def _make_manager(
     db.execute = MagicMock()
 
     config = MemoryConfig()
-    # MemoryConfig uses extra="ignore", so graph-search knobs must be
-    # injected after construction for getattr() in the manager to find them.
-    object.__setattr__(config, "neo4j_graph_search", graph_search)
-    object.__setattr__(config, "neo4j_graph_min_score", graph_min_score)
-    object.__setattr__(config, "neo4j_rrf_k", rrf_k)
 
     return MemoryManager(
         db=db,
@@ -43,6 +39,9 @@ def _make_manager(
         embed_fn=embed_fn,
         neo4j_url=neo4j_url,
         neo4j_auth="neo4j:password" if neo4j_url else None,
+        neo4j_graph_search=graph_search,
+        neo4j_graph_min_score=graph_min_score,
+        neo4j_rrf_k=rrf_k,
     )
 
 
@@ -136,7 +135,7 @@ class TestSearchGraphForMemories:
     async def test_returns_direct_memory_ids(self) -> None:
         """_search_graph_for_memories returns memory IDs from entity vector search."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
@@ -149,12 +148,21 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
+                    "entity_key": entity_key(None, "Python"),
                     "name": "Python",
+                    "entity_type": "tool",
                     "labels": ["Tool"],
                     "score": 0.9,
                     "memory_ids": ["mem-1", "mem-2"],
                 },
-                {"name": "FastAPI", "labels": ["Framework"], "score": 0.8, "memory_ids": ["mem-3"]},
+                {
+                    "entity_key": entity_key(None, "FastAPI"),
+                    "name": "FastAPI",
+                    "entity_type": "framework",
+                    "labels": ["Framework"],
+                    "score": 0.8,
+                    "memory_ids": ["mem-3"],
+                },
             ]
         )
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=["mem-4"])
@@ -169,7 +177,7 @@ class TestSearchGraphForMemories:
     async def test_deduplicates_traversed_ids(self) -> None:
         """_search_graph_for_memories deduplicates IDs from traversal."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
@@ -180,7 +188,14 @@ class TestSearchGraphForMemories:
 
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "A", "labels": [], "score": 0.9, "memory_ids": ["mem-1"]},
+                {
+                    "entity_key": entity_key(None, "A"),
+                    "name": "A",
+                    "entity_type": "entity",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-1"],
+                },
             ]
         )
         # Traversal returns overlapping ID
@@ -197,7 +212,7 @@ class TestSearchGraphForMemories:
     async def test_returns_empty_when_no_entities(self) -> None:
         """_search_graph_for_memories returns empty when no entity matches."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
@@ -221,7 +236,7 @@ class TestSearchMemoriesGraphIntegration:
     async def test_parallel_search_with_rrf_merge(self) -> None:
         """search_memories runs Qdrant and graph search in parallel, merges via RRF."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1, 0.2])
@@ -239,7 +254,14 @@ class TestSearchMemoriesGraphIntegration:
         # Graph returns mem-2, mem-3
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "A", "labels": [], "score": 0.9, "memory_ids": ["mem-2", "mem-3"]},
+                {
+                    "entity_key": entity_key(None, "A"),
+                    "name": "A",
+                    "entity_type": "entity",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-2", "mem-3"],
+                },
             ]
         )
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
@@ -260,7 +282,7 @@ class TestSearchMemoriesGraphIntegration:
     async def test_graceful_degradation_graph_failure(self) -> None:
         """search_memories falls back to Qdrant-only when graph search fails."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -293,7 +315,7 @@ class TestSearchMemoriesGraphIntegration:
     async def test_qdrant_only_when_graph_search_disabled(self) -> None:
         """search_memories skips graph search when neo4j_graph_search is False."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -346,7 +368,7 @@ class TestSearchMemoriesGraphIntegration:
     async def test_user_source_boost_applied(self) -> None:
         """search_memories applies user source boost in graph-augmented mode."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -386,7 +408,7 @@ class TestGraphSearchProjectIdScoping:
     async def test_search_graph_for_memories_passes_project_id(self) -> None:
         """_search_graph_for_memories forwards project_id to KG service methods."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
@@ -397,7 +419,14 @@ class TestGraphSearchProjectIdScoping:
 
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
-                {"name": "Auth", "labels": [], "score": 0.9, "memory_ids": ["mem-1"]},
+                {
+                    "entity_key": "proj-A::auth",
+                    "name": "Auth",
+                    "entity_type": "concept",
+                    "labels": [],
+                    "score": 0.9,
+                    "memory_ids": ["mem-1"],
+                },
             ]
         )
         manager._kg_service.find_related_memory_ids = AsyncMock(return_value=[])
@@ -419,7 +448,7 @@ class TestGraphSearchProjectIdScoping:
     async def test_defense_in_depth_skips_cross_project_memories(self) -> None:
         """search_memories skips memories whose project_id doesn't match."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -469,7 +498,7 @@ class TestGraphSearchProjectIdScoping:
     async def test_defense_in_depth_allows_null_project_memories(self) -> None:
         """search_memories does NOT skip memories with null project_id (global memories)."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -507,7 +536,7 @@ class TestCreateMemoryPassesMemoryId:
     async def test_fire_background_graph_receives_memory_id(self) -> None:
         """_fire_background_graph is called with memory_id from create_memory."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         manager = _make_manager(
             neo4j_url="http://localhost:7474",
@@ -552,7 +581,7 @@ class TestTemporalDecayIntegration:
     async def test_graph_enabled_path_keeps_qdrant_similarity(self) -> None:
         """Graph-enabled search should preserve the real Qdrant score for semantic hits."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])
@@ -586,7 +615,7 @@ class TestTemporalDecayIntegration:
     async def test_older_memory_ranks_lower_graph_path(self) -> None:
         """In graph-augmented search, an older memory should rank below a recent one."""
         llm_service = MagicMock()
-        llm_service.get_default_provider = MagicMock(return_value=AsyncMock())
+        llm_service.get_provider_for_feature = MagicMock(return_value=(AsyncMock(), "haiku", None))
 
         vs = AsyncMock()
         embed_fn = AsyncMock(return_value=[0.1])

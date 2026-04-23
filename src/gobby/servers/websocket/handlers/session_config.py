@@ -45,6 +45,11 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
 
     session = mixin._chat_sessions.get(conversation_id) if conversation_id else None
     if session is not None and conversation_id:
+        if getattr(session, "chat_mode", None) == mode:
+            logger.debug(
+                "Chat mode unchanged ('%s') for conversation %s", mode, conversation_id[:8]
+            )
+            return
         session.set_chat_mode(mode)
         # Sync SDK permission mode so the agent gets a structured mode signal
         await session.sync_sdk_permission_mode()
@@ -86,8 +91,8 @@ async def handle_set_project(
     """Handle set_project message to switch the project for a conversation.
 
     Stops the existing CLI subprocess so the next message creates a fresh
-    session with the correct CWD and project context. Conversation history
-    is preserved via database-backed history injection.
+    session with the correct CWD and project context while keeping the
+    conversation_id stable.
 
     Message format:
     {
@@ -105,6 +110,10 @@ async def handle_set_project(
 
     session = mixin._chat_sessions.get(conversation_id)
     old_project_id = getattr(session, "project_id", None) if session else None
+
+    if session and old_project_id == new_project_id:
+        logger.debug("Project unchanged for conversation %s", conversation_id[:8])
+        return
 
     if session:
         await mixin._cancel_active_chat(conversation_id)
@@ -148,8 +157,7 @@ async def handle_set_worktree(
     """Handle set_worktree message to switch the worktree for a conversation.
 
     Stops the existing CLI subprocess so the next message creates a fresh
-    session with the worktree's CWD. Conversation history is preserved via
-    database-backed history injection.
+    session with the worktree's CWD while keeping the conversation_id stable.
 
     Message format:
     {
@@ -237,8 +245,7 @@ async def handle_set_agent(
     """Handle set_agent message to switch the active agent for a conversation.
 
     Stops the existing CLI subprocess so the next message creates a fresh
-    session with the new agent context. Conversation history is preserved
-    via database-backed history injection.
+    session with the new agent context while keeping the conversation_id stable.
 
     Message format:
     {
@@ -254,12 +261,45 @@ async def handle_set_agent(
         await mixin._send_error(websocket, "set_agent requires conversation_id and agent_name")
         return
 
+    session_manager = getattr(mixin, "session_manager", None)
+    if session_manager and agent_name != "default":
+        try:
+            existing_row = await asyncio.to_thread(session_manager.get, conversation_id)
+        except Exception:
+            existing_row = None
+        try:
+            from gobby.workflows.agent_resolver import resolve_agent
+
+            agent_body = await asyncio.to_thread(
+                resolve_agent,
+                agent_name,
+                session_manager.db,
+                getattr(existing_row, "source", None),
+                getattr(existing_row, "project_id", None),
+            )
+        except Exception as e:
+            logger.warning("Failed to resolve persona candidate '%s': %s", agent_name, e)
+            agent_body = None
+
+        if agent_body is None:
+            await mixin._send_error(websocket, f"Unknown agent definition '{agent_name}'")
+            return
+        if not agent_body.supports_surface("persona"):
+            await mixin._send_error(
+                websocket,
+                f"Agent definition '{agent_name}' is not persona-capable",
+            )
+            return
+
     # Tear down existing session (same pattern as set_worktree)
     session = mixin._chat_sessions.get(conversation_id)
+    current_agent_name = getattr(session, "_pending_agent_name", None) if session else None
+    if session and current_agent_name == agent_name:
+        logger.debug("Agent unchanged for conversation %s", conversation_id[:8])
+        return
     if session:
         await mixin._cancel_active_chat(conversation_id)
         if session.db_session_id:
-            session_manager = getattr(mixin, "session_manager", None)
             if session_manager:
                 try:
                     await asyncio.to_thread(
@@ -307,6 +347,10 @@ async def handle_set_provider(
 
     session = mixin._chat_sessions.get(conversation_id)
     old_provider = getattr(session, "provider", None) if session else None
+
+    if session and old_provider == provider:
+        logger.debug("Provider unchanged for conversation %s", conversation_id[:8])
+        return
 
     if session:
         await mixin._cancel_active_chat(conversation_id)

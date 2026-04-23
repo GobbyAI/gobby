@@ -65,6 +65,7 @@ class SkillManager:
         embedding_model: str = "nomic-embed-text",
         embedding_api_base: str | None = None,
         embedding_api_key: str | None = None,
+        embedding_dim: int | None = None,
     ):
         """Initialize the skill manager.
 
@@ -75,6 +76,7 @@ class SkillManager:
             embedding_model: Embedding model name (from EmbeddingsConfig)
             embedding_api_base: API base URL for embedding endpoint
             embedding_api_key: API key for embedding provider
+            embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
         """
         self._project_id = project_id
 
@@ -92,6 +94,7 @@ class SkillManager:
             embedding_model=embedding_model,
             embedding_api_base=embedding_api_base,
             embedding_api_key=embedding_api_key,
+            embedding_dim=embedding_dim,
         )
 
     @property
@@ -187,8 +190,8 @@ class SkillManager:
             source_type: Source type
             source_ref: Git ref for updates
             enabled: Whether skill is active
-            always_apply: Whether skill should always be injected
-            injection_format: How to inject skill (summary, full, content)
+            always_apply: Whether skill should always be advertised
+            injection_format: Manifest selection format (summary, full, content)
             project_id: Project scope (uses default if not specified)
             source: 'template' or 'installed' (default 'installed')
             **kwargs: Additional fields passed to storage

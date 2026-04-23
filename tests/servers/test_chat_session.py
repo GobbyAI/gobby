@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.config.app import DaemonConfig
+from gobby.config.features import ChatConfig
+from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.chat_session import ChatSession
 
 pytestmark = pytest.mark.unit
@@ -116,6 +119,35 @@ class TestCanUseTool:
         await answer_task
 
         assert session.has_pending_question is False
+
+
+class TestDefaultModelResolution:
+    """Tests for chat config default model resolution."""
+
+    def test_prefers_chat_model_when_provider_matches(self) -> None:
+        session = ChatSession(conversation_id="chat-default", provider="claude")
+        session._config = DaemonConfig(
+            chat=ChatConfig(provider="claude", model="sonnet"),
+            llm_providers=LLMProvidersConfig(
+                claude=LLMProviderConfig(models="haiku,sonnet,opus"),
+                default_model="opus",
+            ),
+        )
+
+        assert session._default_model == "sonnet"
+
+    def test_falls_back_to_global_default_when_chat_provider_mismatch(self) -> None:
+        session = ChatSession(conversation_id="chat-default", provider="claude")
+        session._config = DaemonConfig(
+            chat=ChatConfig(provider="codex", model="gpt-5"),
+            llm_providers=LLMProvidersConfig(
+                claude=LLMProviderConfig(models="haiku,sonnet,opus"),
+                codex=LLMProviderConfig(models="gpt-5"),
+                default_model="opus",
+            ),
+        )
+
+        assert session._default_model == "opus"
 
     @pytest.mark.asyncio
     async def test_provide_answer_stores_answers(self, session: ChatSession) -> None:

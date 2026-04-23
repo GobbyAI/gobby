@@ -2,7 +2,6 @@ import pytest
 
 from gobby.agents.spawners.command_builder import (
     build_cli_command,
-    build_codex_command_with_resume,
 )
 
 pytestmark = pytest.mark.unit
@@ -88,44 +87,3 @@ class TestBuildCliCommand:
         )
         assert cmd == ["gemini", "--acp", "--resume", "gem-session"]
         assert env == {"CUSTOM_VAR": "value"}
-
-
-class TestBuildCodexResume:
-    def test_basic_resume(self):
-        cmd = build_codex_command_with_resume("ext-123")
-        assert cmd == ["codex", "resume", "ext-123"]
-
-    def test_resume_with_prompt(self):
-        cmd = build_codex_command_with_resume("ext-123", prompt="continue")
-        assert cmd == ["codex", "resume", "ext-123", "continue"]
-
-    def test_resume_auto_approve(self):
-        cmd = build_codex_command_with_resume("ext-123", auto_approve=True)
-        assert cmd == ["codex", "resume", "ext-123", "--full-auto"]
-
-    def test_resume_with_model(self):
-        cmd = build_codex_command_with_resume("ext-123", model="gpt-4")
-        assert cmd == ["codex", "resume", "ext-123", "--model", "gpt-4"]
-
-    def test_resume_with_reasoning_effort(self):
-        cmd = build_codex_command_with_resume("ext-123", reasoning_effort="high")
-        assert cmd == ["codex", "-c", 'model_reasoning_effort="high"', "resume", "ext-123"]
-
-    def test_resume_with_working_directory(self):
-        cmd = build_codex_command_with_resume("ext-123", working_directory="/tmp")
-        assert cmd == ["codex", "resume", "ext-123", "-C", "/tmp"]
-
-    def test_resume_with_sandbox_args(self):
-        cmd = build_codex_command_with_resume(
-            "ext-123",
-            sandbox_args=["--sandbox", "workspace-write"],
-        )
-        assert cmd == ["codex", "resume", "ext-123", "--sandbox", "workspace-write"]
-
-    def test_resume_with_gobby_session(self):
-        cmd = build_codex_command_with_resume(
-            "ext-123", gobby_session_id="gob-789", prompt="fix it"
-        )
-        assert cmd[0:3] == ["codex", "resume", "ext-123"]
-        assert "Your Gobby session_id is: gob-789" in cmd[3]
-        assert "fix it" in cmd[3]

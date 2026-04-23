@@ -1,0 +1,33 @@
+tags: [plan-mode, enforcement, gobby, default]
+
+rules:
+  block-writes-outside-plan-artifact:
+    description: "Block file edits outside the current plan artifact during an active planning session"
+    event: before_tool
+    enabled: true
+    priority: 21
+    when: >
+      (
+        (
+          variables.get('_agent_type') == 'planner'
+          and not task_status_in(
+            variables.get('assigned_task_id'),
+            'review_approved', 'escalated', 'closed'
+          )
+        )
+        or (
+          variables.get('plan_review_mode') == 'delegated'
+          and variables.get('interactive_lock_label')
+        )
+      )
+      and not is_current_plan_artifact(
+        tool_input.get('file_path', ''),
+        variables.get('artifact_path')
+      )
+    effects:
+      - type: block
+        tools: [Edit, Write, NotebookEdit]
+        reason: |
+          A planning session is in progress — only the current plan artifact
+          (variables.artifact_path) may be edited. If artifact_path is not set,
+          all writes are blocked until the planning flow re-establishes it.

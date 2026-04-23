@@ -517,7 +517,7 @@ def test_resolve_session_id_with_ref() -> None:
     with (
         patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
         patch("gobby.cli.utils.get_project_context", return_value={"id": "proj-1"}),
-        patch("gobby.cli.utils.LocalSessionManager", return_value=mock_manager),
+        patch("gobby.cli.utils.SessionManager", return_value=mock_manager),
     ):
         result = resolve_session_id("#5")
     assert result == "uuid-resolved"
@@ -534,7 +534,7 @@ def test_resolve_session_id_value_error() -> None:
     with (
         patch("gobby.cli.utils.LocalDatabase", return_value=mock_db),
         patch("gobby.cli.utils.get_project_context", return_value=None),
-        patch("gobby.cli.utils.LocalSessionManager", return_value=mock_manager),
+        patch("gobby.cli.utils.SessionManager", return_value=mock_manager),
         pytest.raises(click.ClickException, match="ambiguous"),
     ):
         resolve_session_id("abc")

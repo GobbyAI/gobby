@@ -1,6 +1,7 @@
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from gobby.utils import deps
 
 
-def test_run_cmd():
+def test_run_cmd() -> None:
     # Success
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="test output\n")
@@ -21,14 +22,14 @@ def test_run_cmd():
         assert deps._run_cmd(["invalid_command"]) is None
 
 
-def test_get_gobby_version():
+def test_get_gobby_version() -> None:
     with patch("gobby.utils.version.get_version", return_value="1.0.0"):
         assert deps.get_gobby_version() == "1.0.0"
     with patch("gobby.utils.version.get_version", side_effect=Exception):
         assert deps.get_gobby_version() is None
 
 
-def test_get_gcode_version(tmp_path):
+def test_get_gcode_version(tmp_path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gcode-version"
         stamp.parent.mkdir(parents=True)
@@ -45,7 +46,7 @@ def test_get_gcode_version(tmp_path):
                 assert deps.get_gcode_version() is None
 
 
-def test_get_gsqz_version(tmp_path):
+def test_get_gsqz_version(tmp_path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gsqz-version"
         stamp.parent.mkdir(parents=True)
@@ -62,7 +63,7 @@ def test_get_gsqz_version(tmp_path):
                 assert deps.get_gsqz_version() is None
 
 
-def test_get_ghook_version(tmp_path):
+def test_get_ghook_version(tmp_path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".ghook-version"
         stamp.parent.mkdir(parents=True)
@@ -80,7 +81,7 @@ def test_get_ghook_version(tmp_path):
             assert deps.get_ghook_version() is None
 
 
-def test_get_gloc_version(tmp_path):
+def test_get_gloc_version(tmp_path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".gloc-version"
         stamp.parent.mkdir(parents=True)
@@ -98,28 +99,28 @@ def test_get_gloc_version(tmp_path):
             assert deps.get_gloc_version() is None
 
 
-def test_get_claude_code_version():
+def test_get_claude_code_version() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="claude 1.0.12"):
         assert deps.get_claude_code_version() == "1.0.12"
     with patch("gobby.utils.deps._run_cmd", return_value=None):
         assert deps.get_claude_code_version() is None
 
 
-def test_get_gemini_cli_version():
+def test_get_gemini_cli_version() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="gemini 2.1.0"):
         assert deps.get_gemini_cli_version() == "2.1.0"
     with patch("gobby.utils.deps._run_cmd", return_value=None):
         assert deps.get_gemini_cli_version() is None
 
 
-def test_get_codex_cli_version():
+def test_get_codex_cli_version() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="codex 3.0.0"):
         assert deps.get_codex_cli_version() == "3.0.0"
     with patch("gobby.utils.deps._run_cmd", return_value=None):
         assert deps.get_codex_cli_version() is None
 
 
-def test_coding_cli_hooks_status(tmp_path):
+def test_coding_cli_hooks_status(tmp_path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         claude = tmp_path / ".claude" / "settings.json"
         gemini = tmp_path / ".gemini" / "settings.json"
@@ -127,7 +128,7 @@ def test_coding_cli_hooks_status(tmp_path):
         claude.parent.mkdir()
         gemini.parent.mkdir()
 
-        claude.write_text("hook_dispatcher.py")
+        claude.write_text("ghook --gobby-owned --cli=claude")
         gemini.write_text("other text")
 
         result = deps.get_coding_cli_hooks_status()
@@ -136,14 +137,14 @@ def test_coding_cli_hooks_status(tmp_path):
         assert result["codex"] is False
 
 
-def test_check_hooks_in_file(tmp_path):
+def test_check_hooks_in_file(tmp_path) -> None:
     f = tmp_path / "settings.json"
     assert deps._check_hooks_in_file(f) is False
-    f.write_text("hook_dispatcher.py")
+    f.write_text("ghook --gobby-owned --cli=codex")
     assert deps._check_hooks_in_file(f) is True
 
 
-def test_external_tools():
+def test_external_tools() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="tmux 3.4"):
         assert deps.get_tmux_version() == "3.4"
     with patch("gobby.utils.deps._run_cmd", return_value="Docker version 27.1.1, build"):
@@ -156,11 +157,11 @@ def test_external_tools():
         assert deps.get_node_version() == "22.1.0"
 
 
-def test_tailscale_info():
+def test_tailscale_info() -> None:
     with patch("shutil.which", return_value=False):
         assert deps.get_tailscale_info() is None
 
-    def mock_run(cmd, **kwargs):
+    def mock_run(cmd: list[str], **kwargs: Any) -> str | None:
         if cmd == ["tailscale", "version"]:
             return "1.66.4\nother"
         if cmd == ["tailscale", "status", "--json"]:
@@ -181,8 +182,8 @@ def test_tailscale_info():
         assert info["funnel"] is True
 
 
-def test_tailscale_info_exceptions():
-    def mock_run(cmd, **kwargs):
+def test_tailscale_info_exceptions() -> None:
+    def mock_run(cmd: list[str], **kwargs: Any) -> str | None:
         if cmd == ["tailscale", "version"]:
             return "bad version format"
         if cmd == ["tailscale", "status", "--json"]:
@@ -202,11 +203,11 @@ def test_tailscale_info_exceptions():
         assert info["serving"] == {}
 
 
-def test_ollama_info():
+def test_ollama_info() -> None:
     with patch("shutil.which", return_value=False):
         assert deps.get_ollama_info() is None
 
-    def mock_run(cmd, **kwargs):
+    def mock_run(cmd: list[str], **kwargs: Any) -> str | None:
         if cmd == ["ollama", "--version"]:
             return "ollama version is 0.1.30"
         return "list output"
@@ -221,8 +222,8 @@ def test_ollama_info():
         assert info["running"] is True
 
 
-def test_ollama_info_exception():
-    def mock_run(cmd, **kwargs):
+def test_ollama_info_exception() -> None:
+    def mock_run(cmd: list[str], **kwargs: Any) -> str | None:
         if cmd == ["ollama", "--version"]:
             return "weird"
         return None
@@ -237,7 +238,7 @@ def test_ollama_info_exception():
         assert info["running"] is False
 
 
-def test_lmstudio_info():
+def test_lmstudio_info() -> None:
     with patch("shutil.which", return_value=False):
         assert deps.get_lmstudio_info() is None
     with (
@@ -254,7 +255,7 @@ def test_lmstudio_info():
             assert deps.get_lmstudio_info() == {"running": True}
 
 
-def test_lmstudio_info_exception():
+def test_lmstudio_info_exception() -> None:
     with (
         patch("shutil.which", return_value=True),
         patch("gobby.utils.deps._run_cmd", return_value=None),
@@ -264,37 +265,137 @@ def test_lmstudio_info_exception():
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider() -> None:
-    config = MagicMock()
-    config.database_path = "/tmp/gobby-hub.db"
-    config.embeddings.api_base = None
-    db_ctx = MagicMock()
-    db_ctx.__enter__.return_value = MagicMock()
-    store = MagicMock()
-    store.get.return_value = "lmstudio"
+def test_get_configured_embedding_provider_detects_ollama(temp_db) -> None:
+    from gobby.config.bootstrap import BootstrapConfig
+    from gobby.storage.config_store import ConfigStore
 
-    with (
-        patch("gobby.config.app.load_config", return_value=config),
-        patch("gobby.storage.database.LocalDatabase", return_value=db_ctx),
-        patch("gobby.storage.config_store.ConfigStore", return_value=store),
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            "embeddings.api_base": "http://localhost:11434/v1",
+            "embeddings.dim": 768,
+        }
+    )
+
+    with patch(
+        "gobby.utils.deps.load_bootstrap",
+        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
+    ):
+        assert deps.get_configured_embedding_provider() == "ollama"
+
+
+@pytest.mark.unit
+def test_get_configured_embedding_provider_detects_lmstudio(temp_db) -> None:
+    from gobby.config.bootstrap import BootstrapConfig
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            "embeddings.api_base": "http://localhost:1234/v1",
+            "embeddings.dim": 768,
+        }
+    )
+
+    with patch(
+        "gobby.utils.deps.load_bootstrap",
+        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
     ):
         assert deps.get_configured_embedding_provider() == "lmstudio"
 
 
 @pytest.mark.unit
-def test_get_configured_embedding_provider_falls_back_to_api_base() -> None:
-    config = MagicMock()
-    config.database_path = "/tmp/gobby-hub.db"
-    config.embeddings.api_base = "http://localhost:1234/v1"
+def test_get_configured_embedding_provider_detects_openai_secret(
+    temp_db, mock_machine_id, tmp_path
+) -> None:
+    from gobby.config.bootstrap import BootstrapConfig
+    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.secrets import SecretStore
 
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            "embeddings.api_base": None,
+            "embeddings.dim": 1536,
+        }
+    )
+
+    salt_file = tmp_path / ".secret_salt"
     with (
-        patch("gobby.config.app.load_config", return_value=config),
-        patch("gobby.storage.database.LocalDatabase", side_effect=RuntimeError("db unavailable")),
+        patch("gobby.storage.secrets.SALT_FILE", salt_file),
+        patch(
+            "gobby.utils.deps.load_bootstrap",
+            return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
+        ),
     ):
-        assert deps.get_configured_embedding_provider() == "lmstudio"
+        SecretStore(temp_db).set(
+            name="openai_api_key",
+            plaintext_value="sk-test",
+            category="llm",
+        )
+        assert deps.get_configured_embedding_provider() == "openai"
 
 
-def test_check_config_mismatches():
+@pytest.mark.unit
+def test_get_configured_embedding_provider_returns_none_without_secret(
+    temp_db, monkeypatch
+) -> None:
+    from gobby.config.bootstrap import BootstrapConfig
+    from gobby.storage.config_store import ConfigStore
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            "embeddings.api_base": None,
+            "embeddings.dim": 1536,
+        }
+    )
+
+    with patch(
+        "gobby.utils.deps.load_bootstrap",
+        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
+    ):
+        assert deps.get_configured_embedding_provider() is None
+
+
+@pytest.mark.unit
+def test_get_configured_embedding_provider_detects_disabled_state(temp_db) -> None:
+    from gobby.config.bootstrap import BootstrapConfig
+    from gobby.storage.config_store import ConfigStore
+
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            "embeddings.api_base": None,
+            "embeddings.dim": 0,
+        }
+    )
+
+    with patch(
+        "gobby.utils.deps.load_bootstrap",
+        return_value=BootstrapConfig(database_path=str(temp_db.db_path)),
+    ):
+        assert deps.get_configured_embedding_provider() == "none"
+
+
+@pytest.mark.unit
+def test_get_configured_embedding_provider_falls_back_to_env_when_db_missing(
+    monkeypatch, tmp_path
+) -> None:
+    from gobby.config.bootstrap import BootstrapConfig
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+
+    with patch(
+        "gobby.utils.deps.load_bootstrap",
+        return_value=BootstrapConfig(database_path=str(tmp_path / "missing.db")),
+    ):
+        assert deps.get_configured_embedding_provider() == "openai"
+
+
+def test_check_config_mismatches() -> None:
     config = MagicMock()
     config.llm_providers.claude = True
     config.llm_providers.codex = True
@@ -316,7 +417,7 @@ def test_check_config_mismatches():
         assert issues[3]["subsystem"] == "Ollama"
 
 
-def test_collect_all_deps():
+def test_collect_all_deps() -> None:
     with (
         patch("gobby.utils.deps.get_gobby_version", return_value="1"),
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
@@ -345,7 +446,7 @@ def test_collect_all_deps():
         assert res["dependencies"]["embeddings_provider"] == "lmstudio"
 
 
-def test_file_read_exceptions(tmp_path):
+def test_file_read_exceptions(tmp_path) -> None:
     with patch("pathlib.Path.read_text", side_effect=OSError):
         with patch.object(Path, "home", return_value=tmp_path):
             stamp = tmp_path / ".gobby" / "bin" / ".gcode-version"
@@ -366,7 +467,7 @@ def test_file_read_exceptions(tmp_path):
             assert deps._check_hooks_in_file(f) is False
 
 
-def test_regex_exceptions():
+def test_regex_exceptions() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="weirdformat"):
         assert deps.get_tmux_version() == "weirdformat"
         assert deps.get_docker_version() == "weirdformat"

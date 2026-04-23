@@ -14,7 +14,13 @@ import pytest
 
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.hooks import WorkflowHookHandler
+from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
@@ -35,6 +41,15 @@ def mock_internal_manager():
     manager = MagicMock()
     manager.is_internal.return_value = False
     return manager
+
+
+@pytest.fixture
+def temp_db(tmp_path):
+    """Create a real workflow DB for integration-style rule tests."""
+    db_path = tmp_path / "test_tool_proxy_validation.db"
+    database = LocalDatabase(db_path)
+    run_migrations(database)
+    return database
 
 
 @pytest.fixture
@@ -892,6 +907,79 @@ class TestWorkflowBeforeToolEnforcement:
         assert event.metadata["_platform_session_id"] == "session-from-context"
 
     @pytest.mark.asyncio
+    async def test_call_tool_emits_pipeline_source_when_session_is_pipeline(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ):
+        """HookEvent emitted by call_tool must carry source='pipeline' for pipeline sessions.
+
+        Regression for #12082: tool_proxy previously read the session off
+        hook_manager._session_manager (service wrapper without .get), so the
+        AttributeError was silently swallowed and source fell back to CODEX,
+        causing require-schema-before-call to fire on pipeline MCP calls.
+        """
+        pipeline_session = SimpleNamespace(
+            source="pipeline",
+            session_type="terminal",
+            project_id="project-123",
+            external_id="pipeline-exec-123",
+        )
+        mock_hook_manager._session_manager.get.return_value = pipeline_session
+
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks-ops",
+            tool_name="start_expansion_run",
+            arguments={"task_id": "#123"},
+            session_id="pipeline-session-abc",
+        )
+
+        event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
+        assert event.source == SessionSource.PIPELINE
+
+    @pytest.mark.asyncio
+    async def test_call_tool_logs_warning_and_defaults_source_when_storage_raises(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager, caplog
+    ):
+        """Storage failures during source resolution must log WARNING and fall back to codex.
+
+        Regression for #12082: the previous DEBUG-only log silently hid the
+        AttributeError that caused source to default to CODEX; a WARNING ensures
+        the regression surfaces on the first run.
+        """
+        import logging
+
+        mock_hook_manager._session_manager.get.side_effect = RuntimeError(
+            "simulated storage failure"
+        )
+
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.services.tool_proxy"):
+            await tool_proxy_with_hooks.call_tool(
+                server_name="gobby-tasks-ops",
+                tool_name="start_expansion_run",
+                arguments={"task_id": "#123"},
+                session_id="pipeline-session-abc",
+            )
+
+        event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
+        assert event.source == SessionSource.CODEX
+
+        matching = [
+            rec
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING and "Failed to load session" in rec.getMessage()
+        ]
+        assert matching, "Expected WARNING log for storage lookup failure"
+
+    @pytest.mark.asyncio
     async def test_modified_input_is_applied_before_execution(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ):
@@ -945,32 +1033,11 @@ class TestWorkflowBeforeToolEnforcement:
             ["gobby-tasks"],
         )
 
-    @pytest.mark.asyncio
-    async def test_get_tool_schema_records_unlocked_tool_for_session(
-        self, tool_proxy_with_hooks, mock_internal_manager
-    ):
-        """Successful schema lookup should persist unlocked_tools for the session."""
-        mock_internal_manager.is_internal.return_value = True
-        mock_registry = MagicMock()
-        mock_registry.get_schema.return_value = {
-            "name": "create_task",
-            "inputSchema": {"type": "object"},
-        }
-        mock_internal_manager.get_registry.return_value = mock_registry
-
-        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
-            result = await tool_proxy_with_hooks.get_tool_schema(
-                "gobby-tasks",
-                "create_task",
-                session_id="session-123",
-            )
-
-        assert result["success"] is True
-        mock_svm_cls.return_value.append_to_set_variable.assert_called_once_with(
-            "session-123",
-            "unlocked_tools",
-            ["gobby-tasks:create_task"],
-        )
+    # NOTE: A previous test asserted that get_tool_schema directly mutated
+    # `unlocked_tools` via SessionVariableManager. That direct write was
+    # removed in favor of the `track-schema-lookup` rule firing off the
+    # synthetic AFTER_TOOL event (see TestSyntheticCodexMcpAfterTool below
+    # and tests/workflows/test_codex_skill_injection.py for end-to-end coverage).
 
 
 class TestSyntheticCodexMcpAfterTool:
@@ -1046,6 +1113,37 @@ class TestSyntheticCodexMcpAfterTool:
         assert event.data["tool_output"] == {"result": {"id": "task-123", "ref": "#123"}}
         assert event.data["mcp_server"] == "gobby-tasks"
         assert event.data["mcp_tool"] == "create_task"
+
+    @pytest.mark.asyncio
+    async def test_internal_tool_success_resolves_numbered_session_ref(
+        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    ) -> None:
+        """Synthetic AFTER_TOOL events should resolve #N refs before session lookup."""
+        resolved_session_id = "f4b198e5-7688-45d5-82f5-5606732c7a96"
+        session = mock_hook_manager._session_manager.get.return_value
+        mock_hook_manager._session_manager.resolve_session_reference.side_effect = (
+            lambda session_id, project_id=None: (
+                resolved_session_id if session_id == "#2985" else session_id
+            )
+        )
+        mock_hook_manager._session_manager.get.side_effect = (
+            lambda session_id: session if session_id == resolved_session_id else None
+        )
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="create_task",
+            arguments={"title": "Test task"},
+            session_id="#2985",
+        )
+
+        mock_hook_manager.handle.assert_called_once()
+        event = mock_hook_manager.handle.call_args.args[0]
+        assert event.metadata["_platform_session_id"] == resolved_session_id
 
     @pytest.mark.asyncio
     async def test_internal_tool_exception_marks_synthetic_after_tool_failure(
@@ -1134,6 +1232,60 @@ class TestSyntheticCodexMcpAfterTool:
         )
 
         mock_hook_manager.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_proxy_schema_after_tool_injects_task_creation(
+        self, mock_mcp_manager, mock_internal_manager, temp_db
+    ) -> None:
+        """Codex terminal proxy schema shims should resolve #N refs before directives."""
+        sync_bundled_rules(temp_db, get_bundled_rules_path())
+        temp_db.execute(
+            "UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'"
+        )
+
+        workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(db=temp_db))
+
+        session = SimpleNamespace(
+            source="codex",
+            session_type="terminal",
+            project_id="project-123",
+            external_id="conv-123",
+        )
+        numbered_session_ref = "#2985"
+        resolved_session_id = "f4b198e5-7688-45d5-82f5-5606732c7a96"
+        session_manager = MagicMock()
+        session_manager.get.side_effect = (
+            lambda session_id: session if session_id == resolved_session_id else None
+        )
+        session_manager.resolve_session_reference.side_effect = (
+            lambda session_id, project_id=None: (
+                resolved_session_id if session_id == numbered_session_ref else session_id
+            )
+        )
+
+        hook_manager = MagicMock()
+        hook_manager._workflow_handler = workflow_handler
+        hook_manager._session_manager = session_manager
+        hook_manager._database = temp_db
+        hook_manager.handle = workflow_handler.evaluate
+
+        tool_proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+            hook_manager_resolver=lambda: hook_manager,
+        )
+
+        await tool_proxy.emit_synthetic_proxy_after_tool(
+            session_id=numbered_session_ref,
+            tool_name="get_tool_schema",
+            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            result={"success": True, "tool": {"name": "create_task", "inputSchema": {}}},
+        )
+
+        variables = SessionVariableManager(temp_db).get_variables(resolved_session_id)
+        assert "task-creation" not in variables.get("loaded_skills", [])
+        assert "task-creation" not in variables.get("injected_skills", [])
 
 
 class TestStripUnknownParameters:

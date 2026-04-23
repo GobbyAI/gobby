@@ -10,7 +10,8 @@ import pytest
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.sync import sync_bundled_rules, sync_bundled_variables
+from gobby.workflows.sync_rules import sync_bundled_rules
+from gobby.workflows.sync_variables import sync_bundled_variables
 
 pytestmark = pytest.mark.unit
 
@@ -88,7 +89,7 @@ class TestBundledRulesSync:
 
     def test_bundled_rules_sync_to_db(self, db) -> None:
         """Bundled rules should sync to DB without errors."""
-        from gobby.workflows.sync import get_bundled_rules_path
+        from gobby.workflows.sync_rules import get_bundled_rules_path
 
         result = sync_bundled_rules(db, get_bundled_rules_path())
         assert result["errors"] == [], f"Sync errors: {result['errors']}"
@@ -99,7 +100,7 @@ class TestBundledVariablesSync:
 
     def test_bundled_variables_dir_exists(self) -> None:
         """The bundled variables directory should exist with YAML files."""
-        from gobby.workflows.sync import get_bundled_variables_path
+        from gobby.workflows.sync_variables import get_bundled_variables_path
 
         var_dir = get_bundled_variables_path()
         assert var_dir.is_dir(), f"Expected {var_dir} to be a directory"

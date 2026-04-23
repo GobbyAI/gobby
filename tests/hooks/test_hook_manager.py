@@ -24,7 +24,6 @@ def mock_components() -> MagicMock:
     components.database = MagicMock()
     components.daemon_client = MagicMock()
     components.transcript_processor = MagicMock()
-    components.session_storage = MagicMock()
     components.session_task_manager = MagicMock()
     components.memory_storage = MagicMock()
     components.message_manager = MagicMock()
@@ -225,6 +224,26 @@ class TestHandleSessionStart:
         manager._handle_internal(event)
 
         assert call_order == ["handler", "rules"]
+
+    def test_session_start_skips_pre_handler_session_lookup(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """SESSION_START must not resolve or auto-register a session before the handler runs."""
+        manager = manager_with_mocks
+        handler = MagicMock(return_value=HookResponse(decision="allow"))
+        manager._event_handlers.get_handler.return_value = handler
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        manager._resolve_project_id = MagicMock(return_value=PERSONAL_PROJECT_ID)
+
+        event = make_event(event_type=HookEventType.SESSION_START, data={"cwd": "/tmp/project"})
+        manager._handle_internal(event)
+
+        manager._session_lookup.resolve.assert_not_called()
+        assert event.project_id == PERSONAL_PROJECT_ID
+        handler.assert_called_once()
 
 
 class TestHandleNonSessionStart:
@@ -465,6 +484,134 @@ class TestFormatDiscoveryResult:
 class TestEvaluateWorkflowRules:
     """Tests for _evaluate_workflow_rules."""
 
+    def test_routine_allow_logs_at_debug(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Routine allow decisions log at debug instead of info."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        manager.logger.info.assert_not_called()
+        manager.logger.debug.assert_called_once()
+        debug_message = manager.logger.debug.call_args[0][0]
+        assert "event=before_tool" in debug_message
+        assert "decision=allow" in debug_message
+        assert "session=session-123" in debug_message
+        assert "tool=Read" in debug_message
+        assert "mcp_calls=" not in debug_message
+        manager._dispatch_mcp_calls.assert_not_called()
+
+    def test_allow_with_mcp_calls_logs_at_info(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Allow decisions with MCP side effects remain info-level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="allow",
+            metadata={
+                "mcp_calls": [
+                    {"server": "gobby-memory", "tool": "search_memories"},
+                    {"server": "gobby-tasks", "tool": "list_tasks"},
+                ]
+            },
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Write"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=allow" in info_message
+        assert "tool=Write" in info_message
+        assert "mcp_calls=2" in info_message
+        assert "gobby-memory/search_memories" in info_message
+        assert "gobby-tasks/list_tasks" in info_message
+        manager._dispatch_mcp_calls.assert_called_once_with(
+            [
+                {"server": "gobby-memory", "tool": "search_memories"},
+                {"server": "gobby-tasks", "tool": "list_tasks"},
+            ],
+            event,
+        )
+
+    def test_allow_with_input_rewrite_logs_at_info(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Input rewriting and auto-approve stay visible at info level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="allow",
+            modified_input={"path": "rewritten.txt"},
+            auto_approve=True,
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking is None
+        assert event.metadata["_modified_input"] == {"path": "rewritten.txt"}
+        assert event.metadata["_auto_approve"] is True
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=allow" in info_message
+        assert "rewrote_input=true" in info_message
+        assert "auto_approve=true" in info_message
+
+    def test_block_logs_at_info_once(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """Blocked workflow outcomes log once at info level."""
+        manager = manager_with_mocks
+        manager.logger = MagicMock()
+        manager._workflow_handler.handle.return_value = HookResponse(
+            decision="block",
+            reason="Blocked by rule",
+        )
+        manager._dispatch_mcp_calls = MagicMock(return_value=[])
+
+        event = make_event(event_type=HookEventType.BEFORE_TOOL, data={"tool_name": "Bash"})
+        event.metadata["_platform_session_id"] = "session-123"
+
+        context, blocking = manager._evaluate_workflow_rules(event)
+
+        assert context is None
+        assert blocking == HookResponse(decision="block", reason="Blocked by rule")
+        manager.logger.debug.assert_not_called()
+        manager.logger.info.assert_called_once()
+        info_message = manager.logger.info.call_args[0][0]
+        assert "decision=block" in info_message
+        assert "reason=Blocked by rule" in info_message
+
     def test_workflow_evaluation_exception_fails_open(
         self,
         manager_with_mocks: HookManager,
@@ -568,6 +715,21 @@ class TestEnsureProjectInDb:
             MockPM.return_value.ensure_exists.side_effect = ValueError("DB error")
             # Should not raise
             manager._ensure_project_in_db({"id": "proj-1", "name": "test"})
+
+
+class TestSessionManagerUnification:
+    """Tests for canonical session manager wiring inside HookManager."""
+
+    def test_init_keeps_only_canonical_session_manager(
+        self,
+        manager_with_mocks: HookManager,
+        mock_components: MagicMock,
+    ) -> None:
+        """HookManager should expose only the canonical session manager handle."""
+        manager = manager_with_mocks
+
+        assert manager._session_manager is mock_components.session_manager
+        assert not hasattr(manager, "_session_storage")
 
 
 # ─── Tests for _resolve_session_refs_in_tool_input ─────────────────────
@@ -732,3 +894,78 @@ class TestResolveSessionRefsInToolInput:
 
         assert event.data["tool_input"]["session_id"] == "uuid-789"
         assert event.metadata.get("_session_refs_resolved") is True
+
+
+class TestRecordSessionActivityPulse:
+    """Activity pulses from hook events feed the statusline gap detector."""
+
+    def test_non_session_start_records_activity_after_session_lookup(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        from gobby.servers.routes.sessions import statusline_activity
+
+        manager = manager_with_mocks
+        statusline_activity.reset_for_tests()
+
+        def resolve(event: HookEvent) -> None:
+            event.metadata["_platform_session_id"] = "platform-abc"
+
+        manager._session_lookup.resolve.side_effect = resolve
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT)
+        manager._handle_internal(event)
+
+        assert statusline_activity.last_session_activity("platform-abc") is not None
+
+    def test_session_start_records_activity_after_handler(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        from gobby.servers.routes.sessions import statusline_activity
+
+        manager = manager_with_mocks
+        statusline_activity.reset_for_tests()
+
+        def handler(event: HookEvent) -> HookResponse:
+            event.metadata["_platform_session_id"] = "platform-xyz"
+            return HookResponse(decision="allow")
+
+        manager._event_handlers.get_handler.return_value = handler
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+        manager._resolve_project_id = MagicMock(return_value=PERSONAL_PROJECT_ID)
+
+        event = make_event(event_type=HookEventType.SESSION_START, data={"cwd": "/tmp/p"})
+        manager._handle_internal(event)
+
+        assert statusline_activity.last_session_activity("platform-xyz") is not None
+
+    def test_no_activity_recorded_when_platform_id_missing(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        from gobby.servers.routes.sessions import statusline_activity
+
+        manager = manager_with_mocks
+        statusline_activity.reset_for_tests()
+
+        manager._session_lookup.resolve.return_value = None
+        manager._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        manager._enricher.enrich = MagicMock()
+
+        event = make_event(event_type=HookEventType.BEFORE_AGENT)
+        manager._handle_internal(event)
+
+        assert statusline_activity.last_session_activity("platform-abc") is None

@@ -86,10 +86,10 @@ describe("ProviderPicker", () => {
       expect(screen.getByText("GPT 5.4")).toBeTruthy();
       expect(screen.getByText("GPT 5.4 Mini")).toBeTruthy();
       expect(screen.getByText("GPT 5.3 Codex")).toBeTruthy();
-      expect(
-        screen.getByText(/Coder Model.*Qwen Oauth/i),
-      ).toBeTruthy();
-      expect(screen.getByText(/Gpt 5.*Openai/i)).toBeTruthy();
+      expect(screen.getByText("Coder Model")).toBeTruthy();
+      expect(screen.getByText("GPT 5")).toBeTruthy();
+      expect(screen.queryByText(/qwen oauth/i)).toBeNull();
+      expect(screen.queryByText(/openai/i)).toBeNull();
     });
   });
 

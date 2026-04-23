@@ -70,6 +70,7 @@ async def test_handle_tick_creates_session_on_first_call() -> None:
         # ChatSession created with correct args
         cls.assert_called_once_with(
             conversation_id=f"conductor-{PROJECT_ID}",
+            provider="claude",
             project_id=PROJECT_ID,
             project_path="/tmp/test-project",
         )
@@ -118,6 +119,25 @@ async def test_handle_tick_no_skip_when_disabled() -> None:
         job = MagicMock()
         result = await manager(job)
         assert "Conductor:" in result
+
+
+@pytest.mark.asyncio
+async def test_init_rejects_non_claude_provider() -> None:
+    """Conductor should fail fast instead of waiting for the first tick."""
+    with pytest.raises(RuntimeError, match="provider 'codex' is not supported"):
+        _make_manager(ConductorConfig(enabled=True, provider="codex", model="gpt-5"))
+
+
+@pytest.mark.asyncio
+async def test_handle_tick_does_not_repeat_provider_validation_after_init() -> None:
+    """Provider validation happens in __init__, not again inside the tick path."""
+    manager, _ = _make_manager()
+    manager._config.provider = "codex"
+
+    job = MagicMock()
+    result = await manager(job)
+
+    assert "Working directory does not exist" in result
 
 
 @pytest.mark.asyncio

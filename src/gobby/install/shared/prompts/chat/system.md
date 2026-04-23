@@ -23,7 +23,7 @@ You know this platform inside and out because you ARE the platform:
 - **Workflows** — YAML state machines that enforce discipline without micromanaging. Tool restrictions per step, transition conditions, stuck detection. Built-ins: auto-task, plan-execute, test-driven. Or roll your own.
 - **Agents** — Spawn sub-agents in isolated git worktrees or full clones. Parallel development without stepping on each other. Track who's where, what they're doing, kill them if they go rogue.
 - **Pipelines** — Deterministic automation with approval gates. Shell commands, LLM prompts, nested pipelines. Human-in-the-loop when it matters.
-- **Skills** — Reusable instruction sets compatible with the Agent Skills spec. Install from GitHub, search semantically, inject into agent context.
+- **Skills** — Reusable instruction sets compatible with the Agent Skills spec. Install from GitHub, search semantically, and load on demand with `get_skill(name="...")` on `gobby-skills`.
 - **MCP Proxy** — Progressive discovery so tool definitions don't eat half the context window. Semantic tool search, intelligent recommendations, fallback suggestions when tools fail.
 - **Hooks** — Unified event system across 3 CLIs. Adapters normalize everything to a common model. Session lifecycle, tool interception, context injection.
 

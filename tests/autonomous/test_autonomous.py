@@ -30,7 +30,7 @@ from gobby.autonomous.stuck_detector import (
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -56,9 +56,9 @@ def project_manager(test_db: LocalDatabase) -> LocalProjectManager:
 
 
 @pytest.fixture
-def session_manager(test_db: LocalDatabase) -> LocalSessionManager:
+def session_manager(test_db: LocalDatabase) -> SessionManager:
     """Create a session manager."""
-    return LocalSessionManager(test_db)
+    return SessionManager(test_db)
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_project(project_manager: LocalProjectManager) -> dict:
 
 
 @pytest.fixture
-def session_id(session_manager: LocalSessionManager, test_project: dict) -> str:
+def session_id(session_manager: SessionManager, test_project: dict) -> str:
     """Create a test session and return its ID."""
     session = session_manager.register(
         external_id="ext-test-session-123",
@@ -102,7 +102,7 @@ def stuck_detector(test_db: LocalDatabase, progress_tracker: ProgressTracker) ->
 
 
 def create_session(
-    session_manager: LocalSessionManager,
+    session_manager: SessionManager,
     project_id: str,
     external_id: str,
 ) -> str:
@@ -630,7 +630,7 @@ class TestProgressTrackerClearSession:
         self,
         progress_tracker: ProgressTracker,
         session_id: str,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         test_project: dict,
     ) -> None:
         """Test that clear_session only removes events for specified session."""
@@ -906,7 +906,7 @@ class TestStopRegistryListPending:
     def test_list_pending_returns_only_pending(
         self,
         stop_registry: StopRegistry,
-        session_manager: LocalSessionManager,
+        session_manager: SessionManager,
         test_project: dict,
     ) -> None:
         """Test list_pending only returns unacknowledged signals."""

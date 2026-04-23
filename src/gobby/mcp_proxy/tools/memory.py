@@ -65,7 +65,7 @@ def create_memory_registry(
         memory_manager: MemoryManager instance
         llm_service: LLM service for AI-powered extraction (optional)
         memory_sync_manager: MemorySyncManager for sync import/export (optional)
-        session_manager: LocalSessionManager for session lookups (optional)
+        session_manager: SessionManager for session lookups (optional)
         config: DaemonConfig for digest provider/model selection (optional)
 
     Returns:
@@ -617,32 +617,11 @@ def create_memory_registry(
             limit: Max memories to process (default 500)
         """
         try:
-            kg = memory_manager.kg_service
-            if not kg:
-                return {
-                    "success": False,
-                    "error": "KnowledgeGraphService not initialized (requires Neo4j + LLM)",
-                }
-            memories = memory_manager.list_memories(project_id=project_id, limit=limit)
-            extracted = 0
-            errors = 0
-            for i, memory in enumerate(memories):
-                try:
-                    await kg.add_to_graph(
-                        memory.content, memory_id=memory.id, project_id=memory.project_id
-                    )
-                    extracted += 1
-                except Exception as e:
-                    logger.warning(f"KG extraction failed for {memory.id}: {e}")
-                    errors += 1
-                if i % 10 == 9:
-                    await asyncio.sleep(0)
-            return {
-                "success": True,
-                "memories_processed": len(memories),
-                "memories_extracted": extracted,
-                "errors": errors,
-            }
+            result = await memory_manager.rebuild_knowledge_graph(
+                project_id=project_id,
+                limit=limit,
+            )
+            return result
         except Exception as e:
             return {"success": False, "error": str(e)}
 

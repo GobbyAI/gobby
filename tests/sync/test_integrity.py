@@ -202,7 +202,7 @@ class TestGetDirtyContentTypes:
         shared.mkdir()
 
         dirty = [
-            "shared/hooks/hook_dispatcher.py",
+            "shared/hooks/validate_settings.py",
             "shared/plugins/foo.py",
         ]
 

@@ -31,6 +31,10 @@ class GeminiWebChatPermissionsMixin:
     _plan_approved: bool
     _plan_feedback: str | None
     _plan_file_path: str | None
+    _last_plan_content: str | None
+    _pending_plan_content: str | None
+    _pending_plan_allowed_prompts: list[str] | None
+    _pending_post_plan_mode: str | None
     _on_mode_persist: Callable[[str], None] | None
     _pending_approval: PendingApproval | None
     _pending_approval_decision: str | None
@@ -59,9 +63,16 @@ class GeminiWebChatPermissionsMixin:
             self._plan_approved = False
             self._plan_feedback = None
             self._plan_file_path = None
+            self._last_plan_content = None
+            self._pending_plan_content = None
+            self._pending_plan_allowed_prompts = None
+            self._pending_post_plan_mode = None
         else:
             self._plan_approved = False
             self._plan_feedback = None
+            self._pending_plan_content = None
+            self._pending_plan_allowed_prompts = None
+            self._pending_post_plan_mode = None
         if self._on_mode_persist:
             try:
                 self._on_mode_persist(mode)

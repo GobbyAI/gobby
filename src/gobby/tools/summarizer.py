@@ -1,9 +1,4 @@
-"""
-Tool description summarization using Claude LLM provider.
-
-Intelligently summarizes long MCP tool descriptions to fit within
-the 200-character limit for config file storage.
-"""
+"""Tool description summarization for MCP metadata."""
 
 from __future__ import annotations
 
@@ -50,9 +45,9 @@ def _get_config() -> ToolSummarizerConfig:
     return ToolSummarizerConfig()
 
 
-async def _summarize_description_with_claude(description: str) -> str:
+async def _summarize_description_with_llm(description: str) -> str:
     """
-    Summarize a tool description using Claude LLM provider.
+    Summarize a tool description using the configured LLM provider.
 
     Args:
         description: Long tool description to summarize
@@ -65,8 +60,6 @@ async def _summarize_description_with_claude(description: str) -> str:
     try:
         if not _llm_service:
             raise RuntimeError("LLM service not initialized")
-
-        provider = _llm_service.get_provider("claude")
 
         # Get summary prompt
         prompt_path = config.prompt_path or "features/tool_summary"
@@ -81,15 +74,15 @@ async def _summarize_description_with_claude(description: str) -> str:
         except (OSError, KeyError, ValueError, RuntimeError):
             system_prompt = "You are a technical summarizer."
 
-        return await provider.generate_text(
-            prompt=prompt,
+        return await _llm_service.call_feature(
+            config,
+            prompt,
             system_prompt=system_prompt,
-            model=config.model,
             caller="tools.tool_summary",
         )
 
     except Exception as e:
-        logger.warning(f"Failed to summarize description with Claude: {e}")
+        logger.warning(f"Failed to summarize description with configured LLM: {e}")
         # Fallback: truncate to 200 chars with ellipsis
         return description[:197] + "..." if len(description) > 200 else description
 
@@ -115,7 +108,7 @@ async def summarize_tools(tools: list[Any]) -> list[dict[str, Any]]:
             logger.debug(
                 f"Summarizing description for tool '{tool.name}' ({len(description)} chars)"
             )
-            description = await _summarize_description_with_claude(description)
+            description = await _summarize_description_with_llm(description)
 
         summaries.append(
             {
@@ -134,8 +127,8 @@ async def generate_server_description(
     """
     Generate a concise server description from tool summaries.
 
-    Uses Claude to synthesize a single-sentence description of what
-    the MCP server does based on all its available tools.
+    Uses the configured LLM to synthesize a single-sentence description
+    of what the MCP server does based on all its available tools.
 
     Args:
         server_name: Name of the MCP server
@@ -149,8 +142,6 @@ async def generate_server_description(
     try:
         if not _llm_service:
             raise RuntimeError("LLM service not initialized")
-
-        provider = _llm_service.get_provider("claude")
 
         # Build tools list for prompt
         tools_list = "\n".join([f"- {t['name']}: {t['description']}" for t in tool_summaries])
@@ -174,10 +165,10 @@ async def generate_server_description(
         except (OSError, KeyError, ValueError, RuntimeError):
             system_prompt = "You write concise technical descriptions."
 
-        return await provider.generate_text(
-            prompt=prompt,
+        return await _llm_service.call_feature(
+            config,
+            prompt,
             system_prompt=system_prompt,
-            model=config.model,
             caller="tools.server_description",
         )
 

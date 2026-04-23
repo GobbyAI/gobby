@@ -21,6 +21,7 @@ interface AgentDefInfo {
   definition: {
     name: string
     description: string | null
+    surfaces?: string[] | null
     role: string | null
     goal: string | null
     personality: string | null
@@ -79,7 +80,7 @@ const ISOLATION_COLORS: Record<string, string> = {
 }
 
 const DEFAULT_FORM: AgentFormData = {
-  name: '', description: '', role: '', goal: '', personality: '', instructions: '',
+  name: '', description: '', surfaces: ['spawn'], role: '', goal: '', personality: '', instructions: '',
   provider: 'inherit', model: '', reasoning_effort: AUTO_REASONING_EFFORT, reasoning_required: false, fallback_agent: '', mode: 'inherit', isolation: 'inherit',
   base_branch: 'inherit', timeout: 0, max_turns: 0, pipeline: '',
 }
@@ -87,6 +88,7 @@ const DEFAULT_FORM: AgentFormData = {
 function agentDefToYaml(d: AgentDefInfo['definition']): string {
   const obj: Record<string, unknown> = { name: d.name }
   if (d.description) obj.description = d.description
+  if (d.surfaces && d.surfaces.length > 0) obj.surfaces = d.surfaces
   if (d.role) obj.role = d.role
   if (d.goal) obj.goal = d.goal
   if (d.personality) obj.personality = d.personality
@@ -94,7 +96,9 @@ function agentDefToYaml(d: AgentDefInfo['definition']): string {
   obj.provider = d.provider
   if (d.model) obj.model = d.model
   if (d.reasoning_effort) obj.reasoning_effort = d.reasoning_effort
-  if (d.reasoning_required) obj.reasoning_required = d.reasoning_required
+  if (d.reasoning_required !== undefined && d.reasoning_required !== null) {
+    obj.reasoning_required = d.reasoning_required
+  }
   if (d.fallback_agent) obj.fallback_agent = d.fallback_agent
   obj.mode = d.mode
   if (d.isolation) obj.isolation = d.isolation
@@ -345,6 +349,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       const body: Record<string, unknown> = {
         name: createForm.name,
         provider: createForm.provider,
+        surfaces: createForm.surfaces,
         mode: createForm.mode,
         isolation: createForm.isolation,
         base_branch: createForm.base_branch,
@@ -400,6 +405,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     setCreateForm({
       name: d.name,
       description: d.description || '',
+      surfaces: d.surfaces || ['spawn'],
       role: d.role || '',
       goal: d.goal || '',
       personality: d.personality || '',
@@ -445,6 +451,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
       const body: Record<string, unknown> = {
         name: createForm.name,
         description: createForm.description || null,
+        surfaces: createForm.surfaces,
         role: createForm.role || null,
         goal: createForm.goal || null,
         personality: createForm.personality || null,
@@ -536,6 +543,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     const body: Record<string, unknown> = {
       name: newName,
       provider: d.provider,
+      surfaces: d.surfaces || ['spawn'],
       mode: d.mode,
       base_branch: d.base_branch,
       timeout: d.timeout,
@@ -545,11 +553,13 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
     if (d.role) body.role = d.role
     if (d.goal) body.goal = d.goal
     if (d.personality) body.personality = d.personality
-      if (d.instructions) body.instructions = d.instructions
-      if (d.model) body.model = d.model
-      if (d.reasoning_effort) body.reasoning_effort = d.reasoning_effort
-      if (d.reasoning_required) body.reasoning_required = d.reasoning_required
-      if (d.fallback_agent) body.fallback_agent = d.fallback_agent
+    if (d.instructions) body.instructions = d.instructions
+    if (d.model) body.model = d.model
+    if (d.reasoning_effort) body.reasoning_effort = d.reasoning_effort
+    if (d.reasoning_required !== undefined && d.reasoning_required !== null) {
+      body.reasoning_required = d.reasoning_required
+    }
+    if (d.fallback_agent) body.fallback_agent = d.fallback_agent
     if (d.isolation) body.isolation = d.isolation
     if (d.workflows) body.workflows = d.workflows
     try {
@@ -640,6 +650,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         name: (parsed.name as string) || yamlAgent.definition.name,
         description: parsed.description ?? null,
         sources: parsed.sources ?? null,
+        surfaces: parsed.surfaces ?? yamlAgent.definition.surfaces ?? ['spawn'],
         role: parsed.role ?? null,
         goal: parsed.goal ?? null,
         personality: parsed.personality ?? null,
@@ -691,6 +702,7 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
         name: (parsed.name as string) || createForm.name,
         description: parsed.description ?? null,
         sources: parsed.sources ?? null,
+        surfaces: parsed.surfaces ?? createForm.surfaces,
         role: parsed.role ?? null,
         goal: parsed.goal ?? null,
         personality: parsed.personality ?? null,

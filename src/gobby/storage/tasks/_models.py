@@ -29,6 +29,7 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
         "code",  # Implementation tasks
         "config",  # Configuration file changes
         "docs",  # Documentation tasks
+        "refactor",  # Refactor tasks, including updating tests (emitted by expansion)
         "test",  # Test infrastructure tasks (fixtures, helpers)
         "research",  # Investigation/exploration tasks
         "planning",  # Design/architecture tasks

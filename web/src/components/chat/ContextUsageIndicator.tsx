@@ -2,24 +2,31 @@ interface ContextUsageIndicatorProps {
   totalInputTokens: number
   outputTokens: number
   contextWindow: number | null
+  staleMs?: number | null
   // Cache breakdown for tooltip
   uncachedInputTokens?: number
   cacheReadTokens?: number
   cacheCreationTokens?: number
 }
 
+const STALE_THRESHOLD_MS = 60_000
+
 export function ContextUsageIndicator({
   totalInputTokens,
   outputTokens,
   contextWindow,
+  staleMs = null,
   uncachedInputTokens = 0,
   cacheReadTokens = 0,
   cacheCreationTokens = 0,
 }: ContextUsageIndicatorProps) {
+  const isStale = Boolean(staleMs && staleMs >= STALE_THRESHOLD_MS)
+
   // Context window is an INPUT limit — output tokens don't occupy it.
   // Only input tokens (uncached + cache_read + cache_creation) count toward context load.
   const percentage = contextWindow ? Math.min((totalInputTokens / contextWindow) * 100, 100) : 0
   const displayPercent = Math.round(percentage)
+  const indicatorLabel = `${displayPercent}%`
 
   // SVG pie/ring chart
   const size = 20
@@ -52,10 +59,15 @@ export function ContextUsageIndicator({
   } else {
     tooltipLines.push('Context usage: waiting for first response...')
   }
+  if (isStale) {
+    tooltipLines.push('')
+    tooltipLines.push('Usage may be stale: no live update in the last minute.')
+  }
 
   return (
     <div
       className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      style={{ opacity: isStale ? 0.55 : 1 }}
       title={tooltipLines.join('\n')}
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0" style={{ transform: 'rotate(-90deg)' }}>
@@ -80,7 +92,7 @@ export function ContextUsageIndicator({
           strokeLinecap="round"
         />
       </svg>
-      <span className="tabular-nums">{displayPercent}%</span>
+      <span className="tabular-nums">{indicatorLabel}</span>
     </div>
   )
 }

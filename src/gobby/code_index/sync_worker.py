@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gobby.code_index.graph import CodeGraph
+    from gobby.code_index.models import IndexedFile
     from gobby.code_index.storage import CodeIndexStorage
     from gobby.config.code_index import CodeIndexConfig
     from gobby.config.persistence import EmbeddingsConfig
@@ -56,6 +57,7 @@ async def sync_worker_loop(
                         model=embeddings_config.model,
                         api_base=embeddings_config.api_base,
                         api_key=embeddings_config.api_key,
+                        expected_dim=embeddings_config.dim,
                     )
 
             embed_model = _EmbedAdapter()
@@ -142,7 +144,7 @@ async def _sync_file(
     embed_model: Any | None,
     project_id: str,
     root: Path,
-    file: Any,
+    file: IndexedFile,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
     # Validate: file record still exists (not invalidated between poll and process)
@@ -178,6 +180,7 @@ async def _sync_file(
     if not file.graph_synced and config.graph_enabled:
         if graph is not None and graph.available:
             try:
+                storage.mark_graph_sync_attempted(file.id)
                 await _sync_graph(
                     storage=storage,
                     graph=graph,
@@ -198,7 +201,7 @@ async def _sync_vectors(
     embed_model: Any,
     config: CodeIndexConfig,
     project_id: str,
-    file: Any,
+    file: IndexedFile,
 ) -> None:
     """Generate embeddings and upsert to Qdrant for a file's symbols."""
     symbols = storage.get_symbols_for_file(project_id, file.file_path)
@@ -256,12 +259,9 @@ async def _sync_graph(
     storage: CodeIndexStorage,
     graph: CodeGraph,
     project_id: str,
-    file: Any,
+    file: IndexedFile,
 ) -> None:
     """Write Neo4j edges for a file from SQLite import/call/symbol data."""
-    # Delete old graph data for this file
-    await graph.delete_file(file_path=file.file_path, project_id=project_id)
-
     # Read relations from SQLite
     imports = storage.get_imports_for_file(project_id, file.file_path)
     calls = storage.get_calls_for_file(project_id, file.file_path)
@@ -274,7 +274,7 @@ async def _sync_graph(
     ]
 
     # Write to Neo4j
-    await graph.add_relationships(
+    await graph.sync_file(
         project_id=project_id,
         file_path=file.file_path,
         imports=imports,

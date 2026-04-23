@@ -176,6 +176,7 @@ class TestTaskExpansionConfigDefaults:
         assert config.enabled is True
         assert config.provider == "claude"
         assert config.model == "opus"
+        assert config.tier == "high"
         assert config.prompt_path is None
         assert config.codebase_research_enabled is True
         assert config.research_model is None
@@ -262,6 +263,7 @@ class TestTaskValidationConfigDefaults:
         assert config.enabled is True
         assert config.provider == "claude"
         assert config.model == "sonnet"
+        assert config.tier == "mid"
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3

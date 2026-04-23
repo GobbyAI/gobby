@@ -8,14 +8,14 @@ from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import LocalSessionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
 def mock_session_manager():
-    manager = MagicMock(spec=LocalSessionManager)
+    manager = MagicMock(spec=SessionManager)
     # resolve_session_reference returns input unchanged by default
     manager.resolve_session_reference = MagicMock(side_effect=lambda ref, project_id=None: ref)
     return manager

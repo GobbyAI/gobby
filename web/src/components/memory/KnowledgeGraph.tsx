@@ -7,7 +7,7 @@ import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from 
 
 interface KnowledgeGraphProps {
   fetchKnowledgeGraph: (limit?: number) => Promise<KnowledgeGraphData | null>
-  fetchEntityNeighbors: (name: string) => Promise<KnowledgeGraphData | null>
+  fetchEntityNeighbors: (entityKey: string) => Promise<KnowledgeGraphData | null>
   limit?: number
   onError?: () => void
 }
@@ -70,12 +70,12 @@ function mergeGraphData(
   existing: KnowledgeGraphData,
   incoming: KnowledgeGraphData
 ): KnowledgeGraphData {
-  const entityMap = new Map(existing.entities.map(e => [e.name, e]))
+  const entityMap = new Map(existing.entities.map(e => [e.entity_key, e]))
   for (const e of incoming.entities) {
-    if (!entityMap.has(e.name)) entityMap.set(e.name, e)
+    if (!entityMap.has(e.entity_key)) entityMap.set(e.entity_key, e)
   }
 
-  const edgeKey = (r: KnowledgeRelationship) => `${r.source}|${r.type}|${r.target}`
+  const edgeKey = (r: KnowledgeRelationship) => `${r.source_key}|${r.type}|${r.target_key}`
   const edgeSet = new Set(existing.relationships.map(edgeKey))
   const merged = [...existing.relationships]
   for (const r of incoming.relationships) {
@@ -89,22 +89,22 @@ function mergeGraphData(
 }
 
 function buildForceData(data: KnowledgeGraphData): { nodes: GraphNode[]; links: GraphLink[] } {
-  const entityNames = new Set(data.entities.map(e => e.name))
+  const entityKeys = new Set(data.entities.map(e => e.entity_key))
 
   const nodes: GraphNode[] = data.entities.map(e => ({
-    id: e.name,
+    id: e.entity_key,
     name: e.name,
-    type: e.type,
+    type: e.entity_type,
     entity: e,
-    color: getEntityColor(e.type),
+    color: getEntityColor(e.entity_type),
     val: 2,
   }))
 
   const links: GraphLink[] = data.relationships
-    .filter(r => entityNames.has(r.source) && entityNames.has(r.target))
+    .filter(r => entityKeys.has(r.source_key) && entityKeys.has(r.target_key))
     .map(r => ({
-      source: r.source,
-      target: r.target,
+      source: r.source_key,
+      target: r.target_key,
       type: r.type,
       color: edgeColor(r.type),
     }))
@@ -279,9 +279,10 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Node click: expand neighbors
   const handleNodeClick = useCallback((node: any) => {  
     if (expandingNode) return
-    const name = node.id as string
-    setExpandingNode(name)
-    fetchEntityNeighbors(name).then(data => {
+    const entityKey = node.id as string
+    const displayName = (node.name as string) || entityKey
+    setExpandingNode(displayName)
+    fetchEntityNeighbors(entityKey).then(data => {
       if (data) {
         setGraphData(prev => prev ? mergeGraphData(prev, data) : data)
       }
@@ -339,10 +340,14 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Link styling
   const linkColor = useCallback((link: any) => {  
     if (isSearchActive) {
-      const srcId = typeof link.source === 'object' ? link.source.id : link.source
-      const tgtId = typeof link.target === 'object' ? link.target.id : link.target
-      const srcMatch = String(srcId).toLowerCase().includes(searchLower)
-      const tgtMatch = String(tgtId).toLowerCase().includes(searchLower)
+      const sourceLabel = typeof link.source === 'object'
+        ? (link.source.name ?? link.source.id)
+        : link.source
+      const targetLabel = typeof link.target === 'object'
+        ? (link.target.name ?? link.target.id)
+        : link.target
+      const srcMatch = String(sourceLabel).toLowerCase().includes(searchLower)
+      const tgtMatch = String(targetLabel).toLowerCase().includes(searchLower)
       if (!srcMatch && !tgtMatch) return 'rgba(60,60,60,0.15)'
     }
     return link.color || 'rgba(120,120,120,0.4)'
@@ -381,7 +386,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Legend types
   const legendTypes = useMemo(() => {
     if (!graphData) return []
-    return [...new Set(graphData.entities.map(e => e.type.toLowerCase()))]
+    return [...new Set(graphData.entities.map(e => e.entity_type.toLowerCase()))]
   }, [graphData])
 
   // Loading state
@@ -422,7 +427,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
             .join('\n')
           return `<div style="text-align:center;font-family:monospace;font-size:11px;line-height:1.4">
             <b>${e.name}</b><br/>
-            <span style="color:${getEntityColor(e.type)};text-transform:uppercase;font-size:9px">${e.type}</span>
+            <span style="color:${getEntityColor(e.entity_type)};text-transform:uppercase;font-size:9px">${e.entity_type}</span>
             ${props ? '<br/><span style="color:#888;font-size:9px">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
           </div>`
         }}

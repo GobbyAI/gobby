@@ -7,13 +7,18 @@ Each function returns None if the tool is not installed/available.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.storage.database import LocalDatabase
 
 from gobby.cli.installers.hook_commands import is_gobby_hook_command
+from gobby.config.bootstrap import load_bootstrap
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
 
 logger = logging.getLogger(__name__)
@@ -142,7 +147,7 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     """Check which coding CLIs have gobby hooks installed.
 
     Returns dict mapping CLI name to whether hooks are installed.
-    Detects by checking if hook_dispatcher.py is referenced in config.
+    Detects by checking for the ``--gobby-owned`` marker in config.
     """
     result: dict[str, bool] = {}
 
@@ -162,7 +167,7 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
 
 
 def _check_hooks_in_file(path: Path) -> bool:
-    """Check if a settings/hooks file references gobby's hook_dispatcher."""
+    """Check if a settings/hooks file references a Gobby-managed hook command."""
     if not path.exists():
         return False
     try:
@@ -335,27 +340,64 @@ def _infer_embedding_provider_from_api_base(api_base: Any) -> str | None:
     return None
 
 
+def _detect_openai(db: LocalDatabase | None = None) -> str | None:
+    """Detect OpenAI embeddings from stored or environment credentials."""
+    if db is not None:
+        try:
+            from gobby.storage.secrets import SecretStore
+
+            if SecretStore(db).get("openai_api_key"):
+                return "openai"
+        except (OSError, RuntimeError, ValueError):
+            logger.debug("Failed to read openai_api_key from SecretStore", exc_info=True)
+
+    return "openai" if os.environ.get("OPENAI_API_KEY") else None
+
+
+def _infer_from_env_or_none(dim: Any, db: LocalDatabase | None = None) -> str | None:
+    """Return the env-backed OpenAI provider, or explicit disabled state, or None."""
+    normalized_dim = dim
+    if isinstance(dim, str):
+        stripped = dim.strip()
+        if stripped:
+            try:
+                normalized_dim = int(stripped)
+            except ValueError:
+                normalized_dim = stripped
+    if normalized_dim == 0:
+        return "none"
+    return _detect_openai(db)
+
+
 def get_configured_embedding_provider() -> str | None:
     """Get the configured embeddings provider from persisted config."""
-    api_base = None
     try:
-        from gobby.config.app import load_config
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.database import LocalDatabase
 
-        config = load_config()
-        api_base = getattr(getattr(config, "embeddings", None), "api_base", None)
-        db_path = Path(config.database_path).expanduser()
+        db_path = Path(load_bootstrap().database_path).expanduser()
+        if not db_path.exists():
+            return _infer_from_env_or_none(dim=None)
+
         with LocalDatabase(db_path) as db:
             store = ConfigStore(db)
-            provider = _normalize_embedding_provider(store.get("embeddings.provider"))
-        if provider is not None:
-            return provider
+            api_base = store.get("embeddings.api_base")
+            dim = store.get("embeddings.dim")
+
+            if api_base == "":
+                return _infer_from_env_or_none(dim=dim, db=db)
+
+            provider = _infer_embedding_provider_from_api_base(api_base)
+            if provider is not None:
+                return provider
+
+            if api_base is None:
+                return _infer_from_env_or_none(dim=dim, db=db)
     except Exception:
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
         )
-    return _infer_embedding_provider_from_api_base(api_base)
+    return None
 
 
 # ---------------------------------------------------------------------------

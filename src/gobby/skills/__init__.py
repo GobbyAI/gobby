@@ -12,7 +12,8 @@ This module provides:
 from gobby.search import (
     generate_embedding,
     generate_embeddings,
-    is_embedding_available,
+    is_embedding_configured,
+    is_embedding_reachable,
 )
 from gobby.skills.loader import (
     GitHubRef,
@@ -55,7 +56,8 @@ __all__ = [
     # Embeddings (from gobby.search)
     "generate_embedding",
     "generate_embeddings",
-    "is_embedding_available",
+    "is_embedding_configured",
+    "is_embedding_reachable",
     # Loader
     "GitHubRef",
     "SkillLoadError",

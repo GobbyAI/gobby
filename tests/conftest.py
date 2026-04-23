@@ -4,7 +4,7 @@ import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from filelock import FileLock
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from gobby.storage.database import LocalDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 
 @pytest.fixture
@@ -99,11 +99,11 @@ def temp_db(temp_dir: Path) -> Iterator["LocalDatabase"]:
 
 
 @pytest.fixture
-def session_manager(temp_db: "LocalDatabase") -> "LocalSessionManager":
+def session_manager(temp_db: "LocalDatabase") -> "SessionManager":
     """Create a session manager with temp database."""
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
-    return LocalSessionManager(temp_db)
+    return SessionManager(temp_db)
 
 
 @pytest.fixture
@@ -120,6 +120,42 @@ def mcp_manager(temp_db: "LocalDatabase") -> "LocalMCPManager":
     from gobby.storage.mcp import LocalMCPManager
 
     return LocalMCPManager(temp_db)
+
+
+@pytest.fixture
+def fast_stop_hook_grace_window() -> Iterator[AsyncMock]:
+    """Avoid real 5s shutdown delays in runner tests."""
+    with patch(
+        "gobby.runner_lifecycle._await_critical_stop_hook_grace_window",
+        new=AsyncMock(),
+    ) as mock_wait:
+        yield mock_wait
+
+
+@pytest.fixture
+def mock_config() -> MagicMock:
+    """Create a runner mock config with WebSocket disabled by default."""
+    from tests.runner_helpers import apply_safe_runner_config_defaults
+
+    config = MagicMock()
+    config.daemon_port = 60887
+    config.websocket = None
+    return apply_safe_runner_config_defaults(config)
+
+
+@pytest.fixture
+def mock_config_with_websocket() -> MagicMock:
+    """Create a runner mock config with WebSocket enabled."""
+    from tests.runner_helpers import apply_safe_runner_config_defaults
+
+    config = MagicMock()
+    config.daemon_port = 60887
+    config.websocket = MagicMock()
+    config.websocket.enabled = True
+    config.websocket.port = 60888
+    config.websocket.ping_interval = 30
+    config.websocket.ping_timeout = 10
+    return apply_safe_runner_config_defaults(config)
 
 
 @pytest.fixture

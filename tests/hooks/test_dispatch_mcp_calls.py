@@ -322,3 +322,99 @@ class TestDispatchMcpCallsProxyNone:
         await asyncio.sleep(0.05)
 
         stub.logger.warning.assert_called()
+
+
+class TestDispatchMcpCallsSessionResolution:
+    """Tests for external_id → platform UUID resolution in the dispatcher."""
+
+    def _proxy_with_session_manager(
+        self,
+        *,
+        resolve_to: str | None,
+        resolve_exc=None,
+    ) -> tuple[AsyncMock, MagicMock]:
+        """Build an AsyncMock proxy whose session_manager resolves refs.
+
+        The dispatcher reads ``proxy.session_manager`` directly (see
+        hooks/dispatchers/mcp.py). AsyncMock auto-generates child mocks
+        for any unset attribute, so the real session_manager must be
+        bound to the proxy at that exact attribute path — otherwise the
+        auto-generated stand-in silently absorbs the calls the test
+        means to assert against.
+        """
+        session_manager = MagicMock()
+        session_manager.db = MagicMock()
+        if resolve_exc is not None:
+            session_manager.resolve_session_reference.side_effect = resolve_exc
+        else:
+            session_manager.resolve_session_reference.return_value = resolve_to
+        session = MagicMock()
+        session.external_id = "ext-xyz"
+        session.project_id = "proj-abc"
+        session_manager.get.return_value = session
+
+        proxy = AsyncMock()
+        proxy.session_manager = session_manager
+        return proxy, session_manager
+
+    def test_dispatch_resolves_external_id_before_setting_session_context(self) -> None:
+        """Caller-supplied external_id is resolved to the platform UUID before dispatch."""
+        external_uuid = "11111111-1111-1111-1111-111111111111"
+        platform_uuid = "22222222-2222-2222-2222-222222222222"
+        proxy, session_manager = self._proxy_with_session_manager(resolve_to=platform_uuid)
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
+        event = _make_event(platform_session_id="ignored-default")
+
+        calls = [
+            {
+                "server": "gobby-memory",
+                "tool": "search_memories",
+                "arguments": {"session_id": external_uuid, "limit": 5},
+                "background": False,
+            }
+        ]
+
+        loop = asyncio.new_event_loop()
+        stub._loop = loop
+        try:
+            stub._dispatch_mcp_calls(calls, event)
+        finally:
+            loop.close()
+
+        session_manager.resolve_session_reference.assert_called()
+        called_kwargs = proxy.call_tool.call_args.kwargs
+        assert called_kwargs.get("session_id") == platform_uuid
+
+    def test_dispatch_unresolvable_session_id_skips_set_session_context(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Unresolvable external_id → warning, no SessionContext planted."""
+        import logging as _logging
+
+        external_uuid = "33333333-3333-3333-3333-333333333333"
+        proxy, _ = self._proxy_with_session_manager(
+            resolve_to=None, resolve_exc=ValueError("Session not found")
+        )
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
+        event = _make_event(platform_session_id="ignored-default")
+
+        calls = [
+            {
+                "server": "gobby-memory",
+                "tool": "search_memories",
+                "arguments": {"session_id": external_uuid},
+                "background": False,
+            }
+        ]
+
+        caplog.set_level(_logging.WARNING, logger="gobby.utils.session_context")
+        loop = asyncio.new_event_loop()
+        stub._loop = loop
+        try:
+            stub._dispatch_mcp_calls(calls, event)
+        finally:
+            loop.close()
+
+        assert any("could not resolve session ref" in rec.message for rec in caplog.records)
+        called_kwargs = proxy.call_tool.call_args.kwargs
+        assert called_kwargs.get("session_id") is None

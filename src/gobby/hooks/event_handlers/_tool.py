@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.normalization import is_shell_tool
+from gobby.skills.formatting import format_skill_fetch_context
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +41,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
         """Handle BEFORE_TOOL event.
 
         Intercepts Skill tool calls and resolves gobby skills via a 4-tier
-        fallback chain, injecting skill content as context and blocking the
-        native tool call (which would fail with "Unknown skill").
+        fallback chain, directing the agent to fetch the skill through
+        gobby-skills and blocking the native tool call.
         """
         input_data = event.data
         tool_name = input_data.get("tool_name", "unknown")
@@ -128,19 +130,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if self._skill_manager:
             skill = self._skill_manager.resolve_skill_name(skill_name)
             if skill is not None:
-                return self._build_skill_response(
-                    skill.name, skill.content, raw_skill_name, tool_input
-                )
+                return self._build_skill_response(skill.name, raw_skill_name, tool_input)
 
         # --- Tier 2: gobby-skills MCP get_skill fallback ---
         if self._call_tool:
             result = self._call_tool("gobby-skills", "get_skill", {"name": skill_name})
             if result and isinstance(result, dict) and result.get("success"):
                 skill_data = result.get("skill") or result.get("result", {}).get("skill")
-                if skill_data and isinstance(skill_data, dict) and skill_data.get("content"):
+                if skill_data and isinstance(skill_data, dict) and skill_data.get("name"):
                     return self._build_skill_response(
                         skill_data.get("name", skill_name),
-                        skill_data["content"],
                         raw_skill_name,
                         tool_input,
                         source="MCP",
@@ -172,21 +171,12 @@ class ToolEventHandlerMixin(EventHandlersBase):
     def _build_skill_response(
         self,
         name: str,
-        content: str,
         raw_skill_name: str,
         tool_input: dict[str, Any],
         source: str = "local",
     ) -> HookResponse:
-        """Build a blocking HookResponse with skill content injected as context."""
-        parts = [f'<skill-context name="{name}">']
-        parts.append(content)
-        parts.append("</skill-context>")
-
-        args = tool_input.get("args", "")
-        if args:
-            parts.append(f"\nUser arguments: {args}")
-
-        context = "\n".join(parts)
+        """Build a blocking HookResponse with an on-demand skill fetch directive."""
+        context = format_skill_fetch_context(name, str(tool_input.get("args", "") or ""))
 
         self.logger.info(
             f"Resolved gobby skill '{name}' via {source} (requested: '{raw_skill_name}')",
@@ -194,7 +184,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(
             decision="block",
-            reason=f"Gobby skill '{name}' resolved via {source} — content injected as context",
+            reason=f"Gobby skill '{name}' resolved via {source} — fetch it with gobby-skills",
             context=context,
         )
 
@@ -248,7 +238,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             # For complex tools (multi_replace, etc), check if they modify files
             # This logic could be expanded, but for now stick to the basic set
 
-            if not is_failure and is_edit and self._session_storage:
+            if not is_failure and is_edit and self._session_manager:
                 try:
                     # Check if file is internal .gobby file
                     file_path = (
@@ -257,8 +247,14 @@ class ToolEventHandlerMixin(EventHandlersBase):
                         or tool_input.get("path")
                     )
                     is_internal = file_path and ".gobby/" in str(file_path)
+                    repo_relative_path = (
+                        self._resolve_repo_relative_edit_path(str(file_path), event.cwd)
+                        if file_path
+                        else None
+                    )
+                    in_repo_edit = not file_path or repo_relative_path is not None
 
-                    if not is_internal:
+                    if not is_internal and in_repo_edit:
                         # Track repo-relative file path in session variables
                         # (independent of task-claim gate — rules need this
                         # for per-session has_dirty_files scoping)
@@ -292,7 +288,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                                 )
 
                         if has_claimed_task:
-                            self._session_storage.mark_had_edits(session_id)
+                            self._session_manager.mark_had_edits(session_id)
                 except Exception as e:
                     # Don't fail the event if tracking fails
                     self.logger.warning(f"Failed to process file edit: {e}")
@@ -302,6 +298,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(decision="allow")
 
+    def _resolve_repo_relative_edit_path(self, file_path: str, cwd: str | None) -> str | None:
+        """Return a repo-relative edit path, or ``None`` when the edit escapes ``cwd``."""
+        if not cwd:
+            return os.path.normpath(file_path)
+
+        repo_root = Path(cwd).resolve(strict=False)
+        target_path = Path(file_path)
+        if not target_path.is_absolute():
+            target_path = repo_root / target_path
+
+        resolved_target = target_path.resolve(strict=False)
+        if not resolved_target.is_relative_to(repo_root):
+            return None
+
+        return os.path.normpath(os.fspath(resolved_target.relative_to(repo_root)))
+
     def _track_session_edited_file(self, session_id: str, file_path: str, cwd: str | None) -> None:
         """Record a repo-relative file path in session_edited_files variable.
 
@@ -309,18 +321,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
         preventing bleed across concurrent sessions sharing a working directory.
         """
         try:
-            if cwd:
-                rel_path = os.path.normpath(os.path.relpath(file_path, cwd))
-            else:
-                rel_path = os.path.normpath(file_path)
-
-            # Skip paths that escape the repo (e.g. /tmp files)
-            if rel_path.startswith(".."):
+            rel_path = self._resolve_repo_relative_edit_path(file_path, cwd)
+            if rel_path is None:
                 return
 
             from gobby.workflows.state_manager import SessionVariableManager
 
-            db = getattr(self._session_storage, "db", None)
+            db = getattr(self._session_manager, "db", None)
             if db:
                 SessionVariableManager(db).append_to_set_variable(
                     session_id, "session_edited_files", [rel_path]

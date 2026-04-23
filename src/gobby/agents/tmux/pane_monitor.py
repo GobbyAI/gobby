@@ -15,13 +15,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.config import TmuxConfig
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
-    from gobby.storage.sessions import LocalSessionManager
+    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +45,12 @@ class TmuxPaneMonitor:
         session_end_callback: Callable[[HookEvent], Any],
         config: TmuxConfig | None = None,
         poll_interval: float = 5.0,
-        session_storage: LocalSessionManager | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         self._callback = session_end_callback
         self._config = config or TmuxConfig()
         self._poll_interval = poll_interval
-        self._session_storage = session_storage
+        self._session_manager = session_manager
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}
@@ -123,10 +123,10 @@ class TmuxPaneMonitor:
         live_lookup = {s.name: s for s in live_sessions}
 
         # 3. Get all active agent runs with a tmux_session_name from DB
-        if not self._session_storage:
+        if not self._session_manager:
             return
         try:
-            arm = LocalAgentRunManager(self._session_storage.db)
+            arm = LocalAgentRunManager(self._session_manager.db)
             all_runs = arm.list_active()
         except Exception:
             logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
@@ -198,11 +198,11 @@ class TmuxPaneMonitor:
 
     def _lookup_session(self, session_id: str) -> Session | None:
         """Look up a session from the database."""
-        if not self._session_storage:
-            logger.debug(f"No session storage configured, cannot look up {session_id}")
+        if not self._session_manager:
+            logger.debug(f"No _session_manager configured, cannot look up {session_id}")
             return None
         try:
-            return self._session_storage.get(session_id)
+            return self._session_manager.get(session_id)
         except Exception:
             logger.debug(f"Failed to look up session {session_id}", exc_info=True)
             return None

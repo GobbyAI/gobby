@@ -13,6 +13,7 @@ from typing import Any
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
+from gobby.hooks.logging_utils import block_tool_name, log_structured_block
 from gobby.hooks.normalization import canonicalize_shell_tool_name, is_shell_tool
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
@@ -36,6 +37,30 @@ from gobby.storage.config_store import ConfigStore
 logger = logging.getLogger(__name__)
 
 
+def _resolve_session_lifecycle_block_reason(
+    *,
+    session_id: str,
+    tool_name: str,
+    input_data: dict[str, Any],
+    reason: str | None,
+) -> str:
+    """Return a non-empty session-lifecycle block reason and warn on fallback use."""
+    cleaned = str(reason or "").strip()
+    if cleaned:
+        return cleaned
+    logger.warning(
+        "BLOCK fallback session=%s event=before_tool tool=%s "
+        "source=session-lifecycle rule=pre-tool-callback "
+        "detail=pre-tool lifecycle callback omitted reason",
+        session_id,
+        block_tool_name(tool_name, input_data),
+    )
+    return (
+        f"Session lifecycle blocked {tool_name} without providing a reason. "
+        "Inspect the pre-tool lifecycle hook response."
+    )
+
+
 class ChatSessionPermissionsMixin:
     """Tool permission, approval, and plan mode logic for ChatSession.
 
@@ -57,6 +82,10 @@ class ChatSessionPermissionsMixin:
     _plan_feedback: str | None
     _plan_approval_completed: bool
     _plan_file_path: str | None
+    _last_plan_content: str | None
+    _pending_plan_content: str | None
+    _pending_plan_allowed_prompts: list[str] | None
+    _pending_post_plan_mode: str | None
     _pending_plan_event: asyncio.Event | None
     _pending_plan_decision: str | None
     _on_mode_persist: Callable[[str], None] | None
@@ -111,7 +140,7 @@ class ChatSessionPermissionsMixin:
                 await self._on_mode_changed("plan", "agent_requested")
             return PermissionResultAllow(updated_input=input_data)
         if tool_name == "ExitPlanMode":
-            plan_content = self._plan_file_path or self._read_plan_file()
+            plan_content = self._read_plan_file()
             if not plan_content:
                 return PermissionResultDeny(
                     message=(
@@ -149,12 +178,19 @@ class ChatSessionPermissionsMixin:
             self._pending_plan_decision = None
 
             if decision == "approve":
+                approved_mode = self._pending_post_plan_mode or self.chat_mode
+                self._pending_post_plan_mode = None
+                if approved_mode != self.chat_mode:
+                    self.set_chat_mode(approved_mode)
                 self._plan_approved = True
+                self._clear_pending_plan_prompt()
                 if self._on_mode_changed:
-                    await self._on_mode_changed("plan", "plan_approved")
+                    await self._on_mode_changed(self.chat_mode, "plan_approved")
                 return PermissionResultAllow(updated_input=input_data)
             else:
                 # request_changes — deny so the agent stays in plan mode
+                self._pending_post_plan_mode = None
+                self._clear_pending_plan_prompt()
                 if self._on_mode_changed:
                     await self._on_mode_changed("plan", "plan_changes_requested")
                 feedback = self._plan_feedback or ""
@@ -207,9 +243,23 @@ class ChatSessionPermissionsMixin:
         if invoke_pre_tool_callback and self._on_pre_tool:
             resp = await self._on_pre_tool({"tool_name": tool_name, "tool_input": input_data})
             if resp and resp.get("decision") == "block":
-                return PermissionResultDeny(
-                    message=resp.get("reason", "Blocked by session lifecycle")
+                session_id = str(getattr(self, "db_session_id", None) or self.conversation_id)
+                reason = _resolve_session_lifecycle_block_reason(
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    input_data=input_data,
+                    reason=resp.get("reason"),
                 )
+                log_structured_block(
+                    logger,
+                    session_id=session_id,
+                    event="before_tool",
+                    tool=block_tool_name(tool_name, input_data),
+                    source="session-lifecycle",
+                    rule="pre-tool-callback",
+                    reason=reason,
+                )
+                return PermissionResultDeny(message=reason)
 
         out_of_repo_path = find_out_of_repo_write_path(
             tool_name,
@@ -355,10 +405,17 @@ class ChatSessionPermissionsMixin:
             self._plan_approved = False
             self._plan_feedback = None
             self._plan_file_path = None
+            self._last_plan_content = None
+            self._pending_plan_content = None
+            self._pending_plan_allowed_prompts = None
+            self._pending_post_plan_mode = None
         elif mode != "plan":
             # Leaving plan mode — clear plan state
             self._plan_approved = False
             self._plan_feedback = None
+            self._pending_plan_content = None
+            self._pending_plan_allowed_prompts = None
+            self._pending_post_plan_mode = None
         # Persist to DB (best-effort, fire-and-forget)
         if self._on_mode_persist:
             try:
@@ -389,6 +446,27 @@ class ChatSessionPermissionsMixin:
         """Whether an ExitPlanMode is currently awaiting a response."""
         return self._pending_plan_event is not None
 
+    def _clear_pending_plan_prompt(self) -> None:
+        """Clear the in-flight plan approval prompt shown in the UI."""
+        self._pending_plan_content = None
+        self._pending_plan_allowed_prompts = None
+
+    def _remember_plan_artifact(
+        self,
+        *,
+        file_path: str | None,
+        content: str | None,
+        allowed_prompts: list[str] | None = None,
+    ) -> None:
+        """Persist the active plan artifact for the current plan cycle."""
+        if file_path:
+            self._plan_file_path = file_path
+        if content:
+            self._last_plan_content = content
+            self._pending_plan_content = content
+        if allowed_prompts is not None:
+            self._pending_plan_allowed_prompts = allowed_prompts
+
     def _read_plan_file(self) -> str | None:
         """Read the plan file written during plan mode, if any.
 
@@ -415,9 +493,14 @@ class ChatSessionPermissionsMixin:
             try:
                 path = _resolve(Path(self._plan_file_path))
                 if path.exists():
-                    return path.read_text(encoding="utf-8")
+                    content = path.read_text(encoding="utf-8")
+                    self._last_plan_content = content
+                    return content
             except Exception as e:
                 logger.warning(f"Failed to read plan file {self._plan_file_path}: {e}")
+
+        if self._last_plan_content:
+            return self._last_plan_content
 
         # Fallback: find the most recently modified plan file
         try:
@@ -448,7 +531,9 @@ class ChatSessionPermissionsMixin:
                 newest = max(candidates, key=lambda p: p.stat().st_mtime)
                 logger.info(f"Plan file path not tracked; using most recent: {newest}")
                 self._plan_file_path = str(newest)
-                return newest.read_text(encoding="utf-8")
+                content = newest.read_text(encoding="utf-8")
+                self._last_plan_content = content
+                return content
         except Exception as e:
             logger.warning(f"Failed to find fallback plan file: {e}")
 

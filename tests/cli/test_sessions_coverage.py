@@ -69,7 +69,7 @@ def _make_session(**overrides: Any) -> Session:
 
 class TestManagerCreation:
     @patch("gobby.cli.sessions.LocalDatabase")
-    @patch("gobby.cli.sessions.LocalSessionManager")
+    @patch("gobby.cli.sessions.SessionManager")
     def test_get_session_manager(self, mock_mgr_cls: MagicMock, mock_db: MagicMock) -> None:
         from gobby.cli.sessions import get_session_manager
 

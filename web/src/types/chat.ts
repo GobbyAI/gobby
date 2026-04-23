@@ -1,4 +1,4 @@
-import type { GobbySession } from "../hooks/useSessions";
+import type { GobbySession } from "./sessions";
 import type { PaletteItem } from "../hooks/useColonAutocomplete";
 
 export type ChatMode = "accept_edits" | "bypass" | "normal" | "plan";
@@ -192,6 +192,7 @@ export interface SessionObservationMeta {
 }
 
 export type SessionInteractionMode = "none" | "observe" | "proxy";
+export type FallbackContextMode = "auto" | "summary" | "digest" | "none";
 
 export interface SwappedSessionTarget {
   sessionId: string;
@@ -211,6 +212,7 @@ export interface ChatState {
   isConnected: boolean;
   isReconnecting: boolean;
   contextUsage?: ContextUsage;
+  contextUsageUpdatedAt?: number | null;
   onSend: (
     content: string,
     files?: QueuedFile[],
@@ -249,6 +251,7 @@ export interface ChatState {
       model?: string | null;
       reasoningEffort?: string | null;
       chatMode?: string | null;
+      fallbackContext?: FallbackContextMode;
     },
   ) => Promise<string>;
   planPendingApproval: boolean;
@@ -293,27 +296,10 @@ export interface ConversationState {
   onSelectSession: (session: GobbySession) => void;
   onDeleteSession?: (session: GobbySession) => void;
   onRenameSession?: (id: string, title: string) => void;
-  agents: Array<{
-    run_id: string;
-    provider: string;
-    pid?: number;
-    mode?: string;
-    started_at?: string;
-    tmux_session_name?: string;
-  }>;
-  onNavigateToAgent: (agent: {
-    run_id: string;
-    session_id?: string;
-    mode?: string;
-    tmux_session_name?: string;
-  }) => void;
-  onKillAgent?: (runId: string) => void;
-  onExpireSession?: (sessionId: string) => void;
-  cliSessions?: GobbySession[];
+  onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
+  onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   viewingSessionId?: string | null;
   attachedSessionId?: string | null;
-  onViewCliSession?: (session: GobbySession) => void;
-  onDetachFromSession?: () => void;
 }
 
 export interface ProjectProps {
@@ -335,6 +321,7 @@ export interface VoiceProps {
   isTranscribing?: boolean;
   isSpeaking?: boolean;
   voiceError?: string | null;
+  prepareTTSPlayback?: () => void;
   startRecording?: () => Promise<void>;
   stopRecording?: () => Promise<void>;
   cancelRecording?: () => void;

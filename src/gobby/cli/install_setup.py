@@ -1,9 +1,4 @@
-"""Daemon setup utilities for the install command.
-
-Extracted from install.py to reduce file size. Handles daemon config
-creation, database initialization, bundled content sync, MCP server
-configuration, and IDE terminal title setup.
-"""
+"""Helpers for install-time daemon bootstrap and bundled binary installs."""
 
 from __future__ import annotations
 
@@ -18,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from shutil import copy2
@@ -28,9 +24,20 @@ from urllib.request import Request, urlopen
 
 import click
 
+from . import install_setup_gcode as _gcode_impl
+from . import install_setup_ghook as _ghook_impl
+from . import install_setup_gloc as _gloc_impl
+from . import install_setup_gsqz as _gsqz_impl
 from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
+# Helper modules resolve these names dynamically from this module to preserve
+# existing patch targets in tests and callers.
+_HELPER_EXPORTS = (os, platform, tempfile, UTC, datetime)
+
+
+def _module() -> Any:
+    return sys.modules[__name__]
 
 
 def _urlopen_https(req: Request, *, timeout: int) -> Any:
@@ -208,17 +215,14 @@ def ensure_daemon_config() -> dict[str, Any]:
     if bootstrap_path.exists():
         return {"created": False, "path": str(bootstrap_path)}
 
-    # Ensure directory exists
     bootstrap_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Copy shared bootstrap template
     shared_bootstrap = get_install_dir() / "shared" / "config" / "bootstrap.yaml"
     if shared_bootstrap.exists():
         copy2(shared_bootstrap, bootstrap_path)
         bootstrap_path.chmod(0o600)
         return {"created": True, "path": str(bootstrap_path), "source": "shared"}
 
-    # Fallback: write minimal defaults directly
     import yaml
 
     defaults = {
@@ -245,7 +249,6 @@ def run_daemon_setup(project_path: Path) -> None:
     """
     from .installers import install_default_mcp_servers
 
-    # Initialize database (ensures _personal project exists before daemon start)
     db = None
     try:
         from gobby.cli.utils import init_local_storage
@@ -255,8 +258,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except (OSError, PermissionError, ValueError) as e:
         click.echo(f"Warning: Database init failed ({type(e).__name__}): {e}")
 
-    # Sync bundled content (skills, prompts, rules, agents) to database.
-    # This is the single import point — the daemon no longer syncs on startup.
     if db is not None:
         try:
             from gobby.cli.installers.shared import sync_bundled_content_to_db
@@ -270,7 +271,6 @@ def run_daemon_setup(project_path: Path) -> None:
         finally:
             db.close()
 
-    # Install default external MCP servers (GitHub, Linear, context7)
     mcp_result = install_default_mcp_servers()
     if mcp_result["success"]:
         if mcp_result["servers_added"]:
@@ -282,7 +282,6 @@ def run_daemon_setup(project_path: Path) -> None:
     else:
         click.echo(f"Warning: Failed to configure MCP servers: {mcp_result['error']}")
 
-    # Install Playwright CLI globally (token-efficient browser automation)
     try:
         npm_result = subprocess.run(
             ["npm", "install", "-g", "@playwright/cli@latest"],
@@ -292,8 +291,6 @@ def run_daemon_setup(project_path: Path) -> None:
         )
         if npm_result.returncode == 0:
             click.echo("Installed Playwright CLI (@playwright/cli)")
-            # Clean up legacy .claude/skills/playwright-cli/ from older installs
-            # (skill is now served exclusively through gobby-skills)
             legacy_skills = project_path / ".claude" / "skills" / "playwright-cli"
             if legacy_skills.exists():
                 try:
@@ -312,7 +309,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except subprocess.TimeoutExpired:
         click.echo("Warning: Playwright CLI install timed out")
 
-    # Install ClawHub CLI (skill hub search)
     try:
         npm_result = subprocess.run(
             ["npm", "install", "-g", "clawhub"],
@@ -329,7 +325,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except subprocess.TimeoutExpired:
         click.echo("Warning: ClawHub CLI install timed out")
 
-    # Install gsqz binary (output compressor for token optimization)
     try:
         gsqz_result = _install_gsqz()
         if gsqz_result.get("installed"):
@@ -348,7 +343,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install gsqz: {e}")
 
-    # Install gcode binary (code index CLI for subagents)
     try:
         gcode_result = _install_gcode()
         if gcode_result.get("installed"):
@@ -367,7 +361,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install gcode: {e}")
 
-    # Install ghook binary (hook manager for sandbox-tolerant CLI hooks)
     try:
         ghook_result = _install_ghook()
         if ghook_result.get("installed"):
@@ -386,7 +379,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install ghook: {e}")
 
-    # Install gloc binary (local LLM launcher)
     try:
         gloc_result = _install_gloc()
         if gloc_result.get("installed"):
@@ -405,7 +397,6 @@ def run_daemon_setup(project_path: Path) -> None:
     except Exception as e:
         click.echo(f"Warning: Failed to install gloc: {e}")
 
-    # Configure VS Code terminal title (any CLI may run inside VS Code's terminal)
     try:
         from .installers.ide_config import configure_ide_terminal_title
 
@@ -421,7 +412,7 @@ _GSQZ_CRATES_API = "https://crates.io/api/v1/crates/gobby-squeeze"
 _GSQZ_VERSION_STAMP = ".gsqz-version"
 _GSQZ_BIN_NAME = "gsqz.exe" if sys.platform == "win32" else "gsqz"
 
-# Platform → target triple mapping (shared by both gcode and gsqz)
+# Platform -> target triple mapping used across public binary installers.
 _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
     ("darwin", "arm64"): "aarch64-apple-darwin",
     ("darwin", "x86_64"): "x86_64-apple-darwin",
@@ -433,824 +424,162 @@ _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
 
 
 def _get_latest_gsqz_version() -> str | None:
-    """Query crates.io for the latest gsqz version.
-
-    Returns:
-        Version string (e.g. ``"0.1.0"``) or ``None`` on failure.
-    """
-    try:
-        req = Request(_GSQZ_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
-        with _urlopen_https(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        return str(data["crate"]["max_version"])
-    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
-        logger.debug("gsqz: could not check latest version: %s", e)
-        return None
+    return _gsqz_impl.get_latest_gsqz_version(_module())
 
 
 def _get_installed_gsqz_version(bin_dir: Path) -> str | None:
-    """Read the installed gsqz version from the stamp file.
-
-    Returns:
-        Version string, ``"unknown"`` if binary exists but no stamp, or
-        ``None`` if not installed.
-    """
-    stamp = bin_dir / _GSQZ_VERSION_STAMP
-    binary = bin_dir / _GSQZ_BIN_NAME
-    if stamp.exists():
-        content = stamp.read_text().strip()
-        return content if content else None
-    if binary.exists():
-        return "unknown"
-    return None
+    return _gsqz_impl.get_installed_gsqz_version(_module(), bin_dir)
 
 
 def _write_gsqz_version_stamp(bin_dir: Path, version: str) -> None:
-    """Write version to stamp file atomically."""
-    stamp = bin_dir / _GSQZ_VERSION_STAMP
-    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".gsqz-version-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(version + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, stamp)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    _gsqz_impl.write_gsqz_version_stamp(_module(), bin_dir, version)
 
 
 def _install_gsqz_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    """Download and extract gsqz from GitHub Releases.
-
-    Args:
-        bin_dir: Target directory (e.g. ``~/.gobby/bin``).
-        target: Platform target triple (e.g. ``aarch64-apple-darwin``).
-        version: Specific version to download, or ``None`` for latest.
-
-    Returns:
-        ``True`` on success, ``False`` on any failure.
-    """
-    return _download_release_binary(
-        bin_dir,
-        binary_name=_GSQZ_BIN_NAME,
-        artifact_name="gsqz",
-        target=target,
-        version=version,
-        tag_prefix=_GSQZ_RELEASE_TAG_PREFIX,
-        label="gsqz",
-    )
+    return _gsqz_impl.install_gsqz_from_github(_module(), bin_dir, target, version)
 
 
 def _install_gsqz_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    """Install gsqz via cargo-binstall (pre-built binary download).
-
-    Returns:
-        ``True`` on success, ``False`` if cargo-binstall is unavailable or fails.
-    """
-    if not shutil.which("cargo-binstall"):
-        return False
-    try:
-        crate = f"gobby-squeeze@{version}" if version else "gobby-squeeze"
-        result = subprocess.run(
-            [
-                "cargo-binstall",
-                crate,
-                "--install-path",
-                str(bin_dir),
-                "--no-confirm",
-                "--no-symlinks",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gsqz: cargo-binstall failed: %s", e)
-        return False
+    return _gsqz_impl.install_gsqz_from_cargo_binstall(_module(), bin_dir, version)
 
 
 def _install_gsqz_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    """Compile and install gsqz from source via ``cargo install``.
-
-    This is the slowest fallback — compilation can take 30-60 seconds.
-
-    Returns:
-        ``True`` on success, ``False`` if cargo is unavailable or fails.
-    """
-    if not shutil.which("cargo"):
-        return False
-    try:
-        cmd = ["cargo", "install", "gobby-squeeze", "--root", str(bin_dir.parent)]
-        if version:
-            cmd.extend(["--version", version])
-        click.echo("  Compiling gsqz from source (this may take 30-60 seconds)...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gsqz: cargo install failed: %s", e)
-        return False
+    return _gsqz_impl.install_gsqz_from_cargo_install(_module(), bin_dir, version)
 
 
 def _ensure_gobby_bin_on_path() -> dict[str, Any]:
-    """Add ``~/.gobby/bin`` to the user's shell PATH if not already present.
-
-    Detects the current shell and appends an export line to the appropriate
-    rc file with a ``# gobby`` guard comment to avoid duplicates.
-
-    Returns:
-        Dict with 'added' (bool), 'shell' (str), and 'rc_file' (str) keys.
-    """
-    gobby_bin = str(Path.home() / ".gobby" / "bin")
-    result: dict[str, Any] = {"added": False}
-
-    # Already on PATH?
-    if gobby_bin in os.environ.get("PATH", "").split(os.pathsep):
-        return result
-
-    if sys.platform == "win32":
-        click.echo(f"  Add {gobby_bin} to your PATH manually (System > Environment Variables)")
-        return result
-
-    shell = os.environ.get("SHELL", "")
-    shell_name = Path(shell).name if shell else ""
-
-    rc_configs: dict[str, tuple[Path, str]] = {
-        "zsh": (Path.home() / ".zshrc", 'export PATH="$HOME/.gobby/bin:$PATH"  # gobby\n'),
-        "bash": (Path.home() / ".bashrc", 'export PATH="$HOME/.gobby/bin:$PATH"  # gobby\n'),
-        "fish": (
-            Path.home() / ".config" / "fish" / "config.fish",
-            "fish_add_path ~/.gobby/bin  # gobby\n",
-        ),
-    }
-
-    if shell_name not in rc_configs:
-        logger.debug("gsqz: unknown shell %s, skipping PATH setup", shell_name)
-        return result
-
-    rc_file, export_line = rc_configs[shell_name]
-
-    # Check guard: don't append if already present
-    if rc_file.exists():
-        content = rc_file.read_text()
-        if "# gobby" in content and ".gobby/bin" in content:
-            return result
-
-    # Ensure parent dir exists (for fish)
-    rc_file.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(rc_file, "a") as f:
-        f.write(f"\n{export_line}")
-
-    result["added"] = True
-    result["shell"] = shell_name
-    result["rc_file"] = str(rc_file)
-    return result
+    return _gsqz_impl.ensure_gobby_bin_on_path(_module())
 
 
 def _install_gsqz(force: bool = False) -> dict[str, Any]:
-    """Install or upgrade the gsqz binary with a fallback chain.
+    return _gsqz_impl.install_gsqz(_module(), force)
 
-    Installation priority:
-      1. GitHub release download (fast, no deps)
-      2. ``cargo-binstall`` (fast if available)
-      3. ``cargo install`` (compiles from source)
-
-    Args:
-        force: Re-download even if the installed version is current.
-
-    Returns:
-        Dict with keys: ``installed``, ``skipped``, ``upgraded``,
-        ``version``, ``method``, ``reason``.
-    """
-    bin_dir = Path.home() / ".gobby" / "bin"
-    gsqz_path = bin_dir / _GSQZ_BIN_NAME
-
-    # Detect platform
-    os_name = sys.platform
-    machine = platform.machine().lower()
-    target = _PLATFORM_TARGETS.get((os_name, machine))
-    if target is None:
-        logger.warning("gsqz: unsupported platform %s/%s", os_name, machine)
-        return {
-            "installed": False,
-            "skipped": True,
-            "reason": f"unsupported platform {os_name}/{machine}",
-        }
-
-    # Version check
-    installed_version = _get_installed_gsqz_version(bin_dir)
-    latest_version = _get_latest_gsqz_version()
-
-    if gsqz_path.exists() and not force:
-        if installed_version and latest_version and installed_version == latest_version:
-            return {"installed": False, "skipped": True, "version": installed_version}
-        if installed_version and installed_version != "unknown" and latest_version is None:
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": installed_version,
-                "reason": "version check failed, keeping current",
-            }
-
-    # Fallback chain
-    target_version = latest_version
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    method = None
-
-    if _install_gsqz_from_github(bin_dir, target, target_version):
-        method = "github"
-    elif _install_gsqz_from_cargo_binstall(bin_dir, target_version):
-        method = "cargo-binstall"
-    elif _install_gsqz_from_cargo_install(bin_dir, target_version):
-        method = "cargo-install"
-    else:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
-
-    gsqz_path.chmod(0o755)
-    # gsqz is a command wrapper — it has no --version flag.
-    # Use the crates.io version we already fetched, or fall back to "unknown".
-    resolved_version = target_version or "unknown"
-    _write_gsqz_version_stamp(bin_dir, resolved_version)
-
-    # Ensure ~/.gobby/bin is on PATH
-    path_result = _ensure_gobby_bin_on_path()
-    if path_result.get("added"):
-        click.echo(
-            f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"
-        )
-
-    is_upgrade = installed_version is not None and installed_version != resolved_version
-    return {
-        "installed": True,
-        "upgraded": is_upgrade,
-        "version": resolved_version,
-        "method": method,
-    }
-
-
-# ── gcode (code index CLI) ──────────────────────────────────────────
 
 _GCODE_RELEASE_TAG_PREFIX = "gcode-v"
 _GCODE_VERSION_STAMP = ".gcode-version"
 _GCODE_BIN_NAME = "gcode.exe" if sys.platform == "win32" else "gcode"
-_GCODE_TARGETS = _PLATFORM_TARGETS  # Same platform mapping
+_GCODE_TARGETS = _PLATFORM_TARGETS
 _GCODE_CRATES_API = "https://crates.io/api/v1/crates/gobby-code"
 
 
 def _get_latest_gcode_version() -> str | None:
-    """Query crates.io for the latest gcode version.
-
-    Returns:
-        Version string (e.g. ``"0.2.3"``) or ``None`` on failure.
-    """
-    try:
-        req = Request(_GCODE_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
-        with _urlopen_https(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        return str(data["crate"]["max_version"])
-    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
-        logger.debug("gcode: could not check latest version: %s", e)
-        return None
+    return _gcode_impl.get_latest_gcode_version(_module())
 
 
 def _get_installed_gcode_version(bin_dir: Path) -> str | None:
-    """Read the installed gcode version from stamp file."""
-    stamp = bin_dir / _GCODE_VERSION_STAMP
-    try:
-        return stamp.read_text().strip() if stamp.exists() else None
-    except OSError:
-        return None
+    return _gcode_impl.get_installed_gcode_version(_module(), bin_dir)
 
 
 def _write_gcode_version_stamp(bin_dir: Path, version: str) -> None:
-    """Atomically write gcode version stamp."""
-    stamp = str(bin_dir / _GCODE_VERSION_STAMP)
-    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".gcode-version-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(version + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, stamp)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    _gcode_impl.write_gcode_version_stamp(_module(), bin_dir, version)
 
 
 def _install_gcode_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    """Download and extract gcode from GitHub Releases.
-
-    Args:
-        bin_dir: Target directory (e.g. ``~/.gobby/bin``).
-        target: Platform target triple (e.g. ``aarch64-apple-darwin``).
-        version: Specific version to download, or ``None`` for latest.
-
-    Returns:
-        ``True`` on success, ``False`` on any failure.
-    """
-    return _download_release_binary(
-        bin_dir,
-        binary_name=_GCODE_BIN_NAME,
-        artifact_name="gcode",
-        target=target,
-        version=version,
-        tag_prefix=_GCODE_RELEASE_TAG_PREFIX,
-        label="gcode",
-    )
+    return _gcode_impl.install_gcode_from_github(_module(), bin_dir, target, version)
 
 
 def _install_gcode_from_submodule(bin_dir: Path) -> bool:
-    """Build gcode from the deps/gobby-cli submodule.
-
-    Preferred for development — uses the pinned submodule commit for
-    schema-compatible builds.
-
-    Returns:
-        ``True`` on success, ``False`` if submodule or cargo unavailable.
-    """
-    if not shutil.which("cargo"):
-        return False
-
-    # Walk up from this file to find the repo root with deps/gobby-cli/
-    search = Path(__file__).resolve().parent
-    for _ in range(10):
-        manifest = search / "deps" / "gobby-cli" / "Cargo.toml"
-        if manifest.exists():
-            break
-        search = search.parent
-    else:
-        logger.debug(
-            "gcode submodule not found after searching %d parents from %s",
-            10,
-            Path(__file__).resolve().parent,
-        )
-        return False
-
-    try:
-        click.echo("  Building gcode from submodule (this may take 30-60 seconds)...")
-        result = subprocess.run(
-            [
-                "cargo",
-                "build",
-                "--release",
-                "-p",
-                "gcode",
-                "--manifest-path",
-                str(manifest),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        if result.returncode != 0:
-            return False
-
-        # Copy binary from target/release/ to bin_dir
-        release_dir = manifest.parent / "target" / "release"
-        src_bin = release_dir / _GCODE_BIN_NAME
-        if not src_bin.exists():
-            return False
-
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        dest = bin_dir / _GCODE_BIN_NAME
-        copy2(str(src_bin), str(dest))
-        dest.chmod(0o755)
-        return True
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
-        logger.warning("gcode: submodule build failed: %s", e)
-        return False
+    return _gcode_impl.install_gcode_from_submodule(_module(), bin_dir)
 
 
 def _install_gcode_from_cargo_git(bin_dir: Path) -> bool:
-    """Install gcode from source via ``cargo install --git``.
-
-    Fallback for dev environments where releases aren't published yet.
-
-    Returns:
-        ``True`` on success, ``False`` if cargo is unavailable or fails.
-    """
-    if not shutil.which("cargo"):
-        return False
-    try:
-        click.echo("  Compiling gcode from source (this may take 30-60 seconds)...")
-        result = subprocess.run(
-            [
-                "cargo",
-                "install",
-                "--git",
-                "https://github.com/GobbyAI/gobby-cli",
-                "-p",
-                "gcode",
-                "--root",
-                str(bin_dir.parent),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gcode: cargo install --git failed: %s", e)
-        return False
+    return _gcode_impl.install_gcode_from_cargo_git(_module(), bin_dir)
 
 
 def _install_gcode_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    """Install gcode via cargo-binstall (pre-built binary download).
-
-    Returns:
-        ``True`` on success, ``False`` if cargo-binstall is unavailable or fails.
-    """
-    if not shutil.which("cargo-binstall"):
-        return False
-    try:
-        crate = f"gobby-code@{version}" if version else "gobby-code"
-        result = subprocess.run(
-            [
-                "cargo-binstall",
-                crate,
-                "--install-path",
-                str(bin_dir),
-                "--no-confirm",
-                "--no-symlinks",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gcode: cargo-binstall failed: %s", e)
-        return False
+    return _gcode_impl.install_gcode_from_cargo_binstall(_module(), bin_dir, version)
 
 
 def _install_gcode_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    """Compile and install gcode from source via ``cargo install gobby-code``.
-
-    Falls back to crates.io when GitHub releases and binstall aren't available.
-
-    Returns:
-        ``True`` on success, ``False`` if cargo is unavailable or fails.
-    """
-    if not shutil.which("cargo"):
-        return False
-    try:
-        cmd = ["cargo", "install", "gobby-code", "--root", str(bin_dir.parent)]
-        if version:
-            cmd.extend(["--version", version])
-        click.echo("  Compiling gcode from source (this may take 30-60 seconds)...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gcode: cargo install failed: %s", e)
-        return False
+    return _gcode_impl.install_gcode_from_cargo_install(_module(), bin_dir, version)
 
 
 def _install_gcode(force: bool = False) -> dict[str, Any]:
-    """Install or upgrade the gcode binary with a fallback chain.
-
-    Installation priority:
-      1. Build from submodule (schema-compatible, for dev)
-      2. GitHub release download (fast, no deps)
-      3. ``cargo-binstall`` (fast if available)
-      4. ``cargo install gobby-code`` (crates.io, compiles from source)
-      5. ``cargo install --git`` (compiles from git HEAD)
-
-    Args:
-        force: Re-download even if the installed version is current.
-
-    Returns:
-        Dict with keys: ``installed``, ``skipped``, ``upgraded``,
-        ``version``, ``method``, ``reason``.
-    """
-    bin_dir = Path.home() / ".gobby" / "bin"
-    gcode_path = bin_dir / _GCODE_BIN_NAME
-
-    # Detect platform
-    os_name = sys.platform
-    machine = platform.machine().lower()
-    target = _GCODE_TARGETS.get((os_name, machine))
-    if target is None:
-        logger.warning("gcode: unsupported platform %s/%s", os_name, machine)
-        return {
-            "installed": False,
-            "skipped": True,
-            "reason": f"unsupported platform {os_name}/{machine}",
-        }
-
-    # Version check (mirrors gsqz pattern)
-    installed_version = _get_installed_gcode_version(bin_dir)
-    latest_version = _get_latest_gcode_version()
-
-    if gcode_path.exists() and not force:
-        if installed_version and latest_version and installed_version == latest_version:
-            return {"installed": False, "skipped": True, "version": installed_version}
-        if installed_version and installed_version != "unknown" and latest_version is None:
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": installed_version,
-                "reason": "version check failed, keeping current",
-            }
-
-    # Fallback chain
-    target_version = latest_version
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    method = None
-
-    if _install_gcode_from_submodule(bin_dir):
-        method = "submodule"
-    elif _install_gcode_from_github(bin_dir, target, target_version):
-        method = "github"
-    elif _install_gcode_from_cargo_binstall(bin_dir, target_version):
-        method = "cargo-binstall"
-    elif _install_gcode_from_cargo_install(bin_dir, target_version):
-        method = "cargo-install"
-    elif _install_gcode_from_cargo_git(bin_dir):
-        method = "cargo-git"
-    else:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
-
-    gcode_path.chmod(0o755)
-
-    # Probe installed binary for version
-    resolved_version = target_version
-    if not resolved_version:
-        try:
-            result = subprocess.run(
-                [str(gcode_path), "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                parts = result.stdout.strip().split()
-                resolved_version = parts[-1] if parts else "unknown"
-            else:
-                resolved_version = "unknown"
-        except Exception:
-            resolved_version = "unknown"
-    _write_gcode_version_stamp(bin_dir, resolved_version)
-
-    # Ensure ~/.gobby/bin is on PATH (shared with gsqz)
-    _ensure_gobby_bin_on_path()
-
-    is_upgrade = installed_version is not None and installed_version != resolved_version
-    return {
-        "installed": True,
-        "upgraded": is_upgrade,
-        "version": resolved_version,
-        "method": method,
-    }
+    return _gcode_impl.install_gcode(_module(), force)
 
 
-# ── ghook (hook manager) ────────────────────────────────────────────
-
-_GHOOK_RELEASE_TAG_PREFIX = "gobby-hooks-v"
+_GHOOK_RELEASE_TAG_PREFIX = "ghook-v"
 _GHOOK_CRATES_API = "https://crates.io/api/v1/crates/gobby-hooks"
 _GHOOK_VERSION_STAMP = ".ghook-version"
+_GHOOK_INSTALL_SIDECAR = ".ghook-install.json"
 _GHOOK_COMPATIBILITY_STAMP = ".ghook-compatibility"
 _GHOOK_BIN_NAME = "ghook.exe" if sys.platform == "win32" else "ghook"
 _GHOOK_TARGETS = _PLATFORM_TARGETS
 _GHOOK_INSTALL_VERSION_ENV = "GOBBY_INSTALL_GHOOK_VERSION"
 _GHOOK_INSTALL_METHOD_ENV = "GOBBY_INSTALL_GHOOK_METHOD"
 _GHOOK_ALLOWED_METHODS = {"auto", "github", "cargo-binstall", "cargo-install"}
+_GHOOK_PUBLIC_INSTALL_METHODS = {
+    "github": "github-release",
+    "cargo-binstall": "crates-binstall",
+    "cargo-install": "cargo-install",
+}
 
 
 def _get_latest_ghook_version() -> str | None:
-    """Query crates.io for the latest ghook version."""
-    try:
-        req = Request(_GHOOK_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
-        with _urlopen_https(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        return str(data["crate"]["max_version"])
-    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
-        logger.debug("ghook: could not check latest version: %s", e)
-        return None
+    return _ghook_impl.get_latest_ghook_version(_module())
 
 
 def _get_installed_ghook_version(bin_dir: Path) -> str | None:
-    """Read the installed ghook version from stamp file."""
-    stamp = bin_dir / _GHOOK_VERSION_STAMP
-    binary = bin_dir / _GHOOK_BIN_NAME
-    if stamp.exists():
-        content = stamp.read_text().strip()
-        return content if content else None
-    if binary.exists():
-        return "unknown"
-    return None
+    return _ghook_impl.get_installed_ghook_version(_module(), bin_dir)
 
 
 def _write_ghook_version_stamp(bin_dir: Path, version: str) -> None:
-    """Atomically write the ghook version stamp."""
-    stamp = bin_dir / _GHOOK_VERSION_STAMP
-    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".ghook-version-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(version + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, stamp)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    _ghook_impl.write_ghook_version_stamp(_module(), bin_dir, version)
 
 
-def _install_ghook_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    """Download and extract ghook from GitHub Releases."""
-    return _download_release_binary(
+def _ghook_installed_at_utc() -> str:
+    return _ghook_impl.ghook_installed_at_utc(_module())
+
+
+def _ghook_install_source_url(method: str, *, target: str, version: str | None) -> str | None:
+    return _ghook_impl.ghook_install_source_url(_module(), method, target=target, version=version)
+
+
+def _write_ghook_install_sidecar(
+    bin_dir: Path,
+    *,
+    install_method: str,
+    install_source_url: str | None,
+    installed_version: str,
+    installed_at: str,
+) -> None:
+    _ghook_impl.write_ghook_install_sidecar(
+        _module(),
         bin_dir,
-        binary_name=_GHOOK_BIN_NAME,
-        artifact_name="ghook",
-        target=target,
-        version=version,
-        tag_prefix=_GHOOK_RELEASE_TAG_PREFIX,
-        label="ghook",
+        install_method=install_method,
+        install_source_url=install_source_url,
+        installed_version=installed_version,
+        installed_at=installed_at,
     )
 
 
+def _install_ghook_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
+    return _ghook_impl.install_ghook_from_github(_module(), bin_dir, target, version)
+
+
 def _install_ghook_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    """Install ghook via cargo-binstall."""
-    if not shutil.which("cargo-binstall"):
-        return False
-    try:
-        crate = f"gobby-hooks@{version}" if version else "gobby-hooks"
-        result = subprocess.run(
-            [
-                "cargo-binstall",
-                crate,
-                "--install-path",
-                str(bin_dir),
-                "--no-confirm",
-                "--no-symlinks",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("ghook: cargo-binstall failed: %s", e)
-        return False
+    return _ghook_impl.install_ghook_from_cargo_binstall(_module(), bin_dir, version)
 
 
 def _install_ghook_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    """Compile and install ghook from source via ``cargo install``."""
-    if not shutil.which("cargo"):
-        return False
-    try:
-        cmd = ["cargo", "install", "gobby-hooks", "--root", str(bin_dir.parent)]
-        if version:
-            cmd.extend(["--version", version])
-        click.echo("  Compiling ghook from source (this may take 30-60 seconds)...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("ghook: cargo install failed: %s", e)
-        return False
+    return _ghook_impl.install_ghook_from_cargo_install(_module(), bin_dir, version)
 
 
 def _get_ghook_version_override() -> str | None:
-    """Return an optional explicit ghook version override from the environment."""
-    value = os.environ.get(_GHOOK_INSTALL_VERSION_ENV, "").strip()
-    return value or None
+    return _ghook_impl.get_ghook_version_override(_module())
 
 
 def _get_ghook_method_override() -> str | None:
-    """Return an optional ghook install-method override from the environment."""
-    value = os.environ.get(_GHOOK_INSTALL_METHOD_ENV, "").strip().lower()
-    if not value or value == "auto":
-        return None
-    if value not in _GHOOK_ALLOWED_METHODS:
-        logger.warning(
-            "ghook: ignoring unsupported %s=%s",
-            _GHOOK_INSTALL_METHOD_ENV,
-            value,
-        )
-        return None
-    return value
+    return _ghook_impl.get_ghook_method_override(_module())
 
 
 def _probe_ghook_version(ghook_path: Path) -> str | None:
-    """Probe the ghook binary for version and trigger compatibility stamp generation."""
-    try:
-        result = subprocess.run(
-            [str(ghook_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception as e:
-        logger.warning("ghook: failed running --version probe: %s", e)
-        return None
-
-    if result.returncode != 0:
-        logger.warning("ghook: --version probe failed: %s", result.stderr.strip())
-        return None
-
-    output = (result.stdout or result.stderr).strip()
-    return output.split()[-1] if output else None
+    return _ghook_impl.probe_ghook_version(_module(), ghook_path)
 
 
 def _install_ghook(force: bool = False) -> dict[str, Any]:
-    """Install or upgrade the ghook binary with the public release fallback chain."""
-    bin_dir = Path.home() / ".gobby" / "bin"
-    ghook_path = bin_dir / _GHOOK_BIN_NAME
+    return _ghook_impl.install_ghook(_module(), force)
 
-    os_name = sys.platform
-    machine = platform.machine().lower()
-    target = _GHOOK_TARGETS.get((os_name, machine))
-    if target is None:
-        logger.warning("ghook: unsupported platform %s/%s", os_name, machine)
-        return {
-            "installed": False,
-            "skipped": True,
-            "reason": f"unsupported platform {os_name}/{machine}",
-        }
-
-    installed_version = _get_installed_ghook_version(bin_dir)
-    requested_version = _get_ghook_version_override()
-    target_version = requested_version or _get_latest_ghook_version()
-    method_override = _get_ghook_method_override()
-
-    if ghook_path.exists() and not force:
-        if target_version and installed_version == target_version:
-            return {"installed": False, "skipped": True, "version": installed_version}
-        if installed_version and installed_version != "unknown" and target_version is None:
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": installed_version,
-                "reason": "version check failed, keeping current",
-            }
-
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    method = None
-
-    if method_override == "github":
-        if _install_ghook_from_github(bin_dir, target, target_version):
-            method = "github"
-    elif method_override == "cargo-binstall":
-        if _install_ghook_from_cargo_binstall(bin_dir, target_version):
-            method = "cargo-binstall"
-    elif method_override == "cargo-install":
-        if _install_ghook_from_cargo_install(bin_dir, target_version):
-            method = "cargo-install"
-    else:
-        if _install_ghook_from_github(bin_dir, target, target_version):
-            method = "github"
-        elif _install_ghook_from_cargo_binstall(bin_dir, target_version):
-            method = "cargo-binstall"
-        elif _install_ghook_from_cargo_install(bin_dir, target_version):
-            method = "cargo-install"
-
-    if method is None:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
-
-    ghook_path.chmod(0o755)
-
-    resolved_version = _probe_ghook_version(ghook_path) or target_version or "unknown"
-    _write_ghook_version_stamp(bin_dir, resolved_version)
-
-    path_result = _ensure_gobby_bin_on_path()
-    if path_result.get("added"):
-        click.echo(
-            f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"
-        )
-
-    is_upgrade = installed_version is not None and installed_version != resolved_version
-    result = {
-        "installed": True,
-        "upgraded": is_upgrade,
-        "version": resolved_version,
-        "method": method,
-    }
-    compatibility_stamp = bin_dir / _GHOOK_COMPATIBILITY_STAMP
-    if compatibility_stamp.exists():
-        result["compatibility"] = str(compatibility_stamp)
-    return result
-
-
-# ── gloc (local LLM launcher) ───────────────────────────────────────
 
 _GLOC_RELEASE_TAG_PREFIX = "gloc-v"
 _GLOC_CRATES_API = "https://crates.io/api/v1/crates/gobby-local"
@@ -1260,183 +589,32 @@ _GLOC_TARGETS = _PLATFORM_TARGETS
 
 
 def _get_latest_gloc_version() -> str | None:
-    """Query crates.io for the latest gloc version."""
-    try:
-        req = Request(_GLOC_CRATES_API, headers={"User-Agent": "gobby-installer/1.0"})
-        with _urlopen_https(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        return str(data["crate"]["max_version"])
-    except (URLError, json.JSONDecodeError, KeyError, OSError) as e:
-        logger.debug("gloc: could not check latest version: %s", e)
-        return None
+    return _gloc_impl.get_latest_gloc_version(_module())
 
 
 def _get_installed_gloc_version(bin_dir: Path) -> str | None:
-    """Read the installed gloc version from stamp file."""
-    stamp = bin_dir / _GLOC_VERSION_STAMP
-    binary = bin_dir / _GLOC_BIN_NAME
-    if stamp.exists():
-        content = stamp.read_text().strip()
-        return content if content else None
-    if binary.exists():
-        return "unknown"
-    return None
+    return _gloc_impl.get_installed_gloc_version(_module(), bin_dir)
 
 
 def _write_gloc_version_stamp(bin_dir: Path, version: str) -> None:
-    """Atomically write the gloc version stamp."""
-    stamp = bin_dir / _GLOC_VERSION_STAMP
-    fd, tmp_path = tempfile.mkstemp(dir=str(bin_dir), prefix=".gloc-version-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(version + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, stamp)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        raise
+    _gloc_impl.write_gloc_version_stamp(_module(), bin_dir, version)
 
 
 def _install_gloc_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    """Download and extract gloc from GitHub Releases."""
-    return _download_release_binary(
-        bin_dir,
-        binary_name=_GLOC_BIN_NAME,
-        artifact_name="gloc",
-        target=target,
-        version=version,
-        tag_prefix=_GLOC_RELEASE_TAG_PREFIX,
-        label="gloc",
-    )
+    return _gloc_impl.install_gloc_from_github(_module(), bin_dir, target, version)
 
 
 def _install_gloc_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    """Install gloc via cargo-binstall."""
-    if not shutil.which("cargo-binstall"):
-        return False
-    try:
-        crate = f"gobby-local@{version}" if version else "gobby-local"
-        result = subprocess.run(
-            [
-                "cargo-binstall",
-                crate,
-                "--install-path",
-                str(bin_dir),
-                "--no-confirm",
-                "--no-symlinks",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gloc: cargo-binstall failed: %s", e)
-        return False
+    return _gloc_impl.install_gloc_from_cargo_binstall(_module(), bin_dir, version)
 
 
 def _install_gloc_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    """Compile and install gloc from source via ``cargo install``."""
-    if not shutil.which("cargo"):
-        return False
-    try:
-        cmd = ["cargo", "install", "gobby-local", "--root", str(bin_dir.parent)]
-        if version:
-            cmd.extend(["--version", version])
-        click.echo("  Compiling gloc from source (this may take 30-60 seconds)...")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        logger.warning("gloc: cargo install failed: %s", e)
-        return False
+    return _gloc_impl.install_gloc_from_cargo_install(_module(), bin_dir, version)
 
 
 def _probe_gloc_version(gloc_path: Path) -> str | None:
-    """Probe the gloc binary for a version string."""
-    try:
-        result = subprocess.run(
-            [str(gloc_path), "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception as e:
-        logger.warning("gloc: failed running --version probe: %s", e)
-        return None
-
-    if result.returncode != 0:
-        logger.warning("gloc: --version probe failed: %s", result.stderr.strip())
-        return None
-
-    output = (result.stdout or result.stderr).strip()
-    return output.split()[-1] if output else None
+    return _gloc_impl.probe_gloc_version(_module(), gloc_path)
 
 
 def _install_gloc(force: bool = False) -> dict[str, Any]:
-    """Install or upgrade the gloc binary with the public release fallback chain."""
-    bin_dir = Path.home() / ".gobby" / "bin"
-    gloc_path = bin_dir / _GLOC_BIN_NAME
-
-    os_name = sys.platform
-    machine = platform.machine().lower()
-    target = _GLOC_TARGETS.get((os_name, machine))
-    if target is None:
-        logger.warning("gloc: unsupported platform %s/%s", os_name, machine)
-        return {
-            "installed": False,
-            "skipped": True,
-            "reason": f"unsupported platform {os_name}/{machine}",
-        }
-
-    installed_version = _get_installed_gloc_version(bin_dir)
-    target_version = _get_latest_gloc_version()
-
-    if gloc_path.exists() and not force:
-        if target_version and installed_version == target_version:
-            return {"installed": False, "skipped": True, "version": installed_version}
-        if installed_version and installed_version != "unknown" and target_version is None:
-            return {
-                "installed": False,
-                "skipped": True,
-                "version": installed_version,
-                "reason": "version check failed, keeping current",
-            }
-
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    method = None
-
-    if _install_gloc_from_github(bin_dir, target, target_version):
-        method = "github"
-    elif _install_gloc_from_cargo_binstall(bin_dir, target_version):
-        method = "cargo-binstall"
-    elif _install_gloc_from_cargo_install(bin_dir, target_version):
-        method = "cargo-install"
-
-    if method is None:
-        return {"installed": False, "skipped": False, "reason": "all installation methods failed"}
-
-    gloc_path.chmod(0o755)
-
-    resolved_version = _probe_gloc_version(gloc_path) or target_version or "unknown"
-    _write_gloc_version_stamp(bin_dir, resolved_version)
-
-    path_result = _ensure_gobby_bin_on_path()
-    if path_result.get("added"):
-        click.echo(
-            f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"
-        )
-
-    is_upgrade = installed_version is not None and installed_version != resolved_version
-    return {
-        "installed": True,
-        "upgraded": is_upgrade,
-        "version": resolved_version,
-        "method": method,
-    }
+    return _gloc_impl.install_gloc(_module(), force)

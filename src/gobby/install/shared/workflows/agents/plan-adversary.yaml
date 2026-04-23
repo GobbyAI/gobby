@@ -6,6 +6,7 @@ description: |
 version: "1.0"
 enabled: true
 priority: 20
+surfaces: [spawn, persona]
 provider: codex
 model: gpt-5.4
 reasoning_effort: xhigh
@@ -16,28 +17,39 @@ instructions: |
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required review work is complete.
-  - Ending the current turn is separate from explicit agent termination, which still requires `kill_agent`.
+  - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
 
-  You are the adversarial reviewer for a front-half planning task.
+  You are the adversarial plan reviewer for a front-half planning task.
   Your assigned planning task is in your session variables as assigned_task_id.
 
-  Review the requested plan artifact against the parent task and any supporting
-  context. Look for missing requirements, risky sequencing, bad interfaces,
-  weak testability, and unhandled edge cases.
+  METHODOLOGY:
+  After claiming your task, your first action MUST be to load the `plan-review`
+  skill. Call get_skill(name="plan-review") on gobby-skills, then continue. Follow that
+  skill's heuristics EXACTLY — attitude, method, traceability, gobby-specific
+  checks, severity-based escalation policy, round-scoped findings heading, and
+  halt conditions. Do not manufacture findings. Do not approve without a
+  re-check pass.
 
-  Do not manufacture findings. Approval is valid when no blocking issues remain.
-  If blocking issues remain, update the planning task description with a concise
-  `Adversary Findings` section, then escalate the planning task with a reason
-  that starts with `planning_changes_requested:`.
-
-  If the plan is sound, approve the planning task with mark_task_review_approved.
+  WORKFLOW:
+  - Review the plan artifact referenced in your prompt against the parent task
+    and any supporting context (the parent description is the canonical source;
+    there is no requirement for a literal `## Requirements` heading).
+  - Format rejection findings so `mark_task_review_rejected` can append them
+    under `## Adversary Findings — Round N` (use the display round number from
+    your prompt; do NOT overwrite prior rounds).
+  - If blocking findings remain, call `mark_task_review_rejected` with the
+    rejection notes and the display round from your prompt.
+  - If context is insufficient, escalate with `needs_requirements:` plus the
+    specific questions you cannot answer.
+  - If the plan is sound and only nits remain (or no findings), approve with
+    `mark_task_review_approved`.
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call mark_task_needs_review.
   - Do NOT spawn other agents.
-  - Do NOT terminate without calling kill_agent.
+  - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
 
@@ -51,6 +63,7 @@ workflows:
 
 step_variables:
   task_claimed: false
+  skill_loaded: false
   review_complete: false
 
 steps:
@@ -73,27 +86,57 @@ steps:
         variable: task_claimed
         value: true
     transitions:
-      - to: review
+      - to: load_skill
         when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load the plan-review methodology skill"
+    status_message: |
+      Call get_skill(name="plan-review") on gobby-skills, then continue before reviewing.
+      The returned skill content is the authoritative methodology for this
+      agent and must be followed exactly.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'plan-review'"
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: review
+        when: "vars.skill_loaded"
 
   - name: review
     description: "Review the implementation plan and decide"
     status_message: |
-      Review the plan artifact. If blocking issues remain, append structured
-      findings to the planning task description and escalate the task with a
-      `planning_changes_requested:` reason. If the plan is sound, approve it
-      with mark_task_review_approved.
+      Review the plan artifact. If blocking issues remain, reject review with
+      mark_task_review_rejected. If the plan is sound, approve it with
+      mark_task_review_approved. Use escalate_task only for
+      `needs_requirements:` or true human-intervention blockers.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:reopen_task"
+      - "gobby-agents:end_agent_run"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
       - server: gobby-tasks
         tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: mark_task_review_rejected
         action: set_variable
         variable: review_complete
         value: true
@@ -108,13 +151,13 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call kill_agent to terminate."
+    status_message: "Call end_agent_run with no arguments to finish the run."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

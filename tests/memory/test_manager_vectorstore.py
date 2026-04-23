@@ -186,7 +186,7 @@ async def test_delete_memory_removes_from_graph(manager, mock_vector_store):
     memory = await manager.create_memory(content="to delete from graph")
     await manager.delete_memory(memory.id)
 
-    mock_kg.remove_memory_from_graph.assert_awaited_once_with(memory.id)
+    mock_kg.remove_memory_from_graph.assert_awaited_once_with(memory.id, project_id=None)
 
 
 @pytest.mark.asyncio

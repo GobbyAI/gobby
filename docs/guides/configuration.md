@@ -469,15 +469,25 @@ skills:
   injection_format: summary      # summary, full, none
 ```
 
-### Conductor (Token Budget)
+### Conductor
 
 ```yaml
 conductor:
-  daily_budget_usd: 50.0
-  warning_threshold: 0.8         # 0.0-1.0
-  throttle_threshold: 0.9        # 0.0-1.0
-  tracking_window_days: 7
+  enabled: false
+  provider: claude
+  model: haiku
+  tick_interval_seconds: 120
+  idle_timeout_seconds: 300
+  skip_if_busy: true
 ```
+
+Migration note for `v0.3.x` -> `v0.4.0`:
+
+- Removed keys: `daily_budget_usd`, `warning_threshold`, `throttle_threshold`, `tracking_window_days`.
+- Breaking change: the conductor now only supports `provider: claude`. Any other conductor provider raises `RuntimeError` at startup, so update your config to `provider: claude` before restarting on `v0.4.0`.
+- Legacy behavior: the current config model ignores unknown conductor keys, so those old values are not auto-migrated and do not affect runtime behavior in `v0.4.0`.
+- Recommended migration: manually remove the old keys from your config before restarting on `v0.4.0`. There is no dedicated migration command or script for this change.
+- See the [Conductor](#conductor) section above for the current example; it now includes the required `provider: claude` key that matches this migration guidance.
 
 ### Hook Extensions
 

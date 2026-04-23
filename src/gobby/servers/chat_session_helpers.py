@@ -139,7 +139,11 @@ def _response_to_prompt_output(resp: dict[str, Any] | None) -> SyncHookJSONOutpu
     if context:
         output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
             hookEventName="UserPromptSubmit",
-            additionalContext=_truncate(context),
+            additionalContext=_truncate(
+                context,
+                contributor_sizes={"response.context": len(context)},
+                logger=logger,
+            ),
         )
     return output
 
@@ -177,7 +181,11 @@ def _response_to_pre_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOut
         if resp.get("auto_approve"):
             specific["permissionDecision"] = "allow"
         if resp.get("context"):
-            specific["additionalContext"] = _truncate(resp["context"])
+            specific["additionalContext"] = _truncate(
+                resp["context"],
+                contributor_sizes={"response.context": len(resp["context"])},
+                logger=logger,
+            )
         output["hookSpecificOutput"] = specific
     return output
 
@@ -192,7 +200,11 @@ def _response_to_post_tool_output(resp: dict[str, Any] | None) -> SyncHookJSONOu
     if context:
         output["hookSpecificOutput"] = PostToolUseHookSpecificOutput(
             hookEventName="PostToolUse",
-            additionalContext=_truncate(context),
+            additionalContext=_truncate(
+                context,
+                contributor_sizes={"response.context": len(context)},
+                logger=logger,
+            ),
         )
     return output
 
@@ -212,7 +224,11 @@ def _response_to_stop_output(resp: dict[str, Any] | None) -> SyncHookJSONOutput:
             Any,
             {  # No SDK TypedDict for Stop
                 "hookEventName": "Stop",
-                "additionalContext": _truncate(context),
+                "additionalContext": _truncate(
+                    context,
+                    contributor_sizes={"response.context": len(context)},
+                    logger=logger,
+                ),
             },
         )
     return output

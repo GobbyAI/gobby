@@ -3,31 +3,18 @@ import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { getSessionTitleText } from '../../lib/sessionTitle'
 import { SourceIcon } from '../shared/SourceIcon'
 
-interface RunningAgent {
-  run_id: string
-  provider: string
-  pid?: number
-  mode?: string
-  started_at?: string
-  session_id?: string
-}
-
 interface CommandBarProps {
   sessionRef: string | null
   title: string | null
   sessionSource?: string | null
   onOpenPalette: () => void
-  onOpenActiveSessions: () => void
   onNewChat: (agentName?: string) => void
-  onTogglePanel: () => void
-  agents: RunningAgent[]
   agentDefinitions?: AgentDefInfo[]
   agentGlobalDefs?: AgentDefInfo[]
   agentProjectDefs?: AgentDefInfo[]
   agentShowScopeToggle?: boolean
   agentHasGlobal?: boolean
   agentHasProject?: boolean
-  isPanelPinned: boolean
 }
 
 export function CommandBar({
@@ -35,9 +22,7 @@ export function CommandBar({
   title,
   sessionSource,
   onOpenPalette,
-  onOpenActiveSessions: _onOpenActiveSessions,
   onNewChat,
-  agents: _agents,
   agentDefinitions: _agentDefinitions = [],
   agentGlobalDefs: _agentGlobalDefs = [],
   agentProjectDefs: _agentProjectDefs = [],
@@ -71,11 +56,11 @@ export function CommandBar({
           <span className="command-bar-title">
             {getSessionTitleText(title)}
           </span>
-          <span className="command-bar-caret">&#9662;</span>
+          <ChevronDownIcon />
         </button>
       </div>
 
-      {/* Right cluster — Live activity */}
+      {/* Right cluster — Actions */}
       <div className="command-bar-right">
         <button
           type="button"
@@ -94,6 +79,25 @@ function PlusIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" clipRule="evenodd" fillRule="evenodd">
       <path d="M8 1a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2H9v5a1 1 0 1 1-2 0V9H2a1 1 0 0 1 0-2h5V2a1 1 0 0 1 1-1Z" />
+    </svg>
+  )
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg
+      className="command-bar-caret"
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="4 6 8 10 12 6" />
     </svg>
   )
 }

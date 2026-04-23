@@ -16,6 +16,7 @@ rules:
           - "gobby-tasks:close_task"
           - "gobby-tasks:mark_task_needs_review"
           - "gobby-tasks:mark_task_review_approved"
+          - "gobby-tasks:mark_task_review_rejected"
         reason: |
           Consider saving any valuable memories from this task before closing.
           Use `create_memory` (via gobby-memory MCP) for insights worth preserving.

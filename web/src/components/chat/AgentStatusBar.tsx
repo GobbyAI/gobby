@@ -1,8 +1,12 @@
-import type { SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
+import { useSyncExternalStore } from 'react'
+import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
 
 interface AgentStatusBarProps {
-  viewingMeta: SessionObservationMeta
+  viewingMeta?: SessionObservationMeta | null
   interactionMode: SessionInteractionMode
+  contextUsage?: ContextUsage
+  contextUsageUpdatedAt?: number | null
   isAttached?: boolean
   isAutonomousSession?: boolean
   onAttach?: () => void
@@ -12,15 +16,33 @@ interface AgentStatusBarProps {
   isPanelPinned?: boolean
 }
 
+const CONTEXT_USAGE_REFRESH_MS = 15_000
+
+function subscribeToClock(onStoreChange: () => void): () => void {
+  const interval = window.setInterval(onStoreChange, CONTEXT_USAGE_REFRESH_MS)
+  return () => window.clearInterval(interval)
+}
+
+function subscribeToClockDisabled(): () => void {
+  return () => {}
+}
+
+function getClockSnapshot(): number {
+  return Date.now()
+}
+
 function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType']): {
   label: string
   className: string
-} {
+} | null {
   if (sessionType === 'web_chat') {
     return { label: 'WEB', className: 'session-kind-badge--web' }
   }
+  if (sessionType === 'terminal') {
+    return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+  }
 
-  return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+  return null
 }
 
 function formatSessionStateText(
@@ -56,6 +78,8 @@ function PanelIcon({ pinned }: { pinned: boolean }) {
 export function AgentStatusBar({
   viewingMeta,
   interactionMode,
+  contextUsage,
+  contextUsageUpdatedAt = null,
   isAttached = false,
   isAutonomousSession = false,
   onAttach,
@@ -64,59 +88,92 @@ export function AgentStatusBar({
   onTogglePanel,
   isPanelPinned = false,
 }: AgentStatusBarProps) {
-  const sessionBadge = getSessionKindBadge(viewingMeta.sessionType)
-  const stateText = formatSessionStateText(interactionMode, isAttached)
+  const usageClock = useSyncExternalStore(
+    contextUsageUpdatedAt == null ? subscribeToClockDisabled : subscribeToClock,
+    getClockSnapshot,
+    getClockSnapshot,
+  )
+
+  const contextUsageStaleMs =
+    contextUsageUpdatedAt != null ? Math.max(0, usageClock - contextUsageUpdatedAt) : null
+  const sessionBadge = viewingMeta ? getSessionKindBadge(viewingMeta.sessionType) : null
+  const stateText = viewingMeta ? formatSessionStateText(interactionMode, isAttached) : null
+  const canAttach = !isAttached && !isAutonomousSession && Boolean(onAttach)
+  const canResume = !isAttached && !isAutonomousSession && Boolean(onResume)
+  const canDetach = isAttached && Boolean(onDetach)
+  const hasActions =
+    Boolean(onTogglePanel) ||
+    canAttach ||
+    canResume ||
+    canDetach
 
   return (
     <div className="agent-status-bar" data-testid="agent-status-bar">
       <div className="agent-status-bar__summary">
-        <div className="chat-session-status">
-          <span className="chat-session-status__state">{stateText}</span>
-          <span className={`session-kind-badge ${sessionBadge.className}`}>
-            {sessionBadge.label}
-          </span>
+        <div className="agent-status-bar__context">
+          <ContextUsageIndicator
+            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+            outputTokens={contextUsage?.outputTokens ?? 0}
+            contextWindow={contextUsage?.contextWindow ?? null}
+            staleMs={contextUsageStaleMs}
+            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+          />
         </div>
+        {viewingMeta && stateText ? (
+          <div className="chat-session-status">
+            <span className="chat-session-status__state">{stateText}</span>
+            {sessionBadge ? (
+              <span className={`session-kind-badge ${sessionBadge.className}`}>
+                {sessionBadge.label}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <div className="agent-status-bar__actions">
-        {onTogglePanel && (
-          <button
-            type="button"
-            className="session-pane-action session-pane-action--icon"
-            onClick={onTogglePanel}
-            aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-            title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-          >
-            <PanelIcon pinned={isPanelPinned} />
-          </button>
-        )}
-        {!isAttached && !isAutonomousSession && onAttach && (
-          <button
-            type="button"
-            className="session-pane-action"
-            onClick={onAttach}
-          >
-            Attach
-          </button>
-        )}
-        {!isAttached && !isAutonomousSession && onResume && (
-          <button
-            type="button"
-            className="session-pane-action"
-            onClick={onResume}
-          >
-            Resume
-          </button>
-        )}
-        {isAttached && onDetach && (
-          <button
-            type="button"
-            className="session-pane-action"
-            onClick={onDetach}
-          >
-            Detach
-          </button>
-        )}
-      </div>
+      {hasActions ? (
+        <div className="agent-status-bar__actions">
+          {onTogglePanel && (
+            <button
+              type="button"
+              className="session-pane-action session-pane-action--icon"
+              onClick={onTogglePanel}
+              aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
+              title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
+            >
+              <PanelIcon pinned={isPanelPinned} />
+            </button>
+          )}
+          {!isAttached && !isAutonomousSession && onAttach && (
+            <button
+              type="button"
+              className="session-pane-action"
+              onClick={onAttach}
+            >
+              Attach
+            </button>
+          )}
+          {!isAttached && !isAutonomousSession && onResume && (
+            <button
+              type="button"
+              className="session-pane-action"
+              onClick={onResume}
+            >
+              Resume
+            </button>
+          )}
+          {isAttached && onDetach && (
+            <button
+              type="button"
+              className="session-pane-action"
+              onClick={onDetach}
+            >
+              Detach
+            </button>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }
