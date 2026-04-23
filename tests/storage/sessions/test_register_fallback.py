@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -111,18 +113,58 @@ def test_register_session_happy_path_populates_caches(
     assert session_mgr._session_metadata[session_id]["external_id"] == "storage-session"
 
 
+def test_register_existing_session_backfills_terminal_context(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    created = session_mgr.register(
+        external_id="existing-terminal-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+    )
+
+    terminal_context = {
+        "parent_pid": 12345,
+        "tmux_pane": "%7",
+        "tmux_socket_path": "/tmp/tmux-501/gobby",
+    }
+
+    updated = session_mgr.register(
+        external_id="existing-terminal-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        terminal_context=terminal_context,
+        workflow_name="developer",
+    )
+
+    assert updated.id == created.id
+    assert updated.terminal_context == terminal_context
+    assert updated.workflow_name == "developer"
+
+
 def test_register_raises_on_storage_failure(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
-    original_execute = session_mgr.db.execute
+    class FailingConnection:
+        def execute(self, sql: str, params: object = ()) -> object:
+            if "SELECT MAX(seq_num)" in sql:
+                return SimpleNamespace(fetchone=lambda: {"max_seq": None})
+            if "INSERT INTO sessions" in sql:
+                raise RuntimeError("boom")
+            raise AssertionError(f"Unexpected SQL: {sql}")
 
-    def execute_with_insert_failure(sql: str, params: object = ()) -> object:
-        if "INSERT INTO sessions" in sql:
-            raise RuntimeError("boom")
-        return original_execute(sql, params)
+    @contextmanager
+    def transaction_with_insert_failure():
+        yield FailingConnection()
 
-    with patch.object(session_mgr.db, "execute", side_effect=execute_with_insert_failure):
+    with patch.object(
+        session_mgr.db,
+        "transaction_immediate",
+        side_effect=transaction_with_insert_failure,
+    ):
         with pytest.raises(RuntimeError, match="boom"):
             session_mgr.register(
                 external_id="raise-session",

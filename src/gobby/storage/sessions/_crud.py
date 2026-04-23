@@ -98,6 +98,7 @@ class _SessionCRUDMixin:
             Session instance
         """
         now = datetime.now(UTC).isoformat()
+        terminal_context_json = json.dumps(terminal_context) if terminal_context else None
 
         if parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
@@ -138,6 +139,8 @@ class _SessionCRUDMixin:
                         transcript_path = COALESCE(?, transcript_path),
                         git_branch = COALESCE(?, git_branch),
                         parent_session_id = COALESCE(?, parent_session_id),
+                        terminal_context = COALESCE(?, terminal_context),
+                        workflow_name = COALESCE(?, workflow_name),
                         sandbox_enabled = COALESCE(?, sandbox_enabled),
                         sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
                         status = 'active',
@@ -149,6 +152,8 @@ class _SessionCRUDMixin:
                         transcript_path,
                         git_branch,
                         parent_session_id,
+                        terminal_context_json,
+                        workflow_name,
                         sandbox_enabled,
                         sandbox_policy_hash,
                         now,
@@ -194,7 +199,7 @@ class _SessionCRUDMixin:
                     parent_session_id,
                     agent_depth,
                     spawned_by_agent_id,
-                    json.dumps(terminal_context) if terminal_context else None,
+                    terminal_context_json,
                     workflow_name,
                     session_type,
                     None if sandbox_enabled is None else int(bool(sandbox_enabled)),

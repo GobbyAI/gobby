@@ -67,9 +67,16 @@ def expire_stale_sessions(db: DatabaseProtocol, timeout_hours: int = 24) -> int:
         UPDATE sessions
         SET status = 'expired', updated_at = datetime('now')
         WHERE status IN ('active', 'paused', 'handoff_ready')
-        AND datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
+        AND (
+            datetime(updated_at) < datetime('now', 'utc', ? || ' hours')
+            OR (
+                session_type = 'terminal'
+                AND (terminal_context IS NULL OR terminal_context = '')
+                AND datetime(created_at) < datetime('now', 'utc', ? || ' hours')
+            )
+        )
         """,
-        (f"-{timeout_hours}",),
+        (f"-{timeout_hours}", f"-{timeout_hours}"),
     )
     count = cursor.rowcount or 0
     if count > 0:
