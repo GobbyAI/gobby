@@ -7,6 +7,8 @@ import pytest
 
 from gobby.install.shared.hooks.statusline_handler import (
     _extract_payload,
+    _log_handler_error,
+    _post_to_daemon,
     _read_daemon_port,
     main,
 )
@@ -119,16 +121,24 @@ class TestMain:
         assert posted["output_tokens"] == 50
 
     def test_handles_invalid_json(self) -> None:
-        with patch("sys.stdin") as mock_stdin:
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("gobby.install.shared.hooks.statusline_handler._log_handler_error") as mock_log,
+        ):
             mock_stdin.read.return_value = "not json"
             result = main()
         assert result == 0
+        mock_log.assert_called_once()
 
     def test_handles_empty_stdin(self) -> None:
-        with patch("sys.stdin") as mock_stdin:
+        with (
+            patch("sys.stdin") as mock_stdin,
+            patch("gobby.install.shared.hooks.statusline_handler._log_handler_error") as mock_log,
+        ):
             mock_stdin.read.return_value = ""
             result = main()
         assert result == 0
+        mock_log.assert_called_once()
 
     def test_forwards_to_downstream(self) -> None:
         data = {
@@ -165,3 +175,31 @@ class TestMain:
 
         assert result == 0
         mock_post.assert_not_called()
+
+
+class TestObservability:
+    """Test statusline handler bake observability."""
+
+    def test_logs_handler_errors(self, tmp_path) -> None:
+        log_path = tmp_path / "statusline_handler_errors.log"
+
+        with patch("gobby.install.shared.hooks.statusline_handler._ERROR_LOG_PATH", str(log_path)):
+            _log_handler_error("probe", RuntimeError("boom"))
+
+        text = log_path.read_text()
+        assert "statusline_handler_error" in text
+        assert "stage=probe" in text
+        assert "error=boom" in text
+
+    def test_post_failure_logs_handler_error(self) -> None:
+        with (
+            patch(
+                "gobby.install.shared.hooks.statusline_handler.urllib.request.urlopen",
+                side_effect=OSError("daemon unavailable"),
+            ),
+            patch("gobby.install.shared.hooks.statusline_handler._log_handler_error") as mock_log,
+        ):
+            _post_to_daemon(60887, b"{}")
+
+        mock_log.assert_called_once()
+        assert mock_log.call_args[0][0] == "post_to_daemon"

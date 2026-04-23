@@ -38,3 +38,11 @@ def _guard_launchctl(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_run(args, *posargs, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", _guarded_run)
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_claude_statusline_ghook_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep installer unit tests from probing a real ghook binary."""
+    from gobby.cli.installers import claude
+
+    monkeypatch.setattr(claude, "resolve_native_bin", lambda name: None)

@@ -87,18 +87,19 @@ class TestStatuslineEndpoint:
         mock_server.session_manager.find_active_by_external_id.return_value = session
         mock_server.session_manager.update_usage.return_value = True
 
-        response = client.post(
-            "/api/sessions/statusline",
-            json={
-                "session_id": "ext-123",
-                "model_id": "claude-opus-4-6",
-                "input_tokens": 12345,
-                "output_tokens": 6789,
-                "cache_creation_tokens": 1000,
-                "cache_read_tokens": 5000,
-                "context_window_size": 200000,
-            },
-        )
+        with patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter:
+            response = client.post(
+                "/api/sessions/statusline",
+                json={
+                    "session_id": "ext-123",
+                    "model_id": "claude-opus-4-6",
+                    "input_tokens": 12345,
+                    "output_tokens": 6789,
+                    "cache_creation_tokens": 1000,
+                    "cache_read_tokens": 5000,
+                    "context_window_size": 200000,
+                },
+            )
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
@@ -114,6 +115,9 @@ class TestStatuslineEndpoint:
             cache_read_tokens=5000,
             context_window=200000,
             model="claude-opus-4-6",
+        )
+        mock_counter.assert_called_once_with(
+            "statusline_posts_succeeded_total", attributes={"source": "claude"}
         )
 
     def test_returns_warning_for_unknown_session(self, client, mock_server) -> None:
@@ -222,6 +226,7 @@ class TestStatuslineEndpoint:
                 "gobby.servers.routes.sessions.core.datetime",
                 autospec=True,
             ) as mock_datetime,
+            patch("gobby.servers.routes.sessions.core.inc_counter") as mock_counter,
             caplog.at_level(logging.WARNING, logger="gobby.servers.routes.sessions.core"),
         ):
             mock_datetime.now.side_effect = [start, start + timedelta(seconds=125)]
@@ -237,6 +242,12 @@ class TestStatuslineEndpoint:
         assert "statusline_usage_gap" in caplog.text
         assert "gap_ms=125000" in caplog.text
         assert "threshold_ms=120000" in caplog.text
+        mock_counter.assert_any_call(
+            "statusline_usage_gap_warnings_total", attributes={"source": "claude"}
+        )
+        mock_counter.assert_any_call(
+            "statusline_posts_succeeded_total", attributes={"source": "claude"}
+        )
 
     def test_suppresses_gap_when_session_is_otherwise_quiet(
         self, client, mock_server, caplog, enable_log_propagation

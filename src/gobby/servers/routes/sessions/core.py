@@ -387,6 +387,10 @@ def register_core_routes(
                         STATUSLINE_GAP_WARNING_THRESHOLD_MS,
                         int((now - activity_ts).total_seconds() * 1000),
                     )
+                    inc_counter(
+                        "statusline_usage_gap_warnings_total",
+                        attributes={"source": "claude"},
+                    )
                 else:
                     logger.debug(
                         "statusline_usage_gap_quiet session_id=%s gap_ms=%s threshold_ms=%s",
@@ -404,6 +408,7 @@ def register_core_routes(
             context_window=body.get("context_window_size"),
             model=body.get("model_id"),
         )
+        inc_counter("statusline_posts_succeeded_total", attributes={"source": "claude"})
 
         ws_server = server.services.websocket_server
         if ws_server is not None:

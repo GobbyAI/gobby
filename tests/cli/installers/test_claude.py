@@ -113,6 +113,10 @@ class TestInstallClaude:
         # Verify .claude directory structure was created
         assert (temp_project / ".claude").exists()
         assert (temp_project / ".claude" / "settings.json").exists()
+        with open(temp_project / ".claude" / "settings.json") as f:
+            settings = json.load(f)
+        assert settings["statusLine"]["type"] == "command"
+        assert "statusline_handler.py" in settings["statusLine"]["command"]
 
         # Verify global hooks were installed
         mock_global_hooks.assert_called_once()

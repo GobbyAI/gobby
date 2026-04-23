@@ -24,10 +24,24 @@ import subprocess  # nosec B404
 import sys
 import threading
 import urllib.request  # nosec B404
+from datetime import UTC, datetime
 from typing import Any
 
 _DEFAULT_PORT = 60887
 _BOOTSTRAP_PATH = os.path.expanduser("~/.gobby/bootstrap.yaml")
+_ERROR_LOG_PATH = os.path.expanduser("~/.gobby/logs/statusline_handler_errors.log")
+
+
+def _log_handler_error(stage: str, error: BaseException | str) -> None:
+    """Write a best-effort error line without affecting Claude Code statusLine."""
+    try:
+        os.makedirs(os.path.dirname(_ERROR_LOG_PATH), exist_ok=True)
+        message = str(error).replace("\n", "\\n")
+        timestamp = datetime.now(UTC).isoformat()
+        with open(_ERROR_LOG_PATH, "a") as f:
+            f.write(f"{timestamp} statusline_handler_error stage={stage} error={message}\n")
+    except Exception:
+        pass
 
 
 def _read_daemon_port() -> int:
@@ -53,8 +67,8 @@ def _post_to_daemon(port: int, payload: bytes) -> None:
             method="POST",
         )
         urllib.request.urlopen(req, timeout=2)  # nosec B310
-    except Exception:
-        pass  # Silent — must never break Claude Code's display
+    except Exception as e:
+        _log_handler_error("post_to_daemon", e)
 
 
 def _extract_payload(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -95,21 +109,29 @@ def _forward_downstream(command: str, raw_json: str) -> None:
         if stdout:
             sys.stdout.buffer.write(stdout)
             sys.stdout.buffer.flush()
-    except (subprocess.TimeoutExpired, OSError):
-        pass  # Silent — must never break Claude Code's display
+    except subprocess.TimeoutExpired as e:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        _log_handler_error("forward_downstream", e)
+    except OSError as e:
+        _log_handler_error("forward_downstream", e)
 
 
 def main() -> int:
     """Main entry point."""
     try:
         raw = sys.stdin.read()
-    except Exception:
+    except Exception as e:
+        _log_handler_error("read_stdin", e)
         return 0
 
     # Parse JSON
     try:
         data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except (json.JSONDecodeError, TypeError) as e:
+        _log_handler_error("parse_json", e)
         return 0
 
     # Extract and POST to daemon in a background thread

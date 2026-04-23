@@ -45,6 +45,13 @@ def test_inc_counter(metrics_collector, meter_provider):
     assert all_metrics["counters"]["http_requests_total"]["value"] == 2
 
 
+def test_statusline_bake_counters_registered(metrics_collector):
+    all_metrics = metrics_collector.get_all_metrics()
+
+    assert all_metrics["counters"]["statusline_posts_succeeded_total"]["value"] == 0
+    assert all_metrics["counters"]["statusline_usage_gap_warnings_total"]["value"] == 0
+
+
 def test_set_gauge(metrics_collector, meter_provider):
     _, reader = meter_provider
     metrics_collector.set_gauge("mcp_active_connections", value=5.0)

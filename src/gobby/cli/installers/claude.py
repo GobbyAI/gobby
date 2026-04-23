@@ -8,6 +8,9 @@ and workflows for Claude Code CLI.
 import json
 import logging
 import os
+import re
+import shlex
+import subprocess  # nosec B404
 import tempfile
 import time
 from pathlib import Path
@@ -16,6 +19,7 @@ from typing import Any
 
 from gobby.adapters.claude_contract import CLAUDE_PASCAL_HOOK_NAMES
 from gobby.cli.utils import get_install_dir
+from gobby.utils.native_bin import resolve_native_bin
 
 from .hook_commands import rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
@@ -33,7 +37,72 @@ logger = logging.getLogger(__name__)
 _GOBBY_HOOK_TYPES = list(CLAUDE_PASCAL_HOOK_NAMES)
 
 
-_STATUSLINE_MARKER = "statusline_handler.py"
+_STATUSLINE_LEGACY_MARKER = "statusline_handler.py"
+_STATUSLINE_GHOOK_MARKER = "--gobby-owned --cli=claude --type=statusline"
+_STATUSLINE_MIN_GHOOK_VERSION = (0, 3, 1)
+
+
+def _parse_semver(version_text: str | None) -> tuple[int, int, int] | None:
+    """Parse a semver-like version from ghook output."""
+    if not version_text:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", version_text)
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _probe_ghook_version(ghook_bin: str) -> str | None:
+    """Return the installed ghook version, or None when probing fails."""
+    try:
+        result = subprocess.run(  # nosec B603
+            [ghook_bin, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+    return (result.stdout or result.stderr).strip() or None
+
+
+def _resolve_statusline_ghook() -> str | None:
+    """Resolve a ghook binary that is new enough to support statusline."""
+    ghook_bin = resolve_native_bin("ghook")
+    if not ghook_bin:
+        return None
+
+    parsed_version = _parse_semver(_probe_ghook_version(ghook_bin))
+    if parsed_version is None or parsed_version < _STATUSLINE_MIN_GHOOK_VERSION:
+        return None
+    return ghook_bin
+
+
+def _is_gobby_statusline_command(command: str) -> bool:
+    """Return whether a statusLine command belongs to Gobby."""
+    return _STATUSLINE_LEGACY_MARKER in command or _STATUSLINE_GHOOK_MARKER in command
+
+
+def _with_statusline_downstream(command: str, downstream: str | None) -> str:
+    """Attach the downstream env var when wrapping a foreign statusLine."""
+    if not downstream:
+        return command
+    quoted_downstream = "'" + downstream.replace("'", "'\\''") + "'"
+    return f"GOBBY_STATUSLINE_DOWNSTREAM={quoted_downstream} {command}"
+
+
+def _build_statusline_command(handler_path: str, downstream: str | None) -> str:
+    """Build the preferred Phase 2 statusLine command."""
+    ghook_bin = _resolve_statusline_ghook()
+    if ghook_bin:
+        command = f"{shlex.quote(ghook_bin)} {_STATUSLINE_GHOOK_MARKER}"
+    else:
+        command = f"python3 {shlex.quote(handler_path)}"
+    return _with_statusline_downstream(command, downstream)
 
 
 def _configure_statusline(settings: dict[str, Any], hooks_dir: Path) -> None:
@@ -42,42 +111,41 @@ def _configure_statusline(settings: dict[str, Any], hooks_dir: Path) -> None:
     If statusLine already points to our handler, re-wrap to update paths.
     If it points to something else, wrap it as GOBBY_STATUSLINE_DOWNSTREAM.
     """
-    handler_path = str((hooks_dir / "statusline_handler.py").resolve())
+    handler_path = str((hooks_dir / _STATUSLINE_LEGACY_MARKER).resolve())
     existing = settings.get("statusLine")
 
     downstream: str | None = None
 
     if existing and isinstance(existing, dict):
         existing_cmd = existing.get("command", "")
-        if _STATUSLINE_MARKER in existing_cmd:
+        if _is_gobby_statusline_command(existing_cmd):
             # Already ours — extract downstream if present
             downstream = _extract_downstream(existing_cmd)
         else:
             # Foreign command — save as downstream
             downstream = existing_cmd
     elif existing and isinstance(existing, str):
-        if _STATUSLINE_MARKER in existing:
+        if _is_gobby_statusline_command(existing):
             downstream = _extract_downstream(existing)
         else:
             downstream = existing
 
-    if downstream:
-        # Shell-escape single quotes in downstream command
-        escaped = downstream.replace("'", "'\\''")
-        command = f"GOBBY_STATUSLINE_DOWNSTREAM='{escaped}' python3 {handler_path}"
-    else:
-        command = f"python3 {handler_path}"
-
-    settings["statusLine"] = {"type": "command", "command": command}
+    settings["statusLine"] = {
+        "type": "command",
+        "command": _build_statusline_command(handler_path, downstream),
+    }
 
 
 def _extract_downstream(command: str) -> str | None:
-    """Extract the downstream command from GOBBY_STATUSLINE_DOWNSTREAM='...'."""
-    import re
+    """Extract the downstream command from GOBBY_STATUSLINE_DOWNSTREAM."""
+    try:
+        parts = shlex.split(command, posix=True)
+    except ValueError:
+        return None
 
-    match = re.search(r"GOBBY_STATUSLINE_DOWNSTREAM='([^']*(?:\\'[^']*)*)'", command)
-    if match:
-        return match.group(1).replace("\\'", "'")
+    for part in parts:
+        if part.startswith("GOBBY_STATUSLINE_DOWNSTREAM="):
+            return part.split("=", 1)[1]
     return None
 
 
@@ -88,7 +156,7 @@ def _restore_statusline(settings: dict[str, Any]) -> None:
         return
 
     cmd = existing.get("command", "") if isinstance(existing, dict) else str(existing)
-    if _STATUSLINE_MARKER not in cmd:
+    if not _is_gobby_statusline_command(cmd):
         return  # Not ours
 
     downstream = _extract_downstream(cmd)
@@ -251,6 +319,9 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         existing_settings["hooks"][hook_type] = hook_config
         hooks_installed.append(hook_type)
 
+    # Configure statusLine for token tracking middleware before persisting settings.
+    _configure_statusline(existing_settings, hooks_dir)
+
     # Write merged settings back using atomic write
     try:
         fd, temp_path = tempfile.mkstemp(dir=str(claude_path), suffix=".tmp", prefix="settings_")
@@ -277,9 +348,6 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
                 logger.error(f"Failed to restore from backup: {restore_error}")
         result["error"] = f"Failed to write settings.json: {e}"
         return result
-
-    # Configure statusLine for token tracking middleware
-    _configure_statusline(existing_settings, hooks_dir)
 
     # Configure MCP server in global settings (~/.claude.json)
     # Note: Claude Code uses ~/.claude.json for user-scoped MCP servers
