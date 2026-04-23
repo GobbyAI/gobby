@@ -137,12 +137,10 @@ fn forward_downstream(command: &OsStr, stdin_raw: &[u8]) -> Option<Vec<u8>> {
         .spawn()
         .ok()?;
 
-    if let Some(mut stdin) = child.stdin.take()
-        && stdin.write_all(stdin_raw).is_err()
-    {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
+    if let Some(mut stdin) = child.stdin.take() {
+        // Python's Popen.communicate(input=...) tolerates a downstream that
+        // exits without reading stdin (e.g. `printf`). Still collect stdout.
+        let _ = stdin.write_all(stdin_raw);
     }
 
     let started = Instant::now();
