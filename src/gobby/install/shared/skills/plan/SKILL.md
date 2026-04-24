@@ -1,7 +1,7 @@
 ---
 name: plan
 description: This skill should be used when the user asks to "/gobby plan", "create plan", "plan feature", "write specification". Guide users through structured specification planning. Does NOT create tasks - use /gobby expand for that (or the built-in adversarial loop ending in Step 8).
-version: "2.1.0"
+version: "2.2.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -26,7 +26,7 @@ The **review methodology** for the adversarial loop lives in the `plan-review` s
 | 1 | Adversarial Opt-in & Parent Task | Y/N opt-in; attach guard; session-owned lock. |
 | 2 | Requirements Gathering | Elicit goal, constraints, risks. |
 | 3 | Draft Plan Structure | Load `plan-draft` skill; structure the plan. |
-| 4 | Write Plan Document | Write the artifact per `plan-draft` template. |
+| 4 | Write Plan Document | Derive slug, then write the artifact per `plan-draft` template. |
 | 5 | Plan Verification | Run `plan-draft`'s verification checklist. |
 | 6 | First-Draft Approval | Route through real `ExitPlanMode`; branch on opt-in. |
 | 6b | Adversary Mode Selection | I/D + `max_rounds`, only if Step 1a opted in. |
@@ -218,7 +218,29 @@ Follow that skill's "Plan Structure" + "Dependency Notation" sections to sketch 
 
 ## Step 4: Write Plan Document
 
-Write the plan to **`.gobby/plans/task-<parent_seq>-plan.md`** (canonical path — adversary and `expand-task` both read from here). Follow `plan-draft`'s canonical template verbatim.
+### 4a. Derive a semantic slug
+
+Derive a **3–4 word kebab-case slug** from the plan title you drafted in Step 3. The slug is baked into the filename so a human scanning `.gobby/plans/` can tell at a glance which plan is which — especially useful when resuming a stalled plan across sessions, or when multiple concurrent plans are in flight.
+
+Rules:
+
+- Lowercase kebab-case (hyphens only; no underscores, spaces, or punctuation).
+- 3–4 words. ≤ 40 characters.
+- Strip articles (`a`, `the`), fillers (`rewrite-of-X` → `x-rewrite`), and generic nouns (`plan`, `feature`).
+- Lead with the most distinctive domain term.
+
+Good: `skillsmp-install-rewrite`, `auth-middleware-rewrite`, `websocket-reconnect`.
+Bad: `plan`, `the-new-feature`, `a-big-refactor-of-the-whole-module`.
+
+Persist the slug:
+
+```text
+set_variable(name="plan_slug", value="<slug>", session_id="#<self>")
+```
+
+### 4b. Write the artifact
+
+Write the plan to **`.gobby/plans/task-<parent_seq>-<slug>.md`**. Follow `plan-draft`'s canonical template verbatim. The adversary and `expand-task` read the path we hand them (via `artifact_path` and pipeline inputs), so this convention is about human-scannability at rest, not downstream coupling.
 
 Remember the two load-bearing rules from `plan-draft`:
 
@@ -228,7 +250,7 @@ Remember the two load-bearing rules from `plan-draft`:
 Persist the path:
 
 ```text
-set_variable(name="artifact_path", value=".gobby/plans/task-<parent_seq>-plan.md", session_id="#<self>")
+set_variable(name="artifact_path", value=".gobby/plans/task-<parent_seq>-<slug>.md", session_id="#<self>")
 ```
 
 ---
@@ -331,7 +353,7 @@ The parent lock was already acquired in Step 1; do not re-acquire here.
 
 ### 7.2. Anchor the artifact
 
-If the plan file is not already at `.gobby/plans/task-<parent_seq>-plan.md`, move/write it there. The adversary and `expand-task` both read from this canonical location.
+If the plan file is not already at `.gobby/plans/task-<parent_seq>-<slug>.md` (the path persisted in `artifact_path`), move/write it there. The adversary and `expand-task` receive the path we pass them, so the canonical filename is for human readability when inspecting `.gobby/plans/` at rest.
 
 ### 7.3. Round accounting
 
@@ -477,6 +499,7 @@ for name in (
     "plan_parent_ref",
     "planning_task_id",
     "artifact_path",
+    "plan_slug",
     "adversary_run_id",
     "current_round",
     "max_rounds",
