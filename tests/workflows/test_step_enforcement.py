@@ -811,6 +811,31 @@ class TestStepTransitions:
             f"got decision={response.decision!r} reason={response.reason!r}"
         )
 
+    @pytest.mark.asyncio
+    async def test_capture_output_bypasses_step_allow_list(
+        self, db, manager, engine, instance_mgr
+    ) -> None:
+        """Operator tool capture_output must bypass step MCP allow-lists."""
+        _setup_step_workflow(db, manager, instance_mgr, current_step="terminate")
+        event = _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-sessions",
+                    "tool_name": "capture_output",
+                    "arguments": {},
+                },
+            },
+        )
+        variables: dict[str, Any] = {}
+
+        response = await engine.evaluate(event, session_id="test-session", variables=variables)
+
+        assert response.decision == "allow", (
+            f"capture_output must bypass terminate's narrow allow-list; "
+            f"got decision={response.decision!r} reason={response.reason!r}"
+        )
+
 
 # Workflow with on_mcp_error handlers for testing app-level failure routing
 _MERGE_WORKFLOW = {

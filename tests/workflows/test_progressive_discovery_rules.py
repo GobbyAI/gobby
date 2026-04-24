@@ -152,7 +152,7 @@ class TestRequireSchemaBeforeCall:
         assert "get_tool_schema" in block_effects[0].reason
 
     def test_when_checks_tool_unlocked(self, db, manager) -> None:
-        """Should check is_tool_unlocked, is_discovery_tool, and call_tool."""
+        """Should check tool exemptions, unlock state, and call_tool."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-schema-before-call")
@@ -161,6 +161,7 @@ class TestRequireSchemaBeforeCall:
         assert body.when is not None
         assert "is_tool_unlocked" in body.when
         assert "is_discovery_tool" in body.when
+        assert "is_operator_tool" in body.when
         assert "call_tool" in body.when
 
 
@@ -464,6 +465,46 @@ class TestRuleEngineIntegration:
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "block"
         assert "get_tool_schema" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_call_tool_allowed_for_send_keys_without_schema_lookup(self, engine) -> None:
+        """Operator tool send_keys should bypass schema-unlock gating."""
+        variables = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-sessions",
+                "tool_name": "send_keys",
+                "arguments": {"keys": "pwd\n"},
+            },
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_allowed_for_capture_output_without_schema_lookup(
+        self, engine
+    ) -> None:
+        """Operator tool capture_output should bypass schema-unlock gating."""
+        variables = {
+            "enforce_tool_schema_check": True,
+            "unlocked_tools": [],
+        }
+        event = _make_hook_event(
+            HookEventType.BEFORE_TOOL,
+            tool_name="mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-sessions",
+                "tool_name": "capture_output",
+                "arguments": {},
+            },
+        )
+        result = await engine.evaluate(event, "test-session", variables)
+        assert result.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_call_tool_allowed_after_schema_lookup(self, engine) -> None:

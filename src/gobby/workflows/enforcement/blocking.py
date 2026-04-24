@@ -38,6 +38,7 @@ INFRASTRUCTURE_TOOLS = {
 # whose allow-list only lists kill_agent).
 OPERATOR_TOOLS = {
     "send_keys",
+    "capture_output",
 }
 
 

@@ -16,6 +16,7 @@ from gobby.workflows.enforcement.blocking import (
     is_current_plan_artifact,
     is_discovery_tool,
     is_message_delivery_tool,
+    is_operator_tool,
     is_plan_file,
     is_server_listed,
     is_tool_unlocked,
@@ -115,6 +116,7 @@ class TemplatingMixin:
         funcs["is_server_listed"] = lambda ti: is_server_listed(ti, variables)
         funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)
         funcs["is_discovery_tool"] = is_discovery_tool
+        funcs["is_operator_tool"] = is_operator_tool
         funcs["is_plan_file"] = is_plan_file
         funcs["is_current_plan_artifact"] = (
             lambda file_path, artifact_path: is_current_plan_artifact(
