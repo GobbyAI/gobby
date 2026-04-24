@@ -2029,16 +2029,19 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["decision"] == "block"
         assert (
             result["reason"]
-            == "Retry the tool call with the corrected input from the hook message."
+            == "Retry the tool call by resending the corrected input from the hook message "
+            "verbatim. Do not reformulate it."
         )
         assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert (
             result["hookSpecificOutput"]["permissionDecisionReason"]
-            == "Retry the tool call with the corrected input from the hook message."
+            == "Retry the tool call by resending the corrected input from the hook message "
+            "verbatim. Do not reformulate it."
         )
         assert "updatedInput" not in result["hookSpecificOutput"]
         assert "Bare python is not allowed" in result["systemMessage"]
+        assert "Do not add, remove, or rename fields." in result["systemMessage"]
         assert "uv run python hello.py" in result["systemMessage"]
 
     def test_pre_tool_use_wrapper_only_call_tool_rewrite_does_not_emit_retry_blob(self) -> None:

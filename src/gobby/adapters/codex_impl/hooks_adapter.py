@@ -177,7 +177,8 @@ class CodexHooksAdapter(BaseAdapter):
         ):
             retry_reason = (
                 normalized_reason
-                or "Retry the tool call with the corrected input from the hook message."
+                or "Retry the tool call by resending the corrected input from the hook message "
+                "verbatim. Do not reformulate it."
             )
             retry_parts: list[str] = []
             if response.system_message:
@@ -185,7 +186,8 @@ class CodexHooksAdapter(BaseAdapter):
             if response.context:
                 retry_parts.append(response.context)
             retry_parts.append(
-                "Retry this tool call with the corrected input below:\n"
+                "Retry this tool call by resending the corrected input below verbatim. "
+                "Do not add, remove, or rename fields.\n"
                 f"{json.dumps(response.modified_input, indent=2, sort_keys=True)}"
             )
             retry_result: dict[str, Any] = {
