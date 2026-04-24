@@ -14,11 +14,21 @@ def body() -> str:
     return SKILL_PATH.read_text()
 
 
-def test_menu_exposes_interactive_delegated_and_plain(body: str) -> None:
-    assert "Interactive" in body
-    assert "Delegated" in body
-    assert "Plain" in body
-    assert 'value="adversarial" | "delegated" | "plain"' in body
+def test_step_1a_presents_yn_opt_in(body: str) -> None:
+    assert "## Step 1: Adversarial Opt-in" in body
+    assert "Do you want adversarial review on this plan?" in body
+    assert "Y) Yes" in body
+    assert "N) No / Plain" in body
+    assert 'value="plain"' in body
+    assert 'name="plan_review_requested"' in body
+
+
+def test_step_6b_presents_interactive_delegated(body: str) -> None:
+    assert "## Step 6b: Adversary Mode Selection" in body
+    assert "I) Interactive" in body
+    assert "D) Delegated" in body
+    assert 'value="adversarial" | "delegated"' in body
+    assert "How many adversary rounds?" in body
 
 
 def test_pre_set_plan_review_mode_skips_menu(body: str) -> None:

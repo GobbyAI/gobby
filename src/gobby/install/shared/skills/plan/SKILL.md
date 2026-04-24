@@ -1,7 +1,7 @@
 ---
 name: plan
 description: This skill should be used when the user asks to "/gobby plan", "create plan", "plan feature", "write specification". Guide users through structured specification planning. Does NOT create tasks - use /gobby expand for that (or the built-in adversarial loop ending in Step 8).
-version: "2.0.0"
+version: "2.1.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -23,12 +23,13 @@ The **review methodology** for the adversarial loop lives in the `plan-review` s
 | # | Name | Notes |
 |---|------|-------|
 | 0 | Enter Plan Mode | Required prelude; native `EnterPlanMode` boundary. |
-| 1 | Mode & Parent Task | I/D/P menu; attach guard; session-owned lock. |
+| 1 | Adversarial Opt-in & Parent Task | Y/N opt-in; attach guard; session-owned lock. |
 | 2 | Requirements Gathering | Elicit goal, constraints, risks. |
 | 3 | Draft Plan Structure | Load `plan-draft` skill; structure the plan. |
 | 4 | Write Plan Document | Write the artifact per `plan-draft` template. |
 | 5 | Plan Verification | Run `plan-draft`'s verification checklist. |
-| 6 | User Approval | Route through real `ExitPlanMode`; branch on mode. |
+| 6 | First-Draft Approval | Route through real `ExitPlanMode`; branch on opt-in. |
+| 6b | Adversary Mode Selection | I/D + `max_rounds`, only if Step 1a opted in. |
 | 7 | Adversarial Review Loop | Spawn `plan-adversary`; wait; revise; re-approve. |
 | 8 | Approval Handoff / Expansion | Run `expand-task` pipeline with retry/escalate. |
 | 9 | Round-budget Exhausted / Abort | Bypass / abort / restart with cleanup. |
@@ -47,47 +48,39 @@ Before creating any plan, enter Claude Code's plan mode so exploration happens w
 
 ---
 
-## Step 1: Mode & Parent Task (NEW)
+## Step 1: Adversarial Opt-in & Parent Task
 
-### 1a. Mode menu
+### 1a. Adversarial-review opt-in
 
-If `plan_review_mode` is already set to one of `"adversarial"`, `"delegated"`,
-or `"plain"`, skip the menu and honor the existing value.
+If `plan_review_mode` is already set (`"adversarial"`, `"delegated"`, or
+`"plain"`), skip this step — the prior run's choice stands. If
+`plan_review_requested == true` but `plan_review_mode` is unset, we're resuming
+between Step 6 approval and Step 6b; skip 1a and jump straight to Step 6b.
 
-Otherwise present the user:
-
-```text
-How would you like to review this plan?
-  I) Interactive — spawn plan-adversary each round, per-round approval via ExitPlanMode
-     (recommended; bundled in this skill)
-  D) Delegated — spawn plan-adversary each round, no per-round approval; wake you only at
-     terminal state (approval, escalation, or round budget exhausted)
-  P) Plain — draft, approve, hand off to /gobby expand manually
-Choice [I]:
-```
-
-- `I` → interactive adversarial loop. Ask for `max_rounds` (default **3**, any positive integer).
-- `D` → delegated adversarial loop. Ask for `max_rounds` (default **3**, any positive integer).
-- `P` → existing manual handoff.
-
-**Always** record the choice:
+Otherwise present:
 
 ```text
-set_variable(
-    name="plan_review_mode",
-    value="adversarial" | "delegated" | "plain",
-    session_id="#<self>",
-)
+Do you want adversarial review on this plan?
+  Y) Yes — I draft, you approve the first draft, then plan-adversary
+     reviews it. You pick interactive vs delegated at that point.
+  N) No / Plain — I draft, you approve, hand off to /gobby expand.
+Choice [Y]:
 ```
 
-Mode mapping is explicit:
+- `N` → `set_variable(name="plan_review_mode", value="plain", ...)`. Continue to Step 1b.
+- `Y` → `set_variable(name="plan_review_requested", value=true, ...)`. Continue to Step 1b. **Do not set `plan_review_mode` yet** — the I/D choice and `max_rounds` land in Step 6b after the first draft is approved.
 
-- `I` → `"adversarial"` (existing value; the user-facing "Interactive" label maps here)
-- `D` → `"delegated"`
-- `P` → `"plain"`
+**Why defer the I/D choice to Step 6b?** Interactive vs delegated is an
+informed decision about how the review loop should behave, and that depends on
+how ready the first draft looks. Asking before the user has seen a draft
+forces a blind pick. Keep the upfront question binary (opt in to review at
+all); make the shape of the review an informed choice after the draft lands.
+Do **not** re-merge these prompts back into one — that was the pre-2.1 design
+and the upfront menu caused users to default to the wrong mode.
 
-Never omit this. `plan_review_mode` is persistent across `ExitPlanMode`; a stale
-value from a previous run could otherwise steer a fresh run into the wrong branch.
+`plan_review_mode` and `plan_review_requested` are persistent across
+`ExitPlanMode`; a stale value from a previous run could otherwise steer a
+fresh run into the wrong branch. Terminal cleanup clears both.
 
 Do **not** overload `plan_mode` — that is an existing boolean referenced by a dozen rules and `ExitPlanMode` resets it to `false`.
 
@@ -168,8 +161,11 @@ lock_label = f"interactive:planning-in-progress:{self_session_id}"
 add_label(task_id=plan_parent_ref, label=lock_label)
 set_variable(name="interactive_lock_label", value=lock_label, session_id="#<self>")
 set_variable(name="plan_parent_ref",        value=plan_parent_ref, session_id="#<self>")
-set_variable(name="max_rounds",             value=max_rounds,      session_id="#<self>")  # adversarial only
 ```
+
+`max_rounds` is intentionally **not** set here — it lands in Step 6b along
+with the I/D choice, since both are part of the same deferred review-mode
+decision.
 
 Persisting the **exact** label string is load-bearing. `remove_label` is exact-match only; terminal cleanup must pass the same string back.
 
@@ -187,7 +183,7 @@ if existing_task_id:
         # resume path
 ```
 
-If a prior planning task is still live, present **resume / abort / restart** instead of the I/D/P menu:
+If a prior planning task is still live, present **resume / abort / restart** instead of the Step 1a menu:
 
 - **Resume** — read `planning_task_id`, `artifact_path`, `current_round` from vars; jump to Step 7.4.
 - **Abort** — close the planning task with reason "User aborted resumed planning"; run terminal cleanup.
@@ -245,18 +241,62 @@ Report the verification output in the exact format `plan-draft` specifies.
 
 ---
 
-## Step 6: User Approval
+## Step 6: First-Draft Approval
 
 Present the plan to the user and route the decision through the real native **`ExitPlanMode`** / `provide_plan_decision` boundary — do **not** synthesize a "user approved?" prompt. The native boundary is the only place `chat_session_permissions` records a real approval.
 
-On approval, read `plan_review_mode` and branch:
+On approval, branch in this order:
 
-- `"plain"` → tell the user to run `/gobby expand <artifact_path>`; run **terminal cleanup**; skill exits.
-- `"adversarial"` / `"delegated"` → proceed to Step 7.
+- `plan_review_mode == "plain"` → tell the user to run `/gobby expand <artifact_path>`; run **terminal cleanup**; skill exits.
+- `plan_review_requested == true` → proceed to **Step 6b** (Adversary Mode Selection). The first-draft approval satisfies the interactive first round; `plan_review_mode` and `max_rounds` are chosen next.
+- `plan_review_mode in ("adversarial", "delegated")` → resume path (Step 6 re-entry during `adversarial` mid-loop revisions). Skip 6b — the mode was already chosen — and proceed to **Step 7**.
 
 ---
 
-## Step 7: Review Loop (NEW, adversarial/delegated modes only)
+## Step 6b: Adversary Mode Selection
+
+Fires only when `plan_review_requested == true` after Step 6 approval — i.e.,
+the user opted into adversarial review at Step 1a, approved the first draft,
+and we now need the shape of the review loop. If `plan_review_mode` is
+already set from a prior round, skip this step and proceed to Step 7.
+
+Present:
+
+```text
+First draft approved. Adversary review starts from here.
+  I) Interactive — I show plan-adversary's findings each round and re-approve
+     the revised plan via ExitPlanMode before the next round.
+  D) Delegated — I revise silently using the findings, wake you only at
+     terminal state (approval, escalation, or round budget exhausted).
+Choice [I]:
+
+How many adversary rounds? [3]
+```
+
+Record the choice:
+
+```text
+set_variable(name="plan_review_mode", value="adversarial" | "delegated", session_id="#<self>")
+set_variable(name="max_rounds",       value=<positive int, default 3>,   session_id="#<self>")
+set_variable(name="plan_review_requested", value=None, session_id="#<self>")  # consumed
+```
+
+Mode mapping:
+
+- `I` → `"adversarial"` (per-round ExitPlanMode approval)
+- `D` → `"delegated"` (silent until terminal)
+
+Clearing `plan_review_requested` is load-bearing — if Step 6 is re-entered
+during an `adversarial` mid-loop revision, the stale `true` value would
+re-enter 6b and re-prompt the mode. The Step 6 branch order above already
+prefers `plan_review_mode` on re-entry, but defense-in-depth: consume the
+opt-in flag the first time it's acted on.
+
+Then proceed to Step 7.
+
+---
+
+## Step 7: Review Loop (adversarial/delegated modes only)
 
 ### 7.0. Artifact precondition
 
@@ -413,10 +453,11 @@ Present the final `## Adversary Findings` and any escalation reasons to the user
 | **Abort** | `close_task(planning_task_id, reason="User aborted adversarial planning")` | Terminal cleanup. |
 | **Restart** | `close_task(planning_task_id, reason="Restart: planning round budget exhausted, beginning a new attempt")` | Terminal cleanup (releases the lock); re-enter Step 1 fresh. |
 
-Restart is a full re-seed — the user gets the I/D/P menu again, re-confirms
-`max_rounds`, and the guard re-runs against current parent state. We deliberately
-do not carry "same attempt" state across restart; doing so would require owner
-semantics deeper than we want to add for this feature.
+Restart is a full re-seed — the user gets the Step 1a Y/N menu again (and
+Step 6b after re-approval if they opt in), and the guard re-runs against
+current parent state. We deliberately do not carry "same attempt" state
+across restart; doing so would require owner semantics deeper than we want
+to add for this feature.
 
 ---
 
@@ -432,6 +473,7 @@ if lock_label:
 # Clear session vars — last so the lock-release always has the stored label.
 for name in (
     "plan_review_mode",
+    "plan_review_requested",
     "plan_parent_ref",
     "planning_task_id",
     "artifact_path",
