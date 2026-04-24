@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.requests import ClientDisconnect
 
 from gobby.adapters.claude_contract import (
     build_graceful_error_hook_response,
@@ -344,7 +345,16 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
         try:
             # Parse request
-            payload, request_metadata = _normalize_hook_request(await request.json())
+            try:
+                raw_payload = await request.json()
+            except ClientDisconnect:
+                logger.debug(
+                    "Hook client disconnected before request body was read",
+                    extra=_hook_log_extra(hook_type, request_metadata, error="client_disconnected"),
+                )
+                return {"continue": True, "decision": "approve"}
+
+            payload, request_metadata = _normalize_hook_request(raw_payload)
             hook_type = payload.get("hook_type")
             source = payload.get("source")
 

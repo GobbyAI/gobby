@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.servers.http import HTTPServer
@@ -2178,6 +2179,28 @@ class TestHooksEndpoints:
         )
         assert response.status_code == 400
         assert "hook_type" in response.json()["detail"]
+
+    def test_execute_hook_client_disconnect_returns_graceful_response(
+        self, client: TestClient
+    ) -> None:
+        """Client disconnects during body parsing should not log endpoint errors."""
+        with (
+            patch(
+                "starlette.requests.Request.json",
+                new=AsyncMock(side_effect=ClientDisconnect()),
+            ),
+            patch("gobby.servers.routes.mcp.hooks.logger") as mock_logger,
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                content=b'{"hook_type":"session-start","source":"claude"}',
+                headers={"Content-Type": "application/json"},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {"continue": True, "decision": "approve"}
+        assert mock_logger.error.called is False
+        assert mock_logger.debug.called is True
 
     def test_execute_hook_missing_source(self, client: TestClient) -> None:
         """Test execute hook with missing source."""
