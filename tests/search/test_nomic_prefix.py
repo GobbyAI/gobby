@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 import gobby.search.embeddings as embeddings_mod
@@ -199,12 +200,43 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
     return mock_client, captured
 
 
+def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
+    """Client that fails with a connection error on first call, then succeeds."""
+    mock_client = AsyncMock()
+    captured: list[list[str]] = []
+    call_count = 0
+
+    async def fake_create(model: str, input: list[str]):
+        nonlocal call_count
+        call_count += 1
+        captured.append(input)
+
+        if call_count == 1:
+            raise httpx.ConnectError("refused")
+
+        class FakeItem:
+            def __init__(self, embedding: list[float]):
+                self.embedding = embedding
+
+        class FakeResponse:
+            def __init__(self, items: list[FakeItem]):
+                self.data = items
+
+        items = [FakeItem([0.1] * dim) for _ in input]
+        return FakeResponse(items)
+
+    mock_client.embeddings.create = fake_create
+    return mock_client, captured
+
+
 @pytest.fixture(autouse=True)
 def _reset_reload_cooldown():
     """Reset the reload cooldown between tests."""
     embeddings_mod._last_reload_attempt = 0.0
+    embeddings_mod._last_local_lm_studio_recovery_attempt = 0.0
     yield
     embeddings_mod._last_reload_attempt = 0.0
+    embeddings_mod._last_local_lm_studio_recovery_attempt = 0.0
 
 
 @pytest.mark.asyncio
@@ -298,3 +330,63 @@ async def test_reload_failure_raises() -> None:
             await generate_embedding(
                 "test", model="nomic-embed-text", api_base="http://localhost:1234/v1"
             )
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_connection_recovery_retries_once() -> None:
+    """Local LM Studio connection refusal triggers readiness helper and retry."""
+    mock_client, captured = _make_connect_error_client()
+
+    with (
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+        patch(
+            "gobby.cli.services.ensure_local_embedding_service_ready",
+            new=AsyncMock(return_value=True),
+        ) as mock_ready,
+    ):
+        result = await generate_embedding(
+            "test",
+            model="nomic-embed-text",
+            api_base="http://localhost:1234/v1",
+        )
+
+    assert result == [0.1] * 4
+    mock_ready.assert_awaited_once_with(
+        model="nomic-embed-text",
+        api_base="http://localhost:1234/v1",
+        api_key=None,
+        expected_dim=None,
+    )
+    assert len(captured) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://remote.example:1234/v1",
+        None,
+    ],
+)
+async def test_connection_failures_do_not_trigger_lmstudio_recovery_for_remote_or_openai(
+    api_base: str | None,
+) -> None:
+    """Remote/OpenAI endpoints should fail fast without LM Studio recovery."""
+    mock_client = AsyncMock()
+    mock_client.embeddings.create = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+    with (
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+        patch(
+            "gobby.cli.services.ensure_local_embedding_service_ready",
+            new=AsyncMock(return_value=True),
+        ) as mock_ready,
+    ):
+        with pytest.raises(RuntimeError, match="Embedding generation failed"):
+            await generate_embedding(
+                "test",
+                model="nomic-embed-text",
+                api_base=api_base,
+            )
+
+    mock_ready.assert_not_awaited()

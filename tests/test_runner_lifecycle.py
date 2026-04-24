@@ -4,10 +4,12 @@ import asyncio
 import signal
 from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gobby.runner_lifecycle as runner_lifecycle
 from gobby.runner import GobbyRunner, main, run_gobby
 from tests.runner_helpers import create_base_patches
 
@@ -190,6 +192,76 @@ class TestGobbyRunnerRun:
             runner = GobbyRunner()
 
             assert runner.http_server.websocket_server == mock_ws_server
+
+
+class TestInitSubsystems:
+    """Tests for subsystem initialization helpers."""
+
+    @pytest.mark.asyncio
+    async def test_init_subsystems_uses_embedding_readiness_helper_and_stays_alive(self) -> None:
+        runner = SimpleNamespace(
+            http_server=SimpleNamespace(
+                services=SimpleNamespace(provider_model_catalog=None),
+            ),
+            mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
+            config=SimpleNamespace(
+                databases=SimpleNamespace(
+                    qdrant=SimpleNamespace(url=""),
+                    neo4j=SimpleNamespace(url=""),
+                ),
+                embeddings=SimpleNamespace(
+                    model="nomic-embed-text",
+                    api_base="http://localhost:1234/v1",
+                    api_key="lm-studio",
+                    dim=768,
+                ),
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost"),
+                telemetry=SimpleNamespace(log_file="/tmp/gobby.log"),
+                bind_host="localhost",
+            ),
+            memory_manager=None,
+            metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
+            vector_store=None,
+            message_processor=None,
+            communications_manager=None,
+            lifecycle_manager=SimpleNamespace(start=AsyncMock()),
+            agent_lifecycle_monitor=None,
+            cron_scheduler=None,
+            code_indexer=None,
+            pipeline_executor=None,
+            pipeline_execution_manager=None,
+            workflow_loader=None,
+            completion_registry=None,
+            websocket_server=None,
+        )
+        tracker = runner_lifecycle.StartupTracker()
+
+        with (
+            patch.object(runner_lifecycle, "_startup_tracker", tracker),
+            patch(
+                "gobby.cli.services.ensure_local_embedding_service_ready",
+                new=AsyncMock(return_value=False),
+            ) as mock_ready,
+            patch(
+                "gobby.cli.services.get_local_embedding_service_failure_reason",
+                return_value="LM Studio server start failed: boom",
+            ),
+            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
+        ):
+            mock_tmux_manager.return_value.health_check = AsyncMock()
+            await runner_lifecycle._init_subsystems(runner, AsyncMock())
+
+        mock_ready.assert_awaited_once_with(
+            model="nomic-embed-text",
+            api_base="http://localhost:1234/v1",
+            api_key="lm-studio",
+            expected_dim=768,
+        )
+        runner.lifecycle_manager.start.assert_awaited_once()
+        assert {
+            "subsystem": "Embeddings",
+            "error": "LM Studio server start failed: boom",
+        } in tracker.errors
 
 
 class TestRunGobbyFunction:

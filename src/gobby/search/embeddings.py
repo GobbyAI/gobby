@@ -43,7 +43,6 @@ import time
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -57,6 +56,10 @@ _DEFAULT_MAX_DELAY = 60.0  # seconds
 # Cooldown for model-reload attempts (prevents hammering lms/ollama)
 _RELOAD_COOLDOWN = 60.0  # seconds
 _last_reload_attempt: float = 0.0
+
+# Cooldown for local LM Studio service recovery after connection failures.
+_LOCAL_LM_STUDIO_RECOVERY_COOLDOWN = 60.0  # seconds
+_last_local_lm_studio_recovery_attempt: float = 0.0
 
 # ---------------------------------------------------------------------------
 # TTL cache for embedding results
@@ -264,6 +267,41 @@ async def _try_reload_model(model: str, api_base: str) -> bool:
     return await try_autoload_embedding_model(model, api_base)
 
 
+async def _try_recover_local_lm_studio_service(
+    model: str,
+    api_base: str,
+    api_key: str | None,
+    expected_dim: int | None,
+) -> bool:
+    """Attempt one bounded LM Studio service recovery after a connection failure."""
+    global _last_local_lm_studio_recovery_attempt  # noqa: PLW0603
+    now = time.monotonic()
+    if now - _last_local_lm_studio_recovery_attempt < _LOCAL_LM_STUDIO_RECOVERY_COOLDOWN:
+        logger.debug("Skipping LM Studio service recovery — cooldown active")
+        return False
+    _last_local_lm_studio_recovery_attempt = now
+
+    from gobby.cli.services import (
+        ensure_local_embedding_service_ready,
+        get_local_embedding_service_failure_reason,
+    )
+
+    logger.info(f"Embedding endpoint unavailable — attempting LM Studio recovery ({model})")
+    recovered = await ensure_local_embedding_service_ready(
+        model=model,
+        api_base=api_base,
+        api_key=api_key,
+        expected_dim=expected_dim,
+    )
+    if recovered:
+        return True
+
+    reason = get_local_embedding_service_failure_reason()
+    if reason:
+        logger.warning(f"LM Studio recovery failed: {reason}")
+    return False
+
+
 def _get_api_error_message(error: Exception) -> str:
     """Extract the provider error message from OpenAI-compatible SDK exceptions."""
     body = getattr(error, "body", None)
@@ -285,10 +323,9 @@ def _is_ollama_endpoint(api_base: str | None) -> bool:
     """Check if api_base points to an Ollama endpoint (port 11434)."""
     if not api_base:
         return False
-    try:
-        return urlparse(api_base).port == 11434
-    except (ValueError, AttributeError):
-        return False
+    from gobby.cli.services import _is_ollama_endpoint as _services_is_ollama_endpoint
+
+    return _services_is_ollama_endpoint(api_base)
 
 
 async def _retry_embeddings_after_reload(
@@ -345,6 +382,7 @@ async def _fetch_embeddings(
 ) -> list[list[float]]:
     """Raw API call to generate embeddings (no caching)."""
     from openai import (
+        APIConnectionError,
         AsyncOpenAI,
         AuthenticationError,
         BadRequestError,
@@ -372,6 +410,35 @@ async def _fetch_embeddings(
         except AuthenticationError as e:
             logger.error(f"Embedding authentication failed: {e}")
             raise RuntimeError(f"Authentication failed: {e}") from e
+        except (APIConnectionError, httpx.ConnectError) as e:
+            from gobby.cli.services import _is_lm_studio_endpoint
+
+            if not api_base or not _is_lm_studio_endpoint(api_base):
+                logger.error(f"Failed to generate embeddings: {e}")
+                raise RuntimeError(f"Embedding generation failed: {e}") from e
+
+            recovered = await _try_recover_local_lm_studio_service(
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                expected_dim=expected_dim,
+            )
+            if not recovered:
+                raise RuntimeError(f"Embedding generation failed: {e}") from e
+            try:
+                return await _retry_embeddings_after_reload(
+                    client,
+                    texts,
+                    model,
+                    expected_dim,
+                    api_base,
+                )
+            except RuntimeError:
+                raise
+            except Exception as retry_err:
+                raise RuntimeError(
+                    f"Embedding failed after LM Studio recovery: {retry_err}"
+                ) from retry_err
         except NotFoundError as e:
             error_message = _get_api_error_message(e).lower()
             if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):

@@ -236,32 +236,37 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
     # Embedding health check: probe endpoint, attempt auto-load, warn if down
     emb_cfg = runner.config.embeddings
     if emb_cfg.api_base:
-        from gobby.cli.services import is_embedding_healthy, try_autoload_embedding_model
+        from gobby.cli.services import (
+            ensure_local_embedding_service_ready,
+            get_local_embedding_service_failure_reason,
+        )
 
-        healthy = await is_embedding_healthy(
+        healthy = await ensure_local_embedding_service_ready(
             model=emb_cfg.model,
             api_base=emb_cfg.api_base,
             api_key=emb_cfg.api_key,
             expected_dim=emb_cfg.dim,
         )
-        if not healthy:
-            # Try to auto-load the model (lms load / ollama pull) and retry
-            if await try_autoload_embedding_model(emb_cfg.model, emb_cfg.api_base):
-                healthy = await is_embedding_healthy(
-                    model=emb_cfg.model,
-                    api_base=emb_cfg.api_base,
-                    api_key=emb_cfg.api_key,
-                    expected_dim=emb_cfg.dim,
+        if healthy:
+            if tracker:
+                tracker.complete("Embeddings healthy")
+        else:
+            failure_reason = get_local_embedding_service_failure_reason()
+            if failure_reason:
+                logger.warning(
+                    "Embedding readiness failed at %s (model: %s): %s",
+                    emb_cfg.api_base,
+                    emb_cfg.model,
+                    failure_reason,
                 )
-            if not healthy:
+            else:
+                failure_reason = f"unreachable at {emb_cfg.api_base}"
                 logger.warning(
                     f"Embedding endpoint unreachable at {emb_cfg.api_base} "
                     f"(model: {emb_cfg.model}) — semantic search will fall back to FTS5"
                 )
-                if tracker:
-                    tracker.error("Embeddings", f"unreachable at {emb_cfg.api_base}")
-            elif tracker:
-                tracker.complete("Embeddings healthy")
+            if tracker:
+                tracker.error("Embeddings", failure_reason)
 
     # Run metrics cleanup on startup
     try:
