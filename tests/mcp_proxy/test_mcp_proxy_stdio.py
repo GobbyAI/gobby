@@ -615,9 +615,8 @@ class TestDaemonProxyMethods:
 class TestMCPToolsWrapper:
     """Tests for the FastMCP tools registered by register_proxy_tools."""
 
-    @pytest.mark.asyncio
-    async def test_tools_exist_and_delegate(self):
-        """Test that tools are registered and delegate to proxy."""
+    @staticmethod
+    def _register_tools():
         captured_tools = {}
 
         def mock_tool_decorator(name=None, **kwargs):
@@ -631,10 +630,8 @@ class TestMCPToolsWrapper:
         mock_mcp = MagicMock()
         mock_mcp.tool.side_effect = mock_tool_decorator
 
-        # Mock DaemonProxy to intercept calls
         mock_proxy = MagicMock()
-
-        # Setup all proxy methods
+        mock_proxy._session_id = None
         mock_proxy.list_mcp_servers = AsyncMock(return_value={"res": "servers"})
         mock_proxy.list_tools = AsyncMock(return_value={"res": "tools"})
         mock_proxy.get_tool_schema = AsyncMock(return_value={"res": "schema"})
@@ -646,16 +643,21 @@ class TestMCPToolsWrapper:
         mock_proxy.remove_mcp_server = AsyncMock(return_value={"res": "remove"})
         mock_proxy.import_mcp_server = AsyncMock(return_value={"res": "import"})
 
-        # Call the registration directly!
         register_proxy_tools(mock_mcp, mock_proxy)
-
-        # Assertion: Did we use the mock?
-        assert captured_tools, "No tools captured! Mocking failed."
 
         async def run_tool(_tool_name, **kwargs):
             if _tool_name in captured_tools:
                 return await captured_tools[_tool_name](**kwargs)
             raise ValueError(f"Tool {_tool_name} not captured")
+
+        return captured_tools, mock_proxy, run_tool
+
+    @pytest.mark.asyncio
+    async def test_tools_exist_and_delegate(self):
+        """Test that tools are registered and delegate to proxy."""
+        captured_tools, mock_proxy, run_tool = self._register_tools()
+
+        assert captured_tools, "No tools captured! Mocking failed."
 
         # 1. list_mcp_servers
         await run_tool("list_mcp_servers")
@@ -702,6 +704,50 @@ class TestMCPToolsWrapper:
         # 10. import_mcp_server
         await run_tool("import_mcp_server", from_project="p")
         mock_proxy.import_mcp_server.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_hoists_flattened_wrapper_fields(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+
+        await run_tool(
+            "call_tool",
+            arguments={
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "session_id": "session-123",
+                "name": "brevity",
+            },
+        )
+
+        mock_proxy.call_tool.assert_called_with("gobby-skills", "get_skill", {"name": "brevity"})
+        assert mock_proxy._session_id == "session-123"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_top_level_wrapper_fields_win(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+
+        await run_tool(
+            "call_tool",
+            server_name="outer-server",
+            tool_name="outer-tool",
+            session_id="outer-session",
+            project_id="outer-project",
+            arguments={
+                "server_name": "inner-server",
+                "tool_name": "inner-tool",
+                "session_id": "inner-session",
+                "project_id": "inner-project",
+                "value": "ok",
+            },
+        )
+
+        mock_proxy.call_tool.assert_called_with(
+            "outer-server",
+            "outer-tool",
+            {"value": "ok"},
+            project_id="outer-project",
+        )
+        assert mock_proxy._session_id == "outer-session"
 
 
 class TestEnsureDaemonRunningFailures:

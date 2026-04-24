@@ -268,6 +268,25 @@ class TestGobbyDaemonToolsCallTool:
         assert call_args[0][2] == complex_args
 
     @pytest.mark.asyncio
+    async def test_call_tool_hoists_nested_server_and_tool_when_top_level_missing(
+        self, tools_handler
+    ):
+        """Flattened wrapper fields are hoisted out of arguments before dispatch."""
+        tools_handler.tool_proxy.call_tool = AsyncMock(return_value={"success": True})
+
+        await tools_handler.call_tool(
+            arguments={
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "name": "brevity",
+            }
+        )
+
+        tools_handler.tool_proxy.call_tool.assert_called_once_with(
+            "gobby-skills", "get_skill", {"name": "brevity"}, None
+        )
+
+    @pytest.mark.asyncio
     async def test_call_tool_with_none_arguments(self, tools_handler):
         """Test call_tool with no arguments."""
         tools_handler.tool_proxy.call_tool = AsyncMock(return_value={"success": True})

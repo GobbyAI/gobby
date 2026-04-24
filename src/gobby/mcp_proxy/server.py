@@ -12,7 +12,10 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from gobby.config.app import DaemonConfig
-from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CallToolWrapperInputError,
+    canonicalize_call_tool_wrapper,
+)
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
@@ -150,8 +153,8 @@ class GobbyDaemonTools:
 
     async def call_tool(
         self,
-        server_name: str,
-        tool_name: str,
+        server_name: str | None = None,
+        tool_name: str | None = None,
         arguments: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
@@ -176,6 +179,37 @@ class GobbyDaemonTools:
                 operations (e.g., an agent in project A creating a task in
                 project B).
         """
+        try:
+            canonical = canonicalize_call_tool_wrapper(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                session_id=session_id,
+                project_id=project_id,
+            )
+        except CallToolWrapperInputError as exc:
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"Error: {exc}")],
+                isError=True,
+            )
+
+        server_name = canonical.server_name
+        tool_name = canonical.tool_name
+        arguments = canonical.arguments
+        session_id = canonical.session_id
+        project_id = canonical.project_id
+
+        if not server_name or not tool_name:
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text="Error: 'server_name' and 'tool_name' are required.",
+                    )
+                ],
+                isError=True,
+            )
+
         # Infrastructure precondition: explicit project_id requires a DB.
         # Distinct from "project not found" — conflating the two makes
         # diagnosis harder.
@@ -211,40 +245,13 @@ class GobbyDaemonTools:
                 ],
                 isError=True,
             )
-        # Coerce string arguments to dict (agents often stringify JSON,
-        # sometimes with literal \" escapes instead of proper quotes)
-        if isinstance(arguments, str):
-            parsed = coerce_string_arguments(arguments)
-            if parsed is not None:
-                arguments = parsed
-            else:
-                reset_seeded_contexts(tokens)
-                return CallToolResult(
-                    content=[
-                        TextContent(
-                            type="text",
-                            text=f"Error: 'arguments' must be a JSON object, got invalid string: {str(arguments)[:200]}",
-                        )
-                    ],
-                    isError=True,
-                )
-
-        # At this point arguments is dict or None (str case handled above)
-        # Strip call_tool's own parameters that LLMs sometimes flatten into
-        # the arguments dict instead of passing as separate parameters.
-        effective_arguments: dict[str, Any] | None = None
-        if isinstance(arguments, dict):
-            effective_arguments = dict(arguments)  # Shallow copy to avoid modifying original
-            for leaked_key in ("server_name", "tool_name", "project_id"):
-                effective_arguments.pop(leaked_key, None)
-
         # Propagate only the resolved platform UUID. Falling back to the raw
         # ref would re-poison workflow checks and synthetic after-tool events.
         effective_session_id = tokens.resolved_session_id
 
         try:
             result = await self.tool_proxy.call_tool(
-                server_name, tool_name, effective_arguments, effective_session_id
+                server_name, tool_name, arguments, effective_session_id
             )
         finally:
             reset_seeded_contexts(tokens)

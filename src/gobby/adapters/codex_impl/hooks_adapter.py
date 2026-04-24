@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from datetime import UTC, datetime
@@ -17,6 +18,10 @@ from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CallToolWrapperInputError,
+    canonicalize_call_tool_wrapper,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -56,6 +61,46 @@ class CodexHooksAdapter(BaseAdapter):
     def __init__(self, hook_manager: HookManager | None = None):
         self._hook_manager = hook_manager
 
+    @staticmethod
+    def _is_wrapper_only_call_tool_rewrite(response: HookResponse) -> bool:
+        modified_input = response.modified_input
+        if not isinstance(modified_input, dict):
+            return False
+
+        normalized_tool_name = response.metadata.get("_normalized_tool_name")
+        if normalized_tool_name not in {
+            "call_tool",
+            "mcp__gobby__call_tool",
+            "mcp_gobby_call_tool",
+        }:
+            return False
+
+        raw_tool_input = response.metadata.get("_raw_tool_input")
+        if not isinstance(raw_tool_input, dict):
+            return False
+
+        try:
+            original_wrapper = canonicalize_call_tool_wrapper(
+                server_name=raw_tool_input.get("server_name"),
+                tool_name=raw_tool_input.get("tool_name"),
+                arguments=raw_tool_input.get("arguments"),
+                args=raw_tool_input.get("args"),
+                session_id=raw_tool_input.get("session_id"),
+                project_id=raw_tool_input.get("project_id"),
+            )
+            rewritten_wrapper = canonicalize_call_tool_wrapper(
+                server_name=modified_input.get("server_name"),
+                tool_name=modified_input.get("tool_name"),
+                arguments=modified_input.get("arguments"),
+                args=modified_input.get("args"),
+                session_id=modified_input.get("session_id"),
+                project_id=modified_input.get("project_id"),
+            )
+        except CallToolWrapperInputError:
+            return False
+
+        return original_wrapper == rewritten_wrapper
+
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Convert Codex hooks.json payload to HookEvent."""
         hook_type = native_event.get("hook_type", "")
@@ -67,6 +112,7 @@ class CodexHooksAdapter(BaseAdapter):
             return None
 
         session_id = input_data.get("session_id", "")
+        raw_tool_input = input_data.get("tool_input")
 
         # Normalize event data (same as Claude — reuse shared normalization)
         from gobby.hooks.normalization import normalize_tool_fields
@@ -82,6 +128,8 @@ class CodexHooksAdapter(BaseAdapter):
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
         metadata = {"is_failure": is_failure} if is_failure else {}
+        if isinstance(raw_tool_input, dict):
+            metadata["raw_tool_input"] = copy.deepcopy(raw_tool_input)
         original_tool_name = normalized_data.pop("_original_tool_name", None)
         if original_tool_name:
             metadata["original_tool_name"] = original_tool_name
@@ -121,7 +169,12 @@ class CodexHooksAdapter(BaseAdapter):
             or response.context
             or response.system_message
         )
-        if response.modified_input and hook_event_name == "PreToolUse" and has_retry_signal:
+        if (
+            response.modified_input
+            and hook_event_name == "PreToolUse"
+            and has_retry_signal
+            and not self._is_wrapper_only_call_tool_rewrite(response)
+        ):
             retry_reason = (
                 normalized_reason
                 or "Retry the tool call with the corrected input from the hook message."

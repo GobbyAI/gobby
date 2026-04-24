@@ -15,6 +15,10 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 from gobby.config.app import load_config
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CallToolWrapperInputError,
+    canonicalize_call_tool_wrapper,
+)
 from gobby.mcp_proxy.daemon_control import (
     check_daemon_http_health,
     get_daemon_pid,
@@ -95,6 +99,7 @@ class DaemonProxy:
         path: str,
         json: dict[str, Any] | None = None,
         timeout: float = 30.0,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
         # Learn session_id from tool arguments (sticky — first one wins)
@@ -105,8 +110,9 @@ class DaemonProxy:
 
         # Build context headers so the daemon resolves the correct project
         headers: dict[str, str] = {}
-        if self._project_id:
-            headers["X-Gobby-Project-Id"] = self._project_id
+        effective_project_id = project_id or self._project_id
+        if effective_project_id:
+            headers["X-Gobby-Project-Id"] = effective_project_id
         if self._session_id:
             headers["X-Gobby-Session-Id"] = self._session_id
 
@@ -155,7 +161,11 @@ class DaemonProxy:
         }
 
     async def call_tool(
-        self, server_name: str, tool_name: str, arguments: dict[str, Any] | None = None
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         # Tool-specific timeouts
         config = load_config()
@@ -182,11 +192,16 @@ class DaemonProxy:
             arg_timeout = float((arguments or {}).get("timeout", 300.0))
             # Add 30s buffer for HTTP overhead
             timeout = arg_timeout + 30.0
+        request_kwargs: dict[str, Any] = {
+            "json": arguments or {},
+            "timeout": timeout,
+        }
+        if project_id:
+            request_kwargs["project_id"] = project_id
         return await self._request(
             "POST",
             f"/api/mcp/{server_name}/tools/{tool_name}",
-            json=arguments or {},
-            timeout=timeout,
+            **request_kwargs,
         )
 
     async def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
@@ -438,11 +453,12 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
 
     @mcp.tool()
     async def call_tool(
-        server_name: str,
-        tool_name: str,
+        server_name: str | None = None,
+        tool_name: str | None = None,
         arguments: str | dict[str, Any] | None = None,
         args: str | dict[str, Any] | None = None,
         session_id: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute a tool on a connected MCP server.
@@ -459,48 +475,34 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 the daemon via X-Gobby-Session-Id header so tools can read it from
                 the SessionContext ContextVar. Individual tools do not need session_id
                 in their own arguments.
+            project_id: Optional project UUID or name for cross-project tool calls.
 
         Returns:
             Dictionary with success status and tool execution result
         """
-        # Coerce string arguments to dict (agents often stringify JSON,
-        # sometimes with literal \" escapes instead of proper quotes)
-        if isinstance(arguments, str):
-            from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
+        try:
+            canonical = canonicalize_call_tool_wrapper(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                args=args,
+                session_id=session_id,
+                project_id=project_id,
+            )
+        except CallToolWrapperInputError as exc:
+            return {"success": False, "error": str(exc)}
 
-            parsed = coerce_string_arguments(arguments)
-            if parsed is not None:
-                arguments = parsed
-            else:
-                return {
-                    "success": False,
-                    "error": f"Invalid JSON in 'arguments' parameter: {str(arguments)[:200]}",
-                }
+        server_name = canonical.server_name
+        tool_name = canonical.tool_name
+        final_args = canonical.arguments
+        session_id = canonical.session_id
+        project_id = canonical.project_id
 
-        # Accept 'args' as alias for 'arguments' (agents sometimes use wrong param name)
-        effective_args = arguments
-        if effective_args is None and args is not None:
-            if isinstance(args, dict):
-                effective_args = args
-            elif isinstance(args, str):
-                from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
-
-                parsed = coerce_string_arguments(args)
-                if parsed is not None:
-                    effective_args = parsed
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Invalid JSON in 'args' parameter: {args[:200]}",
-                    }
-        final_args: dict[str, Any] | None = (
-            effective_args if isinstance(effective_args, dict) else None
-        )
-        # Strip call_tool's own parameters that LLMs sometimes flatten into
-        # the arguments dict instead of passing as separate parameters.
-        if isinstance(final_args, dict):
-            for leaked_key in ("server_name", "tool_name"):
-                final_args.pop(leaked_key, None)
+        if not server_name or not tool_name:
+            return {
+                "success": False,
+                "error": "Missing required parameters: server_name, tool_name",
+            }
 
         # Set session_id on proxy directly so _request() sends it via
         # X-Gobby-Session-Id header. Don't inject into tool arguments —
@@ -509,6 +511,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         if session_id and not proxy._session_id:
             proxy._session_id = session_id
 
+        if project_id:
+            return await proxy.call_tool(server_name, tool_name, final_args, project_id=project_id)
         return await proxy.call_tool(server_name, tool_name, final_args)
 
     @mcp.tool()

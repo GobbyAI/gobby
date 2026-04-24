@@ -116,6 +116,32 @@ class TestCallToolSessionResolution:
         assert resolved == "platform-uuid-7"
 
     @pytest.mark.asyncio
+    async def test_call_tool_hoists_nested_session_id_before_resolution(self) -> None:
+        """Nested wrapper session_id is resolved after canonicalization."""
+        handler, session_manager = self._make_handler(resolve_to="platform-uuid-7")
+
+        await handler.call_tool(
+            arguments={
+                "server_name": "gobby-tasks",
+                "tool_name": "suggest_next_task",
+                "session_id": "11111111-1111-1111-1111-111111111111",
+                "parent_task_id": "#1",
+            }
+        )
+
+        session_manager.resolve_session_reference.assert_called_once_with(
+            "11111111-1111-1111-1111-111111111111", None
+        )
+        call_args = handler.tool_proxy.call_tool.call_args
+        resolved = call_args.kwargs.get("session_id")
+        if resolved is None:
+            resolved = call_args.args[3]
+        assert resolved == "platform-uuid-7"
+        assert call_args.args[0] == "gobby-tasks"
+        assert call_args.args[1] == "suggest_next_task"
+        assert call_args.args[2] == {"parent_task_id": "#1"}
+
+    @pytest.mark.asyncio
     async def test_call_tool_skips_session_context_when_unresolvable(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

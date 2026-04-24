@@ -673,6 +673,23 @@ class TestDetectMcpCall:
 
         assert variables["loaded_skills"] == ["plan"]
 
+    def test_tracks_get_skill_result_and_loaded_skill_together(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "gobby-skills", "tool_name": "get_skill"},
+            tool_output={"result": {"success": True, "skill": {"name": "brevity"}}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_results"]["gobby-skills"]["get_skill"] == {
+            "success": True,
+            "skill": {"name": "brevity"},
+        }
+        assert variables["loaded_skills"] == ["brevity"]
+
     def test_tracks_loaded_skill_idempotently(self, variables, make_after_tool_event) -> None:
         event = make_after_tool_event(
             "mcp__gobby__call_tool",

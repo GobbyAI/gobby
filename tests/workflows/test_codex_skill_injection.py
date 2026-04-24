@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedToolEvent
 from gobby.storage.database import LocalDatabase
@@ -21,6 +22,7 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleEvent
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.observers import detect_mcp_call
 
 pytestmark = pytest.mark.integration
 
@@ -116,6 +118,60 @@ async def test_synthesized_after_tool_emits_task_creation_directive(
         response.context == 'Call get_skill(name="task-creation") on gobby-skills, then continue.'
     )
     assert "loaded_skills" not in variables
+
+
+@pytest.mark.asyncio
+async def test_get_skill_after_tool_updates_loaded_skills_and_suppresses_next_prompt(
+    db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+) -> None:
+    _install_rule(manager, "inject-task-creation-on-schema", _INJECT_TASK_CREATION_ON_SCHEMA)
+
+    variables: dict[str, object] = {}
+    detect_mcp_call(
+        HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            source=SessionSource.CODEX,
+            session_id="external-sid",
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {"server_name": "gobby-skills", "tool_name": "get_skill"},
+                "tool_output": {"result": {"success": True, "skill": {"name": "task-creation"}}},
+                "mcp_server": "gobby-skills",
+                "mcp_tool": "get_skill",
+            },
+            metadata={"_platform_session_id": "sid"},
+        ),
+        variables,
+        "sid",
+    )
+
+    tool_event = ParsedToolEvent(
+        phase="end",
+        call_id="call_2",
+        server="gobby",
+        tool="get_tool_schema",
+        arguments={"server_name": "gobby-tasks", "tool_name": "claim_task"},
+        timestamp=datetime.now(UTC),
+        raw_json={},
+        result={"ok": True},
+    )
+    hook_event = SessionMessageProcessor._build_codex_hook_event(
+        {
+            "external_id": "external-sid",
+            "machine_id": "machine-xyz",
+            "project_id": "project-abc",
+            "platform_session_id": "platform-sid",
+        },
+        tool_event,
+    )
+    assert hook_event is not None
+
+    engine = RuleEngine(db)
+    response = await engine.evaluate(hook_event, session_id="sid", variables=variables)
+
+    assert variables["loaded_skills"] == ["task-creation"]
+    assert response.context is None
 
 
 @pytest.mark.asyncio

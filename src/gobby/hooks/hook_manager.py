@@ -5,6 +5,7 @@ to :mod:`gobby.hooks.event_handlers`.  See :class:`HookManager` for details.
 """
 
 import asyncio
+import copy
 import logging
 import os
 import sqlite3
@@ -414,6 +415,14 @@ class HookManager:
             if not response.modified_input:
                 response.modified_input = event.data.get("tool_input", {})
                 response.auto_approve = True
+
+        raw_tool_input = event.metadata.get("raw_tool_input")
+        if isinstance(raw_tool_input, dict):
+            response.metadata.setdefault("_raw_tool_input", copy.deepcopy(raw_tool_input))
+
+        normalized_tool_name = (event.data or {}).get("tool_name")
+        if isinstance(normalized_tool_name, str):
+            response.metadata.setdefault("_normalized_tool_name", normalized_tool_name)
 
         with create_span("hook.enrich"):
             try:

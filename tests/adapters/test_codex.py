@@ -2041,6 +2041,37 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "Bare python is not allowed" in result["systemMessage"]
         assert "uv run python hello.py" in result["systemMessage"]
 
+    def test_pre_tool_use_wrapper_only_call_tool_rewrite_does_not_emit_retry_blob(self) -> None:
+        """Wrapper-only call_tool reshapes should auto-heal without visible retry JSON."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="allow",
+            modified_input={
+                "server_name": "gobby-skills",
+                "tool_name": "get_skill",
+                "arguments": {"name": "brevity"},
+            },
+            auto_approve=True,
+            metadata={
+                "_normalized_tool_name": "mcp__gobby__call_tool",
+                "_raw_tool_input": {
+                    "arguments": {
+                        "server_name": "gobby-skills",
+                        "tool_name": "get_skill",
+                        "name": "brevity",
+                    }
+                },
+            },
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
+
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "systemMessage" not in result
+
     def test_pre_tool_use_ignores_modified_input_without_rewrite_signal(self) -> None:
         """modified_input alone should not block ordinary Codex commands."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter

@@ -514,3 +514,58 @@ async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
         effective_args = call_args[0][2]
     assert "project_id" not in effective_args
     assert effective_args["title"] == "Test"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_top_level_wrapper_fields_win_and_nested_values_are_stripped(daemon_tools):
+    """Top-level wrapper fields override flattened duplicates inside arguments."""
+    from unittest.mock import sentinel
+
+    daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
+
+    mock_sm = MagicMock()
+    mock_sm.db = MagicMock()
+    mock_session = MagicMock()
+    mock_session.external_id = "ext-123"
+    mock_sm.get.return_value = mock_session
+    mock_sm.resolve_session_reference.return_value = "platform-session"
+    daemon_tools._session_manager = mock_sm
+    mock_project = MagicMock()
+    mock_project.id = "resolved-outer-project"
+
+    with (
+        patch(
+            "gobby.storage.projects.LocalProjectManager",
+        ) as mock_pm_class,
+        patch(
+            "gobby.utils.project_context.set_project_context_from_ref",
+            return_value=sentinel.token,
+        ) as mock_ref,
+        patch(
+            "gobby.utils.project_context.reset_project_context",
+        ),
+    ):
+        mock_pm_class.return_value.resolve_ref.return_value = mock_project
+        await daemon_tools.call_tool(
+            "outer-server",
+            "outer-tool",
+            {
+                "server_name": "inner-server",
+                "tool_name": "inner-tool",
+                "session_id": "inner-session",
+                "project_id": "inner-project",
+                "value": "ok",
+            },
+            session_id="outer-session",
+            project_id="outer-project",
+        )
+
+    mock_ref.assert_called_once_with("resolved-outer-project", mock_sm.db)
+    call_args = daemon_tools.tool_proxy.call_tool.call_args
+    resolved = call_args.kwargs.get("session_id")
+    if resolved is None:
+        resolved = call_args.args[3]
+    assert resolved == "platform-session"
+    assert call_args.args[0] == "outer-server"
+    assert call_args.args[1] == "outer-tool"
+    assert call_args.args[2] == {"value": "ok"}
