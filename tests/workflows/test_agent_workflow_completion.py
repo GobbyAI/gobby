@@ -45,6 +45,7 @@ def _register_agent_workflow(
     *,
     session_id: str = "agent-session",
     workflow_name: str = "plan-adversary-steps",
+    review_tool: str = "mark_task_review_approved",
 ) -> WorkflowInstanceManager:
     _create_session(db, session_id)
     manager = LocalWorkflowDefinitionManager(db)
@@ -62,7 +63,7 @@ def _register_agent_workflow(
                 "on_mcp_success": [
                     {
                         "server": "gobby-tasks",
-                        "tool": "mark_task_review_approved",
+                        "tool": review_tool,
                         "action": "set_variable",
                         "variable": "review_complete",
                         "value": True,
@@ -106,20 +107,34 @@ def _register_agent_workflow(
     return instance_manager
 
 
-def _after_tool_event() -> HookEvent:
+def _after_tool_event(
+    *,
+    session_id: str = "agent-session",
+    source: SessionSource = SessionSource.CLAUDE,
+    mcp_tool: str = "mark_task_review_approved",
+    tool_output: object | None = None,
+    tool_response: object | None = None,
+) -> HookEvent:
+    data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-tasks",
+            "tool_name": mcp_tool,
+        },
+    }
+    if tool_output is not None:
+        data["tool_output"] = tool_output
+    if tool_response is not None:
+        data["tool_response"] = tool_response
+    if "tool_output" not in data and "tool_response" not in data:
+        data["tool_output"] = {"success": True}
+
     return HookEvent(
         event_type=HookEventType.AFTER_TOOL,
-        session_id="agent-session",
-        source=SessionSource.CLAUDE,
+        session_id=session_id,
+        source=source,
         timestamp=datetime.now(UTC),
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-tasks",
-                "tool_name": "mark_task_review_approved",
-            },
-            "tool_output": {"success": True},
-        },
+        data=data,
         metadata={},
     )
 
@@ -173,6 +188,78 @@ class TestAgentWorkflowCompletion:
         assert variables["step_workflow_complete"] is True
         runner.complete_run.assert_not_called()
         completion_registry.notify.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_failed_codex_mcp_envelope_keeps_review_step_open(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            review_tool="mark_task_review_rejected",
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        failed_event = _after_tool_event(
+            source=SessionSource.CODEX,
+            mcp_tool="mark_task_review_rejected",
+            tool_response={
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({"success": False, "error": "Invalid arguments"}),
+                    }
+                ],
+                "structuredContent": {
+                    "success": False,
+                    "error": "Invalid arguments",
+                },
+                "isError": False,
+            },
+        )
+        response = await engine.evaluate(
+            failed_event,
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        assert instance is not None
+        assert instance.current_step == "review"
+        assert instance.variables["review_complete"] is False
+        assert response.context is None
+        completion_registry.notify.assert_not_awaited()
+
+        success_event = _after_tool_event(
+            source=SessionSource.CODEX,
+            mcp_tool="mark_task_review_rejected",
+            tool_response={
+                "content": [{"type": "text", "text": json.dumps({"success": True})}],
+                "structuredContent": {"success": True},
+                "isError": False,
+            },
+        )
+        response = await engine.evaluate(
+            success_event,
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert response.context is not None
+        completion_registry.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_parent_wait_unblocks_without_end_agent_run_tool_call(

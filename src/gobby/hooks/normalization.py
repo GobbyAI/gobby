@@ -466,6 +466,54 @@ def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:
     data.update(metadata)
 
 
+def _parse_json_object(text: Any) -> dict[str, Any] | None:
+    if not isinstance(text, str):
+        return None
+    try:
+        parsed = _json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_mcp_content_object(content: Any) -> dict[str, Any] | None:
+    if not isinstance(content, list):
+        return None
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") != "text":
+            continue
+        parsed = _parse_json_object(item.get("text"))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _unwrap_mcp_tool_output(tool_output: Any) -> Any:
+    if not isinstance(tool_output, dict):
+        return tool_output
+
+    structured_content = tool_output.get("structuredContent")
+    if structured_content is not None:
+        return structured_content
+
+    result = tool_output.get("result")
+    if isinstance(result, dict):
+        nested_structured = result.get("structuredContent")
+        if nested_structured is not None:
+            return nested_structured
+
+    parsed_content = _extract_mcp_content_object(tool_output.get("content"))
+    if parsed_content is not None:
+        return parsed_content
+
+    if isinstance(result, dict):
+        nested_content = _extract_mcp_content_object(result.get("content"))
+        if nested_content is not None:
+            return nested_content
+
+    return tool_output
+
+
 def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize tool-related fields in hook event data.
 
@@ -646,15 +694,18 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     # 2c. Parse string tool_output to dict when possible.
     # Claude Code sends tool_response as JSON text; observers and rules
-    # expect a dict.  Parse once here so every consumer gets structured data.
+    # expect a dict. Parse once here so every consumer gets structured data.
     tool_output = data.get("tool_output")
     if isinstance(tool_output, str):
-        try:
-            parsed = _json.loads(tool_output)
-            if isinstance(parsed, dict):
-                data["tool_output"] = parsed
-        except (ValueError, TypeError):
-            pass  # Non-JSON text output — leave as string
+        parsed = _parse_json_object(tool_output)
+        if parsed is not None:
+            data["tool_output"] = parsed
+
+    # 2d. Unwrap standard MCP result envelopes. Codex transcript synthesis
+    # preserves the outer {content, structuredContent, isError} wrapper, but
+    # rules and step enforcement need the semantic tool payload itself.
+    if "tool_output" in data:
+        data["tool_output"] = _unwrap_mcp_tool_output(data["tool_output"])
 
     return data
 

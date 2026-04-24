@@ -210,6 +210,35 @@ class TestToolOutputNormalization:
         assert result["tool_output"]["success"] is True
         assert result["tool_output"]["result"]["id"] == "abc-123"
 
+    def test_tool_response_envelope_uses_structured_content(self) -> None:
+        data = {
+            "tool_response": {
+                "content": [{"type": "text", "text": '{"success": false, "error": "bad args"}'}],
+                "structuredContent": {
+                    "success": False,
+                    "error": "bad args",
+                    "result": {"ref": "#42"},
+                },
+                "isError": False,
+            }
+        }
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == {
+            "success": False,
+            "error": "bad args",
+            "result": {"ref": "#42"},
+        }
+
+    def test_tool_response_envelope_parses_text_json_without_structured_content(self) -> None:
+        data = {
+            "tool_response": {
+                "content": [{"type": "text", "text": '{"success": false, "error": "bad args"}'}],
+                "isError": False,
+            }
+        }
+        result = normalize_mcp_fields(data)
+        assert result["tool_output"] == {"success": False, "error": "bad args"}
+
     def test_string_tool_output_non_json_left_as_string(self) -> None:
         """Non-JSON tool output (e.g. plain text) should remain a string."""
         data = {"tool_response": "Error: file not found"}
