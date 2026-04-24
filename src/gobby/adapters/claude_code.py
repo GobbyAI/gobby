@@ -135,7 +135,17 @@ class ClaudeCodeAdapter(BaseAdapter):
         from gobby.hooks.normalization import normalize_tool_fields
 
         # Copy to avoid mutating the original (shared function mutates in place)
-        return normalize_tool_fields(dict(input_data))
+        normalized = normalize_tool_fields(dict(input_data))
+
+        # Claude uses ``user_prompt`` on UserPromptSubmit hooks. Canonicalize to
+        # ``prompt`` so turn-start rules and BEFORE_AGENT handlers see the same
+        # field across CLIs while preserving the original payload for compatibility.
+        prompt = normalized.get("prompt")
+        user_prompt = normalized.get("user_prompt")
+        if not prompt and isinstance(user_prompt, str) and user_prompt:
+            normalized["prompt"] = user_prompt
+
+        return normalized
 
     def _build_additional_context(
         self,

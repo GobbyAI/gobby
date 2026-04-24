@@ -216,6 +216,7 @@ class TestTranslateToHookEvent:
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.BEFORE_AGENT
+        assert event.data["prompt"] == "Hello"
         assert event.data["user_prompt"] == "Hello"
 
     def test_stop(self) -> None:
@@ -378,6 +379,16 @@ class TestNormalizeEventData:
         result = adapter._normalize_event_data(data)
         assert result["mcp_server"] == "gobby"
         assert result["mcp_tool"] == "get_tool_schema"
+
+    def test_user_prompt_sets_canonical_prompt_without_overwriting_existing_prompt(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        data = {
+            "prompt": "Canonical prompt",
+            "user_prompt": "Raw Claude prompt",
+        }
+        result = adapter._normalize_event_data(data)
+        assert result["prompt"] == "Canonical prompt"
+        assert result["user_prompt"] == "Raw Claude prompt"
 
     def test_mcp_prefix_call_tool_overrides_with_inner(self) -> None:
         """mcp__gobby__call_tool should use inner server/tool from tool_input."""

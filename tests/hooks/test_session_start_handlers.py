@@ -74,7 +74,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.agent_depth = 0
         mock_session.agent_run_id = None
         mock_session.title = "Useful synthesized title"
-        mock_session.digest_markdown = "## digest"
+        mock_session.digest_markdown = None
         mock_session.terminal_context = None
 
         updated_session = MagicMock()
@@ -84,7 +84,7 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_depth = 0
         updated_session.agent_run_id = None
         updated_session.title = "Useful synthesized title"
-        updated_session.digest_markdown = "## digest"
+        updated_session.digest_markdown = None
         updated_session.terminal_context = {"tmux_pane": "%77", "parent_pid": 123}
 
         mock_dependencies["session_storage"].get.return_value = mock_session

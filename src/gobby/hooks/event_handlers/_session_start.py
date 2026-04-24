@@ -654,8 +654,7 @@ class SessionStartMixin(EventHandlersBase):
 
         if tmux_pane_added:
             title = getattr(session_obj, "title", None)
-            digest = getattr(session_obj, "digest_markdown", None)
-            if title and digest:
+            if title:
                 schedule_tmux_window_rename(
                     session_obj,
                     title,

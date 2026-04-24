@@ -20,10 +20,12 @@ import json
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -149,6 +151,26 @@ class TestBootstrapSessionTitleOnPrompt:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "startswith('/')" in body.when
+
+    def test_claude_user_prompt_submit_matches_prompt_guard(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("bootstrap-session-title-on-prompt")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+
+        event = ClaudeCodeAdapter().translate_to_hook_event(
+            {
+                "hook_type": "user-prompt-submit",
+                "input_data": {
+                    "session_id": "ext-claude",
+                    "user_prompt": "Fix the Claude tmux title regression",
+                },
+            }
+        )
+
+        evaluator = SafeExpressionEvaluator({"event": {"data": event.data}}, {"len": len})
+        assert evaluator.evaluate(body.when) is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

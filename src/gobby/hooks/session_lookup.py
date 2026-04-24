@@ -107,8 +107,7 @@ class SessionLookupService:
 
         if tmux_pane_added and updated_session is not None:
             title = getattr(updated_session, "title", None)
-            digest = getattr(updated_session, "digest_markdown", None)
-            if title and digest:
+            if title:
                 schedule_tmux_window_rename(
                     updated_session,
                     title,

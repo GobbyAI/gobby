@@ -1076,7 +1076,7 @@ class TestHookManagerSessionLookup:
 
         manager._session_manager.db.execute(
             "UPDATE sessions SET title = ?, digest_markdown = ? WHERE id = ?",
-            ("Recovered Codex Title", "## digest", session_id),
+            ("Recovered Codex Title", None, session_id),
         )
 
         repair_event = HookEvent(
