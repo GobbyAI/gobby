@@ -741,9 +741,35 @@ class TestResolveSessionRefsInToolInput:
     def test_resolves_top_level_session_id(
         self, manager_with_mocks: HookManager, make_event: Callable
     ) -> None:
-        """#N in tool_input.session_id is resolved to UUID."""
+        """#N in top-level tool_input.session_id is resolved when tool expects canonical UUIDs."""
         manager = manager_with_mocks
         manager._session_manager.resolve_session_reference.return_value = "uuid-abc-123"
+
+        event = make_event(
+            event_type=HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "#4"},
+                    "session_id": "#3",
+                },
+            },
+        )
+        event.project_id = "proj-1"
+
+        manager._resolve_session_refs_in_tool_input(event)
+
+        assert event.data["tool_input"]["session_id"] == "uuid-abc-123"
+        assert event.metadata.get("_session_refs_resolved") is True
+        manager._session_manager.resolve_session_reference.assert_called_once_with("#3", "proj-1")
+
+    def test_preserves_top_level_session_id_for_set_variable(
+        self, manager_with_mocks: HookManager, make_event: Callable
+    ) -> None:
+        """set_variable keeps #N so the tool can resolve it itself."""
+        manager = manager_with_mocks
 
         event = make_event(
             event_type=HookEventType.BEFORE_TOOL,
@@ -756,9 +782,30 @@ class TestResolveSessionRefsInToolInput:
 
         manager._resolve_session_refs_in_tool_input(event)
 
-        assert event.data["tool_input"]["session_id"] == "uuid-abc-123"
-        assert event.metadata.get("_session_refs_resolved") is True
-        manager._session_manager.resolve_session_reference.assert_called_once_with("#3", "proj-1")
+        assert event.data["tool_input"]["session_id"] == "#3"
+        assert "_session_refs_resolved" not in event.metadata
+        manager._session_manager.resolve_session_reference.assert_not_called()
+
+    def test_preserves_top_level_session_id_for_get_variable(
+        self, manager_with_mocks: HookManager, make_event: Callable
+    ) -> None:
+        """get_variable keeps #N so the tool can resolve it itself."""
+        manager = manager_with_mocks
+
+        event = make_event(
+            event_type=HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "mcp__gobby__get_variable",
+                "tool_input": {"name": "flag", "session_id": "#3"},
+            },
+        )
+        event.project_id = "proj-1"
+
+        manager._resolve_session_refs_in_tool_input(event)
+
+        assert event.data["tool_input"]["session_id"] == "#3"
+        assert "_session_refs_resolved" not in event.metadata
+        manager._session_manager.resolve_session_reference.assert_not_called()
 
     def test_resolves_nested_call_tool_arguments(
         self, manager_with_mocks: HookManager, make_event: Callable

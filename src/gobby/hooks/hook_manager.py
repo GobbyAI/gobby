@@ -500,8 +500,12 @@ class HookManager:
         project_id = event.project_id
         modified = False
 
-        # Top-level session_id (set_variable, get_variable, call_tool, etc.)
-        modified |= self._try_resolve_session_field(tool_input, "session_id", project_id)
+        # Variable tools intentionally keep the user's explicit session ref
+        # (#N, N, UUID, or prefix). They resolve refs internally and preserving
+        # the original form keeps retry payloads cleaner for agents.
+        if tool_name not in {"mcp__gobby__set_variable", "mcp__gobby__get_variable"}:
+            # Top-level session_id (call_tool, tasks tools, etc.)
+            modified |= self._try_resolve_session_field(tool_input, "session_id", project_id)
 
         # Nested session_id inside call_tool arguments
         if tool_name == "mcp__gobby__call_tool":
