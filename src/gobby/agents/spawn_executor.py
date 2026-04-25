@@ -538,7 +538,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     cmd, _cmd_env = build_cli_command(
         cli="codex",
         prompt=request.prompt or "",
-        auto_approve=True,  # --full-auto for sandboxed autonomy
+        auto_approve=True,
         working_directory=request.cwd,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,

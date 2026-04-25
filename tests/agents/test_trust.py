@@ -139,7 +139,7 @@ class TestPreApproveGemini:
 
 class TestCodexNoop:
     def test_codex_is_noop(self, tmp_path: Path) -> None:
-        """Codex uses --full-auto sandbox; no trust pre-approval needed."""
+        """Codex uses daemon-owned sandbox flags; no trust pre-approval needed."""
         clone_dir = "/private/tmp/gobby-clones/test-task"
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):

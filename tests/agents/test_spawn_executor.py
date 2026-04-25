@@ -431,7 +431,8 @@ class TestExecuteSpawn:
             command = spawn_kwargs["command"]
             assert command[0] == "codex"
             assert "resume" not in command
-            assert "--full-auto" in command
+            assert command[1:3] == ["--ask-for-approval", "never"]
+            assert "--full-auto" not in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can
             # late-link via GOBBY_SESSION_ID.
@@ -497,13 +498,17 @@ class TestExecuteSpawn:
             result = await execute_spawn(request)
 
             command = mock_spawner.spawn.call_args.kwargs["command"]
+            assert "--ask-for-approval" in command
+            assert command[command.index("--ask-for-approval") + 1] == "never"
             assert "--sandbox" in command
             assert "workspace-write" in command
+            assert "--full-auto" not in command
             prompt_arg = command[-1]
             # Sandbox args must appear before the final prompt argv entry, which
             # is the raw Codex prompt.
             assert prompt_arg == request.prompt
             assert request.prompt in prompt_arg
+            assert command.index("--ask-for-approval") < command.index("--sandbox")
             assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True
 
@@ -659,6 +664,7 @@ class TestExecuteSpawnSandbox:
             assert "SEATBELT_PROFILE" in call_kwargs["env"]
             # Command should include sandbox args
             command = call_kwargs.get("command")
+            assert "--dangerously-skip-permissions" in command
             assert "--settings" in command
             assert result.success is True
 
@@ -814,6 +820,8 @@ class TestExecuteSpawnSandbox:
             # Command should include -s flag (passed as keyword arg)
             command = call_kwargs.get("command")
             assert command is not None
+            assert "--approval-mode" in command
+            assert "yolo" in command
             assert "-s" in command
             assert result.success is True
 

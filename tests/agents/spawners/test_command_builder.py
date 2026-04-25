@@ -46,7 +46,27 @@ class TestBuildCliCommand:
 
     def test_codex_auto_approve(self):
         cmd, _env = build_cli_command("codex", auto_approve=True, prompt="hello")
-        assert cmd == ["codex", "--full-auto", "hello"]
+        assert cmd == ["codex", "--ask-for-approval", "never", "hello"]
+        assert "--approval-policy" not in cmd
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+        assert "--full-auto" not in cmd
+
+    @pytest.mark.parametrize(
+        ("cli", "approval_args"),
+        [
+            ("claude", ["--dangerously-skip-permissions"]),
+            ("gemini", ["--approval-mode", "yolo"]),
+            ("qwen", ["--approval-mode", "yolo"]),
+        ],
+    )
+    def test_auto_approve_flags_precede_sandbox_args(self, cli, approval_args):
+        cmd, _env = build_cli_command(
+            cli,
+            auto_approve=True,
+            prompt="hello",
+            sandbox_args=["--sandbox"],
+        )
+        assert cmd == [cli, *approval_args, "--sandbox", "hello"]
 
     def test_codex_working_directory(self):
         cmd, _env = build_cli_command("codex", working_directory="/tmp", prompt="hello")

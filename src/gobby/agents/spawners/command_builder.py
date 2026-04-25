@@ -38,7 +38,7 @@ def build_cli_command(
     - gemini --acp (interactive ACP mode)
 
     Codex CLI:
-    - codex --full-auto -C <dir> [PROMPT]
+    - codex --ask-for-approval never -C <dir> [PROMPT]
 
     Args:
         cli: CLI name (claude, gemini, qwen, codex)
@@ -93,7 +93,7 @@ def build_cli_command(
         if cli == "codex" and reasoning_effort:
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if auto_approve:
-            command.append("--full-auto")
+            command.extend(["--ask-for-approval", "never"])
         if working_directory:
             command.extend(["-C", working_directory])
 

@@ -7,7 +7,7 @@ directories so those prompts never appear.
 Each CLI has a different trust mechanism:
 - Claude Code: ~/.claude/projects/<encoded-path>/ (directory existence = trust)
 - Gemini/Qwen CLI: ~/.gemini|.qwen/trustedFolders.json + projects.json
-- Codex CLI: sandboxed via --full-auto, no trust needed
+- Codex CLI: daemon-owned sandbox and approval flags, no trust database needed
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def pre_approve_directory(cli: str, directory: str) -> None:
     elif cli in {"gemini", "qwen"}:
         for path in paths:
             _pre_approve_gemini_compatible(cli, path)
-    # Codex uses --full-auto sandbox; no trust pre-approval needed
+    # Codex uses daemon-owned sandbox and approval flags; no trust pre-approval needed
 
 
 def _pre_approve_claude(directory: str) -> None:
