@@ -80,7 +80,7 @@ logger = logging.getLogger("gobby.mcp.stdio")
 async def _call_with_wait_heartbeat(
     tool_call: Awaitable[dict[str, Any]],
     *,
-    ctx: Context | None,
+    ctx: Context[Any, Any, Any] | None,
     tool_name: str,
     timeout: float | None,
 ) -> dict[str, Any]:
@@ -505,7 +505,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         args: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
-        ctx: Context | None = None,
+        ctx: Context[Any, Any, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Execute a tool on a connected MCP server.

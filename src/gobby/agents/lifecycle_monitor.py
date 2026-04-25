@@ -25,7 +25,7 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
-from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
 from gobby.tasks.state_semantics import (
     is_task_actively_claimed,
 )
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
-    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks import LocalTaskManager, Task
     from gobby.storage.worktrees import LocalWorktreeManager
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ class AgentLifecycleMonitor:
         """Register a PTY master file descriptor for an agent."""
         self._master_fds[run_id] = fd
 
-    async def _resolve_claimed_task_for_run(self, db_run: AgentRun) -> tuple[str, object] | None:
+    async def _resolve_claimed_task_for_run(self, db_run: AgentRun) -> tuple[str, Task] | None:
         """Resolve the task still owned by this run, if any."""
         if not self._task_manager:
             return None
@@ -153,14 +153,17 @@ class AgentLifecycleMonitor:
                 lifecycle_stage = raw_status
 
             if outcome == "cancelled":
-                release_kwargs: dict[str, object] = {}
                 if lifecycle_stage == "in_progress":
-                    release_kwargs["status"] = "open"
-                await asyncio.to_thread(
-                    self._task_manager.release_task_claim,
-                    task_id,
-                    **release_kwargs,
-                )
+                    await asyncio.to_thread(
+                        self._task_manager.release_task_claim,
+                        task_id,
+                        status="open",
+                    )
+                else:
+                    await asyncio.to_thread(
+                        self._task_manager.release_task_claim,
+                        task_id,
+                    )
                 logger.info(
                     "Recovered task %s after agent %s cancelled (status=%s)",
                     task_ref,
@@ -273,7 +276,12 @@ class AgentLifecycleMonitor:
             except Exception as e:
                 logger.warning(f"Failed to expire session for agent {run.id}: {e}")
 
-    async def terminalize_cancelled_run(self, run_id: str, *, terminal_reason: str) -> bool:
+    async def terminalize_cancelled_run(
+        self,
+        run_id: str,
+        *,
+        terminal_reason: AgentRunTerminalReason,
+    ) -> bool:
         """Mark an active run cancelled, recover ownership, and notify waiters."""
         db_run = await asyncio.to_thread(
             self._agent_run_manager.cancel,

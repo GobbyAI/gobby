@@ -1,10 +1,10 @@
 """Wake dispatcher for notifying sessions when async operations complete.
 
-Routes wake messages based on session type:
-- Terminal agents (agent_depth > 0, terminal_context): tmux send-keys
-- SDK agents (agent_depth > 0, sdk_session_id): resume via SDK
-- Interactive sessions (agent_depth 0): InterSessionMessage
-- Fallback: ISM if tmux/SDK fails
+Routes wake messages based on session type after first persisting a durable
+InterSessionMessage:
+- Terminal agents (agent_depth > 0, terminal_context): tmux send-keys wake signal
+- SDK agents (agent_depth > 0, sdk_session_id): SDK resume wake signal
+- Interactive sessions (agent_depth 0): tmux pane wake signal when available
 """
 
 from __future__ import annotations
@@ -14,12 +14,16 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.sessions.tmux_context import parse_terminal_context_value
+
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+
+CONTINUE_WAKE_SIGNAL = "<continue />\n"
 
 # tmux_sender signature: (tmux_session_name: str, message: str) -> None
 TmuxSender = Callable[[str, str], Coroutine[Any, Any, None]]
@@ -76,34 +80,32 @@ class WakeDispatcher:
             logger.warning(f"Cannot wake session {session_id}: not found")
             return
 
-        agent_depth = getattr(session, "agent_depth", 0) or 0
-
-        # Interactive session with continuation_prompt → try tmux pane injection
-        if agent_depth == 0:
-            continuation_prompt = result.get("continuation_prompt") if result else None
-            if continuation_prompt and self._tmux_pane_sender:
-                terminal_context = getattr(session, "terminal_context", None)
-                if terminal_context:
-                    tmux_pane = self._parse_tmux_pane(terminal_context)
-                    if tmux_pane:
-                        try:
-                            await self._tmux_pane_sender(tmux_pane, continuation_prompt)
-                            return
-                        except Exception:
-                            logger.warning(
-                                f"tmux pane wake failed for session {session_id} (pane={tmux_pane}), falling back to ISM",
-                                exc_info=True,
-                            )
-            self._send_ism(session_id, message)
+        if not self._send_ism(session_id, message, result):
             return
 
-        # Terminal agent → try tmux, fall back to SDK, then ISM
+        agent_depth = getattr(session, "agent_depth", 0) or 0
         terminal_context = getattr(session, "terminal_context", None)
+
+        # Interactive session → try tmux pane wake after durable message storage.
+        if agent_depth == 0:
+            if terminal_context and self._tmux_pane_sender:
+                tmux_pane = self._parse_tmux_pane(terminal_context)
+                if tmux_pane:
+                    try:
+                        await self._tmux_pane_sender(tmux_pane, CONTINUE_WAKE_SIGNAL)
+                    except Exception:
+                        logger.warning(
+                            f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
+                            exc_info=True,
+                        )
+            return
+
+        # Terminal agent → try tmux, then SDK. Both are wake signals only.
         if terminal_context and self._tmux_sender:
             tmux_session_name = self._parse_tmux_session(terminal_context)
             if tmux_session_name:
                 try:
-                    await self._tmux_sender(tmux_session_name, message)
+                    await self._tmux_sender(tmux_session_name, CONTINUE_WAKE_SIGNAL)
                     return
                 except Exception:
                     logger.warning(
@@ -116,16 +118,13 @@ class WakeDispatcher:
             sdk_session_id = self._resolve_sdk_session_id(session_id)
             if sdk_session_id:
                 try:
-                    await self._sdk_resumer(sdk_session_id, message)
+                    await self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL)
                     return
                 except Exception:
                     logger.warning(
-                        f"SDK resume failed for session {session_id} (sdk={sdk_session_id}), falling back to ISM",
+                        f"SDK resume failed for session {session_id} (sdk={sdk_session_id})",
                         exc_info=True,
                     )
-
-        # Fallback: ISM
-        self._send_ism(session_id, message)
 
     def _resolve_sdk_session_id(self, session_id: str) -> str | None:
         """Look up the SDK session ID for a session via agent_runs.
@@ -151,36 +150,48 @@ class WakeDispatcher:
             )
             return None
 
-    def _send_ism(self, session_id: str, message: str) -> None:
+    def _send_ism(self, session_id: str, message: str, result: dict[str, Any]) -> bool:
         """Send an InterSessionMessage as durable notification."""
         try:
-            self._ism_manager.create_message(
-                from_session=session_id,  # self-notification (system → session)
-                to_session=session_id,
-                content=message,
-                message_type="completion_notification",
-                priority="high",
+            content = str(
+                result.get("signoff_message")
+                or result.get("continuation_prompt")
+                or message
+                or "Completion available"
             )
+            from_session = str(result.get("from_session_id") or session_id)
+            message_type = str(result.get("message_type") or "completion_notification")
+            metadata = {**result, "completion_message": message}
+            self._ism_manager.create_message(
+                from_session=from_session,
+                to_session=session_id,
+                content=content,
+                message_type=message_type,
+                priority="high",
+                metadata_json=json.dumps(metadata, default=str, sort_keys=True),
+            )
+            return True
         except Exception:
             logger.error(
                 f"Failed to send ISM to session {session_id}",
                 exc_info=True,
             )
+            return False
 
     @staticmethod
-    def _parse_tmux_session(terminal_context: str) -> str | None:
+    def _parse_tmux_session(terminal_context: Any) -> str | None:
         """Extract tmux session name from terminal_context JSON."""
-        try:
-            ctx = json.loads(terminal_context)
-            return cast(str | None, ctx.get("tmux_session"))
-        except (json.JSONDecodeError, TypeError):
+        ctx = parse_terminal_context_value(terminal_context)
+        if not ctx:
             return None
+        value = ctx.get("tmux_session")
+        return value if isinstance(value, str) and value else None
 
     @staticmethod
-    def _parse_tmux_pane(terminal_context: str) -> str | None:
+    def _parse_tmux_pane(terminal_context: Any) -> str | None:
         """Extract tmux pane ID from terminal_context JSON."""
-        try:
-            ctx = json.loads(terminal_context)
-            return cast(str | None, ctx.get("tmux_pane"))
-        except (json.JSONDecodeError, TypeError):
+        ctx = parse_terminal_context_value(terminal_context)
+        if not ctx:
             return None
+        value = ctx.get("tmux_pane")
+        return value if isinstance(value, str) and value else None

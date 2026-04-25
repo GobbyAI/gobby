@@ -555,17 +555,38 @@ def init_orchestration(runner: GobbyRunner) -> None:
         from gobby.agents.tmux import get_tmux_session_manager
 
         mgr = get_tmux_session_manager()
-        await mgr.send_keys(tmux_session_name, message + "\n")
+        await mgr.send_keys(tmux_session_name, message)
 
     # tmux pane sender: sends keys to the invoking CLI's tmux pane
     # Uses the default tmux socket (not -L gobby) since these are user panes
     async def _tmux_pane_send(pane_id: str, message: str) -> None:
+        text = message.rstrip("\n")
         proc = await asyncio.create_subprocess_exec(
             "tmux",
             "send-keys",
             "-t",
             pane_id,
-            message,
+            "-l",
+            text,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        except TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise RuntimeError(f"tmux send-keys to {pane_id} timed out after 10s") from None
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"tmux send-keys to {pane_id} failed: {stderr.decode(errors='replace')}"
+            )
+
+        proc = await asyncio.create_subprocess_exec(
+            "tmux",
+            "send-keys",
+            "-t",
+            pane_id,
             "Enter",
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

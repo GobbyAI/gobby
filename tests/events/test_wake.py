@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.events.wake import WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
 
 
 @dataclass
 class FakeSession:
     id: str
     agent_depth: int = 0
-    terminal_context: str | None = None
+    terminal_context: object | None = None
     parent_session_id: str | None = None
     status: str = "active"
 
@@ -66,7 +66,7 @@ class TestWakeDispatch:
         ism_manager: MagicMock,
         tmux_sender: AsyncMock,
     ) -> None:
-        """agent_depth>0 with terminal_context → tmux send-keys."""
+        """agent_depth>0 with terminal_context → durable ISM plus tmux wake."""
         session_manager.get.return_value = FakeSession(
             id="sess-1",
             agent_depth=1,
@@ -79,10 +79,34 @@ class TestWakeDispatch:
         )
         await dispatcher.wake("sess-1", "Agent completed", {"status": "success"})
 
+        ism_manager.create_message.assert_called_once()
         tmux_sender.assert_called_once()
         args = tmux_sender.call_args[0]
         assert args[0] == "gobby-agent-abc"  # tmux session name
-        assert "Agent completed" in args[1]  # message sent
+        assert args[1] == CONTINUE_WAKE_SIGNAL
+
+    @pytest.mark.asyncio
+    async def test_terminal_agent_accepts_mapping_terminal_context(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        tmux_sender: AsyncMock,
+    ) -> None:
+        """terminal_context may already be a parsed mapping."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=1,
+            terminal_context={"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"},
+        )
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_sender=tmux_sender,
+        )
+
+        await dispatcher.wake("sess-1", "Agent completed", {"status": "success"})
+
+        tmux_sender.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
 
     @pytest.mark.asyncio
     async def test_terminal_agent_fallback_to_ism_when_tmux_fails(
@@ -90,7 +114,7 @@ class TestWakeDispatch:
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """If tmux send fails, fall back to ISM."""
+        """Durable ISM remains when tmux wake fails."""
         session_manager.get.return_value = FakeSession(
             id="sess-1",
             agent_depth=1,
@@ -105,8 +129,8 @@ class TestWakeDispatch:
         )
         await dispatcher.wake("sess-1", "Pipeline completed", {"status": "completed"})
 
-        # Should fall back to ISM
         ism_manager.create_message.assert_called_once()
+        failing_tmux.assert_awaited_once_with("gobby-agent-abc", CONTINUE_WAKE_SIGNAL)
 
     @pytest.mark.asyncio
     async def test_terminal_agent_no_tmux_sender_uses_ism(
@@ -114,7 +138,7 @@ class TestWakeDispatch:
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """Terminal agent but no tmux_sender configured → ISM fallback."""
+        """Terminal agent without tmux_sender still gets durable ISM."""
         session_manager.get.return_value = FakeSession(
             id="sess-1",
             agent_depth=1,
@@ -128,6 +152,30 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_interactive_tmux_session_gets_pane_wake_signal(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Depth 0 tmux-backed sessions get durable ISM plus pane wake."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+        )
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        await dispatcher.wake("sess-1", "Done", {"status": "completed"})
+
+        ism_manager.create_message.assert_called_once()
+        tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL)
 
     @pytest.mark.asyncio
     async def test_unknown_session_logged_not_raised(

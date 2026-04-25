@@ -44,6 +44,79 @@ class TestResolveTmuxTarget:
         assert tmux_manager is None
         assert error == "Session missing-session not found"
 
+    def test_accepts_json_terminal_context(self) -> None:
+        """Stored terminal_context may be raw JSON text."""
+        session = MagicMock()
+        session.terminal_context = '{"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}'
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context"
+        ) as mock_get_tmux_manager:
+            target, tmux_manager, error = _resolve_tmux_target(
+                "session-1",
+                session_manager,
+                agent_run_manager,
+            )
+
+        assert target == "%12"
+        assert tmux_manager == mock_get_tmux_manager.return_value
+        assert error is None
+        mock_get_tmux_manager.assert_called_once_with(
+            {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        )
+
+    def test_reports_invalid_terminal_context(self) -> None:
+        """Malformed stored terminal_context returns a useful diagnostic."""
+        session = MagicMock()
+        session.terminal_context = "{not json"
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        target, tmux_manager, error = _resolve_tmux_target(
+            "session-1",
+            session_manager,
+            agent_run_manager,
+        )
+
+        assert target is None
+        assert tmux_manager is None
+        assert error == (
+            "Session session-1 has invalid terminal_context (str); expected object or JSON object"
+        )
+
+    def test_reports_terminal_context_without_tmux_target(self) -> None:
+        """A parsed context without a tmux target should explain its keys."""
+        session = MagicMock()
+        session.terminal_context = {"terminal": "tmux"}
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = session
+
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        target, tmux_manager, error = _resolve_tmux_target(
+            "session-1",
+            session_manager,
+            agent_run_manager,
+        )
+
+        assert target is None
+        assert tmux_manager is None
+        assert error == (
+            "Session session-1 terminal_context has no tmux_pane or tmux_session (keys: terminal)"
+        )
+
 
 class TestRegisterTerminalTools:
     """Tests for terminal interaction tool registration."""

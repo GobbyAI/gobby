@@ -7,13 +7,12 @@ to interact with running terminal sessions.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
-from gobby.sessions.tmux_context import get_tmux_manager_for_context
+from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
@@ -49,16 +48,26 @@ def _resolve_tmux_target(
         return None, None, f"Session {session_id} not found"
 
     if session.terminal_context:
-        ctx = session.terminal_context
-        if isinstance(ctx, str):
-            try:
-                ctx = json.loads(ctx)
-            except (json.JSONDecodeError, ValueError):
-                return None, None, f"Session {session_id} has invalid terminal_context JSON"
+        ctx = parse_terminal_context_value(session.terminal_context)
+        if ctx is None:
+            raw_type = type(session.terminal_context).__name__
+            return (
+                None,
+                None,
+                f"Session {session_id} has invalid terminal_context ({raw_type}); "
+                "expected object or JSON object",
+            )
         # terminal_context may contain tmux_pane or tmux_session
         tmux_target = ctx.get("tmux_pane") or ctx.get("tmux_session")
         if tmux_target:
             return tmux_target, get_tmux_manager_for_context(ctx), None
+        keys = ", ".join(sorted(str(key) for key in ctx.keys())) or "none"
+        return (
+            None,
+            None,
+            f"Session {session_id} terminal_context has no tmux_pane or tmux_session "
+            f"(keys: {keys})",
+        )
 
     return None, None, f"Session {session_id} has no tmux terminal"
 

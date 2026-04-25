@@ -287,9 +287,7 @@ async def ensure_local_embedding_service_ready(
                 timeout=_LM_STUDIO_STATUS_TIMEOUT,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-            _set_local_embedding_service_failure_reason(
-                f"LM Studio server status failed: {exc}"
-            )
+            _set_local_embedding_service_failure_reason(f"LM Studio server status failed: {exc}")
             return False
 
         combined_status = (status_result.stdout + status_result.stderr).lower()
@@ -301,9 +299,7 @@ async def ensure_local_embedding_service_ready(
                     timeout=_LM_STUDIO_START_TIMEOUT,
                 )
             except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-                _set_local_embedding_service_failure_reason(
-                    f"LM Studio server start failed: {exc}"
-                )
+                _set_local_embedding_service_failure_reason(f"LM Studio server start failed: {exc}")
                 return False
             if start_result.returncode != 0:
                 _set_local_embedding_service_failure_reason(
@@ -318,9 +314,7 @@ async def ensure_local_embedding_service_ready(
             return False
 
         if not await try_autoload_embedding_model(model, api_base):
-            _set_local_embedding_service_failure_reason(
-                f"LM Studio model load failed for {model}"
-            )
+            _set_local_embedding_service_failure_reason(f"LM Studio model load failed for {model}")
             return False
 
         if not await is_embedding_healthy(

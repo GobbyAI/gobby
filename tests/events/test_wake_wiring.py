@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
-from gobby.events.wake import WakeDispatcher
+from gobby.events.wake import CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
@@ -56,11 +56,11 @@ class TestWakeDispatcherSdkResume:
 
         await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
 
-        sdk_resumer.assert_awaited_once_with("sdk-abc123", "Pipeline done")
+        sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
 
     @pytest.mark.asyncio
     async def test_sdk_fallback_to_ism_on_failure(self) -> None:
-        """Failed SDK resume falls back to ISM."""
+        """Durable ISM remains when SDK wake fails."""
         session_mgr = MagicMock()
         session = MagicMock()
         session.agent_depth = 1
@@ -80,9 +80,7 @@ class TestWakeDispatcherSdkResume:
 
         await dispatcher.wake("sess-1", "Pipeline done", {"status": "completed"})
 
-        # SDK was tried
-        sdk_resumer.assert_awaited_once()
-        # Fell back to ISM
+        sdk_resumer.assert_awaited_once_with("sdk-abc123", CONTINUE_WAKE_SIGNAL)
         ism_mgr.create_message.assert_called_once()
 
     @pytest.mark.asyncio
@@ -107,12 +105,12 @@ class TestWakeDispatcherSdkResume:
 
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
-        tmux_sender.assert_awaited_once()
+        tmux_sender.assert_awaited_once_with("agent-1", CONTINUE_WAKE_SIGNAL)
         sdk_resumer.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_tmux_fail_tries_sdk_then_ism(self) -> None:
-        """Tmux failure → SDK failure → ISM fallback."""
+        """Tmux failure → SDK failure, with ISM already durable."""
         session_mgr = MagicMock()
         session = MagicMock()
         session.agent_depth = 1
@@ -134,8 +132,8 @@ class TestWakeDispatcherSdkResume:
 
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
-        tmux_sender.assert_awaited_once()
-        sdk_resumer.assert_awaited_once()
+        tmux_sender.assert_awaited_once_with("agent-1", CONTINUE_WAKE_SIGNAL)
+        sdk_resumer.assert_awaited_once_with("sdk-999", CONTINUE_WAKE_SIGNAL)
         ism_mgr.create_message.assert_called_once()
 
 
