@@ -471,6 +471,29 @@ class TestTranslateFromHookResponse:
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == "Not allowed"
 
+    def test_pre_tool_use_block_emits_single_channel(self) -> None:
+        """Rule-engine block on PreToolUse must surface only via the structured
+        permissionDecisionReason channel — never as top-level stopReason +
+        continue:false. Two channels both render in Claude (PreToolUse: ...
+        blocking error AND Error: ...), so the adapter must pick exactly one.
+        """
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="block",
+            reason="Rule enforced by Gobby: [block-and-teach-code-index]\nUse gcode.",
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["continue"] is True
+        assert "stopReason" not in result
+        assert "decision" not in result
+        hso = result["hookSpecificOutput"]
+        assert hso["hookEventName"] == "PreToolUse"
+        assert hso["permissionDecision"] == "deny"
+        assert hso["permissionDecisionReason"] == (
+            "Rule enforced by Gobby: [block-and-teach-code-index]\nUse gcode."
+        )
+
     def test_block_decision(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(decision="block", reason="Blocked by policy")

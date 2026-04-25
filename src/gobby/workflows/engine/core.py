@@ -307,6 +307,20 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             rule_name=resolved_rule_name,
                             reason=response.reason,
                         )
+                        # Verbose-once: collapse repeat blocks of the same rule
+                        # within a turn down to a single line. Cleared on TURN_START.
+                        # Stored as list[str] because session variables are JSON-persisted.
+                        shown = variables.get("_block_reasons_shown")
+                        if not isinstance(shown, list):
+                            shown = []
+                            variables["_block_reasons_shown"] = shown
+                        if resolved_rule_name in shown:
+                            response.reason = (
+                                f"Rule enforced by Gobby: [{resolved_rule_name}] "
+                                "(full reason shown earlier this turn — scroll up)."
+                            )
+                        else:
+                            shown.append(resolved_rule_name)
                     if span.is_recording():
                         span.set_attribute("final_decision", response.decision)
                         if response.reason:
@@ -382,6 +396,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     variables["_last_blocked_tool"] = ""
                     variables["tool_block_pending"] = False
                     variables["stop_attempts"] = 0
+                    variables["_block_reasons_shown"] = []
 
                     # [auto-discover-servers] — hardcoded, always-on
                     # Seed progressive discovery on first prompt so agents

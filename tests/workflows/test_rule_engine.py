@@ -2695,3 +2695,151 @@ class TestLoadSkillEffect:
         assert variables["plan_mode"] is True
         assert response.context == 'Call get_skill(name="plan") on gobby-skills, then continue.'
         assert "Plan skill content" not in (response.context or "")
+
+
+class TestVerboseOnceBlockReason:
+    """Repeat blocks of the same rule within a turn collapse to a one-liner."""
+
+    _TERSE_HINT = "(full reason shown earlier this turn — scroll up)."
+
+    @staticmethod
+    def _full_reason() -> str:
+        return (
+            "This project is indexed with gcode. Use gcode for code navigation:\n"
+            "- gcode outline path/to/file — symbol map (much cheaper than Read)\n"
+            "- gcode search 'query' — find symbols by name"
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_block_emits_full_reason(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "block-and-teach-code-index",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="block", reason=self._full_reason())],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.decision == "block"
+        assert "gcode outline" in (response.reason or "")
+        assert self._TERSE_HINT not in (response.reason or "")
+        assert variables["_block_reasons_shown"] == ["block-and-teach-code-index"]
+
+    @pytest.mark.asyncio
+    async def test_second_block_same_rule_collapses_to_terse(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "block-and-teach-code-index",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="block", reason=self._full_reason())],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+        second = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert second.decision == "block"
+        assert second.reason == (
+            "Rule enforced by Gobby: [block-and-teach-code-index] "
+            f"{self._TERSE_HINT}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_different_rule_still_emits_full_reason(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "block-and-teach-code-index",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                when="event.data.get('tool_name') == 'Read'",
+                effects=[RuleEffect(type="block", reason=self._full_reason())],
+            ),
+        )
+        _insert_rule(
+            manager,
+            "require-uv",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                when="event.data.get('tool_name') == 'Bash'",
+                effects=[
+                    RuleEffect(
+                        type="block",
+                        reason="Bare python/pip is not permitted in this repo. Use uv instead.",
+                    )
+                ],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+
+        first = await engine.evaluate(
+            _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"}),
+            session_id="sess-1",
+            variables=variables,
+        )
+        second = await engine.evaluate(
+            _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Bash"}),
+            session_id="sess-1",
+            variables=variables,
+        )
+
+        assert first.decision == "block"
+        assert "gcode outline" in (first.reason or "")
+        assert self._TERSE_HINT not in (first.reason or "")
+        assert second.decision == "block"
+        assert "Use uv instead" in (second.reason or "")
+        assert self._TERSE_HINT not in (second.reason or "")
+        assert sorted(variables["_block_reasons_shown"]) == [
+            "block-and-teach-code-index",
+            "require-uv",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_turn_start_clears_shown_set(
+        self, db: LocalDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "block-and-teach-code-index",
+            RuleDefinitionBody(
+                event=RuleEvent.BEFORE_TOOL,
+                effects=[RuleEffect(type="block", reason=self._full_reason())],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {}
+        block_event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+        await engine.evaluate(block_event, session_id="sess-1", variables=variables)
+        await engine.evaluate(block_event, session_id="sess-1", variables=variables)
+        assert "block-and-teach-code-index" in variables["_block_reasons_shown"]
+
+        # New turn: BEFORE_AGENT is the TURN_START transport event.
+        await engine.evaluate(
+            _make_event(HookEventType.BEFORE_AGENT),
+            session_id="sess-1",
+            variables=variables,
+        )
+        assert variables["_block_reasons_shown"] == []
+
+        # Next block in the new turn re-teaches with the full reason.
+        third = await engine.evaluate(block_event, session_id="sess-1", variables=variables)
+        assert third.decision == "block"
+        assert "gcode outline" in (third.reason or "")
+        assert self._TERSE_HINT not in (third.reason or "")
