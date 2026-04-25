@@ -68,3 +68,7 @@ class TmuxConfig(BaseModel):
         ge=30,
         description="Seconds before an uninitialized agent is killed as a provider failure.",
     )
+    auto_enter_approval_prompts: bool = Field(
+        default=True,
+        description="Automatically send Enter for spawned-agent approval prompts.",
+    )

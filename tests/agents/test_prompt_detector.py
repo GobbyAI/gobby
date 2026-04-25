@@ -113,6 +113,38 @@ class TestDetectLoopPrompt:
         assert detector.detect_loop_prompt(output) is True
 
 
+class TestDetectApprovalPrompt:
+    """Tests for approval prompt pattern matching."""
+
+    def test_detects_enter_to_approve_command(self) -> None:
+        detector = PromptDetector()
+        output = "Approval required\nPress Enter to approve this command\n"
+        assert detector.detect_approval_prompt(output) is True
+
+    def test_detects_enter_to_allow_tool_request(self) -> None:
+        detector = PromptDetector()
+        output = "Permission required for tool request\nEnter to allow and continue\n"
+        assert detector.detect_approval_prompt(output) is True
+
+    def test_no_match_without_approval_context(self) -> None:
+        detector = PromptDetector()
+        assert detector.detect_approval_prompt("Press Enter to continue\n") is False
+
+    def test_no_match_without_enter_approval_action(self) -> None:
+        detector = PromptDetector()
+        assert detector.detect_approval_prompt("Approval status: tests passed\n") is False
+
+    def test_trust_and_loop_prompts_do_not_match_approval(self) -> None:
+        detector = PromptDetector()
+        trust_output = "Do you trust the files in this folder?\n1. Trust Folder\n"
+        loop_output = "Potential loop detected. Continue? (y/n)\n"
+
+        assert detector.detect_trust_prompt(trust_output) is True
+        assert detector.detect_approval_prompt(trust_output) is False
+        assert detector.detect_loop_prompt(loop_output) is True
+        assert detector.detect_approval_prompt(loop_output) is False
+
+
 class TestDismissedTracking:
     """Tests for the dismissed state tracking."""
 
@@ -149,3 +181,27 @@ class TestDismissedTracking:
         detector.mark_dismissed("run-123")
         detector.mark_dismissed("run-123")
         assert detector.was_dismissed("run-123") is True
+
+    def test_approval_prompt_fingerprint_tracking(self) -> None:
+        detector = PromptDetector()
+        prompt = "Approval required\nPress Enter to approve command A\n"
+
+        assert detector.was_approval_prompt_dismissed("run-1", prompt) is False
+        detector.mark_approval_prompt_dismissed("run-1", prompt)
+        assert detector.was_approval_prompt_dismissed("run-1", prompt) is True
+        assert (
+            detector.was_approval_prompt_dismissed(
+                "run-1",
+                "Approval required\nPress Enter to approve command B\n",
+            )
+            is False
+        )
+
+    def test_clear_removes_approval_prompt_fingerprint(self) -> None:
+        detector = PromptDetector()
+        prompt = "Approval required\nPress Enter to approve command A\n"
+        detector.mark_approval_prompt_dismissed("run-1", prompt)
+
+        detector.clear("run-1")
+
+        assert detector.was_approval_prompt_dismissed("run-1", prompt) is False

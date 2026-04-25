@@ -23,6 +23,7 @@ from gobby.agents.kill import kill_agent
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
+from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, AgentRunTerminalReason, LocalAgentRunManager
@@ -86,6 +87,14 @@ class AgentLifecycleMonitor:
         self._prompt_detector = PromptDetector()
         self._stall_classifier = StallClassifier()
         self._loop_tracker = LoopTracker(threshold=3)
+        self._terminal_prompt_monitor = TerminalPromptMonitor(
+            get_active_terminal_runs=self._get_active_terminal_runs,
+            get_tmux=lambda: self._tmux,
+            prompt_detector=self._prompt_detector,
+            loop_tracker=self._loop_tracker,
+            get_tmux_config=lambda: self._tmux_config,
+            handle_looping_agent=lambda run: self._checkpoint_and_kill_looping_agent(run),
+        )
         self._checkpoint_manager = (
             CheckpointManager(checkpoint_storage) if checkpoint_storage else None
         )
@@ -344,6 +353,7 @@ class AgentLifecycleMonitor:
                 logger.debug(f"Lifecycle check iteration {iteration}")
                 await self.check_trust_prompts()  # Fast unblock before other checks
                 await self.check_loop_prompts()  # Dismiss loop detection prompts
+                await self.check_approval_prompts()  # Approval prompts are lowest precedence
                 await self.check_unhealthy_agents()
                 await self.expire_terminal_run_sessions()
                 await self.check_initialization_timeout()
@@ -384,82 +394,16 @@ class AgentLifecycleMonitor:
         return expired
 
     async def check_trust_prompts(self) -> int:
-        """Check for folder trust prompts and auto-dismiss them.
-
-        Sends Enter to accept "Trust Folder" and dismiss the prompt.
-        Only fires once per agent to avoid repeated key-sends.
-
-        Returns:
-            Number of trust prompts dismissed.
-        """
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
-
-        handled = 0
-        for run in runs:
-            if self._prompt_detector.was_dismissed(run.id):
-                continue
-
-            tmux_name = run.tmux_session_name
-            assert tmux_name is not None  # guaranteed by filter
-
-            try:
-                pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
-                if pane_output and self._prompt_detector.detect_trust_prompt(pane_output):
-                    sent = await self._tmux.send_keys(tmux_name, PromptDetector.TRUST_DISMISS_KEYS)
-                    if sent:
-                        self._prompt_detector.mark_dismissed(run.id)
-                        logger.info(
-                            f"Auto-dismissed trust prompt for agent {run.id} (trust parent folder)",
-                        )
-                        handled += 1
-            except Exception as e:
-                logger.warning(f"Error checking trust prompt for agent {run.id}: {e}")
-
-        return handled
+        """Check for folder trust prompts and auto-dismiss them."""
+        return await self._terminal_prompt_monitor.check_trust_prompts()
 
     async def check_loop_prompts(self) -> int:
-        """Check for loop detection prompts and auto-dismiss them.
+        """Check for loop detection prompts and auto-dismiss them."""
+        return await self._terminal_prompt_monitor.check_loop_prompts()
 
-        Gemini CLI detects when agents appear stuck in a loop and shows
-        a confirmation prompt. This sends "y" to continue execution.
-        Unlike trust prompts, loop detection can fire multiple times
-        per session so there is no dismissed tracking.
-
-        Returns:
-            Number of loop prompts dismissed.
-        """
-        runs = await asyncio.to_thread(self._get_active_terminal_runs)
-
-        handled = 0
-        for run in runs:
-            tmux_name = run.tmux_session_name
-            assert tmux_name is not None  # guaranteed by filter
-
-            try:
-                pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
-                if pane_output and self._prompt_detector.detect_loop_prompt(pane_output):
-                    count = self._loop_tracker.record_dismissal(run.id)
-
-                    if self._loop_tracker.should_escalate(run.id):
-                        logger.warning(
-                            f"Doom loop detected for agent {run.id}: "
-                            f"{count} loop prompts dismissed, escalating to kill"
-                        )
-                        await self._checkpoint_and_kill_looping_agent(run)
-                    else:
-                        sent = await self._tmux.send_keys(
-                            tmux_name, PromptDetector.LOOP_DISMISS_KEYS
-                        )
-                        if sent:
-                            logger.info(
-                                f"Auto-dismissed loop prompt for agent {run.id} "
-                                f"({count}/{self._loop_tracker.threshold})"
-                            )
-                            handled += 1
-            except Exception as e:
-                logger.warning(f"Error checking loop prompt for agent {run.id}: {e}")
-
-        return handled
+    async def check_approval_prompts(self) -> int:
+        """Check for approval prompts and send Enter when explicitly permitted."""
+        return await self._terminal_prompt_monitor.check_approval_prompts()
 
     async def _cleanup_agent(
         self,

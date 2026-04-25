@@ -410,6 +410,127 @@ class TestLoopPromptEscalation:
         mock_tmux.send_keys.assert_not_called()
 
 
+class TestApprovalPromptAutoEnter:
+    """Tests for approval prompt auto-enter handling."""
+
+    @staticmethod
+    def _run(
+        run_id: str = "run-approval",
+        tmux_session_name: str | None = "gobby-approval",
+    ) -> AgentRun:
+        return AgentRun(
+            id=run_id,
+            parent_session_id="p",
+            provider="codex",
+            prompt="p",
+            status="running",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+            tmux_session_name=tmux_session_name,
+            pid=12345,
+        )
+
+    @staticmethod
+    def _monitor(mock_run_mgr: MagicMock, mock_tmux: AsyncMock) -> AgentLifecycleMonitor:
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+        return monitor
+
+    @pytest.mark.asyncio
+    async def test_sends_enter_once_for_approval_prompt(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = (
+            "Approval required\nPress Enter to approve this command\n"
+        )
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_approval_prompts()
+
+        assert handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-approval",
+            PromptDetector.APPROVAL_DISMISS_KEYS,
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_approval_prompt_is_deduped(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = (
+            "Approval required\nPress Enter to approve this command\n"
+        )
+        mock_tmux.send_keys.return_value = True
+
+        handled_1 = await monitor.check_approval_prompts()
+        handled_2 = await monitor.check_approval_prompts()
+
+        assert handled_1 == 1
+        assert handled_2 == 0
+        mock_tmux.send_keys.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_changed_approval_prompt_can_be_handled_again(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.side_effect = [
+            "Approval required\nPress Enter to approve command A\n",
+            "Approval required\nPress Enter to approve command B\n",
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        handled_1 = await monitor.check_approval_prompts()
+        handled_2 = await monitor.check_approval_prompts()
+
+        assert handled_1 == 1
+        assert handled_2 == 1
+        assert mock_tmux.send_keys.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_disabled_config_skips_approval_prompt_handling(self) -> None:
+        from gobby.config.tmux import TmuxConfig
+
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            tmux_config=TmuxConfig(auto_enter_approval_prompts=False),
+        )
+        monitor._tmux = mock_tmux
+        mock_run_mgr.list_active.return_value = [self._run()]
+
+        handled = await monitor.check_approval_prompts()
+
+        assert handled == 0
+        mock_tmux.capture_pane.assert_not_called()
+        mock_tmux.send_keys.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_runs_are_ignored(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [
+            self._run(run_id="run-no-tmux", tmux_session_name=None)
+        ]
+
+        handled = await monitor.check_approval_prompts()
+
+        assert handled == 0
+        mock_tmux.capture_pane.assert_not_called()
+        mock_tmux.send_keys.assert_not_called()
+
+
 class TestDispatchFailureCountCRUD:
     """Tests for dispatch_failure_count in task CRUD operations."""
 
