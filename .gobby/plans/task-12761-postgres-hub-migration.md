@@ -422,9 +422,14 @@ def uninstall_postgres(
         # if remove_data: also print the manual data-directory deletion step
         ...
     elif mode == "external":
-        # no-op against the database server; clear bootstrap fields only
-        # if remove_data: refuse — external mode never deletes server-side data;
-        # the operator is responsible for dropping the Gobby schema themselves
+        # no-op against the database server; clear bootstrap fields only.
+        # if remove_data: refuse — external mode never deletes server-side data
+        # (the dedicated-database ownership contract from §1.2 means Gobby
+        # owns the whole database, and we still won't drop it for the
+        # operator). Direct the operator at the §5.1 dedicated-database
+        # recovery commands instead — `DROP SCHEMA public CASCADE;
+        # CREATE SCHEMA public;` inside the dedicated database, or drop and
+        # recreate the database itself.
         ...
     ...
 
@@ -519,8 +524,11 @@ def status_cmd(as_json: bool) -> None:
     help=(
         "Docker mode: also delete the gobby_postgres_data and "
         "gobby_pgaudit_log named volumes. Native mode: print the manual "
-        "data-directory deletion steps. External mode: refuses — operator "
-        "must drop the Gobby schema themselves."
+        "data-directory deletion steps. External mode: refuses — Gobby "
+        "never deletes server-side data on external installs. Reset the "
+        "dedicated database with the §5.1 commands instead "
+        "(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;` inside the "
+        "dedicated database, or drop and recreate the database)."
     ),
 )
 def uninstall_cmd(remove_data: bool) -> None:
