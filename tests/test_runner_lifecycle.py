@@ -889,34 +889,54 @@ class TestAgentRestartRecoveryHelpers:
     """Tests for agent restart/shutdown recovery helpers."""
 
     @pytest.mark.asyncio
-    async def test_recover_agent_runs_after_restart_notifies_persisted_waiters(self) -> None:
-        run = SimpleNamespace(id="run-1")
+    async def test_recover_agent_runs_after_restart_rehydrates_completion_event(self) -> None:
+        run = SimpleNamespace(id="run-1", continuation_prompt="Check the agent result")
         runner = SimpleNamespace(
-            agent_lifecycle_monitor=SimpleNamespace(
-                terminalize_cancelled_run=AsyncMock(return_value=True)
-            ),
             agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_running=MagicMock(return_value=[run]))
+                run_storage=SimpleNamespace(list_active=MagicMock(return_value=[run]))
             ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["sess-1"]),
-                remove_completion_subscribers=MagicMock(),
             ),
-            completion_registry=SimpleNamespace(register=MagicMock(), cleanup=MagicMock()),
+            completion_registry=SimpleNamespace(
+                is_registered=MagicMock(return_value=False),
+                register=MagicMock(),
+            ),
         )
 
         recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
 
         assert recovered == 1
-        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=1000)
+        runner.completion_registry.register.assert_called_once_with(
             "run-1",
-            terminal_reason="daemon_restart",
+            subscribers=["sess-1"],
+            continuation_prompt="Check the agent result",
         )
-        runner.completion_registry.register.assert_called_once_with("run-1", subscribers=["sess-1"])
-        runner.pipeline_execution_manager.remove_completion_subscribers.assert_called_once_with(
-            "run-1"
+
+    @pytest.mark.asyncio
+    async def test_rehydrated_agent_completion_event_fires_on_later_notify(self) -> None:
+        from gobby.events.completion_registry import CompletionEventRegistry
+
+        registry = CompletionEventRegistry()
+        run = SimpleNamespace(id="run-1", continuation_prompt=None)
+        runner = SimpleNamespace(
+            agent_runner=SimpleNamespace(
+                run_storage=SimpleNamespace(list_active=MagicMock(return_value=[run]))
+            ),
+            pipeline_execution_manager=SimpleNamespace(
+                get_completion_subscribers=MagicMock(return_value=["sess-1"]),
+            ),
+            completion_registry=registry,
         )
-        runner.completion_registry.cleanup.assert_called_once_with("run-1")
+
+        rehydrated = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+        waiter = asyncio.create_task(registry.wait("run-1", timeout=1.0))
+
+        await registry.notify("run-1", {"status": "success", "run_id": "run-1"})
+
+        assert rehydrated == 1
+        assert await waiter == {"status": "success", "run_id": "run-1"}
 
     @pytest.mark.asyncio
     async def test_cancel_active_agent_runs_for_shutdown_kills_and_cancels(self) -> None:

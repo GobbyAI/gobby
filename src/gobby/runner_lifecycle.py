@@ -117,6 +117,8 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
 def _register_persisted_completion_subscribers(
     runner: GobbyRunner,
     completion_id: str,
+    *,
+    continuation_prompt: str | None = None,
 ) -> list[str]:
     """Load persisted waiters for a completion ID into the in-memory registry."""
     if not runner.pipeline_execution_manager or not runner.completion_registry:
@@ -124,7 +126,11 @@ def _register_persisted_completion_subscribers(
 
     subscribers = runner.pipeline_execution_manager.get_completion_subscribers(completion_id)
     if subscribers:
-        runner.completion_registry.register(completion_id, subscribers=subscribers)
+        runner.completion_registry.register(
+            completion_id,
+            subscribers=subscribers,
+            continuation_prompt=continuation_prompt,
+        )
     return subscribers
 
 
@@ -143,24 +149,25 @@ def _cleanup_persisted_completion_subscribers(
 
 
 async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
-    """Cancel orphaned running agent rows left behind by a daemon restart."""
-    if runner.agent_lifecycle_monitor is None or runner.agent_runner is None:
+    """Rehydrate completion events for active agent rows after daemon restart."""
+    if runner.agent_runner is None or runner.completion_registry is None:
         return 0
 
-    recovered = 0
-    for run in runner.agent_runner.run_storage.list_running(limit=1000):
-        subscribers = _register_persisted_completion_subscribers(runner, run.id)
-        try:
-            transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
-                run.id,
-                terminal_reason="daemon_restart",
-            )
-            if transitioned:
-                recovered += 1
-        finally:
-            _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
+    rehydrated = 0
+    for run in runner.agent_runner.run_storage.list_active(limit=1000):
+        if runner.completion_registry.is_registered(run.id):
+            continue
+        subscribers: list[str] = []
+        if runner.pipeline_execution_manager:
+            subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
+        runner.completion_registry.register(
+            run.id,
+            subscribers=subscribers,
+            continuation_prompt=getattr(run, "continuation_prompt", None),
+        )
+        rehydrated += 1
 
-    return recovered
+    return rehydrated
 
 
 async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
@@ -172,7 +179,11 @@ async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
 
     cancelled = 0
     for run in runner.agent_runner.run_storage.list_active(limit=1000):
-        subscribers = _register_persisted_completion_subscribers(runner, run.id)
+        subscribers = _register_persisted_completion_subscribers(
+            runner,
+            run.id,
+            continuation_prompt=getattr(run, "continuation_prompt", None),
+        )
         try:
             result = await _kill_agent_process(
                 run,
@@ -438,9 +449,12 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
     # Start agent lifecycle monitor
     if runner.agent_lifecycle_monitor:
         await runner.agent_lifecycle_monitor.cleanup_stale_pending_runs()
-        recovered_runs = await _recover_agent_runs_after_restart(runner)
-        if recovered_runs > 0:
-            logger.info("Cancelled %d stale agent run(s) after restart", recovered_runs)
+        rehydrated_runs = await _recover_agent_runs_after_restart(runner)
+        if rehydrated_runs > 0:
+            logger.info(
+                "Rehydrated completion events for %d active agent run(s)",
+                rehydrated_runs,
+            )
         await runner.agent_lifecycle_monitor.start()
         if tracker:
             tracker.complete("Agent lifecycle monitor")
@@ -723,6 +737,18 @@ async def run_daemon(runner: GobbyRunner) -> None:
             logger.info(f"Wrote PID file: {pid_file} (PID {os.getpid()})")
         except OSError as e:
             logger.warning(f"Could not write PID file {pid_file}: {e}")
+
+        try:
+            if runner.agent_lifecycle_monitor:
+                await runner.agent_lifecycle_monitor.cleanup_stale_pending_runs()
+            rehydrated_runs = await _recover_agent_runs_after_restart(runner)
+            if rehydrated_runs > 0:
+                logger.info(
+                    "Rehydrated completion events for %d active agent run(s)",
+                    rehydrated_runs,
+                )
+        except Exception as e:
+            logger.warning(f"Agent completion rehydration after restart failed: {e}")
 
         # Bind HTTP server immediately so health checks pass during init.
         # Allow in-flight HTTP requests a short drain period during shutdown.
