@@ -94,14 +94,15 @@ def test_create_worktree_failure(mock_httpx) -> None:
     assert "Failed to create worktree: Branch exists" in result.output
 
 
-def test_delete_worktree_success(mock_worktree_manager, mock_httpx) -> None:
+@patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
+def test_delete_worktree_success(mock_url, mock_worktree_manager, mock_httpx) -> None:
     """Test 'worktrees delete' success via Daemon API."""
     mock_worktree_manager.list_worktrees.return_value = [MOCK_WORKTREE]
     mock_worktree_manager.get.return_value = MOCK_WORKTREE
 
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"success": True}
+    mock_response.json.return_value = {"success": True, "result": {"success": True}}
     mock_httpx.return_value = mock_response
 
     runner = CliRunner()
@@ -112,6 +113,11 @@ def test_delete_worktree_success(mock_worktree_manager, mock_httpx) -> None:
 
     assert result.exit_code == 0
     assert "Deleted worktree: wt-123" in result.output
+    mock_httpx.assert_called_once_with(
+        "http://localhost:9876/api/mcp/gobby-worktrees/tools/delete_worktree",
+        json={"worktree_id": "wt-123", "force": False},
+        timeout=30.0,
+    )
 
 
 def test_show_worktree(mock_worktree_manager) -> None:

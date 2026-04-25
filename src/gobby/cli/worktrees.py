@@ -15,6 +15,7 @@ Commands for managing git worktrees:
 """
 
 import json
+from typing import Any, cast
 
 import click
 import httpx
@@ -37,6 +38,27 @@ def get_daemon_url() -> str:
 
     config = load_config()
     return f"http://localhost:{config.daemon_port}"
+
+
+def _call_worktree_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    timeout: float,
+) -> dict[str, Any]:
+    """Call a gobby-worktrees MCP tool through the daemon HTTP proxy."""
+    daemon_url = get_daemon_url()
+    response = httpx.post(
+        f"{daemon_url}/api/mcp/gobby-worktrees/tools/{tool_name}",
+        json=arguments,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+
+    result = cast(dict[str, Any], response.json())
+    inner_result = result.get("result")
+    if result.get("success") is True and isinstance(inner_result, dict):
+        return cast(dict[str, Any], inner_result)
+    return result
 
 
 @click.group()
@@ -66,8 +88,6 @@ def create_worktree(
     """
     import os
 
-    daemon_url = get_daemon_url()
-
     arguments = {
         "branch_name": branch_name,
         "base_branch": base_branch,
@@ -83,13 +103,7 @@ def create_worktree(
         arguments["task_id"] = resolved.id
 
     try:
-        response = httpx.post(
-            f"{daemon_url}/mcp/gobby-worktrees/tools/create_worktree",
-            json=arguments,
-            timeout=60.0,
-        )
-        response.raise_for_status()
-        result = response.json()
+        result = _call_worktree_tool("create_worktree", arguments, timeout=60.0)
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         return
@@ -194,16 +208,12 @@ def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
         click.echo(str(e), err=True)
         return
 
-    daemon_url = get_daemon_url()
-
     try:
-        response = httpx.post(
-            f"{daemon_url}/mcp/gobby-worktrees/tools/delete_worktree",
-            json={"worktree_id": worktree_id, "force": force},
+        result = _call_worktree_tool(
+            "delete_worktree",
+            {"worktree_id": worktree_id, "force": force},
             timeout=30.0,
         )
-        response.raise_for_status()
-        result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         return
@@ -279,20 +289,12 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
         click.echo(str(e), err=True)
         return
 
-    daemon_url = get_daemon_url()
-
     arguments = {"worktree_id": worktree_id}
     if source_branch:
         arguments["source_branch"] = source_branch
 
     try:
-        response = httpx.post(
-            f"{daemon_url}/mcp/gobby-worktrees/tools/sync_worktree",
-            json=arguments,
-            timeout=60.0,
-        )
-        response.raise_for_status()
-        result = response.json()
+        result = _call_worktree_tool("sync_worktree", arguments, timeout=60.0)
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         return
@@ -345,18 +347,11 @@ def resolve_worktree_id(manager: LocalWorktreeManager, worktree_ref: str) -> str
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def detect_stale(days: int, json_format: bool) -> None:
     """Detect stale worktrees."""
-    daemon_url = get_daemon_url()
     # Convert days to hours for MCP tool
     hours = days * 24
 
     try:
-        response = httpx.post(
-            f"{daemon_url}/mcp/gobby-worktrees/tools/detect_stale_worktrees",
-            json={"hours": hours},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        result = response.json()
+        result = _call_worktree_tool("detect_stale_worktrees", {"hours": hours}, timeout=30.0)
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         return
@@ -389,20 +384,17 @@ def detect_stale(days: int, json_format: bool) -> None:
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
 def cleanup_worktrees(days: int, dry_run: bool, yes: bool) -> None:
     """Clean up stale worktrees."""
-    daemon_url = get_daemon_url()
     # Convert days to hours for MCP tool
     hours = days * 24
 
     if dry_run:
         # Just detect stale - no confirmation needed
         try:
-            response = httpx.post(
-                f"{daemon_url}/mcp/gobby-worktrees/tools/detect_stale_worktrees",
-                json={"hours": hours},
+            result = _call_worktree_tool(
+                "detect_stale_worktrees",
+                {"hours": hours},
                 timeout=30.0,
             )
-            response.raise_for_status()
-            result = response.json()
             stale = result.get("stale_worktrees", [])
             click.echo(f"Would cleanup {len(stale)} stale worktree(s)")
             for wt in stale:
@@ -416,13 +408,11 @@ def cleanup_worktrees(days: int, dry_run: bool, yes: bool) -> None:
         click.confirm("Are you sure you want to cleanup stale worktrees?", abort=True)
 
     try:
-        response = httpx.post(
-            f"{daemon_url}/mcp/gobby-worktrees/tools/cleanup_stale_worktrees",
-            json={"hours": hours, "dry_run": False},
+        result = _call_worktree_tool(
+            "cleanup_stale_worktrees",
+            {"hours": hours, "dry_run": False},
             timeout=120.0,
         )
-        response.raise_for_status()
-        result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         return
@@ -446,16 +436,12 @@ def worktree_stats(json_format: bool) -> None:
     """Show worktree statistics."""
     import os
 
-    daemon_url = get_daemon_url()
-
     try:
-        response = httpx.post(
-            f"{daemon_url}/mcp/gobby-worktrees/tools/get_worktree_stats",
-            json={"project_path": os.getcwd()},
+        result = _call_worktree_tool(
+            "get_worktree_stats",
+            {"project_path": os.getcwd()},
             timeout=10.0,
         )
-        response.raise_for_status()
-        result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
         return
