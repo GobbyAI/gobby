@@ -168,12 +168,15 @@ class GobbyDaemonTools:
 
         When session_id is provided and a workflow is active, checks that the
         tool is not blocked by the current workflow step's blocked_tools setting.
+        This wrapper context is not injected into target tool arguments.
 
         Args:
             server_name: Target MCP server name.
             tool_name: Tool to call on the server.
             arguments: Tool arguments (dict or JSON string).
-            session_id: Session ID for context resolution and workflow checks.
+            session_id: Wrapper context for context resolution and workflow checks.
+                Target tool parameters still belong in arguments; pass
+                arguments.session_id when the target tool schema requires it.
             project_id: Optional project UUID or name. When provided, overrides
                 session-derived project context, enabling cross-project tool
                 operations (e.g., an agent in project A creating a task in

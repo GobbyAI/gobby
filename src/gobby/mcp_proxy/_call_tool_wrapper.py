@@ -7,7 +7,7 @@ from typing import Any
 
 from gobby.mcp_proxy._coerce_arguments import coerce_string_arguments
 
-CALL_TOOL_WRAPPER_FIELDS = ("server_name", "tool_name", "session_id", "project_id")
+CALL_TOOL_WRAPPER_FIELDS = ("server_name", "tool_name", "project_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,9 +65,11 @@ def canonicalize_call_tool_wrapper(
 ) -> CanonicalCallToolWrapper:
     """Canonicalize public ``call_tool`` wrapper inputs.
 
-    Top-level wrapper fields win. Missing top-level wrapper fields are hoisted
-    from the ``arguments``/``args`` payload when present, then stripped so only
-    inner tool arguments reach downstream dispatch.
+    Top-level wrapper fields win. Missing server/tool/project wrapper fields are
+    hoisted from the ``arguments``/``args`` payload when present, then stripped so
+    only inner tool arguments reach downstream dispatch. ``session_id`` is wrapper
+    context only at the top level; ``arguments.session_id`` remains a target-tool
+    parameter.
     """
 
     effective_arguments = _coerce_wrapper_arguments(arguments, field_name="arguments")
@@ -79,7 +81,7 @@ def canonicalize_call_tool_wrapper(
 
     canonical_server_name = _pick_wrapper_value(server_name, nested.get("server_name"))
     canonical_tool_name = _pick_wrapper_value(tool_name, nested.get("tool_name"))
-    canonical_session_id = _pick_wrapper_value(session_id, nested.get("session_id"))
+    canonical_session_id = session_id if isinstance(session_id, str) and session_id else None
     canonical_project_id = _pick_wrapper_value(project_id, nested.get("project_id"))
 
     if canonical_arguments is not None:

@@ -536,10 +536,11 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
             tool_name: Name of the specific tool to execute
             arguments: Dictionary of arguments required by the tool (optional)
             args: Alias for arguments. Accepts dict or JSON string. Use 'arguments' preferred.
-            session_id: Session ID (accepts #N, N, UUID, or prefix). Propagated to
-                the daemon via X-Gobby-Session-Id header so tools can read it from
-                the SessionContext ContextVar. Individual tools do not need session_id
-                in their own arguments.
+            session_id: Wrapper context only (accepts #N, N, UUID, or prefix).
+                Propagated to the daemon via X-Gobby-Session-Id header and used
+                for Gobby context/workflow resolution. Target tool parameters still
+                belong in arguments; pass arguments.session_id when the target tool
+                schema requires it.
             project_id: Optional project UUID or name for cross-project tool calls.
 
         Returns:

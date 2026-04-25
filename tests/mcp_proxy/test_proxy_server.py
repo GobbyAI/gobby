@@ -517,8 +517,8 @@ async def test_call_tool_project_id_stripped_from_arguments(daemon_tools):
 
 
 @pytest.mark.asyncio
-async def test_call_tool_top_level_wrapper_fields_win_and_nested_values_are_stripped(daemon_tools):
-    """Top-level wrapper fields override flattened duplicates inside arguments."""
+async def test_call_tool_top_level_wrapper_fields_win_and_nested_session_id_stays(daemon_tools):
+    """Top-level wrapper fields win while arguments.session_id stays a target argument."""
     from unittest.mock import sentinel
 
     daemon_tools.tool_proxy.call_tool = AsyncMock(return_value={"ok": True})
@@ -568,4 +568,4 @@ async def test_call_tool_top_level_wrapper_fields_win_and_nested_values_are_stri
     assert resolved == "platform-session"
     assert call_args.args[0] == "outer-server"
     assert call_args.args[1] == "outer-tool"
-    assert call_args.args[2] == {"value": "ok"}
+    assert call_args.args[2] == {"session_id": "inner-session", "value": "ok"}

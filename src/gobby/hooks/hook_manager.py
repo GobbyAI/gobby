@@ -483,8 +483,8 @@ class HookManager:
         """Resolve #N session references to UUIDs in MCP tool arguments.
 
         Modifies event.data["tool_input"] in place so all downstream consumers
-        (rules, handlers, auto-coercion) see resolved UUIDs. Sets a flag so
-        post-processing knows to create _modified_input if no one else did.
+        (rules, handlers, auto-coercion) see resolved UUIDs. Sets a flag only
+        when the rewritten value must be replayed to the tool as modified_input.
         """
         if event.event_type != HookEventType.BEFORE_TOOL:
             return
@@ -498,22 +498,26 @@ class HookManager:
             return
 
         project_id = event.project_id
-        modified = False
+        replay_needed = False
 
         # Variable tools intentionally keep the user's explicit session ref
         # (#N, N, UUID, or prefix). They resolve refs internally and preserving
         # the original form keeps retry payloads cleaner for agents.
         if tool_name not in {"mcp__gobby__set_variable", "mcp__gobby__get_variable"}:
             # Top-level session_id (call_tool, tasks tools, etc.)
-            modified |= self._try_resolve_session_field(tool_input, "session_id", project_id)
+            top_level_modified = self._try_resolve_session_field(
+                tool_input, "session_id", project_id
+            )
+            if tool_name != "mcp__gobby__call_tool":
+                replay_needed |= top_level_modified
 
         # Nested session_id inside call_tool arguments
         if tool_name == "mcp__gobby__call_tool":
             args = tool_input.get("arguments")
             if isinstance(args, dict):
-                modified |= self._try_resolve_session_field(args, "session_id", project_id)
+                replay_needed |= self._try_resolve_session_field(args, "session_id", project_id)
 
-        if modified:
+        if replay_needed:
             event.metadata["_session_refs_resolved"] = True
 
     def _try_resolve_session_field(

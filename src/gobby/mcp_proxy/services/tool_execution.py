@@ -11,6 +11,31 @@ from .tool_proxy_utils import safe_truncate
 logger = logging.getLogger("gobby.mcp.server")
 
 
+def _schema_requires_session_id(input_schema: dict[str, Any]) -> bool:
+    required = input_schema.get("required", [])
+    return isinstance(required, list) and "session_id" in required
+
+
+def _missing_target_session_id_error(
+    *,
+    server_name: str,
+    tool_name: str,
+    input_schema: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": (
+            f"Missing required parameter: arguments.session_id for {server_name}:{tool_name}. "
+            "The top-level call_tool.session_id is Gobby wrapper context only; target tool "
+            "parameters must be supplied inside arguments."
+        ),
+        "hint": "Pass session_id inside arguments when the target tool schema requires it.",
+        "schema": input_schema,
+        "server_name": server_name,
+        "tool_name": tool_name,
+    }
+
+
 async def list_tools(
     service: Any,
     server_name: str,
@@ -162,11 +187,33 @@ async def call_tool(
                 "tool_name": tool_name,
             }
 
-    if service._validate_arguments and arguments:
+    should_check_schema = service._validate_arguments and (
+        bool(arguments) or session_id is not None
+    )
+    if should_check_schema:
         schema_result = await service.get_tool_schema(server_name, tool_name)
         if schema_result.get("success"):
             input_schema = schema_result.get("tool", {}).get("inputSchema", {})
             if input_schema:
+                if (
+                    session_id is not None
+                    and "session_id" not in arguments
+                    and _schema_requires_session_id(input_schema)
+                ):
+                    return _missing_target_session_id_error(
+                        server_name=server_name,
+                        tool_name=tool_name,
+                        input_schema=input_schema,
+                    )
+                if not arguments:
+                    return await _execute_tool(
+                        service=service,
+                        server_name=server_name,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        effective_session_id=effective_session_id,
+                        enforce_workflow=enforce_workflow,
+                    )
                 if strip_unknown:
                     properties = input_schema.get("properties", {})
                     unknown_keys = [k for k in arguments if k not in properties]
@@ -194,6 +241,25 @@ async def call_tool(
                             "tool_name": tool_name,
                         }
 
+    return await _execute_tool(
+        service=service,
+        server_name=server_name,
+        tool_name=tool_name,
+        arguments=arguments,
+        effective_session_id=effective_session_id,
+        enforce_workflow=enforce_workflow,
+    )
+
+
+async def _execute_tool(
+    *,
+    service: Any,
+    server_name: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    effective_session_id: str | None,
+    enforce_workflow: bool,
+) -> Any:
     try:
         if service._internal_manager and service._internal_manager.is_internal(server_name):
             registry = service._internal_manager.get_registry(server_name)

@@ -741,7 +741,7 @@ class TestResolveSessionRefsInToolInput:
     def test_resolves_top_level_session_id(
         self, manager_with_mocks: HookManager, make_event: Callable
     ) -> None:
-        """#N in top-level tool_input.session_id is resolved when tool expects canonical UUIDs."""
+        """#N in call_tool wrapper session_id resolves without requesting modified_input."""
         manager = manager_with_mocks
         manager._session_manager.resolve_session_reference.return_value = "uuid-abc-123"
 
@@ -762,7 +762,7 @@ class TestResolveSessionRefsInToolInput:
         manager._resolve_session_refs_in_tool_input(event)
 
         assert event.data["tool_input"]["session_id"] == "uuid-abc-123"
-        assert event.metadata.get("_session_refs_resolved") is True
+        assert "_session_refs_resolved" not in event.metadata
         manager._session_manager.resolve_session_reference.assert_called_once_with("#3", "proj-1")
 
     def test_preserves_top_level_session_id_for_set_variable(
@@ -924,7 +924,7 @@ class TestResolveSessionRefsInToolInput:
     def test_numeric_string_without_hash(
         self, manager_with_mocks: HookManager, make_event: Callable
     ) -> None:
-        """Plain numeric string '3' is also resolved (agents sometimes omit #)."""
+        """Variable tools preserve plain numeric refs for internal resolution."""
         manager = manager_with_mocks
         manager._session_manager.resolve_session_reference.return_value = "uuid-789"
 
@@ -939,8 +939,9 @@ class TestResolveSessionRefsInToolInput:
 
         manager._resolve_session_refs_in_tool_input(event)
 
-        assert event.data["tool_input"]["session_id"] == "uuid-789"
-        assert event.metadata.get("_session_refs_resolved") is True
+        assert event.data["tool_input"]["session_id"] == "3"
+        assert "_session_refs_resolved" not in event.metadata
+        manager._session_manager.resolve_session_reference.assert_not_called()
 
 
 class TestRecordSessionActivityPulse:

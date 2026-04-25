@@ -723,7 +723,7 @@ class TestMCPToolsWrapper:
         mock_proxy.import_mcp_server.assert_called()
 
     @pytest.mark.asyncio
-    async def test_call_tool_hoists_flattened_wrapper_fields(self) -> None:
+    async def test_call_tool_hoists_wrapper_fields_but_keeps_target_session_id(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
 
         await run_tool(
@@ -736,11 +736,17 @@ class TestMCPToolsWrapper:
             },
         )
 
-        mock_proxy.call_tool.assert_called_with("gobby-skills", "get_skill", {"name": "brevity"})
-        assert mock_proxy._session_id == "session-123"
+        mock_proxy.call_tool.assert_called_with(
+            "gobby-skills",
+            "get_skill",
+            {"session_id": "session-123", "name": "brevity"},
+        )
+        assert mock_proxy._session_id is None
 
     @pytest.mark.asyncio
-    async def test_call_tool_top_level_wrapper_fields_win(self) -> None:
+    async def test_call_tool_top_level_wrapper_fields_win_and_target_session_id_stays(
+        self,
+    ) -> None:
         _, mock_proxy, run_tool = self._register_tools()
 
         await run_tool(
@@ -761,7 +767,7 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.assert_called_with(
             "outer-server",
             "outer-tool",
-            {"value": "ok"},
+            {"session_id": "inner-session", "value": "ok"},
             project_id="outer-project",
         )
         assert mock_proxy._session_id == "outer-session"
