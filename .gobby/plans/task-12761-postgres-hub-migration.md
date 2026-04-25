@@ -67,7 +67,7 @@ Three install modes; Docker is the recommended path. The other two exist so user
 |------|-----------|-------------------|----------|
 | **`docker`** (recommended) | Compose-managed; written to bootstrap by the installer | Bundled by the local-build Dockerfile; pulled from upstream ParadeDB at build time | Default. First-time users, dev machines that already use Docker. |
 | **`native`** | User-running local Postgres; installer writes the DSN to bootstrap after probe | Debian/Ubuntu: installer fetches the same upstream `.deb` and runs `dpkg -i` (sudo). macOS / non-Debian Linux: installer prints platform-specific guidance and exits with a "use `--mode docker`" recommendation. | Devs already running native Postgres, lightweight machines that can't afford a Docker daemon. |
-| **`external`** | User-supplied via `--dsn`; installer only writes bootstrap | Probed via `CREATE EXTENSION IF NOT EXISTS pg_search`; fails closed with a manual install command if missing | Self-hosted team Postgres, devs tunneling to staging, managed Postgres where the operator pre-installed pg_search. |
+| **`external`** | User-supplied via `--dsn`; installer only writes bootstrap (plus the ownership sentinel) | Probed read-only via `SELECT 1 FROM pg_extension WHERE extname='pg_search'`; fails closed with a manual install command if missing. Gobby never runs `CREATE EXTENSION` on the operator's database. | Self-hosted team Postgres, devs tunneling to staging, managed Postgres where the operator pre-installed pg_search. |
 
 #### Docker mode (recommended)
 
@@ -95,14 +95,28 @@ The installer never silently downgrades Docker → native or native → docker; 
 
 #### External mode (BYO DSN)
 
-`gobby postgres install --mode external --dsn <url>` skips compose, skips installer-side pg_search install, and only writes bootstrap fields. It probes `CREATE EXTENSION IF NOT EXISTS pg_search`; on failure it exits with the upstream install command for the URL's reported `version()` platform. The user is responsible for keeping the extension installed; Gobby's role is to refuse to start against a Postgres without it.
+`gobby postgres install --mode external --dsn <url>` skips compose, skips installer-side pg_search install, and writes only bootstrap fields plus the `gobby_install_ownership` sentinel after probes pass. The probe phase is **strictly read-only** (see "Ownership contract for external mode" below) — `SELECT 1 FROM pg_extension WHERE extname='pg_search'` verifies the operator pre-installed pg_search, and the install exits with the upstream install command for the URL's reported `version()` platform if missing. Gobby never runs `CREATE EXTENSION` on the operator's database; the operator is responsible for keeping the extension installed and Gobby's role is to refuse to start against a Postgres without it.
 
 **Ownership contract for external mode.** External installs must point Gobby at a **dedicated database** that Gobby **alone owns**. The DSN's database must be empty at install time (only `public` schema, no user objects) and must remain dedicated to Gobby thereafter. Per-schema isolation against a shared host database is **not supported in v1** — the failed-import recovery story (§5.1) needs an unconditional `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (or equivalent), which is only safe when nothing else lives in the database. Operators who want schema-level isolation against a shared host create a dedicated database for Gobby first; a future workstream may add `--schema` support if usage justifies it.
 
-The installer enforces this two ways:
+The installer enforces this in two phases. **The probe phase is strictly read-only** — no `CREATE`, no `INSERT`, no `CREATE EXTENSION` against the target — so a probe failure leaves the operator's database byte-identical to its pre-probe state. Only after every probe passes does the install phase run any writes (extension load, sentinel table, sentinel row).
 
-- **At install**: connect to the target database, enumerate `information_schema.tables` filtered to non-system schemas; if any non-Gobby objects exist, refuse with a clear error and an operator-facing recovery hint ("point Gobby at a fresh, dedicated database — `CREATE DATABASE gobby_hub;` and re-run with `--dsn postgresql://.../gobby_hub`").
-- **At install**: create the sentinel table `gobby_install_ownership` and write the install row:
+**Probe phase (read-only, ordered):**
+
+1. **Schema enumeration**: `SELECT nspname FROM pg_namespace WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND nspname NOT LIKE 'pg_temp_%' AND nspname NOT LIKE 'pg_toast_temp_%'`. The result must be exactly `{'public'}` — any additional user schema (`gobby`, `auth`, `apps`, etc.) means the database is shared and external mode refuses.
+2. **`public`-schema emptiness**: query `pg_class`, `pg_proc`, and `pg_type` filtered to `pg_namespace.oid = 'public'::regnamespace` and exclude system-generated rows (extension-owned via `pg_depend`, array types, composite types of system tables). Any user table, view, sequence, function, custom type, domain, or aggregate fails the probe. `information_schema.tables` was used previously and was insufficient — it does not catch functions, custom types, or non-relation objects, which is exactly the surface that `DROP SCHEMA public CASCADE` would later destroy.
+3. **`pg_search` already installed**: `SELECT 1 FROM pg_extension WHERE extname = 'pg_search'`. **Read-only check**, not `CREATE EXTENSION IF NOT EXISTS` — the latter is write-capable and would mutate the target on probe failure modes (e.g. partial install where the binary is absent but the extension catalog row exists). If `pg_search` is missing, refuse with the upstream install command for the URL's reported `version()` platform.
+4. **`pgaudit` availability** (advisory, non-blocking): `SELECT name FROM pg_available_extensions WHERE name = 'pgaudit'`. Surface in install output so the operator knows whether `--capture-sink pgaudit-file` is feasible later, but do not refuse install — pgAudit is opt-in for native/external (see §6.0).
+
+**Install phase (writes the target, only if probes passed):**
+
+1. **Sentinel write**: create the `gobby_install_ownership` table and INSERT the singleton row described below.
+
+Gobby does **not** create `pg_search` in external mode — the probe phase already verified the operator installed it. If the probe finds the extension missing, install exits with the upstream install command for the operator's platform; lazy-creating the extension would conflict with the read-only-probe-only invariant the recovery story depends on.
+
+The install fails closed at any probe step. Recovery hint on probe failure points the operator at a fresh database: `CREATE DATABASE gobby_hub;` and re-run with `--dsn postgresql://.../gobby_hub`. Don't suggest cleanup of the existing target — Gobby has no business advising what's safe to delete from someone else's database.
+
+After both phases:
 
   ```sql
   CREATE TABLE gobby_install_ownership (
@@ -338,7 +352,7 @@ Mode dispatch:
 |------|--------|
 | `docker` (default) | Bring up compose profile (`docker compose --profile postgres up -d`), wait for `pg_isready`, probe `CREATE EXTENSION IF NOT EXISTS pg_search`, write bootstrap defaults including `database_url` pointing at `localhost:${GOBBY_POSTGRES_PORT}`. |
 | `native` | Detect platform. Debian/Ubuntu: fetch upstream pg_search `.deb` (same SHA pin used in task 1.1's compose `args`), prompt for sudo, run `dpkg -i`, probe `CREATE EXTENSION pg_search` against `--dsn` (or auto-discovered local DSN if omitted), write bootstrap. macOS / non-Debian Linux: print platform-specific guidance referencing `docs/runbooks/postgres-native-*.md` and exit non-zero with a clear "use `--mode docker`" recommendation. |
-| `external` | Skip compose, skip pg_search install. Require `--dsn`. Probe `CREATE EXTENSION IF NOT EXISTS pg_search`; on failure exit non-zero with the platform-specific upstream install command derived from the target server's `version()` output. On success, write bootstrap. |
+| `external` | Skip compose, skip pg_search install. Require `--dsn`. Run the read-only probe phase from the "Ownership contract for external mode" section: `pg_namespace` + `pg_class` / `pg_proc` / `pg_type` ownership probe, `SELECT 1 FROM pg_extension WHERE extname='pg_search'` (read-only — Gobby never runs `CREATE EXTENSION` here), `pg_available_extensions` advisory check for pgaudit. Failures exit non-zero with the platform-specific upstream install command (for missing pg_search) or the dedicated-database hint (for ownership-probe failures). On all probes passing, run the write phase: create the `gobby_install_ownership` sentinel and write bootstrap. |
 
 ```python
 # src/gobby/cli/installers/postgres.py
@@ -393,17 +407,28 @@ def _install_native(*, gobby_home, dsn):
 
 
 def _install_external(*, gobby_home, dsn):
-    # connect with psycopg, probe CREATE EXTENSION IF NOT EXISTS pg_search
-    # on missing extension, format upstream install command from server version()
+    # READ-ONLY PROBE PHASE — no writes against the target until every probe
+    # passes. See "Ownership contract for external mode" above for the full
+    # rationale; the order below mirrors the prose.
     #
-    # ownership probe: enumerate user objects across non-system schemas in the
-    # target database. If any non-Gobby tables/views/sequences exist, refuse
-    # with the recovery hint from "Ownership contract for external mode" —
-    # point at a fresh dedicated database. v1 supports database-only ownership;
-    # per-schema isolation is not in scope.
+    # 1. Schema enumeration: pg_namespace must yield exactly {'public'} after
+    #    excluding pg_catalog / information_schema / pg_toast / pg_temp_*.
+    # 2. public-schema emptiness: pg_class + pg_proc + pg_type filtered to
+    #    public, excluding extension-owned (via pg_depend) and system-generated
+    #    rows. Any user table/view/sequence/function/type/domain refuses.
+    # 3. pg_search presence: SELECT 1 FROM pg_extension WHERE extname='pg_search'.
+    #    Read-only — do NOT use CREATE EXTENSION IF NOT EXISTS here. On miss,
+    #    format upstream install command from server version() and exit.
+    # 4. pgaudit availability (advisory): pg_available_extensions row presence.
+    #    Surface in install output; do not refuse.
     #
-    # on success: CREATE TABLE gobby_install_ownership (...) and INSERT the
-    # singleton row, then write bootstrap.yaml with database_url=<dsn>.
+    # WRITE PHASE — only after every probe passed. Gobby does NOT create
+    # pg_search in external mode; the probe phase already verified the
+    # operator installed it. Lazy-creating the extension would conflict
+    # with the read-only-probe-only invariant the recovery story depends on.
+    # 5. CREATE TABLE gobby_install_ownership (...) and INSERT the singleton
+    #    row.
+    # 6. Write bootstrap.yaml with database_url=<dsn>.
     ...
 
 
@@ -703,9 +728,34 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
                 verification={"state": "operator-attested", "probe_detail": None},
                 acknowledgement=ack,
             )
-    _write_cutover_ticket(ticket)  # ~/.gobby/migrations/cutover-<timestamp>.json
-    _backup_bootstrap()
+    # ACTIVATION INVARIANT (load-bearing): hub_backend=postgres in bootstrap
+    # exists if and only if the canonical cutover ticket exists at the path
+    # echoed below. §6.1 / §6.2 treat ticket presence as the authoritative
+    # "activation went live" signal, so leaving hub_backend=postgres without
+    # the ticket would break the rollback-export selector and the validation-
+    # window deadline contract.
+    #
+    # Order: pre-render ticket → backup → flip → publish-canonical →
+    # rollback-on-publish-failure. If _write_cutover_ticket() fails after the
+    # bootstrap flip (disk full, permission error, signal between
+    # tmp-write and os.replace()), restore the bootstrap from the backup we
+    # just took and re-raise so the operator sees a clean failure with
+    # hub_backend=sqlite intact. A crash strictly between flip and the
+    # try/except entry can still leave the invariant violated, but
+    # _write_cutover_ticket()'s tmp-then-os.replace() pattern keeps that
+    # window to a few syscalls; the rollback handles the realistic failure
+    # modes (I/O errors, permission errors).
+    backup_path = _backup_bootstrap()
     _set_bootstrap_field("hub_backend", "postgres")
+    try:
+        _write_cutover_ticket(ticket)  # ~/.gobby/migrations/cutover-<timestamp>.json
+    except Exception:
+        # Restore bootstrap so hub_backend goes back to sqlite. The next
+        # gobby start will use sqlite, matching the no-canonical-ticket
+        # state. Re-raise so the operator sees the original error and can
+        # diagnose (disk full, permissions, etc.) before retrying activate.
+        _restore_bootstrap(backup_path)
+        raise
     click.echo("hub_backend set to postgres. To roll back:")
     click.echo("  gobby stop && gobby postgres deactivate && gobby start")
     click.echo(f"Cutover ticket: {ticket['_path']}")
@@ -748,7 +798,9 @@ Mapping table from `_build_cutover_ticket()` parameters to fields:
 | `verification`        | `verification`     | dict with `state`, `probed_at`, `probe_detail`; producer must set all three (probed_at = now() when `state="ok"`, null when `state="operator-attested"`) |
 | `acknowledgement`     | `acknowledgement`  | required when `capture_kind="none"`; rejected otherwise |
 
-`_write_cutover_ticket()` injects `_path` (absolute path it wrote to) into the in-memory dict before returning so the activator can echo it; the on-disk JSON does **not** include `_path`.
+`_write_cutover_ticket()` writes the ticket via temp-file + atomic rename: it serializes to `<canonical_path>.tmp`, calls `os.replace()` to swap it to the canonical path, and only then injects `_path` (absolute path it wrote to) into the in-memory dict so the activator can echo it. The on-disk JSON does **not** include `_path`. Atomic publish is load-bearing for the cutover-ticket invariant: §6.1 / §6.2 treat the artifact's existence at the canonical path as proof the activation went live, so a half-written or pre-flip ticket would produce false-positive cutover state.
+
+The activation invariant is "hub_backend=postgres in bootstrap exists if and only if the canonical ticket exists at the echoed path." `activate_cmd` enforces this with: pre-render ticket → backup bootstrap → flip → publish-canonical, with a try/except around publish that restores bootstrap from the backup if `_write_cutover_ticket()` fails. A crash mid-rename is impossible by `os.replace()`'s POSIX atomicity guarantee. A crash strictly between the flip and the try/except entry is the only window where the invariant could be violated, and `os.replace()`'s tmp-then-rename keeps that window to a few syscalls — recoverable by the operator running `gobby postgres deactivate` if observed. The realistic failure modes (I/O errors, permission errors during ticket write) are caught explicitly. `_restore_bootstrap(backup_path)` reverses the file copy `_backup_bootstrap()` produced.
 
 ```python
 
@@ -1509,7 +1561,7 @@ else:
 
 These branches are deleted in Phase 7.2.
 
-### 4.7 Audit PostgreSQL concurrency semantics under MVCC [category: research] (depends: 3.1)
+### 4.7 Audit PostgreSQL concurrency semantics under MVCC [category: research] (depends: 3.4, 3.5, 3.6, 3.7, 4.1, 4.3, 4.4, 4.5, 4.6)
 
 Target: every call site of `after_commit` callbacks plus any write path that
 assumes SQLite serialization (`after_commit`, `_run_after_commit_callbacks`,
@@ -1566,6 +1618,7 @@ Cutover is blocked until:
 - all remediation PRs identified by the audit are merged
 - all new MVCC integration tests pass in CI for three consecutive runs
 - no known broken `savepoint()` / `conn.in_transaction` usages remain
+- **Re-audit gate**: after Phase 5 completes (the importer can introduce new transaction/savepoint/after-commit usage), 4.7's audit is re-run end-to-end against the integrated codebase. The cutover-blocking gate referenced by §6.1 is the **post-Phase-5 audit report version**, not the original. If Phase 5 (or any intervening task) introduces a new callback / read-modify-write / constraint-timing assumption that the original audit didn't cover, those items are added to the report and must clear the same High/Medium / remediation / CI thresholds before cutover. The re-audit is part of §6.0's setup work; it is not a separate task because the audit methodology and remediation playbook are already defined here.
 
 ## Phase 5: One-shot SQLite → PostgreSQL migration tool
 
@@ -1885,7 +1938,7 @@ Type changes:
 - PostgreSQL installs via `gobby postgres install` with the same ergonomics as the Qdrant / Neo4j installers, across all three install modes (`docker`, `native`, `external`).
 - The Docker mode uses a local-build compose `build:` directive — no Gobby-published Postgres image, no GHCR push. Gobby ships the Dockerfile; the user's machine builds the image and pulls `pg_search.deb` from upstream ParadeDB releases at build time.
 - Native mode (Debian/Ubuntu) auto-installs `pg_search` from the same upstream `.deb`. Native mode (other Linux / macOS) prints platform-specific guidance and exits with a clear "use `--mode docker` (recommended)" message.
-- External mode (`gobby postgres install --mode external --dsn <url>`) skips compose entirely, writes only the bootstrap fields, and probes `CREATE EXTENSION IF NOT EXISTS pg_search`; failure to load the extension exits non-zero with the manual install command for the user's platform.
+- External mode (`gobby postgres install --mode external --dsn <url>`) skips compose entirely, runs the strictly read-only probe phase (`pg_namespace` + object-catalog ownership checks plus `SELECT 1 FROM pg_extension WHERE extname='pg_search'`), and on success writes the `gobby_install_ownership` sentinel + bootstrap fields. Gobby never runs `CREATE EXTENSION` against the operator's database; failure to find pg_search exits non-zero with the manual install command for the user's platform, leaving the target byte-identical to its pre-probe state.
 - Bootstrap selects the hub backend before DB-backed config loads; incorrect combinations are rejected with clear error messages.
 - The daemon boots and runs against PostgreSQL without opening any SQLite file.
 - `gobby postgres migrate-from-sqlite` imports an existing hub database with deterministic row-count, FK integrity, content-hash, and sequence reseed checks — all exit 0.
