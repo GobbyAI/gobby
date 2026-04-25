@@ -24,9 +24,10 @@ The Python codebase is expected to be ported to Rust in a later effort. This pla
 - **Migration tool**: raw SQL files + a handwritten migration registry. No SQLAlchemy, no Alembic.
 - **Test backend**: compose-managed PostgreSQL reached via `DATABASE_URL`. Schema-per-xdist-worker plus test-scoped schema reset for isolation. Zero language-specific test infra so the pattern survives the Rust port.
 - **Rust portability**: migrations must be pure `.sql` files (no Python callables). Parameter style standardized on `$1`. Runtime DSN lives in bootstrap for now; pool and connection tuning are still env-driven (`PGPOOL_MIN`, `PGPOOL_MAX`, `PGCONNECT_TIMEOUT`, `PGAPPNAME`) rather than embedded in Python.
-- **Search**: `pg_search` (ParadeDB) shipped via a custom `gobby/postgres:17-pgsearch` image. BM25 ranking via Tantivy. Rust-portable indexes. Semantic search (Qdrant) is an explicit non-goal of this plan but the search backend dispatcher leaves a clean seam for it.
-- **Gobby Pro compatibility**: Gobby Pro is assumed to be a sync / fleet-management hub, not a hosted-Gobby service. This plan does not need to run on managed Postgres (RDS, Cloud SQL, Aurora). Gobby always runs locally on the user's machine; Gobby Pro talks to Gobby instances via API, not by sharing a database. Gobby Pro's own datastore is out of scope for this plan.
-- **Licensing**: pg_search is AGPL-3.0. Used by Gobby as a separate PostgreSQL extension running inside the Postgres server process, it is not linked into Gobby's application code and does not by itself propagate copyleft to Gobby. The relevant boundary here is process/protocol isolation plus lack of modification: Gobby talks to PostgreSQL over SQL, and PostgreSQL loads pg_search as an extension. AGPL obligations do apply if we modify pg_search itself, distribute a modified pg_search binary, or incorporate pg_search code directly into Gobby instead of consuming it as an extension. If AGPL posture becomes unacceptable for a specific distribution channel, ParadeDB commercial licensing is an explicit fallback option. The rest of the runtime stack is PostgreSQL-license, Apache-2.0 (Qdrant), and LGPL-3.0 (psycopg v3) — all permissive from Gobby's perspective.
+- **Search**: `pg_search` (ParadeDB) consumed as a PostgreSQL extension. In Docker mode, Gobby ships the build recipe (Dockerfile) and the user's machine produces a local image; in native mode, Gobby fetches the upstream `.deb` and runs it on the user's machine; in external mode, the operator pre-installs the extension. **Gobby never publishes a binary that bundles pg_search.** BM25 ranking via Tantivy. Rust-portable indexes. Semantic search (Qdrant) is an explicit non-goal of this plan but the search backend dispatcher leaves a clean seam for it.
+- **Install modes**: three supported install paths — `docker` (recommended), `native` (Debian/Ubuntu first-class via upstream `.deb`; macOS and other Linux print "use Docker" guidance and exit), and `external` (BYO DSN against a pre-installed Postgres + pg_search). The user opts into a mode explicitly via `gobby postgres install --mode {docker,native,external}`; the installer never silently switches modes. Tier-1 testing covers `docker` and Debian `native`; `external` and macOS-with-source-built-pg_search are best-effort with documented runbooks.
+- **Gobby Pro compatibility**: Gobby Pro is assumed to be a sync / fleet-management hub, not a hosted-Gobby service. This plan supports running against an external Postgres (including managed services like RDS, Cloud SQL, Aurora) via `--mode external` — but only as best-effort: Gobby is tested against locally-installed Postgres, and operators of managed services must install pg_search themselves before pointing Gobby at the DSN. Gobby always runs locally on the user's machine; Gobby Pro talks to Gobby instances via API, not by sharing a database. Gobby Pro's own datastore is out of scope for this plan.
+- **Licensing**: pg_search is AGPL-3.0. **Gobby does not distribute pg_search.** Docker mode ships a Dockerfile (build recipe), not an image; native mode fetches the upstream `.deb` directly from ParadeDB releases at install time on the user's machine; external mode requires the operator to install pg_search themselves. Used by Gobby as a separate PostgreSQL extension running inside the Postgres server process, it is not linked into Gobby's application code and does not by itself propagate copyleft to Gobby. AGPL obligations would apply if we modified pg_search itself, distributed a modified pg_search binary, or incorporated pg_search code directly into Gobby — none of which the supported install paths do. If AGPL posture becomes unacceptable for a specific distribution channel, ParadeDB commercial licensing is an explicit fallback option. The rest of the runtime stack is PostgreSQL-license, Apache-2.0 (Qdrant), and LGPL-3.0 (psycopg v3) — all permissive from Gobby's perspective.
 - **Bootstrap security posture**: `bootstrap.yaml` remains the pre-DB source of truth during the overlap window, but plaintext `database_url` storage does not survive cleanup. Phase 7 makes OS keyring / secret-store integration a hard dependency before the migration is considered fully complete. Until that lands, startup must enforce `0600` permissions on `~/.gobby/bootstrap.yaml` and fail closed if the file is broader than owner read/write. Operator docs must treat `bootstrap.yaml` as a secret-bearing credential file during the cutover window.
 - **Rollback window**: short. Stop daemon, restore `hub_backend=sqlite`, restart. Rollback is a migration safety net, not a permanent product feature. Writes made during the post-cutover validation window are at risk on rollback; they must be captured for forensics, but they are not auto-merged back into SQLite. The validation-window write-capture mechanism is therefore a cutover gate, not a nice-to-have.
 
@@ -42,39 +43,67 @@ This is not a connection-string swap. Key SQLite-specific coupling the migration
 - **Upserts**: `INSERT OR IGNORE` (8 sites across `projects.py`, `session_tasks.py`, `migrations.py`, `sessions.py`, `pipelines.py`) and `INSERT OR REPLACE` (1 site at `agents.py:213`). Must be rewritten to `ON CONFLICT DO NOTHING / DO UPDATE SET`.
 - **Schema primitives**: `AUTOINCREMENT` (17 sites), `datetime('now')` (60+ DEFAULT expressions), `json_extract(...)` / `json_set(...)` (17 sites), `PRAGMA foreign_keys=ON`, `PRAGMA query_only=ON` (test read-only enforcement).
 - **Search**: FTS5 virtual tables with content-synced triggers on `tasks`, `memories`, `code_symbols`, `code_content`, `skills` (contentless). 12+ triggers keep virtual tables in sync. No abstraction — managers call FTS5 directly using `MATCH` and `bm25()`.
-- **Migration runner**: `src/gobby/storage/migrations.py` reads `baseline_schema.sql` as a string and executes it via `for stmt in sql.strip().split(";"): conn.execute(stmt)`. The naive `;` split cannot cross FTS5 trigger bodies (`BEGIN ... END;`) or Postgres function bodies (`$$ ... $$`); FTS5 setup is therefore extracted into five Python helpers in `src/gobby/storage/migration_helpers.py` (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_skills_fts`, `_setup_memories_fts`) that the runner calls after the baseline transaction commits. Version tracking uses a `schema_version (version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))` table. `BASELINE_VERSION = 219`; pre-v219 databases are explicitly unsupported and raise `MigrationUnsupportedError`. Post-baseline migrations live in `_migration_registry.MIGRATIONS` (currently empty).
+- **Migration runner**: `src/gobby/storage/migrations.py` reads `baseline_schema.sql` as a string and executes it via `for stmt in sql.strip().split(";"): conn.execute(stmt)`. The naive `;` split cannot cross FTS5 trigger bodies (`BEGIN ... END;`) or Postgres function bodies (`$$ ... $$`); FTS5 setup is therefore extracted into five Python helpers in `src/gobby/storage/migration_helpers.py` (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_skills_fts`, `_setup_memories_fts`) that the runner calls after the baseline transaction commits. Version tracking uses a `schema_version (version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))` table. As of writing, `BASELINE_VERSION = 220` and `_migration_registry.MIGRATIONS` contains a single post-baseline entry (`(220, "Add terminal_reason to agent_runs", "ALTER TABLE agent_runs ADD COLUMN terminal_reason TEXT")`) registered as an inline SQL `str`, not a callable. Phase 0 of this plan re-flattens that entry into the baseline, bumps `BASELINE_VERSION = 221`, and empties `MIGRATIONS` before any Postgres work begins. Pre-baseline databases are explicitly unsupported and raise `MigrationUnsupportedError`.
 - **Bootstrap**: `src/gobby/config/bootstrap.py` has only `database_path`. No backend selection before DB-backed config loads.
 - **Test infrastructure**: `tests/conftest.py` uses `:memory:` SQLite exclusively. No Postgres fixtures. 11k+ tests, ~48 files under `tests/storage/`. Any Postgres-only bug cannot be caught until production today.
 - **Timestamps**: all `created_at` / `updated_at` stored as ISO8601 text. Python adapters assume UTC and add tzinfo; the `datetime('now')` DEFAULT produces naive UTC text. Migration must preserve UTC and align on `TIMESTAMPTZ`.
 
 ## Post-flattening starting point
 
-Commit `4be00747a` flattened the 219-step SQLite migration chain. The PG migration inherits a simpler starting point than the original plan assumed:
+Commit `4be00747a` flattened the 219-step SQLite migration chain into a single baseline. Migration 220 (`ALTER TABLE agent_runs ADD COLUMN terminal_reason TEXT`) landed afterwards as an inline-SQL post-baseline entry in `_migration_registry.MIGRATIONS`. Phase 0 of this plan performs a second flatten — folding migration 220 into the baseline and bumping `BASELINE_VERSION = 221` — so the Postgres work begins from a clean prerequisite state:
 
-- `src/gobby/storage/baseline_schema.sql` — single source-of-truth DDL (68 tables, 173 indexes, plus seed `INSERT`s for the four placeholder projects). Already a portable `.sql` artifact — the Phase 4.2 translation has one file to port, not a 219-step chain to replay.
-- `src/gobby/storage/_migration_registry.py::MIGRATIONS` is empty. Post-baseline SQLite migrations (if any land before cutover) and the new Postgres runner share this list as their registration point.
+- `src/gobby/storage/baseline_schema.sql` — single source-of-truth DDL (68 tables, 173 indexes, plus seed `INSERT`s for the four placeholder projects). Already a portable `.sql` artifact. After Phase 0, it also contains the `terminal_reason` column. Phase 4.2's translation has one file to port, not a chain to replay.
+- `src/gobby/storage/_migration_registry.py::MIGRATIONS` is **emptied by Phase 0** and stays empty until Phase 3.7 introduces the new file-based runner. Post-baseline SQLite migrations (if any land between Phase 0 and cutover) and the new Postgres runner share this list as their registration point — but in the post-3.7 file-based shape (`migrations/NNN_name.sql`), not inline SQL strings.
 - There are no remaining Python *data* migrations. Only the five FTS5 setup helpers persist, and they are SQLite-only by construction — they die alongside FTS5 in Phase 7.2 and never need Postgres equivalents.
-- Pre-v219 SQLite databases are unsupported by the flattened runner. `gobby postgres migrate-from-sqlite` reuses the same `schema_version` gate — sources older than v219 are rejected before import, matching the launch-baseline contract.
+- Pre-v221 SQLite databases are unsupported by the post-Phase-0 runner. `gobby postgres migrate-from-sqlite` reuses the same `schema_version` gate — sources at v220 or older are rejected before import. Users on pre-Phase-0 databases bring themselves up to v221 by running Gobby once with the post-Phase-0 build, which applies the new flattened baseline as a normal version bump.
 
 ## Target Architecture
 
 ### Service packaging
 
+Three install modes; Docker is the recommended path. The other two exist so users who can't or won't run Docker — limited hardware, distro-level Postgres already in use, container-disabled environments — are not locked out.
+
+| Mode | DSN source | pg_search install | Use case |
+|------|-----------|-------------------|----------|
+| **`docker`** (recommended) | Compose-managed; written to bootstrap by the installer | Bundled by the local-build Dockerfile; pulled from upstream ParadeDB at build time | Default. First-time users, dev machines that already use Docker. |
+| **`native`** | User-running local Postgres; installer writes the DSN to bootstrap after probe | Debian/Ubuntu: installer fetches the same upstream `.deb` and runs `dpkg -i` (sudo). macOS / non-Debian Linux: installer prints platform-specific guidance and exits with a "use `--mode docker`" recommendation. | Devs already running native Postgres, lightweight machines that can't afford a Docker daemon. |
+| **`external`** | User-supplied via `--dsn`; installer only writes bootstrap | Probed via `CREATE EXTENSION IF NOT EXISTS pg_search`; fails closed with a manual install command if missing | Self-hosted team Postgres, devs tunneling to staging, managed Postgres where the operator pre-installed pg_search. |
+
+#### Docker mode (recommended)
+
 Add `postgres` to `src/gobby/data/docker-compose.services.yml`:
 
-- image `gobby/postgres:17-pgsearch` (custom image — stock `postgres:17` plus the pg_search extension; built and published as part of this plan, see task 1.4)
+- **`build:`** directive pointing at `src/gobby/data/postgres-pgsearch/Dockerfile` (built locally on the user's machine; not pushed to any registry). Local image tag `gobby-postgres-local:17-pgsearch`.
 - named volume `gobby_postgres_data`
 - Compose profiles `postgres` and `all`
 - `pg_isready` healthcheck
 - env-backed defaults for `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`
 
-Image rationale: using `paradedb/paradedb:latest` directly would bundle pg_analytics and pg_cron (both unused by Gobby), expand image size to ~2GB, and broaden the attack surface. The custom image adds only pg_search on top of `postgres:17`, keeping footprint close to stock Postgres (~600MB) and keeping Gobby-controlled versioning.
+**Why local build, not a published image.** pg_search is AGPL-3.0. Distributing a Gobby-published image that bundles pg_search would put Gobby on the hook as the AGPL distributor for pg_search binaries. By shipping a Dockerfile and using compose's `build:` directive, the user's machine pulls upstream artifacts directly from ParadeDB and produces a local image that never leaves their machine. Gobby ships a build recipe, not a binary; AGPL distribution responsibility stays with ParadeDB.
 
-CLI surface mirrors existing Qdrant / Neo4j installers:
+**Why not `paradedb/paradedb:latest`.** That image bundles pg_analytics and pg_cron (both unused by Gobby), expands footprint to ~2GB, and broadens attack surface. The local-build Dockerfile adds only pg_search on top of `postgres:17`, keeping footprint close to stock Postgres (~600MB) and keeping Gobby-controlled version pinning.
 
-- `gobby postgres install`
-- `gobby postgres status`
-- `gobby postgres uninstall`
+#### Native mode
+
+Skips compose entirely. Installer detects platform and:
+
+- **Debian/Ubuntu (x86_64 + arm64)**: fetches the same upstream pg_search `.deb` with the same SHA pin used by the Dockerfile, prompts for sudo, runs `dpkg -i`, and probes `CREATE EXTENSION pg_search` against a user-provided or auto-discovered DSN.
+- **macOS (Apple Silicon + Intel)**: prints "macOS native pg_search isn't supported upstream — use `--mode docker` (recommended) or follow the manual source-build runbook at `docs/runbooks/postgres-native-macos.md`." Exits non-zero.
+- **Other Linux (RHEL/Fedora/Arch/Alpine)**: prints the source-build steps (cargo-pgrx + Postgres headers) and exits non-zero with the same "use `--mode docker`" recommendation.
+
+The installer never silently downgrades Docker → native or native → docker; the user opts into a mode explicitly.
+
+#### External mode (BYO DSN)
+
+`gobby postgres install --mode external --dsn <url>` skips compose, skips installer-side pg_search install, and only writes bootstrap fields. It probes `CREATE EXTENSION IF NOT EXISTS pg_search`; on failure it exits with the upstream install command for the URL's reported `version()` platform. The user is responsible for keeping the extension installed; Gobby's role is to refuse to start against a Postgres without it.
+
+#### CLI surface
+
+Mirrors existing Qdrant / Neo4j installers, with the new `--mode` / `--dsn` flags:
+
+- `gobby postgres install [--mode {docker,native,external}] [--dsn <url>]` — default `docker`
+- `gobby postgres status` — reports active mode + extension presence
+- `gobby postgres uninstall` — Docker mode tears down the compose profile and offers volume deletion; native mode prints the manual uninstall steps; external mode is a no-op against the database (only clears bootstrap fields)
 - `gobby postgres migrate-from-sqlite`
 - `gobby postgres activate` / `deactivate`
 
@@ -89,6 +118,7 @@ Backend selection must happen before DB-backed config is available. Bootstrap-le
 - `hub_backend`: `"sqlite"` or `"postgres"`
 - `database_url`: psycopg v3 DSN used when `hub_backend=postgres`
 - `database_path`: legacy SQLite path used when `hub_backend=sqlite` and during one-shot import
+- `postgres_install_mode`: `"docker"`, `"native"`, or `"external"` — recorded by the installer so `uninstall` and `status` know which teardown path to use; absent until `gobby postgres install` runs
 
 Rules:
 
@@ -186,20 +216,58 @@ Explicitly out of scope for this plan (tracked as follow-ups for Gobby Pro):
 - `gobby export` / `gobby import` for moving a user's Gobby state between machines — that's a Gobby Pro sync feature, not part of this hub-storage migration.
 - OS keyring integration for Postgres credentials: replace inline `database_url` storage in `bootstrap.yaml` with a keyring-backed reference plus a migration step that rewrites existing plaintext entries.
 
+## Phase 0: Re-flatten SQLite baseline
+
+**Goal**: collapse migration 220 into the baseline so the Postgres work begins from a clean prerequisite state — empty `MIGRATIONS`, single source-of-truth DDL, no inline-SQL post-baseline entries to special-case in Phase 3.7 or Phase 4.1.
+
+This phase is a hard prerequisite gate. Phase 1 cannot start until Phase 0 lands and ships in a release; the post-Phase-0 baseline is what Phase 4.2's translator reads.
+
+### 0.1 Fold migration 220 into the SQLite baseline [category: refactor]
+
+Target: `src/gobby/storage/baseline_schema.sql`, `src/gobby/storage/_migration_registry.py`, `src/gobby/storage/migrations.py`
+
+Steps:
+
+1. **Apply the column to baseline DDL.** In `baseline_schema.sql`, locate the `CREATE TABLE agent_runs (...)` statement and add `terminal_reason TEXT` to the column list at the appropriate position (alongside the other nullable text columns; not at the end if it would create a noisy diff for downstream readers — match the existing column-grouping convention in that table).
+2. **Empty the registry.** In `_migration_registry.py`, replace the `MIGRATIONS` list contents so it is the empty list:
+    ```python
+    MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
+    ```
+   Keep the type alias and the docstring; Phase 3.7 will widen the action type once the file-based runner lands.
+3. **Bump the version constant.** In `migrations.py`, set `BASELINE_VERSION = 221`. Update the constant's docstring/comment to reflect "post-Phase-0 flatten — folds v220 terminal_reason into baseline."
+4. **Schema fingerprint check.** Add a one-shot test that:
+    - applies the pre-Phase-0 chain (v219 baseline + migration 220) to a fresh in-memory SQLite database
+    - applies the post-Phase-0 baseline to a separate fresh in-memory SQLite database
+    - asserts `sqlite_master` rows match exactly across both (table DDL, index DDL, trigger DDL, view DDL — order-independent comparison via sorted set of `(type, name, sql)` tuples)
+    - asserts `schema_version` ends at 221 in the post-Phase-0 case
+
+   Test lives at `tests/storage/test_phase0_flatten.py`. It is a regression guard — once the baseline is updated and the test passes, the test stays in the suite as protection against future drift.
+5. **User-database upgrade path.** Existing user databases running at v220 (with the registry entry already applied) need a no-op upgrade to v221. Add a minimal post-baseline registration so the runner records the bump:
+    - In the new file-based runner (Phase 3.7), this becomes `migrations/221_phase0_flatten.sql` containing only `INSERT INTO schema_version(version) VALUES (221) ON CONFLICT DO NOTHING;`.
+    - Until Phase 3.7 lands, ship Phase 0 as: baseline at v221 *plus* a single inline-SQL entry in `MIGRATIONS` of the form `(221, "Phase 0 flatten marker", "INSERT INTO schema_version(version) VALUES (221) ON CONFLICT DO NOTHING")`. Yes, this temporarily re-adds one inline-SQL entry; it disappears at Phase 3.7 when the runner gains file-based loading. The alternative — bumping baseline without a registry marker — leaves v220 user databases unable to record the upgrade because the runner skips the baseline path on already-initialized databases.
+6. **Verification on existing databases.** Run the daemon against a copy of `~/.gobby/gobby-hub.db` checked into a fixture directory at v220. Confirm it upgrades cleanly to v221 without rewriting `agent_runs` data and without violating the existing `terminal_reason` column.
+
+Acceptance: the schema fingerprint test passes, fresh installs initialize at v221, existing v220 databases upgrade to v221 without data loss, and `MIGRATIONS` contains at most the single Phase-0 marker entry until Phase 3.7 supersedes it.
+
 ## Phase 1: PostgreSQL service and bootstrap support
 
 **Goal**: PostgreSQL runs as a first-class local service and bootstrap can select it before DB-backed config loads.
 
-### 1.1 Add `postgres` service to compose template [category: config]
+### 1.1 Add `postgres` service to compose template [category: config] (depends: Phase 0)
 
 Target: `src/gobby/data/docker-compose.services.yml`
 
-Add a `postgres` service alongside the existing `qdrant` and `neo4j` services:
+Add a `postgres` service alongside the existing `qdrant` and `neo4j` services. Compose uses a local-build `build:` directive so no Gobby-published image is required (see Service packaging > Docker mode for the licensing rationale):
 
 ```yaml
 services:
   postgres:
-    image: gobby/postgres:17-pgsearch
+    build:
+      context: ./postgres-pgsearch
+      args:
+        PG_SEARCH_VERSION: ${GOBBY_PG_SEARCH_VERSION:-0.17.0}
+        PG_SEARCH_SHA256: ${GOBBY_PG_SEARCH_SHA256}
+    image: gobby-postgres-local:17-pgsearch  # local tag only — never pushed
     container_name: gobby-postgres
     profiles: ["postgres", "all"]
     environment:
@@ -220,36 +288,111 @@ volumes:
   gobby_postgres_data:
 ```
 
-The image is built and published by task 1.4. Verification: `docker compose --profile postgres up -d postgres` succeeds and `pg_isready` exits 0 within 30s; `psql -c "CREATE EXTENSION pg_search"` inside the container succeeds.
+`PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` defaults live in the installer (task 1.2) so users running raw `docker compose up` without the installer still get a deterministic build. The Dockerfile body is task 1.4. Verification: `docker compose --profile postgres up -d postgres` builds the image on first run, `pg_isready` exits 0 within 30s; `psql -c "CREATE EXTENSION pg_search"` inside the container succeeds.
 
 ### 1.2 Add PostgreSQL installer, uninstaller, and status CLI [category: code] (depends: 1.1)
 
 Target: `src/gobby/cli/installers/postgres.py` (new), `src/gobby/cli/postgres.py` (new Click group)
 
-Mirror the functional pattern used by `src/gobby/cli/installers/qdrant.py` and `src/gobby/cli/installers/neo4j.py`. Do not invent a new installer base class. The installer brings up the compose profile, waits for health, and writes `database_url` plus related defaults into `~/.gobby/bootstrap.yaml`. `hub_backend` stays `sqlite` until explicit activation. Status reads `pg_isready` via `docker compose exec`. Uninstall removes the compose profile and offers volume deletion.
+Mirror the functional pattern used by `src/gobby/cli/installers/qdrant.py` and `src/gobby/cli/installers/neo4j.py`. Do not invent a new installer base class. The installer dispatches by mode and writes `database_url` plus related defaults into `~/.gobby/bootstrap.yaml`. `hub_backend` stays `sqlite` until explicit activation regardless of mode.
+
+Mode dispatch:
+
+| Mode | Action |
+|------|--------|
+| `docker` (default) | Bring up compose profile (`docker compose --profile postgres up -d`), wait for `pg_isready`, probe `CREATE EXTENSION IF NOT EXISTS pg_search`, write bootstrap defaults including `database_url` pointing at `localhost:${GOBBY_POSTGRES_PORT}`. |
+| `native` | Detect platform. Debian/Ubuntu: fetch upstream pg_search `.deb` (same SHA pin used in task 1.1's compose `args`), prompt for sudo, run `dpkg -i`, probe `CREATE EXTENSION pg_search` against `--dsn` (or auto-discovered local DSN if omitted), write bootstrap. macOS / non-Debian Linux: print platform-specific guidance referencing `docs/runbooks/postgres-native-*.md` and exit non-zero with a clear "use `--mode docker`" recommendation. |
+| `external` | Skip compose, skip pg_search install. Require `--dsn`. Probe `CREATE EXTENSION IF NOT EXISTS pg_search`; on failure exit non-zero with the platform-specific upstream install command derived from the target server's `version()` output. On success, write bootstrap. |
 
 ```python
 # src/gobby/cli/installers/postgres.py
-def install_postgres(*, gobby_home: Path | None = None, port: int = 60891) -> dict[str, Any]:
+from typing import Literal
+
+InstallMode = Literal["docker", "native", "external"]
+
+
+def install_postgres(
+    *,
+    mode: InstallMode = "docker",
+    dsn: str | None = None,
+    gobby_home: Path | None = None,
+    port: int = 60891,
+) -> dict[str, Any]:
+    """Dispatches on mode. Returns a structured result for rendering."""
+    if mode == "docker":
+        return _install_docker(gobby_home=gobby_home, port=port)
+    if mode == "native":
+        return _install_native(gobby_home=gobby_home, dsn=dsn)
+    if mode == "external":
+        if not dsn:
+            raise click.ClickException("--mode external requires --dsn")
+        return _install_external(gobby_home=gobby_home, dsn=dsn)
+    raise click.ClickException(f"Unknown install mode: {mode}")
+
+
+def _install_docker(*, gobby_home, port):
     compose_file = _ensure_unified_compose(...)
-    # docker compose --profile postgres up -d --remove-orphans
+    # docker compose --profile postgres up -d --remove-orphans (builds locally on first run)
     # wait for pg_isready
-    # write bootstrap defaults, including database_url
+    # probe CREATE EXTENSION IF NOT EXISTS pg_search
+    # write bootstrap defaults including database_url
     ...
 
-def uninstall_postgres(*, gobby_home: Path | None = None, remove_data: bool = False) -> dict[str, Any]:
-    # docker compose --profile postgres down
-    # optionally remove volume
+
+def _install_native(*, gobby_home, dsn):
+    platform = _detect_platform()
+    if platform.os == "linux" and platform.distro in ("debian", "ubuntu"):
+        return _install_native_debian(gobby_home=gobby_home, dsn=dsn)
+    if platform.os == "darwin":
+        raise click.ClickException(
+            "macOS native pg_search is not supported upstream. "
+            "Use `gobby postgres install --mode docker` (recommended), "
+            "or follow the manual source-build runbook at "
+            "docs/runbooks/postgres-native-macos.md, then re-run with --mode external."
+        )
+    raise click.ClickException(
+        f"Native install on {platform.distro} requires building pg_search from source. "
+        f"See docs/runbooks/postgres-native-source.md, or use `--mode docker` (recommended)."
+    )
+
+
+def _install_external(*, gobby_home, dsn):
+    # connect with psycopg, probe CREATE EXTENSION IF NOT EXISTS pg_search
+    # on missing extension, format upstream install command from server version()
+    # on success, write bootstrap.yaml with database_url=<dsn>
     ...
+
+
+def uninstall_postgres(
+    *,
+    mode: InstallMode = "docker",
+    gobby_home: Path | None = None,
+    remove_data: bool = False,
+) -> dict[str, Any]:
+    if mode == "docker":
+        # docker compose --profile postgres down
+        # optionally remove volume
+        ...
+    elif mode == "native":
+        # print manual uninstall steps; do not run apt-get remove without explicit confirmation
+        ...
+    elif mode == "external":
+        # no-op against the database; clear bootstrap fields only
+        ...
+    ...
+
 
 async def get_postgres_status(...) -> dict[str, Any]:
-    # report installed / healthy / configured DSN host+db (not password)
+    # report active mode (read from bootstrap), extension presence, healthy/unhealthy,
+    # configured DSN host+db (not password)
     ...
 ```
 
 CLI wiring in `src/gobby/cli/postgres.py`:
 
 ```python
+import asyncio
+
 import click
 
 @click.group("postgres")
@@ -257,8 +400,20 @@ def postgres_cli() -> None:
     """Manage the local PostgreSQL hub database."""
 
 @postgres_cli.command("install")
-def install_cmd() -> None:
-    result = install_postgres()
+@click.option(
+    "--mode",
+    type=click.Choice(["docker", "native", "external"]),
+    default="docker",
+    show_default=True,
+    help="Install mode. docker is recommended.",
+)
+@click.option(
+    "--dsn",
+    default=None,
+    help="psycopg DSN. Required for --mode external; optional for --mode native.",
+)
+def install_cmd(mode: str, dsn: str | None) -> None:
+    result = install_postgres(mode=mode, dsn=dsn)
     _render_install_result(result)
 
 @postgres_cli.command("status")
@@ -267,17 +422,17 @@ def status_cmd() -> None:
 
 @postgres_cli.command("uninstall")
 def uninstall_cmd() -> None:
-    result = uninstall_postgres()
+    result = uninstall_postgres(mode=_active_install_mode())
     _render_uninstall_result(result)
 ```
 
-Register the group in `src/gobby/cli/__init__.py`.
+Register the group in `src/gobby/cli/__init__.py`. The `_active_install_mode()` helper reads the mode that was used at install time (recorded in `bootstrap.yaml` as `postgres_install_mode`) so uninstall does not require the user to remember.
 
-### 1.3 Extend bootstrap config with `hub_backend` and `database_url` [category: code] (depends: 1.2)
+### 1.3 Extend bootstrap config with `hub_backend`, `database_url`, and `postgres_install_mode` [category: code] (depends: 1.2)
 
 Target: `src/gobby/config/bootstrap.py`, `~/.gobby/bootstrap.yaml` schema, `src/gobby/runner.py::runner_init`
 
-Add two fields to `BootstrapConfig`:
+Add three fields to `BootstrapConfig`:
 
 ```python
 from dataclasses import dataclass
@@ -289,22 +444,24 @@ class BootstrapConfig:
 
     hub_backend: Literal["sqlite", "postgres"] = "sqlite"
     database_url: str | None = None  # psycopg v3 DSN; required when hub_backend=postgres
+    postgres_install_mode: Literal["docker", "native", "external"] | None = None
 ```
 
 Validation:
 
 - `hub_backend="postgres"` requires `database_url` non-empty
-- `hub_backend="sqlite"` tolerates `database_url=None`
+- `hub_backend="sqlite"` tolerates `database_url=None` and `postgres_install_mode=None`
+- `postgres_install_mode` is set by `gobby postgres install` and is `None` until then; bootstrap parsing accepts it absent
 - `database_url` is stored verbatim in `bootstrap.yaml` only during the overlap window; require `bootstrap.yaml` to be owner read/write only (`0600`), fail startup if that check fails, and complete the OS keyring migration in Phase 7 before cleanup is considered done
 - parse errors raise `BootstrapConfigError` with field-level messages
 
-Update `runner_init()` to branch on `hub_backend` when constructing the hub database. Do not allow DB-stored config to override bootstrap-level backend selection.
+Update `runner_init()` to branch on `hub_backend` when constructing the hub database. Do not allow DB-stored config to override bootstrap-level backend selection. `postgres_install_mode` is read by `gobby postgres uninstall` and `gobby postgres status` — runtime startup itself does not branch on install mode (the DSN already encodes everything the runtime needs).
 
-### 1.4 Build and publish `gobby/postgres:17-pgsearch` image [category: config] (depends: 1.1)
+### 1.4 Add local-build Dockerfile for the Docker mode [category: config] (depends: 1.1)
 
-Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), CI publish workflow
+Target: `src/gobby/data/postgres-pgsearch/Dockerfile` (new), CI smoke-test workflow
 
-Build a minimal Postgres image with pg_search added on top of `postgres:17`:
+Ship a Dockerfile that builds locally on the user's machine via the compose `build:` directive in task 1.1. **No registry push, no Gobby-published image, no GHCR.** The Dockerfile is a build recipe; the resulting image is local to the user and never leaves their machine. This keeps Gobby off the AGPL-distribution hook for pg_search — see "Why local build, not a published image" in the Service packaging section.
 
 ```dockerfile
 # src/gobby/data/postgres-pgsearch/Dockerfile
@@ -327,16 +484,16 @@ RUN apt-get update \
 
 ```
 
-The image build must pin an exact pg_search release artifact and checksum in the repo. Updating pg_search is a deliberate version bump, not "whatever ParadeDB ships today." The image must:
+The Dockerfile must pin an exact pg_search release artifact and checksum in the repo. Updating pg_search is a deliberate version bump, not "whatever ParadeDB ships today." Requirements:
 
-- Tag as `gobby/postgres:17-pgsearch` (and matching `:17-pgsearch-<semver>`)
-- Start PostgreSQL with `shared_preload_libraries=pg_search` via the service command or entrypoint configuration (for example `postgres -c shared_preload_libraries=pg_search`) so the preload requirement is explicit at runtime rather than hidden in a sample-file mutation
-- Pass `pg_isready` and `CREATE EXTENSION pg_search` smoke tests in the build pipeline
-- Publish to the Gobby image registry (GHCR or equivalent) on every release tag
-- Bump `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` together, verify the checksum against the upstream release artifact before merge, and rerun the Postgres smoke/search test suite before publish
-- Security checklist: monitor `pg_search` / ParadeDB advisories through GitHub security alerts or CVE feeds so future bumps are tracked intentionally
+- Tag locally as `gobby-postgres-local:17-pgsearch` via the compose `build:` directive's `image:` clause. **Never push to a registry** — not GHCR, not Docker Hub, not Gobby's image registry. Distribution stays with ParadeDB upstream.
+- Start PostgreSQL with `shared_preload_libraries=pg_search` via the service command or entrypoint configuration (for example `postgres -c shared_preload_libraries=pg_search`) so the preload requirement is explicit at runtime rather than hidden in a sample-file mutation.
+- CI builds the Dockerfile on every PR that touches `src/gobby/data/postgres-pgsearch/`, runs `pg_isready` and `CREATE EXTENSION pg_search` smoke tests, and discards the resulting image. Build-only verification; no `docker push`.
+- Bump `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` together. The PR template for pg_search bumps requires (a) the SHA verified against the upstream release artifact and (b) a green CI run against the Postgres smoke/search test suite.
+- Security checklist: monitor `pg_search` / ParadeDB advisories through GitHub security alerts or CVE feeds so future bumps are tracked intentionally.
+- The same SHA pin is used by task 1.2's native-Debian/Ubuntu installer when fetching the upstream `.deb` directly. Single source of truth for "which pg_search version Gobby supports right now."
 
-CI task publishes image on git tag. License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is included in the image via `/usr/share/doc/pg_search/copyright` already present in the .deb.
+License notice (AGPL-3.0 for pg_search, PostgreSQL license for Postgres) is preserved in the locally built image via `/usr/share/doc/pg_search/copyright` already present in the upstream `.deb`. Because Gobby never distributes the resulting image, AGPL distribution obligations stay with ParadeDB.
 
 ### 1.5 Add `gobby postgres activate` and `deactivate` commands [category: code] (depends: 1.3, 1.4)
 
@@ -873,15 +1030,15 @@ For Postgres, `NOW()` returns `TIMESTAMPTZ`. For SQLite during overlap, `NOW()` 
 
 Target: `src/gobby/storage/_migration_registry.py`, `src/gobby/storage/migration_helpers.py`, lint rule under `src/gobby/storage/`
 
-**Scope after flattening**: the only Python callables remaining in the migration path are the five FTS5 setup helpers in `migration_helpers.py` (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_skills_fts`, `_setup_memories_fts`). These are SQLite-specific by construction — they set up FTS5 virtual tables and triggers that have no Postgres equivalent; `pg_search` BM25 indexes replace them in task 4.4, and the helpers themselves are deleted in Phase 7.2.
+**Scope after Phase 0 + flattening**: the only Python callables remaining in the migration path are the five FTS5 setup helpers in `migration_helpers.py` (`_setup_code_symbols_fts`, `_setup_code_content_fts`, `_setup_tasks_fts`, `_setup_skills_fts`, `_setup_memories_fts`). These are SQLite-specific by construction — they set up FTS5 virtual tables and triggers that have no Postgres equivalent; `pg_search` BM25 indexes replace them in task 4.4, and the helpers themselves are deleted in Phase 7.2.
 
 This task therefore becomes a **verification pass**:
 
-1. Confirm `_migration_registry.MIGRATIONS` contains no callable entries and remains empty through cutover. If a post-baseline SQLite migration lands before cutover, its action must be a `str` pointing at a shared `.sql` file, not a Python callable.
+1. Confirm `_migration_registry.MIGRATIONS` contains no callable entries. Phase 0 emptied the registry; entries that land between Phase 0 and cutover must use the post-3.7 file-based shape (`migrations/NNN_name.sql`), not callables and not inline SQL strings.
 2. Confirm `migration_helpers.py` is referenced only from `migrations._apply_baseline` (the SQLite-only path) and the FTS5 backend code. It must never be invoked from the Postgres path.
-3. Add a lint in `src/gobby/storage/` that fails on any new `Callable` entry added to `MIGRATIONS`.
+3. Add a lint in `src/gobby/storage/` that fails on any new `Callable` entry added to `MIGRATIONS` and on any inline-SQL `str` entry post-3.7 (file path entries only).
 
-No new `.sql` files are produced by this task. The prior-revision scope (port `_migrate_claimed_by_session_id` and friends to SQL) is obsolete — those callables were folded into the v219 baseline and no longer exist.
+No new `.sql` files are produced by this task. The prior-revision scope (port `_migrate_claimed_by_session_id` and friends to SQL) is obsolete — those callables were folded into the original v219 baseline by commit `4be00747a` and no longer exist.
 
 ### 4.2 Add `postgres_baseline_schema.sql` [category: code] (depends: 3.7)
 
@@ -1336,9 +1493,9 @@ Target: `CLAUDE.md`, `README.md`, `docs/`, in-code comments referencing SQLite a
 
 New commands:
 
-- `gobby postgres install`
+- `gobby postgres install [--mode {docker,native,external}] [--dsn <url>]` — default `docker`
 - `gobby postgres status`
-- `gobby postgres uninstall`
+- `gobby postgres uninstall` — uses `postgres_install_mode` from bootstrap to pick the teardown path
 - `gobby postgres migrate-from-sqlite`
 - `gobby postgres activate` / `deactivate`
 
@@ -1346,6 +1503,7 @@ Bootstrap fields:
 
 - `hub_backend` (new; `sqlite` | `postgres`)
 - `database_url` (new; psycopg v3 DSN)
+- `postgres_install_mode` (new; `docker` | `native` | `external`; recorded by `install`, read by `uninstall` and `status`)
 - `database_path` (retained for SQLite import and short-window rollback; removed in Phase 7)
 
 Env vars (new; Rust-portable):
@@ -1363,12 +1521,15 @@ Type changes:
 
 ## Acceptance Criteria
 
-- PostgreSQL installs via `gobby postgres install` with the same ergonomics as the Qdrant / Neo4j installers.
+- PostgreSQL installs via `gobby postgres install` with the same ergonomics as the Qdrant / Neo4j installers, across all three install modes (`docker`, `native`, `external`).
+- The Docker mode uses a local-build compose `build:` directive — no Gobby-published Postgres image, no GHCR push. Gobby ships the Dockerfile; the user's machine builds the image and pulls `pg_search.deb` from upstream ParadeDB releases at build time.
+- Native mode (Debian/Ubuntu) auto-installs `pg_search` from the same upstream `.deb`. Native mode (other Linux / macOS) prints platform-specific guidance and exits with a clear "use `--mode docker` (recommended)" message.
+- External mode (`gobby postgres install --mode external --dsn <url>`) skips compose entirely, writes only the bootstrap fields, and probes `CREATE EXTENSION IF NOT EXISTS pg_search`; failure to load the extension exits non-zero with the manual install command for the user's platform.
 - Bootstrap selects the hub backend before DB-backed config loads; incorrect combinations are rejected with clear error messages.
 - The daemon boots and runs against PostgreSQL without opening any SQLite file.
 - `gobby postgres migrate-from-sqlite` imports an existing hub database with deterministic row-count, FK integrity, content-hash, and sequence reseed checks — all exit 0.
 - Search behavior on tasks, memories, skills, and code index uses BM25 ranking on both SQLite (FTS5) and Postgres (pg_search). Representative-query top-N ordering matches across backends during the overlap and continues to return expected results post-cutover.
-- `gobby/postgres:17-pgsearch` image is built, passes `CREATE EXTENSION pg_search` smoke tests, and is published to the Gobby image registry on release.
+- The local-build Dockerfile passes `pg_isready` and `CREATE EXTENSION pg_search` smoke tests in CI on every PR that touches it. Pin updates (PG_SEARCH_VERSION + SHA256) are gated on those smoke tests and a green search test suite.
 - The test suite runs against PostgreSQL via compose + `DATABASE_URL` with schema-per-xdist-worker plus test-scoped schema reset isolation; every Phase 3–5 task is covered by tests running against the real backend.
 - All **post-baseline** migration files are pure `.sql` with `$1`-style placeholders. The five SQLite-only FTS5 setup helpers in `migration_helpers.py` persist through the overlap window as SQLite-specific scaffolding and are deleted in Phase 7.2 with the rest of the SQLite runtime. Runtime DSN bootstrap is explicit and pool/connection tuning is env-var-driven.
 - Fresh installs initialize PostgreSQL directly; `~/.gobby/gobby-hub.db` is not created.
@@ -1379,16 +1540,11 @@ Type changes:
 ## Assumptions
 
 - Scope is the full hub database, not a partial migration.
-- PostgreSQL runs in the same compose project as Qdrant and Neo4j; each stays in its own container.
+- Docker mode is the recommended install path. PostgreSQL runs in the same compose project as Qdrant and Neo4j; each stays in its own container. Native and external modes exist for users who can't or won't run Docker, and are tested on Debian/Ubuntu (native) and against ad-hoc DSNs (external) but not at the same depth as Docker mode.
 - Raw SQL remains the storage implementation style for this migration.
 - There are no external users, so a cold cutover is preferable to dual-write rollout complexity.
 - The compatibility layer (`SqliteHubDatabase`, dialect branches) is temporary scaffolding removed in Phase 7.
 - Qdrant and Neo4j remain supporting stores; they are not replaced by PostgreSQL as part of this work.
 - The Python codebase will be ported to Rust in a later effort. This plan biases toward choices that survive the port unchanged.
+- Phase 0 ships and reaches users before Phase 1 starts. Users on pre-v221 SQLite databases run a normal Gobby release once to upgrade, then participate in the Postgres migration from the v221 baseline.
 
-## Task Mapping
-
-<!-- Updated after `/gobby expand <this-file>` creates tasks -->
-
-| Plan Item | Task Ref | Status |
-|-----------|----------|--------|
