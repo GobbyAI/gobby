@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ class TerminalPromptMonitor:
         loop_tracker: LoopTracker,
         get_tmux_config: Callable[[], TmuxConfig],
         handle_looping_agent: Callable[[AgentRun], Awaitable[None]],
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._get_active_terminal_runs = get_active_terminal_runs
         self._get_tmux = get_tmux
@@ -37,6 +39,16 @@ class TerminalPromptMonitor:
         self._loop_tracker = loop_tracker
         self._get_tmux_config = get_tmux_config
         self._handle_looping_agent = handle_looping_agent
+        self._monotonic = monotonic
+        self._last_enter_sent_at: dict[str, float] = {}
+
+    def mark_enter_sent(self, run_id: str) -> None:
+        """Record that this run just received an automatic terminal keypress."""
+        self._last_enter_sent_at[run_id] = self._monotonic()
+
+    def clear(self, run_id: str) -> None:
+        """Remove prompt-monitor state for a completed or cleaned-up run."""
+        self._last_enter_sent_at.pop(run_id, None)
 
     async def check_trust_prompts(self) -> int:
         """Check for folder trust prompts and auto-dismiss them."""
@@ -58,6 +70,7 @@ class TerminalPromptMonitor:
                         PromptDetector.TRUST_DISMISS_KEYS,
                     )
                     if sent:
+                        self.mark_enter_sent(run.id)
                         self._prompt_detector.mark_dismissed(run.id)
                         logger.info(
                             "Auto-dismissed trust prompt for agent %s (trust folder)",
@@ -97,6 +110,7 @@ class TerminalPromptMonitor:
                             PromptDetector.LOOP_DISMISS_KEYS,
                         )
                         if sent:
+                            self.mark_enter_sent(run.id)
                             logger.info(
                                 "Auto-dismissed loop prompt for agent %s (%s/%s)",
                                 run.id,
@@ -130,13 +144,49 @@ class TerminalPromptMonitor:
 
                 sent = await self._get_tmux().send_keys(
                     tmux_name,
-                    PromptDetector.APPROVAL_DISMISS_KEYS,
+                    PromptDetector.ENTER_KEY,
+                    literal=False,
                 )
                 if sent:
+                    self.mark_enter_sent(run.id)
                     self._prompt_detector.mark_approval_prompt_dismissed(run.id, pane_output)
                     logger.info("Auto-entered approval prompt for agent %s", run.id)
                     handled += 1
             except Exception as e:
                 logger.warning("Error checking approval prompt for agent %s: %s", run.id, e)
+
+        return handled
+
+    async def check_periodic_enters(self) -> int:
+        """Periodically send Enter to active spawned-agent terminal panes."""
+        config = self._get_tmux_config()
+        if not config.auto_enter_agent_terminals:
+            return 0
+
+        runs = await asyncio.to_thread(self._get_active_terminal_runs)
+        now = self._monotonic()
+        interval = config.auto_enter_agent_interval_seconds
+
+        handled = 0
+        for run in runs:
+            tmux_name = run.tmux_session_name
+            assert tmux_name is not None
+
+            last_sent = self._last_enter_sent_at.get(run.id)
+            if last_sent is not None and now - last_sent < interval:
+                continue
+
+            try:
+                sent = await self._get_tmux().send_keys(
+                    tmux_name,
+                    PromptDetector.ENTER_KEY,
+                    literal=False,
+                )
+                if sent:
+                    self._last_enter_sent_at[run.id] = now
+                    logger.info("Sent periodic Enter to agent terminal %s", run.id)
+                    handled += 1
+            except Exception as e:
+                logger.warning("Error sending periodic Enter to agent %s: %s", run.id, e)
 
         return handled

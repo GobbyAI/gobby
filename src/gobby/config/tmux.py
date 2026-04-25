@@ -72,3 +72,12 @@ class TmuxConfig(BaseModel):
         default=True,
         description="Automatically send Enter for spawned-agent approval prompts.",
     )
+    auto_enter_agent_terminals: bool = Field(
+        default=True,
+        description="Periodically send Enter to active spawned-agent terminal panes.",
+    )
+    auto_enter_agent_interval_seconds: int = Field(
+        default=30,
+        ge=1,
+        description="Minimum seconds between periodic Enter keypresses per agent terminal.",
+    )

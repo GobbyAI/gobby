@@ -263,6 +263,7 @@ class AgentLifecycleMonitor:
                 pass
 
         self._prompt_detector.clear(run.id)
+        self._terminal_prompt_monitor.clear(run.id)
         self._stall_classifier.clear(run.id)
         self._loop_tracker.clear(run.id)
 
@@ -354,6 +355,7 @@ class AgentLifecycleMonitor:
                 await self.check_trust_prompts()  # Fast unblock before other checks
                 await self.check_loop_prompts()  # Dismiss loop detection prompts
                 await self.check_approval_prompts()  # Approval prompts are lowest precedence
+                await self.check_periodic_enters()  # Provider-agnostic terminal nudge
                 await self.check_unhealthy_agents()
                 await self.expire_terminal_run_sessions()
                 await self.check_initialization_timeout()
@@ -404,6 +406,10 @@ class AgentLifecycleMonitor:
     async def check_approval_prompts(self) -> int:
         """Check for approval prompts and send Enter when explicitly permitted."""
         return await self._terminal_prompt_monitor.check_approval_prompts()
+
+    async def check_periodic_enters(self) -> int:
+        """Periodically send Enter to active autonomous terminal agents."""
+        return await self._terminal_prompt_monitor.check_periodic_enters()
 
     async def _cleanup_agent(
         self,

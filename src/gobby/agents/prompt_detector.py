@@ -72,6 +72,7 @@ class PromptDetector:
 
     # Key sequence to approve prompts whose visible text says Enter approves/proceeds.
     APPROVAL_DISMISS_KEYS = "\n"
+    ENTER_KEY = "Enter"
 
     def __init__(self) -> None:
         self._dismissed: set[str] = set()

@@ -1,6 +1,6 @@
 """Additional tests for AgentLifecycleMonitor."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -455,7 +455,8 @@ class TestApprovalPromptAutoEnter:
         assert handled == 1
         mock_tmux.send_keys.assert_called_once_with(
             "gobby-approval",
-            PromptDetector.APPROVAL_DISMISS_KEYS,
+            PromptDetector.ENTER_KEY,
+            literal=False,
         )
 
     @pytest.mark.asyncio
@@ -478,7 +479,8 @@ class TestApprovalPromptAutoEnter:
         assert handled == 1
         mock_tmux.send_keys.assert_called_once_with(
             "gobby-approval",
-            PromptDetector.APPROVAL_DISMISS_KEYS,
+            PromptDetector.ENTER_KEY,
+            literal=False,
         )
 
     @pytest.mark.asyncio
@@ -551,6 +553,136 @@ class TestApprovalPromptAutoEnter:
 
         assert handled == 0
         mock_tmux.capture_pane.assert_not_called()
+        mock_tmux.send_keys.assert_not_called()
+
+
+class TestPeriodicAgentTerminalEnter:
+    """Tests for provider-agnostic autonomous terminal Enter heartbeat."""
+
+    @staticmethod
+    def _run(
+        run_id: str = "run-periodic",
+        tmux_session_name: str | None = "gobby-periodic",
+        provider: str = "codex",
+    ) -> AgentRun:
+        return AgentRun(
+            id=run_id,
+            parent_session_id="p",
+            provider=provider,
+            prompt="p",
+            status="running",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+            tmux_session_name=tmux_session_name,
+            pid=12345,
+        )
+
+    @staticmethod
+    def _monitor(
+        mock_run_mgr: MagicMock,
+        mock_tmux: AsyncMock,
+        *,
+        enabled: bool = True,
+        interval: int = 30,
+    ) -> AgentLifecycleMonitor:
+        from gobby.config.tmux import TmuxConfig
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            tmux_config=TmuxConfig(
+                auto_enter_agent_terminals=enabled,
+                auto_enter_agent_interval_seconds=interval,
+            ),
+        )
+        monitor._tmux = mock_tmux
+        monitor._terminal_prompt_monitor._get_tmux = lambda: mock_tmux
+        return monitor
+
+    @pytest.mark.asyncio
+    async def test_sends_enter_to_all_active_terminal_providers(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [
+            self._run(run_id="run-codex", tmux_session_name="gobby-codex", provider="codex"),
+            self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
+            self._run(run_id="run-gemini", tmux_session_name="gobby-gemini", provider="gemini"),
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 3
+        assert mock_tmux.send_keys.call_args_list == [
+            call("gobby-codex", PromptDetector.ENTER_KEY, literal=False),
+            call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
+            call("gobby-gemini", PromptDetector.ENTER_KEY, literal=False),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_respects_interval_per_run(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.send_keys.return_value = True
+        current_time = 100.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: current_time
+
+        handled_1 = await monitor.check_periodic_enters()
+        current_time = 120.0
+        handled_2 = await monitor.check_periodic_enters()
+        current_time = 131.0
+        handled_3 = await monitor.check_periodic_enters()
+
+        assert (handled_1, handled_2, handled_3) == (1, 0, 1)
+        assert mock_tmux.send_keys.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_approval_prompt_enter_defers_periodic_enter(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = (
+            "Approval required\nPress Enter to approve command A\n"
+        )
+        mock_tmux.send_keys.return_value = True
+        current_time = 100.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: current_time
+
+        approval_handled = await monitor.check_approval_prompts()
+        periodic_handled = await monitor.check_periodic_enters()
+
+        assert approval_handled == 1
+        assert periodic_handled == 0
+        mock_tmux.send_keys.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_can_be_disabled(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux, enabled=False)
+        mock_run_mgr.list_active.return_value = [self._run()]
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 0
+        mock_tmux.send_keys.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_ignores_runs_without_tmux(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [
+            self._run(run_id="run-no-tmux", tmux_session_name=None)
+        ]
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 0
         mock_tmux.send_keys.assert_not_called()
 
 
