@@ -438,6 +438,7 @@ class LocalAgentRunManager:
         run_id: str,
         turns_used: int = 0,
         error: str = "Execution timed out",
+        tool_calls_count: int = 0,
     ) -> AgentRun | None:
         """Mark agent run as timed out."""
         now = datetime.now(UTC).isoformat()
@@ -447,13 +448,14 @@ class LocalAgentRunManager:
             SET status = 'timeout',
                 error = ?,
                 terminal_reason = NULL,
+                tool_calls_count = ?,
                 turns_used = ?,
                 completed_at = ?,
                 updated_at = ?
             WHERE id = ?
               AND status IN ('pending', 'running')
             """,
-            (error, turns_used, now, now, run_id),
+            (error, tool_calls_count, turns_used, now, now, run_id),
         )
         if not (cursor.rowcount or 0):
             return None
@@ -765,68 +767,72 @@ class LocalAgentRunManager:
         Returns:
             Number of runs timed out.
         """
-        now = datetime.now(UTC).isoformat()
-
-        # Runs with explicit timeout_seconds
-        cursor1 = self.db.execute(
+        stale_runs = self.db.fetchall(
             """
-            UPDATE agent_runs
-            SET status = 'timeout',
-                error = 'Exceeded timeout (' || CAST(timeout_seconds AS INTEGER) || 's)',
-                completed_at = ?,
-                updated_at = ?
-            WHERE status = 'running'
-            AND timeout_seconds IS NOT NULL
-            AND (julianday('now') - julianday(started_at)) * 86400 > timeout_seconds
-            """,
-            (now, now),
-        )
-        count1 = cursor1.rowcount or 0
-
-        # Runs without explicit timeout — use default
-        cursor2 = self.db.execute(
-            """
-            UPDATE agent_runs
-            SET status = 'timeout',
-                error = 'Exceeded default timeout (' || ? || 'm)',
-                completed_at = ?,
-                updated_at = ?
-            WHERE status = 'running'
-            AND timeout_seconds IS NULL
-            AND datetime(started_at) < datetime('now', 'utc', ? || ' minutes')
-            """,
-            (default_timeout_minutes, now, now, f"-{default_timeout_minutes}"),
-        )
-        count2 = cursor2.rowcount or 0
-
-        count = count1 + count2
-
-        # Expire sessions for runs we just timed out
-        if count > 0:
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET status = 'expired',
-                    updated_at = ?
-                WHERE status IN ('active', 'paused')
-                AND (
-                    agent_run_id IN (
-                        SELECT id FROM agent_runs
-                        WHERE status = 'timeout' AND completed_at = ?
-                    )
-                    OR id IN (
-                        SELECT child_session_id FROM agent_runs
-                        WHERE status = 'timeout'
-                        AND completed_at = ?
-                        AND child_session_id IS NOT NULL
-                    )
-                )
-                """,
-                (now, now, now),
+            WITH run_activity AS (
+                SELECT
+                    ar.id,
+                    ar.timeout_seconds,
+                    COALESCE(child.updated_at, ar.updated_at, ar.started_at) AS last_activity_at,
+                    COALESCE(child.tool_call_count, parent.tool_call_count, ar.tool_calls_count, 0)
+                        AS tool_calls_count,
+                    COALESCE(child.turn_count, parent.turn_count, ar.turns_used, 0) AS turns_used
+                FROM agent_runs ar
+                LEFT JOIN sessions child ON child.id = ar.child_session_id
+                LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
+                WHERE ar.status = 'running'
             )
-            logger.info(f"Timed out {count} stale agent runs ({count1} explicit, {count2} default)")
+            SELECT
+                id,
+                timeout_seconds,
+                tool_calls_count,
+                turns_used
+            FROM run_activity
+            WHERE (
+                timeout_seconds IS NOT NULL
+                AND (julianday('now') - julianday(last_activity_at)) * 86400 > timeout_seconds
+            )
+            OR (
+                timeout_seconds IS NULL
+                AND datetime(last_activity_at) < datetime('now', 'utc', ? || ' minutes')
+            )
+            """,
+            (f"-{default_timeout_minutes}",),
+        )
 
-        return count
+        explicit_count = 0
+        default_count = 0
+        timed_out = 0
+        for row in stale_runs:
+            timeout_seconds = row["timeout_seconds"]
+            error = (
+                f"Exceeded timeout ({int(timeout_seconds)}s)"
+                if timeout_seconds is not None
+                else f"Exceeded default timeout ({default_timeout_minutes}m)"
+            )
+            updated = self.timeout(
+                row["id"],
+                turns_used=row["turns_used"] or 0,
+                error=error,
+                tool_calls_count=row["tool_calls_count"] or 0,
+            )
+            if updated is None:
+                continue
+            timed_out += 1
+            if timeout_seconds is not None:
+                explicit_count += 1
+            else:
+                default_count += 1
+
+        if timed_out:
+            logger.info(
+                "Timed out %s stale agent runs (%s explicit, %s default)",
+                timed_out,
+                explicit_count,
+                default_count,
+            )
+
+        return timed_out
 
     def cleanup_stale_pending_runs(self, timeout_minutes: int = 60) -> int:
         """

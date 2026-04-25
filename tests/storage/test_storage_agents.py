@@ -459,11 +459,12 @@ class TestLocalAgentRunManager:
         )
         agent_manager.start(agent_run.id)
 
-        timed_out = agent_manager.timeout(agent_run.id, turns_used=7)
+        timed_out = agent_manager.timeout(agent_run.id, turns_used=7, tool_calls_count=3)
 
         assert timed_out is not None
         assert timed_out.status == "timeout"
         assert timed_out.error == "Execution timed out"
+        assert timed_out.tool_calls_count == 3
         assert timed_out.turns_used == 7
         assert timed_out.completed_at is not None
 
@@ -482,6 +483,7 @@ class TestLocalAgentRunManager:
 
         timed_out = agent_manager.timeout(agent_run.id)
 
+        assert timed_out.tool_calls_count == 0
         assert timed_out.turns_used == 0
 
     def test_timeout_expires_child_session(
@@ -977,13 +979,26 @@ class TestLocalAgentRunManager:
     def test_cleanup_stale_runs(
         self,
         agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
         sample_session: dict,
     ) -> None:
         """Test cleaning up stale running agent runs."""
+        child_session = session_manager.register(
+            external_id="stale-run-child",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        session_manager.update_stats(child_session.id, tool_call_count=9, turn_count=4)
+        agent_manager.db.execute(
+            "UPDATE sessions SET updated_at = datetime('now', '-40 minutes') WHERE id = ?",
+            (child_session.id,),
+        )
         run1 = agent_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
             prompt="Stale run",
+            child_session_id=child_session.id,
         )
         agent_manager.start(run1.id)
 
@@ -999,7 +1014,47 @@ class TestLocalAgentRunManager:
         cleaned = agent_manager.get(run1.id)
         assert cleaned.status == "timeout"
         assert cleaned.error == "Exceeded default timeout (30m)"
+        assert cleaned.tool_calls_count == 9
+        assert cleaned.turns_used == 4
         assert cleaned.completed_at is not None
+
+    def test_cleanup_stale_runs_skips_active_child_session(
+        self,
+        agent_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+    ) -> None:
+        """Active child session heartbeat prevents default stale timeout."""
+        child_session = session_manager.register(
+            external_id="fresh-run-child",
+            machine_id="machine-1",
+            source="claude",
+            project_id=sample_session["project_id"],
+        )
+        session_manager.update_stats(child_session.id, tool_call_count=5, turn_count=2)
+        run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Fresh child run",
+            child_session_id=child_session.id,
+        )
+        agent_manager.start(run.id)
+        agent_manager.db.execute(
+            """
+            UPDATE agent_runs
+            SET started_at = datetime('now', '-35 minutes'),
+                updated_at = datetime('now', '-35 minutes')
+            WHERE id = ?
+            """,
+            (run.id,),
+        )
+
+        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+
+        assert count == 0
+        refreshed = agent_manager.get(run.id)
+        assert refreshed is not None
+        assert refreshed.status == "running"
 
     def test_cleanup_stale_runs_no_stale(
         self,
@@ -1036,15 +1091,24 @@ class TestLocalAgentRunManager:
 
         # Backdate
         agent_manager.db.execute(
-            "UPDATE agent_runs SET started_at = datetime('now', '-35 minutes') WHERE id = ?",
+            """
+            UPDATE agent_runs
+            SET started_at = datetime('now', '-35 minutes'),
+                updated_at = datetime('now', '-35 minutes')
+            WHERE id = ?
+            """,
             (run.id,),
         )
 
         with patch("gobby.storage.agents.logger") as mock_logger:
             count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
             assert count == 1
-            mock_logger.info.assert_called_once()
-            assert "Timed out 1 stale agent runs" in mock_logger.info.call_args[0][0]
+            mock_logger.info.assert_called_once_with(
+                "Timed out %s stale agent runs (%s explicit, %s default)",
+                1,
+                0,
+                1,
+            )
 
     def test_cleanup_stale_runs_skips_non_running(
         self,
