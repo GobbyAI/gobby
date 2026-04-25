@@ -64,15 +64,15 @@ class WorkflowHookHandler:
             except RuntimeError:
                 pass
 
-        # Codex can omit tool_input on AFTER_TOOL. Track the prior BEFORE_TOOL
+        # Some CLIs omit tool_input on AFTER_TOOL. Track the prior BEFORE_TOOL
         # context so progressive-discovery and task observers still see parity.
-        self._codex_tool_context_lock = threading.Lock()
-        self._codex_tool_contexts: dict[str, list[dict[str, Any]]] = {}
-        self._codex_tool_context_by_id: dict[tuple[str, str], dict[str, Any]] = {}
+        self._tool_context_lock = threading.Lock()
+        self._tool_contexts: dict[str, list[dict[str, Any]]] = {}
+        self._tool_context_by_id: dict[tuple[str, str], dict[str, Any]] = {}
 
     @staticmethod
-    def _codex_tool_context_ids(data: dict[str, Any]) -> list[str]:
-        """Extract stable per-tool identifiers from Codex hook payloads."""
+    def _tool_context_ids(data: dict[str, Any]) -> list[str]:
+        """Extract stable per-tool identifiers from hook payloads."""
         identifiers: list[str] = []
         for key in (
             "tool_use_id",
@@ -91,8 +91,8 @@ class WorkflowHookHandler:
         return identifiers
 
     @staticmethod
-    def _needs_codex_tool_rehydration(data: dict[str, Any]) -> bool:
-        """Return True when a Codex AFTER_TOOL event lacks usable tool context."""
+    def _needs_tool_rehydration(data: dict[str, Any]) -> bool:
+        """Return True when an AFTER_TOOL event lacks usable tool context."""
         tool_name = data.get("tool_name")
         if not isinstance(tool_name, str) or not tool_name.strip():
             return True
@@ -107,9 +107,9 @@ class WorkflowHookHandler:
 
         return False
 
-    def _snapshot_codex_tool_context(self, data: dict[str, Any]) -> dict[str, Any] | None:
-        """Capture the Codex BEFORE_TOOL fields needed later on AFTER_TOOL."""
-        tool_name = data.get("tool_name")
+    def _snapshot_tool_context(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Capture BEFORE_TOOL fields needed later on AFTER_TOOL."""
+        tool_name = data.get("tool_name") or data.get("toolName")
         if not isinstance(tool_name, str) or not tool_name:
             return None
 
@@ -119,44 +119,62 @@ class WorkflowHookHandler:
             "mcp_server",
             "mcp_tool",
             "item_id",
+            "itemId",
             "tool_use_id",
+            "toolUseId",
             "tool_call_id",
+            "toolCallId",
             "call_id",
+            "callId",
+            "id",
         ):
             value = data.get(key)
             if value not in (None, ""):
                 snapshot[key] = deepcopy(value)
 
-        identifiers = self._codex_tool_context_ids(data)
+        identifiers = self._tool_context_ids(data)
         if identifiers:
             snapshot["_ids"] = identifiers
 
         return snapshot
 
-    def _remember_codex_tool_context(self, session_id: str, data: dict[str, Any]) -> None:
-        """Store Codex BEFORE_TOOL context until the matching AFTER_TOOL arrives."""
-        snapshot = self._snapshot_codex_tool_context(data)
+    @staticmethod
+    def _tool_context_session_key(source: SessionSource, session_id: str) -> str:
+        """Build a cache key that keeps CLI sources isolated."""
+        return f"{source.value}:{session_id}"
+
+    def _remember_tool_context(
+        self,
+        source: SessionSource,
+        session_id: str,
+        data: dict[str, Any],
+    ) -> None:
+        """Store BEFORE_TOOL context until the matching AFTER_TOOL arrives."""
+        snapshot = self._snapshot_tool_context(data)
         if snapshot is None:
             return
 
-        with self._codex_tool_context_lock:
-            self._codex_tool_contexts.setdefault(session_id, []).append(snapshot)
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            self._tool_contexts.setdefault(cache_key, []).append(snapshot)
             for identifier in snapshot.get("_ids", []):
-                self._codex_tool_context_by_id[(session_id, identifier)] = snapshot
+                self._tool_context_by_id[(cache_key, identifier)] = snapshot
 
-    def _match_codex_tool_context(
+    def _match_tool_context(
         self,
+        source: SessionSource,
         session_id: str,
         data: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Find the best stored Codex BEFORE_TOOL context for an AFTER_TOOL event."""
-        with self._codex_tool_context_lock:
-            for identifier in self._codex_tool_context_ids(data):
-                snapshot = self._codex_tool_context_by_id.get((session_id, identifier))
+        """Find the best stored BEFORE_TOOL context for an AFTER_TOOL event."""
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            for identifier in self._tool_context_ids(data):
+                snapshot = self._tool_context_by_id.get((cache_key, identifier))
                 if snapshot is not None:
                     return snapshot
 
-            pending = self._codex_tool_contexts.get(session_id, [])
+            pending = self._tool_contexts.get(cache_key, [])
             if not pending:
                 return None
 
@@ -168,51 +186,58 @@ class WorkflowHookHandler:
 
             return pending[-1]
 
-    def _forget_codex_tool_context(self, session_id: str, snapshot: dict[str, Any]) -> None:
-        """Remove stored Codex BEFORE_TOOL context after the tool completes."""
-        with self._codex_tool_context_lock:
-            pending = self._codex_tool_contexts.get(session_id, [])
+    def _forget_tool_context(
+        self,
+        source: SessionSource,
+        session_id: str,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """Remove stored BEFORE_TOOL context after the tool completes."""
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            pending = self._tool_contexts.get(cache_key, [])
             if snapshot in pending:
                 pending.remove(snapshot)
                 if not pending:
-                    self._codex_tool_contexts.pop(session_id, None)
+                    self._tool_contexts.pop(cache_key, None)
 
             for identifier in snapshot.get("_ids", []):
-                self._codex_tool_context_by_id.pop((session_id, identifier), None)
+                self._tool_context_by_id.pop((cache_key, identifier), None)
 
-    def _clear_codex_tool_context(self, session_id: str) -> None:
-        """Drop any stored Codex tool context for a session."""
-        with self._codex_tool_context_lock:
-            snapshots = self._codex_tool_contexts.pop(session_id, [])
+    def _clear_tool_context(self, source: SessionSource, session_id: str) -> None:
+        """Drop any stored tool context for a session."""
+        cache_key = self._tool_context_session_key(source, session_id)
+        with self._tool_context_lock:
+            snapshots = self._tool_contexts.pop(cache_key, [])
             for snapshot in snapshots:
                 for identifier in snapshot.get("_ids", []):
-                    self._codex_tool_context_by_id.pop((session_id, identifier), None)
+                    self._tool_context_by_id.pop((cache_key, identifier), None)
 
-    def _sync_codex_tool_context(self, event: HookEvent, session_id: str) -> None:
-        """Maintain Codex BEFORE/AFTER tool parity for rule evaluation."""
+    def _sync_tool_context(self, event: HookEvent, session_id: str) -> None:
+        """Maintain BEFORE/AFTER tool parity for rule evaluation."""
         if (
-            event.source != SessionSource.CODEX
+            event.source not in (SessionSource.CLAUDE, SessionSource.CODEX)
             or not session_id
             or not isinstance(event.data, dict)
         ):
             return
 
         if event.event_type == HookEventType.SESSION_END:
-            self._clear_codex_tool_context(session_id)
+            self._clear_tool_context(event.source, session_id)
             return
 
         if event.event_type == HookEventType.BEFORE_TOOL:
-            self._remember_codex_tool_context(session_id, event.data)
+            self._remember_tool_context(event.source, session_id, event.data)
             return
 
         if event.event_type != HookEventType.AFTER_TOOL:
             return
 
-        snapshot = self._match_codex_tool_context(session_id, event.data)
+        snapshot = self._match_tool_context(event.source, session_id, event.data)
         if snapshot is None:
             return
 
-        if self._needs_codex_tool_rehydration(event.data):
+        if self._needs_tool_rehydration(event.data):
             for key, value in snapshot.items():
                 if key.startswith("_"):
                     continue
@@ -222,9 +247,12 @@ class WorkflowHookHandler:
             from gobby.hooks.normalization import normalize_tool_fields
 
             normalize_tool_fields(event.data)
-            event.metadata["_codex_tool_context_rehydrated"] = True
+            event.metadata["_tool_context_rehydrated"] = True
+            event.metadata["_tool_context_rehydrated_source"] = event.source.value
+            if event.source == SessionSource.CODEX:
+                event.metadata["_codex_tool_context_rehydrated"] = True
 
-        self._forget_codex_tool_context(session_id, snapshot)
+        self._forget_tool_context(event.source, session_id, snapshot)
 
     def _resolve_project_path(self, event: HookEvent) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
@@ -331,7 +359,7 @@ class WorkflowHookHandler:
         try:
             session_id = event.metadata.get("_platform_session_id") or event.session_id or ""
 
-            self._sync_codex_tool_context(event, session_id)
+            self._sync_tool_context(event, session_id)
 
             # Load session-scoped variables (canonical store)
             variables: dict[str, Any] = {}

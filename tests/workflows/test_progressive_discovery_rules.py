@@ -486,9 +486,7 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_call_tool_allowed_for_capture_output_without_schema_lookup(
-        self, engine
-    ) -> None:
+    async def test_call_tool_allowed_for_capture_output_without_schema_lookup(self, engine) -> None:
         """Operator tool capture_output should bypass schema-unlock gating."""
         variables = {
             "enforce_tool_schema_check": True,
@@ -506,19 +504,20 @@ class TestRuleEngineIntegration:
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "allow"
 
+    @pytest.mark.parametrize("mcp_tool", ["create_task", "add_label", "update_task"])
     @pytest.mark.asyncio
-    async def test_call_tool_allowed_after_schema_lookup(self, engine) -> None:
+    async def test_call_tool_allowed_after_schema_lookup(self, engine, mcp_tool: str) -> None:
         """call_tool should be allowed after get_tool_schema was called."""
         variables = {
             "enforce_tool_schema_check": True,
-            "unlocked_tools": ["gobby-tasks:create_task"],
+            "unlocked_tools": [f"gobby-tasks:{mcp_tool}"],
         }
         event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__call_tool",
             tool_input={
                 "server_name": "gobby-tasks",
-                "tool_name": "create_task",
+                "tool_name": mcp_tool,
                 "arguments": {"title": "test"},
             },
         )
@@ -611,8 +610,9 @@ class TestRuleEngineIntegration:
         result = await engine.evaluate(event, "test-session", variables)
         assert result.decision == "allow"
 
+    @pytest.mark.parametrize("mcp_tool", ["create_task", "add_label", "update_task"])
     @pytest.mark.asyncio
-    async def test_tracking_rules_set_variables_via_after_tool(self, engine) -> None:
+    async def test_tracking_rules_set_variables_via_after_tool(self, engine, mcp_tool: str) -> None:
         """Tracking rules should set variables when after_tool events fire."""
         variables: dict = {
             "enforce_tool_schema_check": True,
@@ -641,11 +641,27 @@ class TestRuleEngineIntegration:
         after_schema = _make_hook_event(
             HookEventType.AFTER_TOOL,
             tool_name="mcp__gobby__get_tool_schema",
-            tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
+            tool_input={"server_name": "gobby-tasks", "tool_name": mcp_tool},
         )
         result = await engine.evaluate(after_schema, "test-session", variables)
         assert result.decision == "allow"
-        assert "gobby-tasks:create_task" in variables.get("unlocked_tools", [])
+        assert f"gobby-tasks:{mcp_tool}" in variables.get("unlocked_tools", [])
+
+    @pytest.mark.asyncio
+    async def test_tracking_schema_lookup_uses_server_and_tool_aliases(self, engine) -> None:
+        """track-schema-lookup should accept the same aliases as is_tool_unlocked."""
+        variables: dict = {
+            "enforce_tool_schema_check": True,
+        }
+
+        after_schema = _make_hook_event(
+            HookEventType.AFTER_TOOL,
+            tool_name="mcp__gobby__get_tool_schema",
+            tool_input={"server": "gobby-tasks", "tool": "add_label"},
+        )
+        result = await engine.evaluate(after_schema, "test-session", variables)
+        assert result.decision == "allow"
+        assert "gobby-tasks:add_label" in variables.get("unlocked_tools", [])
 
     @pytest.mark.asyncio
     async def test_full_discovery_flow_with_blocking(self, engine) -> None:

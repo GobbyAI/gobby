@@ -1475,8 +1475,8 @@ class TestCodexToolContextRehydration:
         }
 
     @pytest.mark.asyncio
-    async def test_non_codex_after_tool_is_unchanged(self) -> None:
-        """Other providers should not use Codex rehydration behavior."""
+    async def test_unsupported_after_tool_source_is_unchanged(self) -> None:
+        """Sources without tool-context rehydration should be unchanged."""
         handler, rule_engine = self._make_handler()
 
         before_event = self._make_event(
@@ -1485,14 +1485,14 @@ class TestCodexToolContextRehydration:
                 "tool_name": "Read",
                 "tool_input": {"file_path": "src/main.py"},
             },
-            source=SessionSource.CLAUDE,
+            source=SessionSource.GEMINI,
         )
         await handler._evaluate_rules(before_event)
 
         after_event = self._make_event(
             HookEventType.AFTER_TOOL,
             data={"tool_name": "Read"},
-            source=SessionSource.CLAUDE,
+            source=SessionSource.GEMINI,
         )
         await handler._evaluate_rules(after_event)
 
