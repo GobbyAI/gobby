@@ -10,9 +10,11 @@ Runs as a periodic background task alongside the session lifecycle manager.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
+from collections import deque
 from typing import TYPE_CHECKING, Literal
 
 from gobby.agents.checkpoint_manager import CheckpointManager
@@ -851,6 +853,10 @@ class AgentLifecycleMonitor:
                 f"Agent {run.id} still idle after "
                 f"{self._tmux_config.max_reprompt_attempts} reprompts — failing"
             )
+            self._log_recent_codex_response_items(
+                run,
+                reason="failing after max idle reprompts",
+            )
             await self._fail_idle_agent(run, reason="idle after max reprompt attempts")
             return 1
 
@@ -860,12 +866,106 @@ class AgentLifecycleMonitor:
             self._tmux_config.max_reprompt_attempts,
         ):
             logger.info(f"Reprompting idle agent {run.id}")
+            self._log_recent_codex_response_items(
+                run,
+                reason="reprompting apparently idle agent",
+            )
             sent = await self._tmux.send_keys(tmux_name, IdleDetector.REPROMPT_MESSAGE + "\n")
             if sent:
                 self._idle_detector.record_reprompt(run.id)
             return 1
 
         return 0
+
+    @staticmethod
+    def _read_recent_codex_response_items(
+        transcript_path: str,
+        *,
+        limit: int = 8,
+    ) -> list[dict[str, object]]:
+        items: deque[dict[str, object]] = deque(maxlen=limit)
+        with open(transcript_path, encoding="utf-8") as handle:
+            for line_num, raw_line in enumerate(handle, start=1):
+                if not raw_line.strip():
+                    continue
+                try:
+                    data = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(data, dict) or data.get("type") != "response_item":
+                    continue
+                payload = data.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                items.append(
+                    {
+                        "line_num": line_num,
+                        "timestamp": data.get("timestamp"),
+                        "payload_type": payload.get("type"),
+                        "raw": data,
+                    }
+                )
+        return list(items)
+
+    def _log_recent_codex_response_items(self, run: AgentRun, *, reason: str) -> None:
+        if self._session_manager is None:
+            return
+
+        session_id = run.child_session_id or run.parent_session_id
+        if not session_id:
+            return
+
+        try:
+            session = self._session_manager.get(session_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to load session %s for Codex idle diagnostics on run %s: %s",
+                session_id,
+                run.id,
+                exc,
+            )
+            return
+
+        if session is None or getattr(session, "source", None) != "codex":
+            return
+
+        transcript_path = getattr(session, "transcript_path", None)
+        if not isinstance(transcript_path, str) or not transcript_path:
+            logger.warning(
+                "Codex idle diagnostic for run %s (%s): session %s has no transcript path",
+                run.id,
+                reason,
+                session_id,
+            )
+            return
+
+        try:
+            items = self._read_recent_codex_response_items(transcript_path)
+        except OSError as exc:
+            logger.warning(
+                "Failed to read Codex transcript for idle diagnostic on run %s (%s): %s",
+                run.id,
+                reason,
+                exc,
+            )
+            return
+
+        if not items:
+            logger.warning(
+                "Codex idle diagnostic for run %s (%s): no recent response_item records for session %s",
+                run.id,
+                reason,
+                session_id,
+            )
+            return
+
+        logger.warning(
+            "Codex idle diagnostic for run %s (%s) session %s: %s",
+            run.id,
+            reason,
+            session_id,
+            json.dumps(items, ensure_ascii=True),
+        )
 
     async def _checkpoint_and_kill_looping_agent(self, run: AgentRun) -> None:
         """Checkpoint work, kill tmux, then full cleanup for a doom-looping agent.

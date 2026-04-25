@@ -15,8 +15,8 @@ Line types:
 Only response_item lines produce ParsedMessage objects. Within response_item,
 payload.type discriminates:
     - message: User/assistant/developer messages with content blocks
-    - function_call: Tool invocation (name, arguments, call_id)
-    - function_call_output: Tool result (call_id, output)
+    - function_call/custom_tool_call/web_search_call: Tool invocation variants
+    - function_call_output/custom_tool_call_output: Tool results
 """
 
 from __future__ import annotations
@@ -47,6 +47,39 @@ def _parse_int_token(value: Any, *, default: int = 0) -> int:
     except (TypeError, ValueError):
         logger.warning("Invalid Codex token count value %r; using %s", value, default)
         return default
+
+
+def _parse_tool_payload(value: Any) -> dict[str, Any]:
+    """Parse a tool payload value into a dict when possible."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"raw": value}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"value": parsed}
+    return {}
+
+
+def _normalize_tool_output(output: Any) -> tuple[str, dict[str, Any]]:
+    """Normalize tool output for transcript rendering and stats."""
+    if isinstance(output, dict):
+        return str(output), output
+    if isinstance(output, str):
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError:
+            return output, {"output": output}
+        if isinstance(parsed, dict):
+            content = parsed.get("output")
+            if isinstance(content, str):
+                return content, parsed
+            return str(parsed), parsed
+        return str(parsed), {"value": parsed}
+    return str(output), {"output": output}
 
 
 class CodexTranscriptParser(BaseTranscriptParser):
@@ -143,10 +176,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         if payload_type == "message":
             return self._parse_message(data, payload, index, timestamp)
-        if payload_type == "function_call":
-            return self._parse_function_call(data, payload, index, timestamp)
-        if payload_type == "function_call_output":
-            return self._parse_function_call_output(data, payload, index, timestamp)
+        if payload_type in {"function_call", "custom_tool_call", "web_search_call"}:
+            return self._parse_tool_call(data, payload, index, timestamp)
+        if payload_type in {"function_call_output", "custom_tool_call_output"}:
+            return self._parse_tool_call_output(data, payload, index, timestamp)
         if payload_type == "reasoning":
             return None
 
@@ -186,20 +219,34 @@ class CodexTranscriptParser(BaseTranscriptParser):
             message_id=self._message_id_for(index, payload.get("id")),
         )
 
-    def _parse_function_call(
+    def _parse_tool_call(
         self,
         data: dict[str, Any],
         payload: dict[str, Any],
         index: int,
         timestamp: datetime,
     ) -> ParsedMessage:
-        name = payload.get("name", "unknown")
-        arguments_str = payload.get("arguments", "{}")
-        try:
-            tool_input = json.loads(arguments_str)
-        except (json.JSONDecodeError, TypeError):
-            tool_input = {"raw": arguments_str}
+        payload_type = payload.get("type")
         call_id = payload.get("call_id")
+
+        if payload_type == "web_search_call":
+            action = payload.get("action")
+            if not isinstance(action, dict):
+                action = {}
+            tool_input = dict(action)
+            status = payload.get("status")
+            if status is not None:
+                tool_input["status"] = status
+            name = "WebSearch"
+        elif payload_type == "custom_tool_call":
+            name = str(payload.get("name") or "unknown")
+            tool_input = _parse_tool_payload(payload.get("input"))
+            status = payload.get("status")
+            if status is not None:
+                tool_input.setdefault("status", status)
+        else:
+            name = str(payload.get("name") or "unknown")
+            tool_input = _parse_tool_payload(payload.get("arguments"))
 
         return ParsedMessage(
             index=index,
@@ -216,7 +263,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             message_id=self._message_id_for(index, payload.get("id") or call_id),
         )
 
-    def _parse_function_call_output(
+    def _parse_tool_call_output(
         self,
         data: dict[str, Any],
         payload: dict[str, Any],
@@ -225,15 +272,16 @@ class CodexTranscriptParser(BaseTranscriptParser):
     ) -> ParsedMessage:
         output = payload.get("output", "")
         call_id = payload.get("call_id")
+        content, tool_result = _normalize_tool_output(output)
 
         return ParsedMessage(
             index=index,
             role="tool",
-            content=str(output),
+            content=content,
             content_type="tool_result",
             tool_name=None,
             tool_input=None,
-            tool_result=output if isinstance(output, dict) else {"output": output},
+            tool_result=tool_result,
             timestamp=timestamp,
             raw_json=data,
             usage=None,
