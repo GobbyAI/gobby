@@ -17,6 +17,41 @@ from gobby.tasks.state_semantics import get_claimed_session_id
 logger = logging.getLogger(__name__)
 
 
+def _has_delegated_agent_run(
+    ctx: RegistryContext,
+    *,
+    child_session_id: str,
+    task_id: str,
+    current_owner: str | None,
+) -> bool:
+    """Return true when an active agent run proves parent-to-child delegation."""
+    if not current_owner:
+        return False
+
+    try:
+        row = ctx.task_manager.db.fetchone(
+            """
+            SELECT id FROM agent_runs
+            WHERE child_session_id = ?
+              AND task_id = ?
+              AND parent_session_id = ?
+              AND status IN ('pending', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (child_session_id, task_id, current_owner),
+        )
+    except Exception as e:
+        logger.debug(f"Delegated claim lookup failed: {e}")
+        return False
+
+    try:
+        run_id = row["id"] if row is not None else None
+    except (KeyError, TypeError, IndexError):
+        return False
+    return isinstance(run_id, str) and bool(run_id)
+
+
 def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     """Register the claim_task tool on the given registry."""
 
@@ -73,7 +108,21 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         # Check if already claimed by another session
         current_owner = get_claimed_session_id(task)
+        delegated_claim = False
         if current_owner and current_owner != resolved_session_id and not force:
+            delegated_claim = _has_delegated_agent_run(
+                ctx,
+                child_session_id=resolved_session_id,
+                task_id=resolved_id,
+                current_owner=current_owner,
+            )
+
+        if (
+            current_owner
+            and current_owner != resolved_session_id
+            and not force
+            and not delegated_claim
+        ):
             return {
                 "success": False,
                 "error": "Task already claimed by another session",
@@ -88,7 +137,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             updated = ctx.task_manager.claim_task(
                 resolved_id,
                 session_id=resolved_session_id,
-                force=force,
+                force=force or delegated_claim,
             )
         except ValueError as e:
             return {"error": str(e)}

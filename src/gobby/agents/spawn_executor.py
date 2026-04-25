@@ -518,15 +518,6 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
-    # Codex learns its Gobby session id via the prompt (it has no equivalent of
-    # Claude's --session-id flag). Late-link still happens via the SessionStart
-    # hook on the daemon side; the prefix is purely so Codex can call MCP tools
-    # with the right session_id.
-    prefixed_prompt = (
-        f"Your Gobby session_id is: {gobby_session_id}\n"
-        f"Use this when calling Gobby MCP tools.\n\n" + (request.prompt or "")
-    )
-
     sandbox_args: list[str] = []
     if request.sandbox_config and request.sandbox_config.enabled:
         resolver = CodexSandboxResolver()
@@ -538,7 +529,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
 
     cmd, _cmd_env = build_cli_command(
         cli="codex",
-        prompt=prefixed_prompt,
+        prompt=request.prompt or "",
         auto_approve=True,  # --full-auto for sandboxed autonomy
         working_directory=request.cwd,
         model=request.model,

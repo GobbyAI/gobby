@@ -72,6 +72,24 @@ def claimed_task():
     )
 
 
+@pytest.fixture
+def parent_owned_task():
+    """Create a sample task claimed by a spawning parent session."""
+    return Task(
+        id="550e8400-e29b-41d4-a716-446655440010",
+        project_id="proj-1",
+        title="Parent Owned Task",
+        status="in_progress",
+        priority=2,
+        task_type="task",
+        created_at="2024-01-01T00:00:00Z",
+        updated_at="2024-01-01T00:00:00Z",
+        description="Delegated to child",
+        labels=[],
+        assignee="parent-session-id",
+    )
+
+
 class TestClaimTaskTool:
     """Tests for the claim_task MCP tool."""
 
@@ -196,6 +214,106 @@ class TestClaimTaskTool:
                 session_id="my-session-id",
                 force=True,
             )
+
+    @pytest.mark.asyncio
+    async def test_delegated_child_can_claim_parent_owned_task_without_force(
+        self, mock_task_manager, mock_sync_manager, parent_owned_task
+    ) -> None:
+        """A spawned child can claim its assigned parent-owned task without public force."""
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+        ):
+            mock_st_instance = MagicMock()
+            MockSessionTaskManager.return_value = mock_st_instance
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task_manager.get_task.return_value = parent_owned_task
+            mock_task_manager.db.fetchone.return_value = {"id": "run-delegated"}
+            updated_task = MagicMock()
+            updated_task.id = parent_owned_task.id
+            updated_task.status = "in_progress"
+            updated_task.assignee = "my-session-id"
+            mock_task_manager.claim_task.return_value = updated_task
+
+            result = await registry.call(
+                "claim_task",
+                {
+                    "task_id": parent_owned_task.id,
+                },
+            )
+
+            assert "error" not in result
+            assert any(
+                call.args[1] == ("my-session-id", parent_owned_task.id, "parent-session-id")
+                for call in mock_task_manager.db.fetchone.call_args_list
+            )
+            mock_task_manager.claim_task.assert_called_once_with(
+                parent_owned_task.id,
+                session_id="my-session-id",
+                force=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_delegated_child_cannot_claim_third_party_owned_task_without_force(
+        self, mock_task_manager, mock_sync_manager, parent_owned_task
+    ) -> None:
+        """Delegation only applies while the parent still owns the assigned task."""
+        third_party_owned_task = Task(
+            id=parent_owned_task.id,
+            project_id=parent_owned_task.project_id,
+            title=parent_owned_task.title,
+            status=parent_owned_task.status,
+            priority=parent_owned_task.priority,
+            task_type=parent_owned_task.task_type,
+            created_at=parent_owned_task.created_at,
+            updated_at=parent_owned_task.updated_at,
+            description=parent_owned_task.description,
+            labels=parent_owned_task.labels,
+            assignee="third-party-session-id",
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+        ):
+            MockSessionTaskManager.return_value = MagicMock()
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "my-session-id"
+            mock_session_manager.get.return_value = MagicMock(project_id="proj-1")
+            MockSessionManager.return_value = mock_session_manager
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+            mock_task_manager.get_task.return_value = third_party_owned_task
+            mock_task_manager.db.fetchone.return_value = None
+
+            result = await registry.call(
+                "claim_task",
+                {
+                    "task_id": third_party_owned_task.id,
+                },
+            )
+
+            assert "error" in result
+            assert "already claimed" in result["error"].lower()
+            assert any(
+                call.args[1]
+                == ("my-session-id", third_party_owned_task.id, "third-party-session-id")
+                for call in mock_task_manager.db.fetchone.call_args_list
+            )
+            mock_task_manager.claim_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_claim_task_already_claimed_by_same_session(

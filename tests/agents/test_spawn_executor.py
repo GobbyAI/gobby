@@ -431,16 +431,18 @@ class TestExecuteSpawn:
             command = spawn_kwargs["command"]
             assert command[0] == "codex"
             assert "resume" not in command
+            assert "--full-auto" in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can
             # late-link via GOBBY_SESSION_ID.
             assert spawn_kwargs.get("env") is not None
             assert spawn_kwargs["env"].get("GOBBY_SESSION_ID") == "gobby-sess-123"
 
-            # Codex learns its Gobby session_id via the prompt prefix (no
-            # equivalent of Claude's --session-id flag exists for Codex).
+            # Codex gets its Gobby session id from env/hooks, not prompt text.
             prompt_arg = command[-1]
-            assert "Your Gobby session_id is: gobby-sess-123" in prompt_arg
+            assert prompt_arg == request.prompt
+            assert "gobby-sess-123" not in prompt_arg
+            assert "Your Gobby session_id is" not in prompt_arg
 
             # SpawnResult.run_id is the caller-minted id (no fabricated
             # `codex-xxxxxxxx` substitute).
@@ -499,7 +501,8 @@ class TestExecuteSpawn:
             assert "workspace-write" in command
             prompt_arg = command[-1]
             # Sandbox args must appear before the final prompt argv entry, which
-            # is the prefixed Codex prompt carrying the session_id and user text.
+            # is the raw Codex prompt.
+            assert prompt_arg == request.prompt
             assert request.prompt in prompt_arg
             assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True

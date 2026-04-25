@@ -75,6 +75,13 @@ class TestAdversarySkillLoading:
         transitions = load_step.transitions or []
         assert any(t.to == "review" and t.when and "skill_loaded" in t.when for t in transitions)
 
+    def test_claim_step_uses_normal_delegated_claim(self, agent: AgentDefinitionBody) -> None:
+        claim_step = find_step(agent.steps or [], "claim")
+        assert claim_step is not None
+        assert claim_step.status_message is not None
+        assert "claim_task(task_id=assigned_task_id)" in claim_step.status_message
+        assert "force=true" not in ADVERSARY_PATH.read_text()
+
 
 class TestAdversaryInstructionsPreserveContracts:
     def test_instructions_reference_plan_review(self, agent: AgentDefinitionBody) -> None:
@@ -126,6 +133,10 @@ class TestAdversaryInstructionsPreserveContracts:
     def test_kill_agent_removed_from_instructions(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
         assert "kill_agent" not in instructions
+
+    def test_call_tool_uses_ambient_session_context(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "Do NOT pass session_id to mcp__gobby__call_tool" in instructions
 
 
 class TestAdversaryTerminateStep:
