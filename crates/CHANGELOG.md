@@ -7,7 +7,7 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] — gobby-hooks
+## [0.4.1] — gobby-hooks
 
 ### Added
 
@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### gobby-hooks
 
 - **Droid blocking semantics** — droid daemon responses with `continue:false` now exit 2 with the daemon reason while preserving the response JSON on stdout. Other droid block JSON is forwarded on stdout with exit 0 for droid's hook protocol, and daemon transport failures surface as exit 1 stderr diagnostics.
+
+### Fixed
+
+#### gobby-hooks
+
+- **Stop double-emitting Claude PreToolUse denies** — for `--cli=claude`, ghook now narrows the legacy `stderr+exit(2)` channel to daemon responses that explicitly set top-level `continue:false` with a non-empty `stopReason` (the HARD_STOP shape). All other responses — including PreToolUse denies that arrive via `hookSpecificOutput.permissionDecision:"deny"` — are emitted as JSON on stdout with exit 0, matching the structured-channel contract the Python `ClaudeCodeAdapter` already targets. Previously, ghook synthesized a second deny channel on top of the structured one, causing Claude Code to render every PreToolUse deny twice (once as a permission denial, once as a "hook blocking error"). Codex/Gemini/Qwen/Droid paths are unchanged.
 
 ## [0.3.1] — gobby-hooks
 
