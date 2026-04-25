@@ -382,19 +382,24 @@ set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 
 The spawn path auto-injects `assigned_task_id` and auto-claims the task for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here.
 
-### 7.5. Wait for the adversary
+### 7.5. Yield until the adversary wake
 
-Surface "Adversary reviewing — blocking turn", then:
+Surface "Adversary reviewing; I will resume when the daemon wakes this session."
 
-```text
-wait_for_completion(completion_id=adversary_run_id)
-```
+Do **not** call the removed workflow completion-wait tool. After storing
+`adversary_run_id`, end the current turn. The daemon records a durable
+completion notification and sends a wake signal when the adversary run exits.
+On wake/resume, continue at Step 7.6.
 
-This is push-based via `asyncio.Event` (`events/completion_registry.py:101-120`). It fires on agent exit, and if the adversary finishes before the wait is called the stored result still returns immediately — no polling, no early-completion race.
+This is push-based via the completion registry and durable wake dispatcher. If
+the adversary finishes before the parent yields, the completion result is still
+stored and the wake path resumes from durable state — no polling, no
+early-completion race.
 
 ### 7.6. Interpret the result
 
-`get_task(planning_task_id)` and branch on status:
+On wake/resume, `get_task(planning_task_id)` and branch on status. If raw run
+details are needed for diagnostics, call `get_agent_result(run_id=adversary_run_id)`.
 
 - **`review_approved`** → go to Step 8.
 - **`open`** after `mark_task_review_rejected`
@@ -416,7 +421,8 @@ This is push-based via `asyncio.Event` (`events/completion_registry.py:101-120`)
   2. This is terminal for delegated mode and an interrupt for interactive mode.
   3. Go to Step 9.
 
-- **Any other terminal state** → treat as adversary crash. Surface the state + raw `wait_for_completion` result. Go to Step 9.
+- **Any other terminal state** → treat as adversary crash. Surface the state,
+  `adversary_run_id`, and any available `get_agent_result` details. Go to Step 9.
 
 **Why only interactive mode re-enters plan mode each round:** the user's native
 approval boundary runs through `ExitPlanMode` / `provide_plan_decision`
@@ -440,13 +446,19 @@ execution = run_pipeline(
     name="expand-task",
     inputs={"task_id": plan_parent_ref, "plan_file": artifact_path},
 )
-wait_for_completion(completion_id=execution.execution_id)
+set_variable(name="expansion_execution_id", value=execution.execution_id, session_id="#<self>")
 ```
+
+Do **not** call the removed workflow completion-wait tool. Store `expansion_execution_id`, end the
+current turn, and resume from the daemon's durable completion wake.
 
 ### 8.2. Branch on outcome
 
+On wake/resume, read `expansion_execution_id` and call
+`get_pipeline_status(execution_id)`.
+
 - **Success** —
-  1. `get_pipeline_status(execution_id)` — report child-task count to the user.
+  1. Report child-task count to the user.
   2. `close_task(planning_task_id, reason="Interactive planning complete; expansion launched")`. The planning epic needs no `changes_summary` (epic exemption).
   3. Run **terminal cleanup** (clear all session vars, remove `interactive_lock_label` from parent).
   4. Skill exits.
@@ -501,6 +513,7 @@ for name in (
     "artifact_path",
     "plan_slug",
     "adversary_run_id",
+    "expansion_execution_id",
     "current_round",
     "max_rounds",
     "interactive_lock_label",
@@ -514,12 +527,18 @@ Using the **exact** value stored in `interactive_lock_label` is critical — `re
 
 ## Edge Cases
 
-- **User cancels mid-wait.** `wait_for_completion` is interruptible. The adversary still owns the claim; on the next skill invocation, the resume-detection branch in Step 1 picks it up and offers resume / abort / restart.
-- **Adversary crashes or never completes.** `wait_for_completion` returns an error/timeout (or wakes when the lifecycle monitor notifies on agent death). Route to Step 9 as "adversary crash." If the adversary died mid-claim, the restart path can force-release via `reopen_task` or `de_escalate_task`.
-- **Session compaction mid-wait.** `context-handoff` rules re-inject task context on compaction; session vars persist; skill re-enters at the right branch based on task status and var presence.
-- **Web UI vs CLI.** Entirely daemon-driven. The web UI sees a long-running tool call during `wait_for_completion` — same as any async MCP tool. No UI-specific work.
+- **User stops after spawn/pipeline start.** The adversary or pipeline still owns
+  its run; on the next skill invocation, the resume-detection branch in Step 1
+  picks it up and offers resume / abort / restart.
+- **Adversary crashes or never completes.** The lifecycle monitor sends the same
+  durable wake on agent death when it can classify the run. Route to Step 9 as
+  "adversary crash." If the adversary died mid-claim, the restart path can
+  force-release via `reopen_task` or `de_escalate_task`.
+- **Session compaction before completion.** `context-handoff` rules re-inject task context on compaction; session vars persist; skill re-enters at the right branch based on task status and var presence.
+- **Web UI vs CLI.** Entirely daemon-driven. Both surfaces receive durable
+  completion notifications and wake signals; no UI-specific work.
 - **Stale plan file from pre-adversarial drafting.** Step 4/7.2 always anchors the artifact at the canonical path; adversary and `expand-task` both read from there.
-- **Early-completion race.** Handled by the completion registry — `notify()` stores results against the registered `run_id`; a later `wait()` returns immediately if the event has already fired.
+- **Early-completion race.** Handled by the completion registry and durable wake storage; a later resume inspects persisted task/run state.
 
 ---
 

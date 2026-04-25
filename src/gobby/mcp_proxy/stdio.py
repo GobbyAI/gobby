@@ -58,10 +58,10 @@ WAIT_TOOL_NAMES = (
     "wait_for_task",
     "wait_for_any_task",
     "wait_for_all_tasks",
-    "wait_for_completion",
     "wait_for_agent",
 )
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
+REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
 
 
 __all__ = [
@@ -75,6 +75,21 @@ __all__ = [
 ]
 
 logger = logging.getLogger("gobby.mcp.stdio")
+
+
+def _removed_wait_for_completion_result() -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": (
+            "gobby-workflows.wait_for_completion was removed. Start the agent or pipeline, "
+            "persist its run_id or execution_id, then resume from the daemon's durable "
+            "completion notification and inspect get_task, get_agent_result, or "
+            "get_pipeline_status."
+        ),
+        "error_code": "TOOL_REMOVED",
+        "server_name": "gobby-workflows",
+        "tool_name": REMOVED_WORKFLOW_WAIT_TOOL,
+    }
 
 
 async def _call_with_wait_heartbeat(
@@ -219,6 +234,9 @@ class DaemonProxy:
         arguments: dict[str, Any] | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
+        if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
+            return _removed_wait_for_completion_result()
+
         # Tool-specific timeouts
         config = load_config()
         # Default to standard timeout

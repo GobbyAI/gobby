@@ -33,11 +33,13 @@ call_tool("gobby-workflows", "run_pipeline", {
 })
 ```
 
-3. If the caller wants to block, wait on the returned `execution_id` with:
+3. Store the returned `execution_id` and end the turn. The daemon sends a
+   durable completion notification and wake signal when the pipeline finishes.
+   On wake/resume, inspect the run with:
 
 ```python
-call_tool("gobby-workflows", "wait_for_completion", {
-    "completion_id": "<execution_id>"
+call_tool("gobby-workflows", "get_pipeline_status", {
+    "execution_id": "<execution_id>"
 })
 ```
 
@@ -47,4 +49,5 @@ call_tool("gobby-workflows", "wait_for_completion", {
 
 - Expansion state lives on `expansion_runs`, not on the task record.
 - Do not call deprecated save/execute-spec tools.
+- Do not call the removed workflow completion-wait tool.
 - Use `gobby-tasks-ops:get_latest_expansion_run` or `get_expansion_run` for inspection.

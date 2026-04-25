@@ -1281,67 +1281,10 @@ class TestDynamicPipelineTools:
         assert "pipeline:internal" not in tool_names
 
 
-class TestWaitForCompletionTool:
-    """Tests for the wait_for_completion MCP tool."""
+class TestWaitForCompletionRemoved:
+    """wait_for_completion is no longer registered on gobby-workflows."""
 
-    @pytest.fixture
-    def completion_registry(self) -> MagicMock:
-        """Create a mock completion registry."""
-        registry = MagicMock()
-        registry.wait = AsyncMock()
-        return registry
-
-    @pytest.fixture
-    def registry(self, mock_loader, mock_executor, mock_execution_manager, completion_registry):
-        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
-
-        return create_workflows_registry(
-            loader=mock_loader,
-            executor_getter=lambda: mock_executor,
-            execution_manager_getter=lambda: mock_execution_manager,
-            completion_registry=completion_registry,
-        )
-
-    @pytest.mark.asyncio
-    async def test_wait_returns_result_on_success(self, registry, completion_registry) -> None:
-        completion_registry.wait.return_value = {"status": "success", "run_id": "run-1"}
-
-        result = await registry.call(
-            "wait_for_completion", {"completion_id": "run-1", "timeout": 60}
-        )
-
-        assert result["success"] is True
-        assert result["status"] == "success"
-        assert result["completion_id"] == "run-1"
-        completion_registry.wait.assert_awaited_once_with("run-1", timeout=60)
-
-    @pytest.mark.asyncio
-    async def test_wait_returns_error_when_not_registered(
-        self, registry, completion_registry
-    ) -> None:
-        completion_registry.wait.side_effect = KeyError("not registered")
-
-        result = await registry.call("wait_for_completion", {"completion_id": "bogus"})
-
-        assert result["success"] is False
-        assert "not registered" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_wait_returns_error_on_timeout(self, registry, completion_registry) -> None:
-        completion_registry.wait.side_effect = TimeoutError()
-
-        result = await registry.call(
-            "wait_for_completion", {"completion_id": "run-1", "timeout": 5}
-        )
-
-        assert result["success"] is False
-        assert "Timed out" in result["error"]
-        assert result["timeout"] == 5
-
-    @pytest.mark.asyncio
-    async def test_wait_no_registry_returns_error(
-        self, mock_loader, mock_executor, mock_execution_manager
-    ) -> None:
+    def test_wait_not_registered(self, mock_loader, mock_executor, mock_execution_manager) -> None:
         from gobby.mcp_proxy.tools.workflows import create_workflows_registry
 
         registry = create_workflows_registry(
@@ -1351,16 +1294,6 @@ class TestWaitForCompletionTool:
             completion_registry=None,
         )
 
-        result = await registry.call("wait_for_completion", {"completion_id": "run-1"})
-
-        assert result["success"] is False
-        assert "not available" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_wait_with_no_timeout(self, registry, completion_registry) -> None:
-        completion_registry.wait.return_value = {"status": "success"}
-
-        result = await registry.call("wait_for_completion", {"completion_id": "run-1"})
-
-        assert result["success"] is True
-        completion_registry.wait.assert_awaited_once_with("run-1", timeout=None)
+        assert registry.get_schema("wait_for_completion") is None
+        tool_names = [tool["name"] for tool in registry.list_tools()]
+        assert "wait_for_completion" not in tool_names

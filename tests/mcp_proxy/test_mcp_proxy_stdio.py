@@ -612,6 +612,22 @@ class TestDaemonProxyMethods:
             assert result["success"] is True
             mock_req.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_removed_wait_for_completion_returns_error_without_request(self):
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_req:
+            result = await proxy.call_tool(
+                "gobby-workflows",
+                "wait_for_completion",
+                {"completion_id": "run-1"},
+            )
+
+        assert result["success"] is False
+        assert result["error_code"] == "TOOL_REMOVED"
+        mock_req.assert_not_called()
+
 
 class TestMCPToolsWrapper:
     """Tests for the FastMCP tools registered by register_proxy_tools."""
@@ -770,9 +786,9 @@ class TestMCPToolsWrapper:
             task = asyncio.create_task(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-workflows",
-                    tool_name="wait_for_completion",
-                    arguments={"completion_id": "run-1", "timeout": 600},
+                    server_name="gobby-tasks",
+                    tool_name="wait_for_task",
+                    arguments={"task_id": "#1", "timeout": 600},
                     ctx=ctx,
                 )
             )

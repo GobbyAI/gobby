@@ -69,8 +69,8 @@ class TestRunPipelineNoWait:
         )
 
 
-class TestWaitForAgentRemoved:
-    """wait_for_agent tool is no longer registered."""
+class TestRemovedWaitTools:
+    """Removed wait tools are no longer registered."""
 
     def test_wait_for_agent_not_in_registry(self) -> None:
         """The agents registry should not contain wait_for_agent."""
@@ -90,6 +90,22 @@ class TestWaitForAgentRemoved:
 
         tool_names = [t["name"] for t in registry.list_tools()]
         assert "wait_for_agent" not in tool_names
+
+    def test_wait_for_completion_not_in_workflows_registry(self) -> None:
+        """The workflows registry should not contain wait_for_completion."""
+        from unittest.mock import MagicMock
+
+        from gobby.mcp_proxy.tools.workflows import create_workflows_registry
+
+        registry = create_workflows_registry(
+            loader=MagicMock(),
+            executor_getter=lambda: MagicMock(),
+            execution_manager_getter=lambda: MagicMock(),
+            completion_registry=MagicMock(),
+        )
+
+        tool_names = [t["name"] for t in registry.list_tools()]
+        assert "wait_for_completion" not in tool_names
 
 
 class TestSpawnAgentContinuationPrompt:

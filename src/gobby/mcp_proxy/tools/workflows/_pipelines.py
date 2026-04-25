@@ -150,37 +150,6 @@ def register_pipeline_tools(
     )
 
     @registry.tool(
-        name="wait_for_completion",
-        description=(
-            "Block until a completion event fires (agent run or pipeline execution). "
-            "Returns the result when the event completes, or an error on timeout. "
-            "The completion_id is typically a run_id (from spawn_agent) or "
-            "execution_id (from run_pipeline)."
-        ),
-    )
-    async def _wait_for_completion(
-        completion_id: str,
-        timeout: float | None = None,
-    ) -> dict[str, Any]:
-        if _completion_registry is None:
-            return {"success": False, "error": "Completion registry not available"}
-        try:
-            result = await _completion_registry.wait(completion_id, timeout=timeout)
-            return {"success": True, "completion_id": completion_id, **result}
-        except KeyError:
-            return {
-                "success": False,
-                "error": f"Completion event {completion_id!r} not registered. "
-                "Ensure the agent or pipeline was started first.",
-            }
-        except TimeoutError:
-            return {
-                "success": False,
-                "error": f"Timed out waiting for completion event {completion_id!r}",
-                "timeout": timeout,
-            }
-
-    @registry.tool(
         name="list_pipelines",
         description="List available pipeline definitions from project and global directories.",
     )

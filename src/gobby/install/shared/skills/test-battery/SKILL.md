@@ -81,29 +81,31 @@ Ask: "What task or epic should the orchestrator target? Enter a ref (#N) or 'new
 #### Prompt 4: Expansion
 
 Ask: "How should subtasks be created?"
-- **(a) Run expand-task pipeline now** — Will block until expansion completes (~2-5 min)
+- **(a) Run expand-task pipeline now** — Starts expansion and resumes from the daemon completion wake
 - **(b) Provide a plan file** — Path to a .md plan file for the expansion run to use
 - **(c) Skip** — Subtasks already exist under this epic
 
-If (a): Run expand-task pipeline with `wait_for_completion: true`:
+If (a): Run expand-task pipeline and store the returned `execution_id`:
 ```python
 call_tool("gobby-workflows", "run_pipeline", {
     "name": "expand-task",
-    "inputs": {"task_id": "<epic_id>"},
-    "wait_for_completion": true,
-    "wait_timeout": 600
+    "inputs": {"task_id": "<epic_id>"}
 })
 ```
 
-If (b): Run expand-task with the plan file:
+Then end the turn. On the daemon completion wake, inspect the run with
+`get_pipeline_status(execution_id=<execution_id>)`.
+
+If (b): Run expand-task with the plan file and store the returned `execution_id`:
 ```python
 call_tool("gobby-workflows", "run_pipeline", {
     "name": "expand-task",
-    "inputs": {"task_id": "<epic_id>", "plan_file": "<path>"},
-    "wait_for_completion": true,
-    "wait_timeout": 600
+    "inputs": {"task_id": "<epic_id>", "plan_file": "<path>"}
 })
 ```
+
+Then end the turn. On the daemon completion wake, inspect the run with
+`get_pipeline_status(execution_id=<execution_id>)`.
 
 If (c): Verify subtasks exist with `list_tasks(parent_task_id=epic_id)`. Warn if zero subtasks found.
 

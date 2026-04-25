@@ -5,7 +5,7 @@ Tests pipeline tool error paths, helper functions, and dynamic tool registration
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -212,7 +212,7 @@ class TestRegisterPipelineTools:
         assert registry.get_schema("approve_pipeline") is not None
         assert registry.get_schema("reject_pipeline") is not None
         assert registry.get_schema("get_pipeline_status") is not None
-        assert registry.get_schema("wait_for_completion") is not None
+        assert registry.get_schema("wait_for_completion") is None
 
     def test_creates_def_manager_from_db(self) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
@@ -238,64 +238,14 @@ class TestRegisterPipelineTools:
 class TestToolFunctionErrors:
     """Tests for error paths in registered tool functions."""
 
-    @pytest.mark.asyncio
-    async def test_wait_for_completion_no_registry(self) -> None:
+    def test_wait_for_completion_not_registered(self) -> None:
         from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
 
         registry = InternalToolRegistry("test")
         with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
-            register_pipeline_tools(registry, completion_registry=None)
+            register_pipeline_tools(registry)
 
-        result = await registry.call("wait_for_completion", {"completion_id": "cid-1"})
-        assert result["success"] is False
-        assert "not available" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_wait_for_completion_key_error(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
-
-        mock_registry = AsyncMock()
-        mock_registry.wait.side_effect = KeyError("not registered")
-
-        registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
-            register_pipeline_tools(registry, completion_registry=mock_registry)
-
-        result = await registry.call("wait_for_completion", {"completion_id": "cid-1"})
-        assert result["success"] is False
-        assert "not registered" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_wait_for_completion_timeout(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
-
-        mock_registry = AsyncMock()
-        mock_registry.wait.side_effect = TimeoutError()
-
-        registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
-            register_pipeline_tools(registry, completion_registry=mock_registry)
-
-        result = await registry.call(
-            "wait_for_completion", {"completion_id": "cid-1", "timeout": 5.0}
-        )
-        assert result["success"] is False
-        assert "Timed out" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_wait_for_completion_success(self) -> None:
-        from gobby.mcp_proxy.tools.workflows._pipelines import register_pipeline_tools
-
-        mock_registry = AsyncMock()
-        mock_registry.wait.return_value = {"status": "completed", "result": "ok"}
-
-        registry = InternalToolRegistry("test")
-        with patch("gobby.mcp_proxy.tools.workflows._pipelines._register_exposed_pipeline_tools"):
-            register_pipeline_tools(registry, completion_registry=mock_registry)
-
-        result = await registry.call("wait_for_completion", {"completion_id": "cid-1"})
-        assert result["success"] is True
-        assert result["status"] == "completed"
+        assert registry.get_schema("wait_for_completion") is None
 
     @pytest.mark.asyncio
     async def test_get_pipeline_status_no_em(self) -> None:

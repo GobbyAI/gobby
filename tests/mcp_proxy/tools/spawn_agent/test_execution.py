@@ -288,7 +288,7 @@ class TestSpawnAgentPreRegistration:
         """On successful spawn, run_storage.start(run_id) is called immediately.
 
         Spawn-time transition is the authoritative pending->running flip, so
-        wait_for_completion works even if the child session's SessionStart
+        completion notifications work even if the child session's SessionStart
         hook races or misfires. The hook's start_agent_run remains idempotent
         (returns False when status is no longer 'pending').
         """
