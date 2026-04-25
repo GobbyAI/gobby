@@ -207,6 +207,31 @@ class InterSessionMessageManager:
         rows = self.db.fetchall(query, (to_session,))
         return [InterSessionMessage.from_row(row) for row in rows]
 
+    def has_completion_notification(
+        self,
+        to_session: str,
+        message_type: str,
+        completion_id: str,
+    ) -> bool:
+        """Return True when a completion notification already exists."""
+        row = self.db.fetchone(
+            """
+            SELECT 1 FROM inter_session_messages
+            WHERE to_session = ?
+              AND message_type = ?
+              AND metadata_json IS NOT NULL
+              AND json_valid(metadata_json)
+              AND (
+                json_extract(metadata_json, '$.completion_id') = ?
+                OR json_extract(metadata_json, '$.run_id') = ?
+                OR json_extract(metadata_json, '$.execution_id') = ?
+              )
+            LIMIT 1
+            """,
+            (to_session, message_type, completion_id, completion_id, completion_id),
+        )
+        return row is not None
+
     def mark_read(self, message_id: str) -> InterSessionMessage:
         """Mark a message as read.
 

@@ -13,9 +13,10 @@ Provides P2P messaging and command coordination between sessions:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -41,6 +42,35 @@ class CommandLike(Protocol):
     allowed_tools: str | None
     allowed_mcp_tools: str | None
     exit_condition: str | None
+
+
+def _message_metadata(msg: Any) -> dict[str, Any]:
+    """Parse optional JSON metadata from an inter-session message."""
+    raw = getattr(msg, "metadata_json", None)
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    return {}
+
+
+def _message_delivery_payload(msg: Any) -> dict[str, Any]:
+    """Return pending-message payload with delivery context included."""
+    raw_payload = msg.to_brief()
+    payload: dict[str, Any] = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
+    metadata = _message_metadata(msg)
+    if metadata:
+        payload["metadata"] = metadata
+    for key in ("run_id", "task_id", "completion_id", "signoff_message"):
+        value = metadata.get(key)
+        if value:
+            payload[key] = value
+    payload["has_signoff"] = bool(metadata.get("signoff_message") or metadata.get("signoff"))
+    return payload
 
 
 def add_messaging_tools(
@@ -325,7 +355,7 @@ def add_messaging_tools(
             messages = []
             for msg in undelivered:
                 message_manager.mark_delivered(msg.id)
-                messages.append(msg.to_brief())
+                messages.append(_message_delivery_payload(msg))
 
             return {
                 "success": True,

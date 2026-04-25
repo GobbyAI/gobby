@@ -557,12 +557,17 @@ def init_orchestration(runner: GobbyRunner) -> None:
         mgr = get_tmux_session_manager()
         await mgr.send_keys(tmux_session_name, message)
 
-    # tmux pane sender: sends keys to the invoking CLI's tmux pane
-    # Uses the default tmux socket (not -L gobby) since these are user panes
-    async def _tmux_pane_send(pane_id: str, message: str) -> None:
+    async def _tmux_pane_send(
+        pane_id: str,
+        message: str,
+        tmux_socket_path: str | None,
+    ) -> None:
         text = message.rstrip("\n")
+        tmux_cmd = ["tmux"]
+        if tmux_socket_path:
+            tmux_cmd.extend(["-S", tmux_socket_path])
         proc = await asyncio.create_subprocess_exec(
-            "tmux",
+            *tmux_cmd,
             "send-keys",
             "-t",
             pane_id,
@@ -583,7 +588,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             )
 
         proc = await asyncio.create_subprocess_exec(
-            "tmux",
+            *tmux_cmd,
             "send-keys",
             "-t",
             pane_id,

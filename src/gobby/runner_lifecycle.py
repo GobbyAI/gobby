@@ -170,6 +170,60 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
     return rehydrated
 
 
+async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int:
+    """Replay durable wake notifications for daemon-restart agent cancellations."""
+    if (
+        runner.agent_runner is None
+        or runner.pipeline_execution_manager is None
+        or runner.completion_registry is None
+    ):
+        return 0
+
+    replayed = 0
+    cancelled_runs = runner.agent_runner.run_storage.list_by_status("cancelled", limit=1000)
+    for run in cancelled_runs:
+        if getattr(run, "terminal_reason", None) != "daemon_restart":
+            continue
+
+        subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
+        if not subscribers:
+            continue
+
+        if not runner.completion_registry.is_registered(run.id):
+            runner.completion_registry.register(
+                run.id,
+                subscribers=subscribers,
+                continuation_prompt=getattr(run, "continuation_prompt", None),
+            )
+
+        try:
+            await runner.completion_registry.notify(
+                run.id,
+                result={
+                    "status": "cancelled",
+                    "terminal_reason": "daemon_restart",
+                    "run_id": run.id,
+                    "completion_id": run.id,
+                },
+                message=(
+                    f"Agent {run.id} was interrupted by a daemon restart.\n"
+                    "Status: cancelled (daemon restarted)"
+                ),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to replay daemon-restart cancellation for agent %s: %s",
+                run.id,
+                e,
+            )
+            continue
+
+        _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
+        replayed += 1
+
+    return replayed
+
+
 async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
     """Cancel live agent runs before subsystem teardown on daemon shutdown."""
     if runner.agent_lifecycle_monitor is None or runner.agent_runner is None:
@@ -179,34 +233,31 @@ async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
 
     cancelled = 0
     for run in runner.agent_runner.run_storage.list_active(limit=1000):
-        subscribers = _register_persisted_completion_subscribers(
+        _register_persisted_completion_subscribers(
             runner,
             run.id,
             continuation_prompt=getattr(run, "continuation_prompt", None),
         )
-        try:
-            result = await _kill_agent_process(
-                run,
-                runner.database,
-                signal_name="TERM",
-                close_terminal=True,
-            )
-            if not result.get("success") and result.get("error") != "No target PID found":
-                logger.warning(
-                    "Failed to stop active agent %s during shutdown: %s",
-                    run.id,
-                    result.get("error"),
-                )
-                continue
-
-            transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
+        result = await _kill_agent_process(
+            run,
+            runner.database,
+            signal_name="TERM",
+            close_terminal=True,
+        )
+        if not result.get("success") and result.get("error") != "No target PID found":
+            logger.warning(
+                "Failed to stop active agent %s during shutdown: %s",
                 run.id,
-                terminal_reason="daemon_restart",
+                result.get("error"),
             )
-            if transitioned:
-                cancelled += 1
-        finally:
-            _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
+            continue
+
+        transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
+            run.id,
+            terminal_reason="daemon_restart",
+        )
+        if transitioned:
+            cancelled += 1
 
     return cancelled
 
@@ -456,6 +507,12 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
                 rehydrated_runs,
             )
         await runner.agent_lifecycle_monitor.start()
+        replayed_cancellations = await _replay_daemon_restart_agent_cancellations(runner)
+        if replayed_cancellations > 0:
+            logger.info(
+                "Replayed daemon-restart cancellation wakes for %d agent run(s)",
+                replayed_cancellations,
+            )
         if tracker:
             tracker.complete("Agent lifecycle monitor")
 

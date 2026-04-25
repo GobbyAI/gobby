@@ -974,3 +974,5 @@ class TestAgentRestartRecoveryHelpers:
             "run-1",
             terminal_reason="daemon_restart",
         )
+        runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
+        runner.completion_registry.cleanup.assert_not_called()

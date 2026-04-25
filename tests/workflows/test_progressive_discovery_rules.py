@@ -468,7 +468,7 @@ class TestRuleEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_call_tool_allowed_for_send_keys_without_schema_lookup(self, engine) -> None:
-        """Operator tool send_keys should bypass schema-unlock gating."""
+        """Web/operator send_keys should bypass schema-unlock capability gating."""
         variables = {
             "enforce_tool_schema_check": True,
             "unlocked_tools": [],

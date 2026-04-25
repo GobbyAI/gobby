@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -28,8 +28,8 @@ CONTINUE_WAKE_SIGNAL = "<continue />\n"
 # tmux_sender signature: (tmux_session_name: str, message: str) -> None
 TmuxSender = Callable[[str, str], Coroutine[Any, Any, None]]
 
-# tmux_pane_sender signature: (pane_id: str, message: str) -> None
-TmuxPaneSender = Callable[[str, str], Coroutine[Any, Any, None]]
+# tmux_pane_sender signature: (pane_id: str, message: str, socket_path: str | None) -> None
+TmuxPaneSender = Callable[[str, str, str | None], Coroutine[Any, Any, None]]
 
 # sdk_resumer signature: (sdk_session_id: str, message: str) -> None
 SdkResumer = Callable[[str, str], Coroutine[Any, Any, None]]
@@ -91,8 +91,13 @@ class WakeDispatcher:
             if terminal_context and self._tmux_pane_sender:
                 tmux_pane = self._parse_tmux_pane(terminal_context)
                 if tmux_pane:
+                    tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
                     try:
-                        await self._tmux_pane_sender(tmux_pane, CONTINUE_WAKE_SIGNAL)
+                        await self._tmux_pane_sender(
+                            tmux_pane,
+                            CONTINUE_WAKE_SIGNAL,
+                            tmux_socket_path,
+                        )
                     except Exception:
                         logger.warning(
                             f"tmux pane wake failed for session {session_id} (pane={tmux_pane})",
@@ -162,6 +167,11 @@ class WakeDispatcher:
             from_session = str(result.get("from_session_id") or session_id)
             message_type = str(result.get("message_type") or "completion_notification")
             metadata = {**result, "completion_message": message}
+            completion_id = self._notification_completion_id(metadata)
+            if completion_id and "completion_id" not in metadata:
+                metadata["completion_id"] = completion_id
+            if completion_id and self._notification_exists(session_id, message_type, completion_id):
+                return True
             self._ism_manager.create_message(
                 from_session=from_session,
                 to_session=session_id,
@@ -177,6 +187,66 @@ class WakeDispatcher:
                 exc_info=True,
             )
             return False
+
+    def _notification_exists(
+        self,
+        session_id: str,
+        message_type: str,
+        completion_id: str,
+    ) -> bool:
+        """Return True if this durable completion notification already exists."""
+        has_notification = getattr(
+            type(self._ism_manager),
+            "has_completion_notification",
+            None,
+        )
+        if callable(has_notification):
+            try:
+                return bool(
+                    has_notification(self._ism_manager, session_id, message_type, completion_id)
+                )
+            except Exception:
+                logger.debug(
+                    f"Could not query existing completion notification for {session_id}",
+                    exc_info=True,
+                )
+
+        list_messages = getattr(self._ism_manager, "list_messages", None)
+        if not callable(list_messages):
+            return False
+        try:
+            messages = list_messages(
+                session_id,
+                direction="inbox",
+                message_type=message_type,
+                limit=100,
+            )
+        except Exception:
+            logger.debug(
+                f"Could not query existing completion notifications for {session_id}",
+                exc_info=True,
+            )
+            return False
+
+        for msg in messages:
+            metadata_json = getattr(msg, "metadata_json", None)
+            if not metadata_json:
+                continue
+            try:
+                metadata = json.loads(metadata_json)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if self._notification_completion_id(metadata) == completion_id:
+                return True
+        return False
+
+    @staticmethod
+    def _notification_completion_id(metadata: dict[str, Any]) -> str | None:
+        """Resolve the stable id used to dedupe completion notifications."""
+        value = metadata.get("completion_id") or metadata.get("run_id") or metadata.get(
+            "execution_id"
+        )
+        return str(value) if value else None
 
     @staticmethod
     def _parse_tmux_session(terminal_context: Any) -> str | None:
@@ -195,3 +265,11 @@ class WakeDispatcher:
             return None
         value = ctx.get("tmux_pane")
         return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _parse_tmux_socket_path(terminal_context: Any) -> str | None:
+        """Extract tmux socket path from terminal_context JSON."""
+        ctx = parse_terminal_context_value(terminal_context)
+        if not ctx:
+            return None
+        return get_tmux_socket_path(ctx)

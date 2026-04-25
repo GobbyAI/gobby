@@ -44,6 +44,7 @@ def _make_msg(
     message_type: str = "message",
     from_session: str = "from-1111-2222-3333-444444444444",
     priority: str = "normal",
+    metadata_json: str | None = None,
 ) -> MagicMock:
     msg = MagicMock()
     msg.content = content
@@ -51,6 +52,7 @@ def _make_msg(
     msg.message_type = message_type
     msg.from_session = from_session
     msg.priority = priority
+    msg.metadata_json = metadata_json
     return msg
 
 
@@ -169,6 +171,30 @@ class TestMessageGrouping:
         assert "[Pending messages from web chat user]:" in response.context
         assert "P2P hello" in response.context
         assert "Chat hello" in response.context
+
+    def test_completion_message_includes_run_task_type_and_signoff_context(self) -> None:
+        """Turn-start pending injection includes durable signoff metadata."""
+        msg = _make_msg(
+            content="Review approved",
+            message_type="completion_notification",
+            metadata_json=(
+                '{"run_id": "run-1", "task_id": "#12754", '
+                '"completion_id": "run-1", "signoff_message": "Review approved"}'
+            ),
+        )
+        enricher = _make_enricher(msgs=[msg])
+        event = _make_event(HookEventType.BEFORE_AGENT)
+        response = HookResponse()
+
+        enricher.enrich(event, response)
+
+        assert "Review approved" in response.context
+        assert "type=completion_notification" in response.context
+        assert "run_id=run-1" in response.context
+        assert "task_id=#12754" in response.context
+        assert "completion_id=run-1" in response.context
+        assert "signoff=true" in response.context
+        assert "from_session=from-1111-2222-3333-444444444444" in response.context
 
 
 class TestUrgentPriority:

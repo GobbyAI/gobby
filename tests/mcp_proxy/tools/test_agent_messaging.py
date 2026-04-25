@@ -502,6 +502,35 @@ class TestDeliverPendingMessages:
         assert result["messages"] == []
         assert result["count"] == 0
 
+    @pytest.mark.asyncio
+    async def test_deliver_includes_run_task_type_and_signoff_context(
+        self, messaging_registry, mock_message_manager
+    ) -> None:
+        """Delivered completion messages include metadata needed for continuation."""
+        msg = MockMessage(
+            id="msg-1",
+            message_type="completion_notification",
+            metadata_json=(
+                '{"run_id": "run-1", "task_id": "#12754", '
+                '"completion_id": "run-1", "signoff_message": "Approved"}'
+            ),
+        )
+        mock_message_manager.get_undelivered_messages.return_value = [msg]
+
+        result = await messaging_registry.call(
+            "deliver_pending_messages",
+            {"target_session_id": "s-child"},
+        )
+
+        delivered = result["messages"][0]
+        assert delivered["message_type"] == "completion_notification"
+        assert delivered["run_id"] == "run-1"
+        assert delivered["task_id"] == "#12754"
+        assert delivered["completion_id"] == "run-1"
+        assert delivered["signoff_message"] == "Approved"
+        assert delivered["has_signoff"] is True
+        assert delivered["metadata"]["run_id"] == "run-1"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # activate_command

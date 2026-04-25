@@ -302,6 +302,45 @@ class TestInterSessionMessageManagerCreateMessage:
 class TestInterSessionMessageManagerGetMessages:
     """TDD tests for get_messages method."""
 
+    def test_has_completion_notification_matches_metadata(
+        self, temp_db: LocalDatabase
+    ) -> None:
+        """Completion notification lookup checks stable metadata IDs."""
+        from gobby.storage.inter_session_messages import InterSessionMessageManager
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import SessionManager
+
+        project_mgr = LocalProjectManager(temp_db)
+        project = project_mgr.create(name="test-project", repo_path="/tmp/test")
+
+        session_mgr = SessionManager(temp_db)
+        parent = session_mgr.register(
+            external_id="parent", machine_id="m1", source="claude", project_id=project.id
+        )
+        child = session_mgr.register(
+            external_id="child", machine_id="m1", source="claude", project_id=project.id
+        )
+
+        manager = InterSessionMessageManager(temp_db)
+        manager.create_message(
+            from_session=parent.id,
+            to_session=child.id,
+            content="Agent interrupted",
+            message_type="completion_notification",
+            metadata_json='{"completion_id": "run-1", "run_id": "run-1"}',
+        )
+
+        assert manager.has_completion_notification(
+            child.id,
+            "completion_notification",
+            "run-1",
+        )
+        assert not manager.has_completion_notification(
+            child.id,
+            "completion_notification",
+            "run-2",
+        )
+
     def test_get_messages_returns_list(self, temp_db: LocalDatabase) -> None:
         """Test that get_messages returns a list of messages."""
         from gobby.storage.inter_session_messages import InterSessionMessageManager

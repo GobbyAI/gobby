@@ -9,7 +9,9 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
@@ -43,6 +45,36 @@ _PIGGYBACK_EVENTS = {
     HookEventType.BEFORE_TOOL,
     HookEventType.BEFORE_AGENT,
 }
+
+
+def _message_metadata(msg: Any) -> dict[str, Any]:
+    """Parse optional JSON metadata from an inter-session message."""
+    raw = getattr(msg, "metadata_json", None)
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    return {}
+
+
+def _message_context_suffix(msg: Any, msg_type: str) -> str:
+    """Build compact machine-readable context for pending message injection."""
+    metadata = _message_metadata(msg)
+    bits: list[str] = [f"type={msg_type}"]
+    from_session = getattr(msg, "from_session", None)
+    if from_session:
+        bits.append(f"from_session={from_session}")
+    for key in ("run_id", "task_id", "completion_id"):
+        value = metadata.get(key)
+        if value:
+            bits.append(f"{key}={value}")
+    if metadata.get("signoff_message") or metadata.get("signoff"):
+        bits.append("signoff=true")
+    return f" ({', '.join(bits)})"
 
 
 class EventEnricher:
@@ -169,7 +201,8 @@ class EventEnricher:
             for msg in msgs:
                 urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
                 sender = self._resolve_sender_label(getattr(msg, "from_session", None))
-                lines.append(f"- {urgent}{sender}{msg.content}")
+                context = _message_context_suffix(msg, msg_type)
+                lines.append(f"- {urgent}{sender}{msg.content}{context}")
             sections.append("\n".join(lines))
 
         pending_context = "\n\n".join(sections)
