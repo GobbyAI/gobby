@@ -153,6 +153,7 @@ class TestAgentRun:
             "completed_at",
             "created_at",
             "updated_at",
+            "terminal_reason",
         ]
         for field in expected_fields:
             assert field in d, f"Missing field: {field}"
@@ -582,6 +583,25 @@ class TestLocalAgentRunManager:
         assert cancelled.status == "cancelled"
         assert cancelled.completed_at is not None
 
+    def test_cancel_agent_run_with_terminal_reason(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Test cancelling an agent run stores terminal_reason."""
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="Cancel with reason",
+        )
+        agent_manager.start(agent_run.id)
+
+        cancelled = agent_manager.cancel(agent_run.id, terminal_reason="user_cancelled")
+
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
+        assert cancelled.terminal_reason == "user_cancelled"
+
     def test_cancel_pending_run(
         self,
         agent_manager: LocalAgentRunManager,
@@ -603,6 +623,25 @@ class TestLocalAgentRunManager:
         """Test cancelling nonexistent run returns None."""
         result = agent_manager.cancel("nonexistent-id")
         assert result is None
+
+    def test_terminal_transition_first_write_wins(
+        self,
+        agent_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Second terminal write should no-op once a run is already terminal."""
+        agent_run = agent_manager.create(
+            parent_session_id=sample_session["id"],
+            provider="claude",
+            prompt="First write wins",
+        )
+        agent_manager.start(agent_run.id)
+
+        cancelled = agent_manager.cancel(agent_run.id, terminal_reason="user_cancelled")
+        completed = agent_manager.complete(agent_run.id, result="done")
+
+        assert cancelled is not None
+        assert completed is None
 
     def test_update_child_session(
         self,

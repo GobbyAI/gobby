@@ -883,3 +883,74 @@ class TestMainFunctionExtended:
         ):
             main()
         assert exc_info.value.code == 1
+
+
+class TestAgentRestartRecoveryHelpers:
+    """Tests for agent restart/shutdown recovery helpers."""
+
+    @pytest.mark.asyncio
+    async def test_recover_agent_runs_after_restart_notifies_persisted_waiters(self) -> None:
+        run = SimpleNamespace(id="run-1")
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=SimpleNamespace(
+                terminalize_cancelled_run=AsyncMock(return_value=True)
+            ),
+            agent_runner=SimpleNamespace(
+                run_storage=SimpleNamespace(list_running=MagicMock(return_value=[run]))
+            ),
+            pipeline_execution_manager=SimpleNamespace(
+                get_completion_subscribers=MagicMock(return_value=["sess-1"]),
+                remove_completion_subscribers=MagicMock(),
+            ),
+            completion_registry=SimpleNamespace(register=MagicMock(), cleanup=MagicMock()),
+        )
+
+        recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
+
+        assert recovered == 1
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            "run-1",
+            terminal_reason="daemon_restart",
+        )
+        runner.completion_registry.register.assert_called_once_with("run-1", subscribers=["sess-1"])
+        runner.pipeline_execution_manager.remove_completion_subscribers.assert_called_once_with(
+            "run-1"
+        )
+        runner.completion_registry.cleanup.assert_called_once_with("run-1")
+
+    @pytest.mark.asyncio
+    async def test_cancel_active_agent_runs_for_shutdown_kills_and_cancels(self) -> None:
+        run = SimpleNamespace(id="run-1")
+        runner = SimpleNamespace(
+            agent_lifecycle_monitor=SimpleNamespace(
+                terminalize_cancelled_run=AsyncMock(return_value=True)
+            ),
+            agent_runner=SimpleNamespace(
+                run_storage=SimpleNamespace(list_active=MagicMock(return_value=[run]))
+            ),
+            pipeline_execution_manager=SimpleNamespace(
+                get_completion_subscribers=MagicMock(return_value=["sess-1"]),
+                remove_completion_subscribers=MagicMock(),
+            ),
+            completion_registry=SimpleNamespace(register=MagicMock(), cleanup=MagicMock()),
+            database=MagicMock(),
+        )
+
+        with patch(
+            "gobby.agents.kill.kill_agent",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ) as mock_kill:
+            cancelled = await runner_lifecycle._cancel_active_agent_runs_for_shutdown(runner)
+
+        assert cancelled == 1
+        mock_kill.assert_awaited_once_with(
+            run,
+            runner.database,
+            signal_name="TERM",
+            close_terminal=True,
+        )
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            "run-1",
+            terminal_reason="daemon_restart",
+        )

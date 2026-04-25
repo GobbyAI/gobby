@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 
 if TYPE_CHECKING:
+    from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -64,6 +65,7 @@ def setup_internal_registries(
     config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_sync_manager: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
+    agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
     transcript_reader: Any | None = None,
     communications_manager: Any | None = None,
@@ -235,6 +237,7 @@ def setup_internal_registries(
             db=db,
             hook_manager_resolver=hook_manager_resolver,
             completion_registry=completion_registry,
+            lifecycle_monitor=agent_lifecycle_monitor,
             daemon_config=_config,
         )
 

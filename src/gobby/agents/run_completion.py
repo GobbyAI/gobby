@@ -30,12 +30,19 @@ async def complete_and_notify_agent_run(
         result=completion_result,
     )
 
+    if not completed:
+        logger.debug(
+            "Skipping completion notify for run %s; terminal state already recorded",
+            run_id,
+        )
+        return False
+
     if completion_registry and notify_result is not None:
         if completion_registry.get_result(run_id) is not None:
-            return completed
+            return True
         try:
             await completion_registry.notify(run_id, notify_result, message=message)
         except Exception:
             logger.debug("Failed to notify completion registry for run %s", run_id, exc_info=True)
 
-    return completed
+    return True

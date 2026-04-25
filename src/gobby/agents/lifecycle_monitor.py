@@ -13,7 +13,7 @@ import asyncio
 import logging
 import os
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.agents.idle_detector import IdleDetector
@@ -102,46 +102,47 @@ class AgentLifecycleMonitor:
         """Register a PTY master file descriptor for an agent."""
         self._master_fds[run_id] = fd
 
-    async def _recover_task_from_failed_agent(self, run_id: str) -> None:
-        """Recover task ownership after a failed agent run.
+    async def _resolve_claimed_task_for_run(self, db_run: AgentRun) -> tuple[str, object] | None:
+        """Resolve the task still owned by this run, if any."""
+        if not self._task_manager:
+            return None
 
-        If the failure is provider-side, logs which provider failed so the
-        orchestrator can rotate to an alternative on the next dispatch.
-        """
+        task_id = db_run.task_id
+
+        if not task_id and db_run.child_session_id:
+            tasks = await asyncio.to_thread(
+                self._task_manager.list_tasks,
+                claimed_by_session_id=db_run.child_session_id,
+                closed=False,
+            )
+            if tasks:
+                task_id = tasks[0].id
+
+        if not task_id:
+            return None
+
+        task = await asyncio.to_thread(self._task_manager.get_task, task_id)
+        expected_owner = db_run.child_session_id or db_run.claimed_session_id
+        if not task or not is_task_actively_claimed(task, expected_owner):
+            return None
+
+        return task_id, task
+
+    async def _recover_task_from_terminal_agent(
+        self,
+        db_run: AgentRun,
+        *,
+        outcome: Literal["failed", "cancelled"],
+    ) -> None:
+        """Recover task ownership after a failed or cancelled agent run."""
         if not self._task_manager:
             return
         try:
-            db_run = await asyncio.to_thread(self._agent_run_manager.get, run_id)
-            if not db_run:
+            resolved = await self._resolve_claimed_task_for_run(db_run)
+            if resolved is None:
                 return
 
-            task_id = db_run.task_id
-
-            # Fallback: find task by assignee matching the agent's session
-            if not task_id and db_run.child_session_id:
-                tasks = await asyncio.to_thread(
-                    self._task_manager.list_tasks,
-                    claimed_by_session_id=db_run.child_session_id,
-                    closed=False,
-                )
-                if tasks:
-                    task_id = tasks[0].id
-
-            if not task_id:
-                return
-
-            # Classify error for provider rotation
-            is_provider = self._stall_classifier.is_provider_error(db_run.error)
-            if is_provider:
-                logger.info(
-                    f"Agent {run_id} failed with provider error (provider={db_run.provider}): {db_run.error}",
-                )
-
-            task = await asyncio.to_thread(self._task_manager.get_task, task_id)
-            expected_owner = db_run.child_session_id or db_run.claimed_session_id
-            if not task or not is_task_actively_claimed(task, expected_owner):
-                return
-
+            task_id, task = resolved
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
             raw_stage = getattr(task, "lifecycle_stage", None)
             raw_status = getattr(task, "status", None)
@@ -149,26 +150,47 @@ class AgentLifecycleMonitor:
             if lifecycle_stage is None and isinstance(raw_status, str) and raw_status:
                 lifecycle_stage = raw_status
 
-            if lifecycle_stage != "in_progress":
+            if outcome == "cancelled":
+                release_kwargs: dict[str, object] = {}
+                if lifecycle_stage == "in_progress":
+                    release_kwargs["status"] = "open"
                 await asyncio.to_thread(
                     self._task_manager.release_task_claim,
                     task_id,
+                    **release_kwargs,
                 )
                 logger.info(
-                    "Released stale ownership on task %s after agent %s failed (status=%s)",
+                    "Recovered task %s after agent %s cancelled (status=%s)",
                     task_ref,
-                    run_id,
+                    db_run.id,
                     task.status,
                 )
                 return
 
-            # Track dispatch failures (exclude provider errors — rotation handles those)
+            is_provider = self._stall_classifier.is_provider_error(db_run.error)
+            if is_provider:
+                logger.info(
+                    "Agent %s failed with provider error (provider=%s): %s",
+                    db_run.id,
+                    db_run.provider,
+                    db_run.error,
+                )
+
+            if lifecycle_stage != "in_progress":
+                await asyncio.to_thread(self._task_manager.release_task_claim, task_id)
+                logger.info(
+                    "Released stale ownership on task %s after agent %s failed (status=%s)",
+                    task_ref,
+                    db_run.id,
+                    task.status,
+                )
+                return
+
             failure_count = task.dispatch_failure_count or 0
             if not is_provider:
                 failure_count += 1
 
             if not is_provider and failure_count >= 3:
-                # Escalate after too many non-provider failures; reset counter
                 await asyncio.to_thread(
                     self._task_manager.release_task_claim,
                     task_id,
@@ -177,18 +199,106 @@ class AgentLifecycleMonitor:
                     escalation_reason=f"Failed {failure_count} times across different agents",
                 )
                 logger.warning(
-                    f"Task {task_ref} escalated: {failure_count} failures across different agents"
+                    "Task %s escalated: %s failures across different agents",
+                    task_ref,
+                    failure_count,
                 )
-            else:
-                await asyncio.to_thread(
-                    self._task_manager.release_task_claim,
-                    task_id,
-                    status="open",
-                    dispatch_failure_count=failure_count,
-                )
-                logger.info(f"Recovered task {task_ref} to open after agent {run_id} failed")
+                return
+
+            await asyncio.to_thread(
+                self._task_manager.release_task_claim,
+                task_id,
+                status="open",
+                dispatch_failure_count=failure_count,
+            )
+            logger.info(f"Recovered task {task_ref} to open after agent {db_run.id} failed")
         except Exception as e:
-            logger.warning(f"Failed to recover task for agent {run_id}: {e}")
+            logger.warning(f"Failed to recover task for agent {db_run.id}: {e}")
+
+    async def _recover_task_from_failed_agent(self, run_id: str) -> None:
+        """Recover task ownership after a failed agent run."""
+        db_run = await asyncio.to_thread(self._agent_run_manager.get, run_id)
+        if not db_run:
+            return
+        await self._recover_task_from_terminal_agent(db_run, outcome="failed")
+
+    async def _notify_terminal_completion(
+        self,
+        run_id: str,
+        *,
+        result: dict[str, str],
+        message: str,
+    ) -> None:
+        """Notify waiters about a terminal run transition."""
+        if not self._completion_registry:
+            return
+        try:
+            await self._completion_registry.notify(run_id, result=result, message=message)
+        except Exception as e:
+            logger.warning(f"Failed to notify completion for {run_id}: {e}")
+
+    async def _post_terminal_cleanup(self, run: AgentRun) -> None:
+        """Release in-memory and isolation state for a terminal agent run."""
+        session_id = run.child_session_id or run.parent_session_id
+
+        fd = self._master_fds.pop(run.id, None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+        self._prompt_detector.clear(run.id)
+        self._stall_classifier.clear(run.id)
+        self._loop_tracker.clear(run.id)
+
+        if self._session_coordinator and session_id:
+            try:
+                self._session_coordinator.release_session_worktrees(session_id)
+            except Exception as e:
+                logger.warning(f"Failed to release worktrees for agent {run.id}: {e}")
+
+        if self._clone_storage and run.clone_id:
+            try:
+                await asyncio.to_thread(self._clone_storage.release, run.clone_id)
+            except Exception as e:
+                logger.warning(f"Failed to release clone for agent {run.id}: {e}")
+
+        if self._session_manager and session_id:
+            try:
+                await asyncio.to_thread(self._session_manager.update_status, session_id, "expired")
+                logger.debug(f"Expired session {session_id} for agent {run.id}")
+            except Exception as e:
+                logger.warning(f"Failed to expire session for agent {run.id}: {e}")
+
+    async def terminalize_cancelled_run(self, run_id: str, *, terminal_reason: str) -> bool:
+        """Mark an active run cancelled, recover ownership, and notify waiters."""
+        db_run = await asyncio.to_thread(
+            self._agent_run_manager.cancel,
+            run_id,
+            terminal_reason=terminal_reason,
+        )
+        if db_run is None:
+            current = await asyncio.to_thread(self._agent_run_manager.get, run_id)
+            logger.debug(
+                "Cancelled terminalization no-op for run %s; current status=%s",
+                run_id,
+                current.status if current else "missing",
+            )
+            return False
+
+        await self._recover_task_from_terminal_agent(db_run, outcome="cancelled")
+        await self._notify_terminal_completion(
+            db_run.id,
+            result={
+                "status": "cancelled",
+                "terminal_reason": terminal_reason,
+                "run_id": db_run.id,
+            },
+            message=f"Agent {db_run.id} cancelled",
+        )
+        await self._post_terminal_cleanup(db_run)
+        return True
 
     async def start(self) -> None:
         """Start the monitoring loop."""
@@ -360,83 +470,64 @@ class AgentLifecycleMonitor:
             is_success: If True, mark as completed (not failed) and skip task recovery.
             is_timeout: If True, mark as timed out instead of failed.
         """
-        session_id = run.child_session_id or run.parent_session_id
+        terminal_run = run
+        transitioned = False
 
-        # 1. Mark DB record
         if run.status in ("pending", "running"):
             if is_success:
-                await asyncio.to_thread(
+                updated = await asyncio.to_thread(
                     self._agent_run_manager.complete,
                     run.id,
                     result=error,  # "error" is really "reason" for success case
                 )
+                if updated is not None:
+                    terminal_run = updated
+                    transitioned = True
             elif is_timeout:
-                await asyncio.to_thread(
+                updated = await asyncio.to_thread(
                     self._agent_run_manager.timeout,
                     run.id,
                     error=error,
                 )
-                logger.info(f"Marked agent run {run.id} as timed out: {error}")
+                if updated is not None:
+                    terminal_run = updated
+                    transitioned = True
+                    logger.info(f"Marked agent run {run.id} as timed out: {error}")
             else:
-                await asyncio.to_thread(
+                updated = await asyncio.to_thread(
                     self._agent_run_manager.fail,
                     run.id,
                     error=error,
                 )
-                logger.info(f"Marked agent run {run.id} as failed: {error}")
+                if updated is not None:
+                    terminal_run = updated
+                    transitioned = True
+                    logger.info(f"Marked agent run {run.id} as failed: {error}")
 
-        # 2. Recover task (only on failure)
-        if not is_success:
-            await self._recover_task_from_failed_agent(run.id)
+        if transitioned:
+            if not is_success:
+                await self._recover_task_from_terminal_agent(terminal_run, outcome="failed")
 
-        # 3. Notify completion registry
-        if self._completion_registry:
-            try:
-                if is_success:
-                    result_data: dict[str, str] = {"status": "completed"}
-                else:
-                    result_data = {"status": "error", "error": error}
-                await self._completion_registry.notify(
-                    run.id,
-                    result=result_data,
-                    message=f"Agent {run.id} {'completed' if is_success else 'failed'}",
-                )
-            except Exception as e:
-                logger.warning(f"Failed to notify completion for {run.id}: {e}")
+            if is_success:
+                result_data: dict[str, str] = {"status": "completed"}
+            else:
+                result_data = {"status": "error", "error": error}
+            await self._notify_terminal_completion(
+                run.id,
+                result=result_data,
+                message=f"Agent {run.id} {'completed' if is_success else 'failed'}",
+            )
+        else:
+            current = await asyncio.to_thread(self._agent_run_manager.get, run.id)
+            logger.debug(
+                "Terminal cleanup no-op for run %s; current status=%s",
+                run.id,
+                current.status if current else "missing",
+            )
+            if current is not None:
+                terminal_run = current
 
-        # 4. Clear in-memory state
-        fd = self._master_fds.pop(run.id, None)
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-
-        # 5. Clear detector state
-        self._prompt_detector.clear(run.id)
-        self._stall_classifier.clear(run.id)
-        self._loop_tracker.clear(run.id)
-
-        # 6. Release isolation
-        if self._session_coordinator and session_id:
-            try:
-                self._session_coordinator.release_session_worktrees(session_id)
-            except Exception as e:
-                logger.warning(f"Failed to release worktrees for agent {run.id}: {e}")
-
-        if self._clone_storage and run.clone_id:
-            try:
-                await asyncio.to_thread(self._clone_storage.release, run.clone_id)
-            except Exception as e:
-                logger.warning(f"Failed to release clone for agent {run.id}: {e}")
-
-        # 7. Expire the session
-        if self._session_manager and session_id:
-            try:
-                await asyncio.to_thread(self._session_manager.update_status, session_id, "expired")
-                logger.debug(f"Expired session {session_id} for agent {run.id}")
-            except Exception as e:
-                logger.warning(f"Failed to expire session for agent {run.id}: {e}")
+        await self._post_terminal_cleanup(terminal_run)
 
     async def check_unhealthy_agents(self) -> int:
         """Detect and clean up dead or expired agents.

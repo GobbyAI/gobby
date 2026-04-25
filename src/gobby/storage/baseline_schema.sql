@@ -163,7 +163,8 @@ CREATE TABLE agent_runs (
     tmux_session_name TEXT,
     worktree_id TEXT,
     clone_id TEXT,
-    timeout_seconds REAL
+    timeout_seconds REAL,
+    terminal_reason TEXT
 );
 CREATE INDEX idx_agent_runs_parent_session ON agent_runs(parent_session_id);
 CREATE INDEX idx_agent_runs_child_session ON agent_runs(child_session_id);

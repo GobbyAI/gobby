@@ -114,6 +114,92 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
         runner._websocket_task = None
 
 
+def _register_persisted_completion_subscribers(
+    runner: GobbyRunner,
+    completion_id: str,
+) -> list[str]:
+    """Load persisted waiters for a completion ID into the in-memory registry."""
+    if not runner.pipeline_execution_manager or not runner.completion_registry:
+        return []
+
+    subscribers = runner.pipeline_execution_manager.get_completion_subscribers(completion_id)
+    if subscribers:
+        runner.completion_registry.register(completion_id, subscribers=subscribers)
+    return subscribers
+
+
+def _cleanup_persisted_completion_subscribers(
+    runner: GobbyRunner,
+    completion_id: str,
+    subscribers: list[str],
+) -> None:
+    """Drop persisted/in-memory subscriber state after a restart notification."""
+    if not subscribers:
+        return
+    if runner.pipeline_execution_manager:
+        runner.pipeline_execution_manager.remove_completion_subscribers(completion_id)
+    if runner.completion_registry:
+        runner.completion_registry.cleanup(completion_id)
+
+
+async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
+    """Cancel orphaned running agent rows left behind by a daemon restart."""
+    if runner.agent_lifecycle_monitor is None or runner.agent_runner is None:
+        return 0
+
+    recovered = 0
+    for run in runner.agent_runner.run_storage.list_running(limit=1000):
+        subscribers = _register_persisted_completion_subscribers(runner, run.id)
+        try:
+            transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
+                run.id,
+                terminal_reason="daemon_restart",
+            )
+            if transitioned:
+                recovered += 1
+        finally:
+            _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
+
+    return recovered
+
+
+async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
+    """Cancel live agent runs before subsystem teardown on daemon shutdown."""
+    if runner.agent_lifecycle_monitor is None or runner.agent_runner is None:
+        return 0
+
+    from gobby.agents.kill import kill_agent as _kill_agent_process
+
+    cancelled = 0
+    for run in runner.agent_runner.run_storage.list_active(limit=1000):
+        subscribers = _register_persisted_completion_subscribers(runner, run.id)
+        try:
+            result = await _kill_agent_process(
+                run,
+                runner.database,
+                signal_name="TERM",
+                close_terminal=True,
+            )
+            if not result.get("success") and result.get("error") != "No target PID found":
+                logger.warning(
+                    "Failed to stop active agent %s during shutdown: %s",
+                    run.id,
+                    result.get("error"),
+                )
+                continue
+
+            transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
+                run.id,
+                terminal_reason="daemon_restart",
+            )
+            if transitioned:
+                cancelled += 1
+        finally:
+            _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
+
+    return cancelled
+
+
 async def _reap_remaining_child_processes(timeout: float = 1.0) -> None:
     """Terminate then force-kill child processes that survived graceful shutdown."""
     try:
@@ -352,6 +438,9 @@ async def _init_subsystems(runner: GobbyRunner, rebuild_vector_store: Any) -> No
     # Start agent lifecycle monitor
     if runner.agent_lifecycle_monitor:
         await runner.agent_lifecycle_monitor.cleanup_stale_pending_runs()
+        recovered_runs = await _recover_agent_runs_after_restart(runner)
+        if recovered_runs > 0:
+            logger.info("Cancelled %d stale agent run(s) after restart", recovered_runs)
         await runner.agent_lifecycle_monitor.start()
         if tracker:
             tracker.complete("Agent lifecycle monitor")
@@ -712,6 +801,12 @@ async def run_daemon(runner: GobbyRunner) -> None:
 
         if runner.agent_lifecycle_monitor:
             try:
+                cancelled_runs = await _cancel_active_agent_runs_for_shutdown(runner)
+                if cancelled_runs > 0:
+                    logger.info(
+                        "Cancelled %d active agent run(s) during graceful shutdown",
+                        cancelled_runs,
+                    )
                 await asyncio.wait_for(runner.agent_lifecycle_monitor.stop(), timeout=2.0)
             except TimeoutError:
                 logger.warning("Agent lifecycle monitor shutdown timed out")

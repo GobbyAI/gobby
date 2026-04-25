@@ -179,6 +179,7 @@ class HTTPServer:
             config_setter=lambda c: setattr(services, "config", c),
             memory_sync_manager=services.memory_sync_manager,
             completion_registry=services.completion_registry,
+            agent_lifecycle_monitor=services.agent_lifecycle_monitor,
             cron_scheduler=services.cron_scheduler,
             transcript_reader=services.transcript_reader,
             communications_manager=services.communications_manager,

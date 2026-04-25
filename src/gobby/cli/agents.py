@@ -6,7 +6,7 @@ Commands for managing subagent runs:
 - list: List agent runs for a session
 - show: Show details for an agent run
 - status: Check status of a running agent
-- stop: Stop a running agent (marks cancelled in DB, does not kill process)
+- stop: Stop a running agent and cancel the run
 - kill: Kill a running agent process (SIGTERM/SIGKILL)
 """
 
@@ -379,7 +379,9 @@ def agent_status(run_ref: str) -> None:
 @click.argument("run_ref")
 @click.confirmation_option(prompt="Are you sure you want to stop this agent run?")
 def stop_agent(run_ref: str) -> None:
-    """Stop a running agent (marks as cancelled, does not kill process)."""
+    """Stop a running agent and cancel the run."""
+    from gobby.utils.daemon_client import DaemonClient
+
     run_id = resolve_agent_run_id(run_ref)
     manager = get_agent_run_manager()
     run = manager.get(run_id)
@@ -392,8 +394,21 @@ def stop_agent(run_ref: str) -> None:
         click.echo(f"Cannot stop agent in status: {run.status}", err=True)
         return
 
-    manager.cancel(run.id)
-    click.echo(f"Stopped agent run: {run.id}")
+    client = DaemonClient()
+    try:
+        result = client.call_mcp_tool(
+            server_name="gobby-agents",
+            tool_name="stop_agent",
+            arguments={"run_id": run.id},
+        )
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        return
+
+    if result.get("success"):
+        click.echo(f"Stopped agent run: {run.id}")
+    else:
+        click.echo(f"Failed: {result.get('error')}", err=True)
 
 
 @agents.command("kill")

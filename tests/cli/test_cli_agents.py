@@ -1312,12 +1312,14 @@ class TestAgentsStopCommand:
         assert result.exit_code == 0
         assert "RUN_REF" in result.output
 
+    @patch("gobby.utils.daemon_client.DaemonClient")
     @patch("gobby.cli.agents.resolve_agent_run_id")
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_stop_running_agent(
         self,
         mock_get_manager: MagicMock,
         mock_resolve: MagicMock,
+        mock_daemon_client: MagicMock,
         runner: CliRunner,
         mock_agent_run: MagicMock,
     ) -> None:
@@ -1326,19 +1328,22 @@ class TestAgentsStopCommand:
         mock_manager.get.return_value = mock_agent_run
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = mock_agent_run.id
+        mock_daemon_client.return_value.call_mcp_tool.return_value = {"success": True}
 
         result = runner.invoke(cli, ["agents", "stop", mock_agent_run.id, "--yes"])
 
         assert result.exit_code == 0
         assert "Stopped agent run" in result.output
-        mock_manager.cancel.assert_called_once_with(mock_agent_run.id)
+        mock_daemon_client.return_value.call_mcp_tool.assert_called_once()
 
+    @patch("gobby.utils.daemon_client.DaemonClient")
     @patch("gobby.cli.agents.resolve_agent_run_id")
     @patch("gobby.cli.agents.get_agent_run_manager")
     def test_stop_pending_agent(
         self,
         mock_get_manager: MagicMock,
         mock_resolve: MagicMock,
+        mock_daemon_client: MagicMock,
         runner: CliRunner,
     ) -> None:
         """Test stopping a pending agent."""
@@ -1350,6 +1355,7 @@ class TestAgentsStopCommand:
         mock_manager.get.return_value = pending_run
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-pending123"
+        mock_daemon_client.return_value.call_mcp_tool.return_value = {"success": True}
 
         result = runner.invoke(cli, ["agents", "stop", "ar-pending123", "--yes"])
 
@@ -1398,12 +1404,14 @@ class TestAgentsStopCommand:
         assert result.exit_code != 0
         assert "Agent run not found" in result.output
 
+    @patch("gobby.utils.daemon_client.DaemonClient")
     @patch("gobby.cli.agents.get_agent_run_manager")
     @patch("gobby.cli.agents.LocalDatabase")
     def test_stop_prefix_match(
         self,
         mock_db_cls: MagicMock,
         mock_get_manager: MagicMock,
+        mock_daemon_client: MagicMock,
         runner: CliRunner,
         mock_agent_run: MagicMock,
     ) -> None:
@@ -1435,6 +1443,7 @@ class TestAgentsStopCommand:
             }
         ]
         mock_db_cls.return_value = mock_db
+        mock_daemon_client.return_value.call_mcp_tool.return_value = {"success": True}
 
         result = runner.invoke(cli, ["agents", "stop", "ar-abc", "--yes"])
 

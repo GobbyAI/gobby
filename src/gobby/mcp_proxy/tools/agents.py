@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
+    from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,97 @@ def _fire_synthetic_stop(
         logger.warning(f"Failed to fire synthetic stop rules for session {session_id}: {e}")
 
 
+async def _cleanup_terminal_artifacts(
+    *,
+    tmux_session_name: str | None,
+    agent_session_id: str | None,
+    debug: bool,
+    session_manager: Any | None,
+    hook_manager_resolver: Any | None,
+    result: dict[str, Any],
+) -> None:
+    """Clean up terminal/session state after an explicit agent termination."""
+    if not debug and tmux_session_name:
+        try:
+            import subprocess
+
+            from gobby.config.tmux import TmuxConfig
+
+            tmux_cfg = TmuxConfig()
+            kill_cmd = [tmux_cfg.command]
+            if tmux_cfg.socket_name:
+                kill_cmd.extend(["-L", tmux_cfg.socket_name])
+            kill_cmd.extend(["kill-session", "-t", tmux_session_name])
+            subprocess.run(kill_cmd, capture_output=True, timeout=5)
+            result["tmux_session_killed"] = True
+        except Exception as e:
+            logger.debug(f"tmux session cleanup failed for {tmux_session_name}: {e}")
+
+    if not debug and agent_session_id:
+        if session_manager is not None:
+            try:
+                session_manager.update_status(agent_session_id, "expired")
+                result["session_expired"] = True
+            except Exception as e:
+                result["session_expire_error"] = str(e)
+
+        _fire_synthetic_stop(hook_manager_resolver, agent_session_id)
+
+
+async def _complete_self_terminated_run(
+    *,
+    runner: AgentRunner,
+    run: Any,
+    kill_db: Any,
+    completion_registry: Any | None,
+    session_manager: Any | None,
+    hook_manager_resolver: Any | None,
+    signal: str = "TERM",
+    debug: bool = False,
+) -> dict[str, Any]:
+    """Terminate the caller's process and finalize the run as success."""
+    agent_session_id = run.child_session_id
+    result = await _kill_agent_process(
+        run,
+        kill_db,
+        signal_name=signal,
+        close_terminal=not debug,
+    )
+    if not result.get("success") and result.get("error") != "No target PID found":
+        return result
+
+    completed = await complete_and_notify_agent_run(
+        runner,
+        run.id,
+        completion_registry=completion_registry,
+        notify_result={"status": "success", "run_id": run.id},
+        message=f"Agent {run.id} completed",
+    )
+    if not completed:
+        current = runner.get_run(run.id)
+        logger.debug(
+            "Self-success terminalization no-op for run %s; current status=%s",
+            run.id,
+            current.status if current else "missing",
+        )
+        result["status"] = current.status if current else "unknown"
+        result["noop"] = True
+    else:
+        result["status"] = "success"
+
+    await _cleanup_terminal_artifacts(
+        tmux_session_name=run.tmux_session_name,
+        agent_session_id=agent_session_id,
+        debug=debug,
+        session_manager=session_manager,
+        hook_manager_resolver=hook_manager_resolver,
+        result=result,
+    )
+    result["run_id"] = run.id
+    result["success"] = True
+    return result
+
+
 def create_agents_registry(
     runner: AgentRunner,
     session_manager: Any | None = None,
@@ -79,6 +171,7 @@ def create_agents_registry(
     # For firing synthetic stop events on agent kill
     hook_manager_resolver: Any | None = None,
     completion_registry: Any | None = None,
+    lifecycle_monitor: AgentLifecycleMonitor | None = None,
     # Legacy parameter — ignored, kept for caller compatibility during migration
     running_registry: Any | None = None,
     daemon_config: Any | None = None,
@@ -145,6 +238,7 @@ def create_agents_registry(
             "started_at": run.started_at,
             "completed_at": run.completed_at,
             "child_session_id": run.child_session_id,
+            "terminal_reason": run.terminal_reason,
         }
 
     @registry.tool(
@@ -205,14 +299,11 @@ def create_agents_registry(
 
     @registry.tool(
         name="stop_agent",
-        description="Stop a running agent (marks as cancelled in DB, does not kill process).",
+        description="Stop a running agent and mark the run cancelled.",
     )
     async def stop_agent(run_id: str) -> dict[str, Any]:
         """
-        Stop a running agent by marking it as cancelled.
-
-        This only updates the database status - it does NOT kill the actual process.
-        Use kill_agent to terminate the process.
+        Stop a running agent and mark the run as cancelled.
 
         Args:
             run_id: The agent run ID to stop.
@@ -220,15 +311,64 @@ def create_agents_registry(
         Returns:
             Dict with success status.
         """
-        success = runner.cancel_run(run_id)
-        if success:
-            return {"success": True, "message": f"Agent run {run_id} stopped"}
+        run = runner.get_run(run_id)
+        if not run:
+            return {"success": False, "error": f"Agent run {run_id} not found"}
+        if run.status not in ("pending", "running"):
+            return {"success": False, "error": f"Cannot stop agent in status: {run.status}"}
+
+        kill_db = db or agent_run_manager.db
+        result = await _kill_agent_process(
+            run,
+            kill_db,
+            signal_name="TERM",
+            close_terminal=True,
+        )
+        if not result.get("success") and result.get("error") != "No target PID found":
+            return result
+
+        transitioned = False
+        if lifecycle_monitor is not None:
+            transitioned = await lifecycle_monitor.terminalize_cancelled_run(
+                run_id,
+                terminal_reason="user_cancelled",
+            )
         else:
-            run = runner.get_run(run_id)
-            if not run:
-                return {"success": False, "error": f"Agent run {run_id} not found"}
-            else:
-                return {"success": False, "error": f"Cannot stop agent in status: {run.status}"}
+            transitioned = runner.cancel_run(run_id)
+            if transitioned and completion_registry is not None:
+                await completion_registry.notify(
+                    run_id,
+                    {
+                        "status": "cancelled",
+                        "terminal_reason": "user_cancelled",
+                        "run_id": run_id,
+                    },
+                    message=f"Agent {run_id} cancelled",
+                )
+
+        if not transitioned:
+            current = runner.get_run(run_id)
+            logger.debug(
+                "stop_agent no-op for run %s; current status=%s",
+                run_id,
+                current.status if current else "missing",
+            )
+
+        await _cleanup_terminal_artifacts(
+            tmux_session_name=run.tmux_session_name,
+            agent_session_id=run.child_session_id,
+            debug=False,
+            session_manager=session_manager,
+            hook_manager_resolver=hook_manager_resolver,
+            result=result,
+        )
+        return {
+            "success": True,
+            "message": f"Agent run {run_id} stopped",
+            "run_id": run_id,
+            "status": "cancelled",
+            "terminal_reason": "user_cancelled",
+        }
 
     @registry.tool(
         name="end_agent_run",
@@ -253,16 +393,21 @@ def create_agents_registry(
         if not db_run:
             return {"success": False, "error": f"Agent run {run_id} not found"}
 
-        # Neutral verb chosen to reduce false positives from provider-side
-        # classifiers; engine-side workflow termination remains durable fix.
-        await complete_and_notify_agent_run(
-            runner,
-            run_id,
+        result = await _complete_self_terminated_run(
+            runner=runner,
+            run=db_run,
+            kill_db=db or agent_run_manager.db,
             completion_registry=completion_registry,
-            notify_result={"status": "success", "run_id": run_id},
-            message=f"Agent {run_id} completed",
+            session_manager=session_manager,
+            hook_manager_resolver=hook_manager_resolver,
         )
-        return {"success": True, "run_id": run_id, "status": "success"}
+        if not result.get("success"):
+            return result
+        return {
+            "success": True,
+            "run_id": run_id,
+            "status": result.get("status", "success"),
+        }
 
     @registry.tool(
         name="kill_agent",
@@ -354,95 +499,93 @@ def create_agents_registry(
         agent_session_id = db_run.child_session_id or resolved_session_id
         tmux_session_name = db_run.tmux_session_name
 
-        # Default: full cleanup. debug=True preserves state/terminal for inspection.
-        close_terminal = not debug
+        is_self_termination = resolved_session_id is not None
+        if not is_self_termination and agent_session_id:
+            caller_session_id = get_current_session_id()
+            if caller_session_id and caller_session_id == agent_session_id:
+                is_self_termination = True
+        effective_status = status or ("success" if is_self_termination else "cancelled")
 
         kill_db = db or agent_run_manager.db
+        if effective_status == "success":
+            return await _complete_self_terminated_run(
+                runner=runner,
+                run=db_run,
+                kill_db=kill_db,
+                completion_registry=completion_registry,
+                session_manager=session_manager,
+                hook_manager_resolver=hook_manager_resolver,
+                signal=signal,
+                debug=debug,
+            )
+
         result = await _kill_agent_process(
             db_run,
             kill_db,
             signal_name=signal,
-            close_terminal=close_terminal,
+            close_terminal=not debug,
         )
+        if not result.get("success"):
+            return result
 
-        # Agent already exited — still need tmux/session cleanup below
-        already_completed = result.get("already_completed", False)
-
-        if result.get("success") or already_completed:
-            # Self-termination (session_id path) → default success
-            # Parent-initiated kill (run_id path) → default cancelled
-            # Caller can override with explicit status
-            is_self_termination = resolved_session_id is not None
-
-            # Also detect self-termination via run_id path:
-            # Agent calls kill_agent(run_id=...) and session context reveals caller IS the agent
-            if not is_self_termination and agent_session_id:
-                caller_session_id = get_current_session_id()
-                if caller_session_id and caller_session_id == agent_session_id:
-                    is_self_termination = True
-            effective_status = status or ("success" if is_self_termination else "cancelled")
-            if not already_completed:
-                if effective_status == "success":
-                    await complete_and_notify_agent_run(
-                        runner,
-                        run_id,
-                        completion_registry=completion_registry,
-                        notify_result={"status": effective_status, "run_id": run_id},
-                    )
-                elif effective_status == "cancelled":
-                    runner.cancel_run(run_id)
-                elif effective_status == "error":
-                    runner.run_storage.fail(run_id, error="Agent self-reported error")
-                else:
-                    runner.cancel_run(run_id)
-                    effective_status = "cancelled"
-            elif effective_status == "success":
-                await complete_and_notify_agent_run(
-                    runner,
+        if effective_status == "cancelled":
+            transitioned = False
+            if lifecycle_monitor is not None:
+                transitioned = await lifecycle_monitor.terminalize_cancelled_run(
                     run_id,
-                    completion_registry=completion_registry,
-                    notify_result={"status": effective_status, "run_id": run_id},
+                    terminal_reason="user_cancelled",
                 )
-            elif completion_registry and run_id:
-                try:
-                    notify_result: dict[str, Any] = {"status": effective_status, "run_id": run_id}
-                    await completion_registry.notify(run_id, notify_result)
-                except Exception:
-                    logger.debug(
-                        f"Failed to notify completion registry for run {run_id}", exc_info=True
+            else:
+                transitioned = runner.cancel_run(run_id)
+                if transitioned and completion_registry is not None:
+                    await completion_registry.notify(
+                        run_id,
+                        {
+                            "status": "cancelled",
+                            "terminal_reason": "user_cancelled",
+                            "run_id": run_id,
+                        },
                     )
+            if not transitioned:
+                current = runner.get_run(run_id)
+                logger.debug(
+                    "Cancelled terminalization no-op for run %s; current status=%s",
+                    run_id,
+                    current.status if current else "missing",
+                )
+            result["status"] = "cancelled"
+            result["terminal_reason"] = "user_cancelled"
+        elif effective_status == "error":
+            failed_run = runner.run_storage.fail(run_id, error="Agent self-reported error")
+            if failed_run is None:
+                current = runner.get_run(run_id)
+                logger.debug(
+                    "Error terminalization no-op for run %s; current status=%s",
+                    run_id,
+                    current.status if current else "missing",
+                )
+            result["status"] = "error"
+        else:
+            fallback_cancelled = runner.cancel_run(run_id)
+            if not fallback_cancelled:
+                current = runner.get_run(run_id)
+                logger.debug(
+                    "Fallback cancelled terminalization no-op for run %s; current status=%s",
+                    run_id,
+                    current.status if current else "missing",
+                )
+            effective_status = "cancelled"
+            result["status"] = "cancelled"
+            result["terminal_reason"] = "user_cancelled"
 
-            # Clean up the tmux session (remain-on-exit keeps dead panes alive)
-            if not debug and tmux_session_name:
-                try:
-                    import subprocess
-
-                    from gobby.config.tmux import TmuxConfig
-
-                    tmux_cfg = TmuxConfig()
-                    kill_cmd = [tmux_cfg.command]
-                    if tmux_cfg.socket_name:
-                        kill_cmd.extend(["-L", tmux_cfg.socket_name])
-                    kill_cmd.extend(["kill-session", "-t", tmux_session_name])
-                    subprocess.run(kill_cmd, capture_output=True, timeout=5)
-                    result["tmux_session_killed"] = True
-                except Exception as e:
-                    logger.debug(f"tmux session cleanup failed for {tmux_session_name}: {e}")
-
-            if not debug and agent_session_id:
-                # Mark session as 'expired' so transcript gets processed
-                # (Gemini sessions don't transition to expired via normal flow)
-                if session_manager is not None:
-                    try:
-                        session_manager.update_status(agent_session_id, "expired")
-                        result["session_expired"] = True
-                    except Exception as e:
-                        result["session_expire_error"] = str(e)
-
-                # Fire synthetic stop event so stop-triggered rules
-                # (e.g. digest-on-response) evaluate for killed agent sessions.
-                # The CLI never gets to fire its stop hook when SIGTERM'd.
-                _fire_synthetic_stop(hook_manager_resolver, agent_session_id)
+        await _cleanup_terminal_artifacts(
+            tmux_session_name=tmux_session_name,
+            agent_session_id=agent_session_id,
+            debug=debug,
+            session_manager=session_manager,
+            hook_manager_resolver=hook_manager_resolver,
+            result=result,
+        )
 
         return result
 

@@ -14,6 +14,8 @@ from gobby.storage.database import DatabaseProtocol
 logger = logging.getLogger(__name__)
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
+AgentRunTerminalReason = Literal["user_cancelled", "daemon_restart"]
+ACTIVE_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = ("pending", "running")
 TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
     "success",
     "error",
@@ -58,6 +60,7 @@ class AgentRun:
     worktree_id: str | None = None
     clone_id: str | None = None
     timeout_seconds: float | None = None
+    terminal_reason: AgentRunTerminalReason | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> AgentRun:
@@ -114,6 +117,7 @@ class AgentRun:
             worktree_id=row["worktree_id"] if "worktree_id" in row.keys() else None,
             clone_id=row["clone_id"] if "clone_id" in row.keys() else None,
             timeout_seconds=row["timeout_seconds"] if "timeout_seconds" in row.keys() else None,
+            terminal_reason=row["terminal_reason"] if "terminal_reason" in row.keys() else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +155,7 @@ class AgentRun:
             "clone_id": self.clone_id,
             "timeout_seconds": self.timeout_seconds,
             "continuation_prompt": self.continuation_prompt,
+            "terminal_reason": self.terminal_reason,
         }
 
     def to_brief(self) -> dict[str, Any]:
@@ -164,6 +169,7 @@ class AgentRun:
             "provider": self.provider,
             "task_id": self.task_id,
             "status": self.status,
+            "terminal_reason": self.terminal_reason,
         }
 
 
@@ -367,19 +373,23 @@ class LocalAgentRunManager:
             Updated AgentRun.
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE agent_runs
             SET status = 'success',
                 result = ?,
+                terminal_reason = NULL,
                 tool_calls_count = ?,
                 turns_used = ?,
                 completed_at = ?,
                 updated_at = ?
             WHERE id = ?
+              AND status IN ('pending', 'running')
             """,
             (result, tool_calls_count, turns_used, now, now, run_id),
         )
+        if not (cursor.rowcount or 0):
+            return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
@@ -403,19 +413,23 @@ class LocalAgentRunManager:
             Updated AgentRun.
         """
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE agent_runs
             SET status = 'error',
                 error = ?,
+                terminal_reason = NULL,
                 tool_calls_count = ?,
                 turns_used = ?,
                 completed_at = ?,
                 updated_at = ?
             WHERE id = ?
+              AND status IN ('pending', 'running')
             """,
             (error, tool_calls_count, turns_used, now, now, run_id),
         )
+        if not (cursor.rowcount or 0):
+            return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
@@ -427,32 +441,47 @@ class LocalAgentRunManager:
     ) -> AgentRun | None:
         """Mark agent run as timed out."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE agent_runs
             SET status = 'timeout',
                 error = ?,
+                terminal_reason = NULL,
                 turns_used = ?,
                 completed_at = ?,
                 updated_at = ?
             WHERE id = ?
+              AND status IN ('pending', 'running')
             """,
             (error, turns_used, now, now, run_id),
         )
+        if not (cursor.rowcount or 0):
+            return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 
-    def cancel(self, run_id: str) -> AgentRun | None:
+    def cancel(
+        self,
+        run_id: str,
+        *,
+        terminal_reason: AgentRunTerminalReason | None = None,
+    ) -> AgentRun | None:
         """Mark agent run as cancelled."""
         now = datetime.now(UTC).isoformat()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE agent_runs
-            SET status = 'cancelled', completed_at = ?, updated_at = ?
+            SET status = 'cancelled',
+                terminal_reason = ?,
+                completed_at = ?,
+                updated_at = ?
             WHERE id = ?
+              AND status IN ('pending', 'running')
             """,
-            (now, now, run_id),
+            (terminal_reason, now, now, run_id),
         )
+        if not (cursor.rowcount or 0):
+            return None
         self._expire_sessions_for_run_ids([run_id])
         return self.get(run_id)
 

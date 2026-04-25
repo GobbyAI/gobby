@@ -486,3 +486,132 @@ class TestDispatchFailureCountCRUD:
         mgr.reopen_task(task.id)
         reopened = mgr.get_task(task.id)
         assert reopened.dispatch_failure_count == 0
+
+
+class TestTerminalizeCancelledRun:
+    """Tests for terminalize_cancelled_run."""
+
+    @pytest.mark.asyncio
+    async def test_reopens_in_progress_task_and_notifies(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_task_mgr = MagicMock()
+        mock_completion_registry = MagicMock()
+        mock_completion_registry.notify = AsyncMock()
+        mock_session_mgr = MagicMock()
+
+        run = AgentRun(
+            id="run-cancel",
+            parent_session_id="parent-1",
+            child_session_id="child-1",
+            task_id="task-1",
+            provider="claude",
+            prompt="cancel it",
+            status="cancelled",
+            terminal_reason="user_cancelled",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+        mock_run_mgr.cancel.return_value = run
+
+        task = MagicMock()
+        task.status = "in_progress"
+        task.lifecycle_stage = "in_progress"
+        task.claimed_by_session_id = "child-1"
+        task.seq_num = 42
+        mock_task_mgr.get_task.return_value = task
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            session_manager=mock_session_mgr,
+            completion_registry=mock_completion_registry,
+            task_manager=mock_task_mgr,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            "run-cancel",
+            terminal_reason="user_cancelled",
+        )
+
+        assert transitioned is True
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-1", status="open")
+        mock_completion_registry.notify.assert_awaited_once_with(
+            "run-cancel",
+            result={
+                "status": "cancelled",
+                "terminal_reason": "user_cancelled",
+                "run_id": "run-cancel",
+            },
+            message="Agent run-cancel cancelled",
+        )
+        mock_session_mgr.update_status.assert_called_once_with("child-1", "expired")
+
+    @pytest.mark.asyncio
+    async def test_clears_claim_without_status_change_for_review_task(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_task_mgr = MagicMock()
+
+        run = AgentRun(
+            id="run-review",
+            parent_session_id="parent-1",
+            child_session_id="child-1",
+            task_id="task-review",
+            provider="claude",
+            prompt="cancel review",
+            status="cancelled",
+            terminal_reason="user_cancelled",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+        mock_run_mgr.cancel.return_value = run
+
+        task = MagicMock()
+        task.status = "needs_review"
+        task.lifecycle_stage = "needs_review"
+        task.claimed_by_session_id = "child-1"
+        task.seq_num = 7
+        mock_task_mgr.get_task.return_value = task
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            task_manager=mock_task_mgr,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            "run-review",
+            terminal_reason="user_cancelled",
+        )
+
+        assert transitioned is True
+        mock_task_mgr.release_task_claim.assert_called_once_with("task-review")
+
+    @pytest.mark.asyncio
+    async def test_no_second_notification_when_run_already_terminal(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_run_mgr.cancel.return_value = None
+        mock_run_mgr.get.return_value = AgentRun(
+            id="run-done",
+            parent_session_id="parent-1",
+            provider="claude",
+            prompt="done",
+            status="success",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+        mock_completion_registry = MagicMock()
+        mock_completion_registry.notify = AsyncMock()
+
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+            completion_registry=mock_completion_registry,
+        )
+
+        transitioned = await monitor.terminalize_cancelled_run(
+            "run-done",
+            terminal_reason="user_cancelled",
+        )
+
+        assert transitioned is False
+        mock_completion_registry.notify.assert_not_awaited()

@@ -7,5 +7,12 @@ from gobby.storage.database import LocalDatabase
 MigrationAction = str | Callable[[LocalDatabase], None]
 
 # Historical SQLite migrations through v219 are folded into baseline_schema.sql.
-# Keep this empty until a future SQLite migration lands before PostgreSQL cutover.
-MIGRATIONS: list[tuple[int, str, MigrationAction]] = []
+MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
+    (
+        220,
+        "Add terminal_reason to agent_runs",
+        """
+        ALTER TABLE agent_runs ADD COLUMN terminal_reason TEXT
+        """,
+    )
+]

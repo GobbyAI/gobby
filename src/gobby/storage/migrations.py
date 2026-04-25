@@ -56,7 +56,7 @@ class MigrationUnsupportedError(Exception):
 
 MigrationAction = str | Callable[[LocalDatabase], None]
 
-BASELINE_VERSION = 219
+BASELINE_VERSION = 220
 _MIN_MIGRATION_VERSION = 219
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 
@@ -71,8 +71,8 @@ def get_current_version(db: LocalDatabase) -> int:
 
 
 def _apply_baseline(db: LocalDatabase) -> None:
-    """Apply baseline schema for new databases (flattened at v219)."""
-    logger.info("Applying baseline schema (v219)")
+    """Apply baseline schema for new databases (flattened at v220)."""
+    logger.info("Applying baseline schema (v220)")
 
     with db.transaction() as conn:
         # Execute baseline schema
@@ -159,7 +159,7 @@ def run_migrations(db: LocalDatabase) -> int:
         - Applies the current baseline schema directly.
 
     For existing databases:
-        - Version 219 runs any future SQLite migrations and repairs the system session.
+        - Versions 219+ run any future SQLite migrations and repair the system session.
         - Versions below 219 raise MigrationUnsupportedError.
         - Versions above the latest known migration are left untouched.
 

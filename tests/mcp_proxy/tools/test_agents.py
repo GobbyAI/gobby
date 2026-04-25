@@ -254,17 +254,25 @@ class TestStopAgent:
 
     @pytest.mark.asyncio
     async def test_successful_stop(self):
-        """Test successful agent stop (DB-only, no registry removal)."""
+        """Test successful agent stop."""
         runner = _make_runner_with_run_storage()
+        runner.get_run.return_value = _make_mock_agent_run(status="running")
         runner.cancel_run.return_value = True
 
         registry = create_agents_registry(runner)
         stop_agent = registry._tools["stop_agent"].func
 
-        result = await stop_agent(run_id="run-123")
+        with patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            return_value={"success": True},
+        ):
+            result = await stop_agent(run_id="run-123")
 
         assert result["success"] is True
         assert "stopped" in result["message"]
+        assert result["terminal_reason"] == "user_cancelled"
+        runner.cancel_run.assert_called_once_with("run-123")
 
     @pytest.mark.asyncio
     async def test_run_not_found(self):
@@ -649,7 +657,14 @@ class TestEndAgentRun:
 
         from gobby.utils.session_context import session_context_for_test
 
-        with session_context_for_test("sess-456"):
+        with (
+            session_context_for_test("sess-456"),
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+        ):
             result = await registry._tools["end_agent_run"].func()
 
         assert result == {"success": True, "run_id": "run-123", "status": "success"}
