@@ -1,5 +1,6 @@
 """Tests for the MCP proxy stdio module."""
 
+import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -748,6 +749,56 @@ class TestMCPToolsWrapper:
             project_id="outer-project",
         )
         assert mock_proxy._session_id == "outer-session"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_emits_progress_heartbeat_for_wait_tools(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+
+        heartbeat_seen = asyncio.Event()
+        release_call = asyncio.Event()
+        ctx = MagicMock()
+        ctx.report_progress = AsyncMock(side_effect=lambda **_: heartbeat_seen.set())
+
+        async def _block_until_heartbeat(*args, **kwargs):
+            await heartbeat_seen.wait()
+            await release_call.wait()
+            return {"res": "call"}
+
+        mock_proxy.call_tool.side_effect = _block_until_heartbeat
+
+        with patch("gobby.mcp_proxy.stdio.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
+            task = asyncio.create_task(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-workflows",
+                    tool_name="wait_for_completion",
+                    arguments={"completion_id": "run-1", "timeout": 600},
+                    ctx=ctx,
+                )
+            )
+            await asyncio.wait_for(heartbeat_seen.wait(), timeout=0.2)
+            assert ctx.report_progress.await_count >= 1
+            release_call.set()
+            result = await asyncio.wait_for(task, timeout=0.2)
+
+        assert result == {"res": "call"}
+
+    @pytest.mark.asyncio
+    async def test_call_tool_skips_progress_heartbeat_for_non_wait_tools(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+
+        ctx = MagicMock()
+        ctx.report_progress = AsyncMock()
+
+        await run_tool(
+            "call_tool",
+            server_name="gobby-skills",
+            tool_name="get_skill",
+            arguments={"name": "brevity"},
+            ctx=ctx,
+        )
+
+        ctx.report_progress.assert_not_awaited()
 
 
 class TestEnsureDaemonRunningFailures:

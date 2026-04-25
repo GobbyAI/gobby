@@ -9,10 +9,11 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Awaitable
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 from gobby.config.app import load_config
 from gobby.mcp_proxy._call_tool_wrapper import (
@@ -53,6 +54,15 @@ LLM_TASK_TOOLS = (
     "suggest_next_task",
 )
 
+WAIT_TOOL_NAMES = (
+    "wait_for_task",
+    "wait_for_any_task",
+    "wait_for_all_tasks",
+    "wait_for_completion",
+    "wait_for_agent",
+)
+WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
+
 
 __all__ = [
     "create_stdio_mcp_server",
@@ -65,6 +75,48 @@ __all__ = [
 ]
 
 logger = logging.getLogger("gobby.mcp.stdio")
+
+
+async def _call_with_wait_heartbeat(
+    tool_call: Awaitable[dict[str, Any]],
+    *,
+    ctx: Context | None,
+    tool_name: str,
+    timeout: float | None,
+) -> dict[str, Any]:
+    """Keep stdio MCP transport active while a long-running wait tool blocks."""
+    if ctx is None or tool_name not in WAIT_TOOL_NAMES:
+        return await tool_call
+
+    stop_event = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        elapsed = 0.0
+        while True:
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS,
+                )
+                return
+            except TimeoutError:
+                elapsed += WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS
+                progress = min(elapsed, timeout) if timeout is not None else elapsed
+                await ctx.report_progress(
+                    progress=progress,
+                    total=timeout,
+                    message=f"{tool_name} still waiting for daemon result",
+                )
+
+    heartbeat_task = asyncio.create_task(_heartbeat(), name=f"{tool_name}-heartbeat")
+    try:
+        return await tool_call
+    finally:
+        stop_event.set()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
 
 class DaemonProxy:
@@ -181,13 +233,7 @@ class DaemonProxy:
         elif tool_name in LLM_TASK_TOOLS:
             timeout = 300.0
         # Wait tools: use the requested timeout plus a buffer
-        elif tool_name in (
-            "wait_for_task",
-            "wait_for_any_task",
-            "wait_for_all_tasks",
-            "wait_for_completion",
-            "wait_for_agent",
-        ):
+        elif tool_name in WAIT_TOOL_NAMES:
             # Extract timeout from arguments, default to 300s if not specified
             arg_timeout = float((arguments or {}).get("timeout", 300.0))
             # Add 30s buffer for HTTP overhead
@@ -459,6 +505,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         args: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """
         Execute a tool on a connected MCP server.
@@ -511,9 +558,25 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         if session_id and not proxy._session_id:
             proxy._session_id = session_id
 
+        requested_timeout = None
+        if tool_name in WAIT_TOOL_NAMES:
+            raw_timeout = final_args.get("timeout") if isinstance(final_args, dict) else None
+            if isinstance(raw_timeout, int | float):
+                requested_timeout = float(raw_timeout)
+
         if project_id:
-            return await proxy.call_tool(server_name, tool_name, final_args, project_id=project_id)
-        return await proxy.call_tool(server_name, tool_name, final_args)
+            return await _call_with_wait_heartbeat(
+                proxy.call_tool(server_name, tool_name, final_args, project_id=project_id),
+                ctx=ctx,
+                tool_name=tool_name,
+                timeout=requested_timeout,
+            )
+        return await _call_with_wait_heartbeat(
+            proxy.call_tool(server_name, tool_name, final_args),
+            ctx=ctx,
+            tool_name=tool_name,
+            timeout=requested_timeout,
+        )
 
     @mcp.tool()
     async def recommend_tools(
