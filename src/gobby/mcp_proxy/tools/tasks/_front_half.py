@@ -22,6 +22,12 @@ from gobby.mcp_proxy.tools.tasks._expansion import (
     _subscribe_completion,
     _summarize_run,
 )
+from gobby.mcp_proxy.tools.tasks._front_half_artifacts import (
+    ArtifactPaths,
+)
+from gobby.mcp_proxy.tools.tasks._front_half_artifacts import (
+    artifact_paths as _resolve_artifact_paths,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.tasks import Task, TaskNotFoundError
@@ -73,7 +79,8 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         _ensure_label(ctx, parent_task, FRONT_HALF_LABEL)
 
-        artifacts = _artifact_paths(parent_task)
+        artifacts = _artifact_paths(ctx, parent_task)
+        plan_file = artifacts["plan_file"]
 
         requirements_task = _get_or_create_stage_task(
             ctx,
@@ -123,7 +130,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             ctx,
             parent_task,
             stage="planning",
-            description=_planning_stage_description(parent_task, artifacts["plan_file"]),
+            description=_planning_stage_description(parent_task, plan_file),
             extra_labels=[f"{PLANNING_ROUND_LABEL_PREFIX}0"],
         )
 
@@ -168,6 +175,21 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             requirements_task=requirements_task,
             planning_task=planning_task,
         )
+        if plan_file is None:
+            return _response(
+                parent_task,
+                current_stage="planning",
+                next_action="front_half_failed",
+                message=(
+                    "Planning cannot start because no persisted plan artifact path "
+                    "exists for the parent task."
+                ),
+                artifacts=artifacts,
+                stage_tasks=stage_tasks,
+                planning_round=planning_round,
+                max_planning_rounds=max_planning_rounds,
+                front_half_complete=False,
+            )
         if planning_task.status in ("open", "in_progress"):
             if planning_task.status == "open" and planning_round >= max_planning_rounds:
                 return _response(
@@ -211,7 +233,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     prompt=_planner_prompt(
                         parent_task,
                         planning_task,
-                        plan_file=artifacts["plan_file"],
+                        plan_file=plan_file,
                         planning_round=planning_round,
                     ),
                 ),
@@ -246,7 +268,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     prompt=_adversary_prompt(
                         parent_task,
                         planning_task,
-                        plan_file=artifacts["plan_file"],
+                        plan_file=plan_file,
                         planning_round=planning_round,
                     ),
                 ),
@@ -265,7 +287,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             ctx,
             parent_task,
             stage="expansion",
-            description=_expansion_stage_description(parent_task, artifacts["plan_file"]),
+            description=_expansion_stage_description(parent_task, plan_file),
         )
         stage_tasks["expansion"] = _task_payload(expansion_task)
 
@@ -273,7 +295,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             ctx,
             parent_task=parent_task,
             expansion_task=expansion_task,
-            plan_file=artifacts["plan_file"],
+            plan_file=plan_file,
             provider=expansion_provider,
             model=expansion_model,
         )
@@ -300,7 +322,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             stage="test_architecture",
             description=_test_architecture_stage_description(
                 parent_task,
-                plan_file=artifacts["plan_file"],
+                plan_file=plan_file,
                 test_architecture_file=artifacts["test_architecture_file"],
             ),
         )
@@ -347,7 +369,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     prompt=_test_architect_prompt(
                         parent_task,
                         test_architecture_task,
-                        plan_file=artifacts["plan_file"],
+                        plan_file=plan_file,
                         test_architecture_file=artifacts["test_architecture_file"],
                     ),
                 ),
@@ -465,7 +487,7 @@ def _response(
     current_stage: str,
     next_action: str,
     message: str,
-    artifacts: dict[str, str],
+    artifacts: ArtifactPaths,
     stage_tasks: dict[str, dict[str, Any]],
     front_half_complete: bool,
     dispatch: dict[str, Any] | None = None,
@@ -495,12 +517,8 @@ def _response(
     return response
 
 
-def _artifact_paths(parent_task: Task) -> dict[str, str]:
-    ident = str(parent_task.seq_num) if parent_task.seq_num is not None else parent_task.id[:8]
-    return {
-        "plan_file": f".gobby/plans/task-{ident}-plan.md",
-        "test_architecture_file": f".gobby/test-architecture/task-{ident}-test-architecture.md",
-    }
+def _artifact_paths(ctx: RegistryContext, parent_task: Task) -> ArtifactPaths:
+    return _resolve_artifact_paths(ctx, parent_task, _STAGE_LABELS)
 
 
 def _task_ref(task: Task) -> str:
@@ -624,7 +642,7 @@ def _requirements_stage_description(parent_task: Task) -> str:
     )
 
 
-def _planning_stage_description(parent_task: Task, plan_file: str) -> str:
+def _planning_stage_description(parent_task: Task, plan_file: str | None) -> str:
     return (
         f"Front-half planning stage for parent task {_task_ref(parent_task)}.\n\n"
         f"Plan artifact: {plan_file}\n"

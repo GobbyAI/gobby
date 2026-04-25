@@ -16,12 +16,14 @@ from gobby.mcp_proxy.tools.tasks._front_half import (
     FRONT_HALF_LABEL,
     NEEDS_REQUIREMENTS_PREFIX,
     PLANNING_ROUND_LABEL_PREFIX,
+    _artifact_paths,
     create_front_half_registry,
 )
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -99,9 +101,38 @@ def _stage_task(task_manager: LocalTaskManager, parent_id: str, stage: str):
     return tasks[0]
 
 
-def _plan_file_path(repo_root: Path, parent_task) -> Path:
+def _task_ident(parent_task) -> str:
     ident = str(parent_task.seq_num) if parent_task.seq_num is not None else parent_task.id[:8]
-    return repo_root / ".gobby" / "plans" / f"task-{ident}-plan.md"
+    return ident
+
+
+def _plan_file_rel(parent_task, slug: str = "front-half-conductor") -> str:
+    return f".gobby/plans/task-{_task_ident(parent_task)}-{slug}.md"
+
+
+def _plan_file_path(repo_root: Path, parent_task, slug: str = "front-half-conductor") -> Path:
+    return repo_root / _plan_file_rel(parent_task, slug)
+
+
+def _legacy_plan_file_path(repo_root: Path, parent_task) -> Path:
+    return repo_root / ".gobby" / "plans" / f"task-{_task_ident(parent_task)}-plan.md"
+
+
+def _seed_plan_artifact(task_manager: LocalTaskManager, session_id: str, parent_task) -> str:
+    plan_file = _plan_file_rel(parent_task)
+    parent_ref = f"#{parent_task.seq_num}" if parent_task.seq_num is not None else parent_task.id
+    SessionVariableManager(task_manager.db).merge_variables(
+        session_id,
+        {"plan_parent_ref": parent_ref, "artifact_path": plan_file},
+    )
+    return plan_file
+
+
+def _approve_requirements_and_seed_plan(
+    task_manager: LocalTaskManager, requirements_task, session_id: str, parent_task
+) -> str:
+    _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+    return _seed_plan_artifact(task_manager, session_id, parent_task)
 
 
 def _write_plan_file(repo_root: Path, parent_task) -> Path:
@@ -122,6 +153,64 @@ def _approve_stage_task(
 
 
 class TestFrontHalfTick:
+    def test_artifact_paths_returns_none_without_persisted_plan(
+        self,
+        task_manager,
+        sync_manager,
+        parent_task,
+    ) -> None:
+        ctx = RegistryContext(
+            task_manager=task_manager,
+            sync_manager=sync_manager,
+            task_validator=None,
+            config=None,
+        )
+
+        artifacts = _artifact_paths(ctx, parent_task)
+
+        assert artifacts["plan_file"] is None
+
+    def test_artifact_paths_uses_persisted_interactive_slug_path(
+        self,
+        task_manager,
+        sync_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        ctx = RegistryContext(
+            task_manager=task_manager,
+            sync_manager=sync_manager,
+            task_validator=None,
+            config=None,
+        )
+        expected = _seed_plan_artifact(task_manager, test_session, parent_task)
+
+        artifacts = _artifact_paths(ctx, parent_task)
+
+        assert artifacts["plan_file"] == expected
+        assert not expected.endswith("-plan.md")
+
+    def test_artifact_paths_finds_existing_legacy_autonomous_plan(
+        self,
+        task_manager,
+        sync_manager,
+        parent_task,
+        temp_dir,
+    ) -> None:
+        ctx = RegistryContext(
+            task_manager=task_manager,
+            sync_manager=sync_manager,
+            task_validator=None,
+            config=None,
+        )
+        plan_file = _legacy_plan_file_path(temp_dir, parent_task)
+        plan_file.parent.mkdir(parents=True, exist_ok=True)
+        plan_file.write_text("# Legacy plan\n", encoding="utf-8")
+
+        artifacts = _artifact_paths(ctx, parent_task)
+
+        assert artifacts["plan_file"] == str(plan_file.relative_to(temp_dir))
+
     @pytest.mark.asyncio
     async def test_creates_requirements_stage_and_waits(
         self,
@@ -159,7 +248,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        expected_plan_file = _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             result = await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -167,7 +258,7 @@ class TestFrontHalfTick:
         assert result["current_stage"] == "planning"
         assert result["next_action"] == "spawn_planner"
         assert result["dispatch"]["agent"] == "planner"
-        assert result["artifacts"]["plan_file"].endswith("-plan.md")
+        assert result["artifacts"]["plan_file"] == expected_plan_file
 
         refreshed_requirements = task_manager.get_task(requirements_task.id)
         assert refreshed_requirements is not None
@@ -175,6 +266,27 @@ class TestFrontHalfTick:
 
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
         assert f"{PLANNING_ROUND_LABEL_PREFIX}0" in (planning_task.labels or [])
+
+    @pytest.mark.asyncio
+    async def test_requirements_approval_without_plan_path_fails_closed(
+        self,
+        front_half_registry,
+        task_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        with session_context_for_test(test_session):
+            await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
+
+        requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
+        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+
+        with session_context_for_test(test_session):
+            result = await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
+
+        assert result["current_stage"] == "planning"
+        assert result["next_action"] == "front_half_failed"
+        assert result["artifacts"]["plan_file"] is None
 
     @pytest.mark.asyncio
     async def test_planning_needs_review_dispatches_adversary(
@@ -188,7 +300,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -216,7 +330,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -255,7 +371,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -298,7 +416,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -338,7 +458,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -433,6 +555,7 @@ class TestFrontHalfTick:
         )
 
         _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _seed_plan_artifact(task_manager, test_session, parent_task)
         task_manager.close_task(requirements_task.id, reason="done")
         _approve_stage_task(task_manager, planning_task.id, notes="Approved")
         task_manager.close_task(planning_task.id, reason="done")
@@ -461,7 +584,9 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         requirements_task = _stage_task(task_manager, parent_task.id, "requirements")
-        _approve_stage_task(task_manager, requirements_task.id, notes="Locked")
+        _approve_requirements_and_seed_plan(
+            task_manager, requirements_task, test_session, parent_task
+        )
 
         with session_context_for_test(test_session):
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
