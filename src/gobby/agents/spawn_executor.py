@@ -94,6 +94,8 @@ class SpawnResult:
     message: str | None = None
     codex_session_id: str | None = None  # Codex external session ID
     tmux_session_name: str | None = None  # Tmux session name for output streaming
+    tmux_socket_name: str | None = None  # Tmux socket name used for output/input routing
+    tmux_socket_path: str | None = None  # Explicit tmux socket path, if configured
 
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
@@ -234,6 +236,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         pid=terminal_result.pid,
         terminal_type=terminal_result.terminal_type,
         tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Claude agent spawned in {terminal_result.terminal_type} with session {gobby_session_id}",
     )
 
@@ -354,6 +358,8 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         pid=terminal_result.pid,
         terminal_type=terminal_result.terminal_type,
         tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Gemini agent spawned in terminal with session {gobby_session_id}",
     )
 
@@ -464,6 +470,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         pid=terminal_result.pid,
         terminal_type=terminal_result.terminal_type,
         tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Qwen agent spawned in terminal with session {gobby_session_id}",
     )
 
@@ -566,5 +574,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         pid=terminal_result.pid,
         terminal_type=terminal_result.terminal_type,
         tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Codex agent spawned in terminal with session {gobby_session_id}",
     )

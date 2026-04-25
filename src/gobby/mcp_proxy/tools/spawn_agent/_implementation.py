@@ -19,7 +19,6 @@ from gobby.agents.isolation import (
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
-from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
 from gobby.utils.machine_id import get_machine_id
@@ -436,6 +435,26 @@ async def spawn_agent_impl(
     # agent_runs row using that exact id. It is the single source of truth.
 
     spawn_result = await execute_spawn(spawn_request)
+    tmux_session_name = getattr(spawn_result, "tmux_session_name", None)
+    if not isinstance(tmux_session_name, str):
+        tmux_session_name = None
+    tmux_socket_name = getattr(spawn_result, "tmux_socket_name", None)
+    if not isinstance(tmux_socket_name, str):
+        tmux_socket_name = None
+    tmux_socket_path = getattr(spawn_result, "tmux_socket_path", None)
+    if not isinstance(tmux_socket_path, str):
+        tmux_socket_path = None
+
+    if spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name:
+        alive = await _check_tmux_session_alive(
+            tmux_session_name,
+            socket_name=tmux_socket_name,
+            socket_path=tmux_socket_path,
+        )
+        if not alive:
+            spawn_result.success = False
+            spawn_result.status = "failed"
+            spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
 
     # 12. Update DB and handle post-spawn setup based on spawn result
     if spawn_result.success and spawn_result.child_session_id is not None:
@@ -449,7 +468,7 @@ async def spawn_agent_impl(
             runner.run_storage.update_runtime(
                 run_id,
                 pid=spawn_result.pid,
-                tmux_session_name=spawn_result.tmux_session_name,
+                tmux_session_name=tmux_session_name,
                 worktree_id=isolation_ctx.worktree_id,
                 clone_id=isolation_ctx.clone_id,
             )
@@ -478,7 +497,9 @@ async def spawn_agent_impl(
                     "parent_session_id": parent_session_id,
                     "provider": effective_provider,
                     "pid": spawn_result.pid,
-                    "tmux_session_name": spawn_result.tmux_session_name,
+                    "tmux_session_name": tmux_session_name,
+                    "tmux_socket_name": tmux_socket_name,
+                    "tmux_socket_path": tmux_socket_path,
                 },
             )
         except Exception as e:
@@ -553,18 +574,21 @@ async def spawn_agent_impl(
                 logger.error(f"Failed to create step workflow instance: {e}", exc_info=True)
 
         # Post-spawn health check: verify tmux session is still alive.
-        if spawn_result.terminal_type == "tmux" and spawn_result.tmux_session_name:
+        if spawn_result.terminal_type == "tmux" and tmux_session_name:
 
             async def _deferred_health_check(
                 _run_id: str,
                 _tmux_name: str,
+                _socket_name: str | None,
+                _socket_path: str | None,
                 _delay: float,
             ) -> None:
                 try:
                     await asyncio.sleep(_delay)
-                    tmux_cfg = TmuxConfig()
                     alive = await _check_tmux_session_alive(
-                        _tmux_name, socket_name=tmux_cfg.socket_name
+                        _tmux_name,
+                        socket_name=_socket_name,
+                        socket_path=_socket_path,
                     )
                     if not alive:
                         logger.error(
@@ -585,7 +609,11 @@ async def spawn_agent_impl(
 
             health_task = asyncio.create_task(
                 _deferred_health_check(
-                    run_id, spawn_result.tmux_session_name, TMUX_HEALTH_CHECK_DELAY
+                    run_id,
+                    tmux_session_name,
+                    tmux_socket_name,
+                    tmux_socket_path,
+                    TMUX_HEALTH_CHECK_DELAY,
                 ),
                 name=f"tmux-health-{run_id}",
             )
@@ -617,6 +645,9 @@ async def spawn_agent_impl(
         "worktree_path": isolation_ctx.cwd if effective_isolation == "worktree" else None,
         "clone_id": isolation_ctx.clone_id,
         "pid": spawn_result.pid,
+        "tmux_session_name": tmux_session_name,
+        "tmux_socket_name": tmux_socket_name,
+        "tmux_socket_path": tmux_socket_path,
         "message": spawn_result.message,
         "reasoning": reasoning.to_dict(),
     }

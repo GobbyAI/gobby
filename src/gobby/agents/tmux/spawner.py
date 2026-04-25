@@ -25,7 +25,7 @@ from gobby.agents.spawners.base import (
 )
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.spawners.prompt_manager import MAX_ENV_PROMPT_LENGTH, create_prompt_file
-from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
@@ -140,27 +140,61 @@ class TmuxSpawner(TerminalSpawnerBase):
                 error=str(e),
             )
 
-        # Verify session actually exists (guards against post-restart tmux failures)
-        await asyncio.sleep(0.2)
-        if not await self._session_manager.has_session(info.name):
+        try:
+            verified_info, verification_error = await self._verify_live_pane(info.name)
+        except Exception as e:
             return SpawnResult(
                 success=False,
-                message=f"tmux session '{info.name}' created but not found on verification",
-                error="tmux session verification failed",
+                message=f"tmux session '{info.name}' failed live-pane verification",
+                error=f"tmux session verification failed: {e}",
+            )
+        if verified_info is None:
+            return SpawnResult(
+                success=False,
+                message=f"tmux session '{info.name}' failed live-pane verification",
+                error=verification_error or "tmux session verification failed",
             )
 
+        attach_cmd = self._attach_command(verified_info.name)
         result = SpawnResult(
             success=True,
-            message=(
-                f"Spawned tmux session '{info.name}' "
-                f"(attach: tmux -L {self._config.socket_name} attach -t {info.name})"
-            ),
-            pid=info.pane_pid,
+            message=(f"Spawned tmux session '{verified_info.name}' (attach: {attach_cmd})"),
+            pid=verified_info.pane_pid,
             terminal_type=self.terminal_type,
+            tmux_session_name=verified_info.name,
+            tmux_socket_name=self._config.socket_name,
+            tmux_socket_path=self._config.socket_path,
         )
-        # Attach tmux_session_name to the result for callers that need it
-        result.tmux_session_name = info.name
         return result
+
+    async def _verify_live_pane(
+        self, session_name: str
+    ) -> tuple[TmuxSessionInfo | None, str | None]:
+        """Verify tmux created a live pane and return its authoritative metadata."""
+        deadline = time.monotonic() + 2.0
+        last_error = f"tmux session '{session_name}' was not found"
+        while True:
+            info = await self._session_manager.get_session(session_name)
+            if info is None:
+                last_error = f"tmux session '{session_name}' was not found"
+            elif info.pane_dead:
+                return None, f"tmux session '{session_name}' pane is dead"
+            elif info.pane_pid is None:
+                last_error = f"tmux session '{session_name}' has no pane PID"
+            else:
+                return info, None
+
+            if time.monotonic() >= deadline:
+                return None, last_error
+            await asyncio.sleep(0.1)
+
+    def _attach_command(self, session_name: str) -> str:
+        """Return a tmux attach command for the configured socket."""
+        if self._config.socket_path:
+            return f"tmux -S {shlex.quote(self._config.socket_path)} attach -t {session_name}"
+        if self._config.socket_name:
+            return f"tmux -L {self._config.socket_name} attach -t {session_name}"
+        return f"tmux attach -t {session_name}"
 
     # ------------------------------------------------------------------
     # spawn_agent  (moved from the former TerminalSpawner orchestrator)

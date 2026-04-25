@@ -78,6 +78,24 @@ class TmuxSessionManager:
             args.extend(["-f", "/dev/null"])
         return args
 
+    @staticmethod
+    def _parse_session_info_line(line: str) -> TmuxSessionInfo | None:
+        """Parse one tab-delimited tmux metadata row."""
+        if not line.strip():
+            return None
+        parts = line.split("\t")
+        if len(parts) < 2:
+            return None
+        pid_str = parts[1]
+        return TmuxSessionInfo(
+            name=parts[0],
+            pane_pid=int(pid_str) if pid_str.isdigit() else None,
+            pane_id=parts[2] if len(parts) > 2 and parts[2] else None,
+            window_name=parts[3] if len(parts) > 3 and parts[3] else None,
+            pane_title=parts[4] if len(parts) > 4 and parts[4] else None,
+            pane_dead=parts[5] == "1" if len(parts) > 5 else False,
+        )
+
     async def _run(
         self,
         *tmux_args: str,
@@ -304,26 +322,28 @@ class TmuxSessionManager:
         for line in stdout.splitlines():
             if not line.strip():
                 continue
-            parts = line.split("\t")
-            if len(parts) >= 2:
-                name = parts[0]
-                pid_str = parts[1]
-                pid = int(pid_str) if pid_str.isdigit() else None
-                pane_id = parts[2] if len(parts) > 2 and parts[2] else None
-                window_name = parts[3] if len(parts) > 3 and parts[3] else None
-                pane_title = parts[4] if len(parts) > 4 and parts[4] else None
-                pane_dead = parts[5] == "1" if len(parts) > 5 else False
-                results.append(
-                    TmuxSessionInfo(
-                        name=name,
-                        pane_pid=pid,
-                        pane_id=pane_id,
-                        window_name=window_name,
-                        pane_title=pane_title,
-                        pane_dead=pane_dead,
-                    )
-                )
+            info = self._parse_session_info_line(line)
+            if info:
+                results.append(info)
         return results
+
+    async def get_session(self, name: str) -> TmuxSessionInfo | None:
+        """Fetch metadata for the first pane in one tmux session."""
+        rc, stdout, _stderr = await self._run(
+            "list-panes",
+            "-t",
+            name,
+            "-F",
+            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
+            timeout=2.0,
+        )
+        if rc != 0:
+            return None
+        for line in stdout.splitlines():
+            info = self._parse_session_info_line(line)
+            if info:
+                return info
+        return None
 
     async def list_pane_ids(self) -> set[str]:
         """Return the set of all live pane IDs (e.g. {"%0", "%5"}) across all sessions."""

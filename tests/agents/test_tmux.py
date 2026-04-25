@@ -222,6 +222,36 @@ class TestTmuxSessionManager:
             assert result[1].pane_id == "%2"
 
     @pytest.mark.asyncio
+    async def test_get_session_returns_target_pane_metadata(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "session1\t100\t%1\tzsh\tTitle\t0\n", "")
+            result = await mgr.get_session("session1")
+
+        assert result is not None
+        assert result.name == "session1"
+        assert result.pane_pid == 100
+        assert result.pane_id == "%1"
+        assert result.window_name == "zsh"
+        assert result.pane_title == "Title"
+        mock_run.assert_awaited_once_with(
+            "list-panes",
+            "-t",
+            "session1",
+            "-F",
+            "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
+            timeout=2.0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_session_returns_none_when_missing(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "can't find session")
+            result = await mgr.get_session("missing")
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_has_session(self) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
@@ -513,11 +543,11 @@ class TestTmuxSpawner:
                 spawner._session_manager, "create_session", new_callable=AsyncMock
             ) as mock_create,
             patch.object(
-                spawner._session_manager, "has_session", new_callable=AsyncMock
-            ) as mock_has,
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
-            mock_has.return_value = True
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             await spawner._async_spawn(
                 command=["echo", "hello"],
                 cwd="/tmp",
@@ -544,11 +574,11 @@ class TestTmuxSpawner:
                 spawner._session_manager, "create_session", new_callable=AsyncMock
             ) as mock_create,
             patch.object(
-                spawner._session_manager, "has_session", new_callable=AsyncMock
-            ) as mock_has,
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
-            mock_has.return_value = True
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=123)
             await spawner._async_spawn(
                 command=["claude", "--session-id=xxx"],
                 cwd="/tmp",
@@ -571,11 +601,11 @@ class TestTmuxSpawner:
                 spawner._session_manager, "create_session", new_callable=AsyncMock
             ) as mock_create,
             patch.object(
-                spawner._session_manager, "has_session", new_callable=AsyncMock
-            ) as mock_has,
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
-            mock_has.return_value = True
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
             result = await spawner._async_spawn(
                 command=["echo", "test"],
                 cwd="/tmp",
@@ -584,6 +614,51 @@ class TestTmuxSpawner:
             assert result.success is True
             assert result.pid == 456
             assert result.tmux_session_name == "test-session"
+            assert result.tmux_socket_name == "gobby"
+            assert result.tmux_socket_path is None
+
+    @pytest.mark.asyncio
+    async def test_spawn_fails_when_verified_pane_is_dead(self) -> None:
+        """A dead tmux pane is not a usable spawn."""
+        spawner = TmuxSpawner()
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
+            mock_get.return_value = TmuxSessionInfo(
+                name="test-session",
+                pane_pid=456,
+                pane_dead=True,
+            )
+            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+
+        assert result.success is False
+        assert result.error == "tmux session 'test-session' pane is dead"
+
+    @pytest.mark.asyncio
+    async def test_spawn_fails_when_verified_pane_pid_is_missing(self) -> None:
+        """A tmux session without pane_pid fails live-pane verification."""
+        spawner = TmuxSpawner()
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+            patch("gobby.agents.tmux.spawner.time.monotonic", side_effect=[0.0, 2.1]),
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
+            mock_get.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
+            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+
+        assert result.success is False
+        assert result.error == "tmux session 'test-session' has no pane PID"
 
     @pytest.mark.asyncio
     async def test_spawn_failure_returns_error(self) -> None:

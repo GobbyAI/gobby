@@ -19,6 +19,10 @@ class SpawnResult:
     error: str | None = None
     tmux_session_name: str | None = None
     """Tmux session name (set when terminal_type is tmux)."""
+    tmux_socket_name: str | None = None
+    """Tmux socket name used for the session."""
+    tmux_socket_path: str | None = None
+    """Explicit tmux socket path used for the session, if configured."""
 
 
 def make_spawn_env(env: dict[str, str] | None = None) -> dict[str, str]:
