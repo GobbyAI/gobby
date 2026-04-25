@@ -1,4 +1,4 @@
-tags: [task-enforcement, enforcement, lifecycle, gobby, default]
+tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-injection]
 
 rules:
   inject-transition-skill:

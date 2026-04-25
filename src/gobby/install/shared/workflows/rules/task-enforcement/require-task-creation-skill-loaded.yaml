@@ -1,8 +1,8 @@
-tags: [task-enforcement, enforcement, lifecycle, gobby, default]
+tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-injection]
 
 rules:
   require-task-creation-skill-loaded:
-    description: "Require task-creation skill before create/claim lifecycle calls"
+    description: "Require task-creation skill before create_task lifecycle calls"
     event: before_tool
     enabled: true
     priority: 24
@@ -10,17 +10,17 @@ rules:
       (
         (
           event.data.get('mcp_server') == 'gobby-tasks'
-          and event.data.get('mcp_tool') in ('create_task', 'claim_task')
+          and event.data.get('mcp_tool') == 'create_task'
         )
         or (
           event.data.get('tool_name') in ('call_tool', 'mcp__gobby__call_tool')
           and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
-          and (tool_input.get('tool_name') or tool_input.get('tool')) in ('create_task', 'claim_task')
+          and (tool_input.get('tool_name') or tool_input.get('tool')) == 'create_task'
         )
       )
       and not skill_loaded('task-creation')
     effects:
       - type: block
         reason: |
-          Load the task-creation workflow before creating or claiming tasks.
+          Load the task-creation workflow before creating tasks.
           Call get_skill(name="task-creation") on gobby-skills, then continue.

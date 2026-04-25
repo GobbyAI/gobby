@@ -69,6 +69,7 @@ workflows:
       - "tag:worker-safety"
     exclude:
       - "tag:sync"
+      - "tag:task-skill-injection"
 
 step_variables:
   task_claimed: false
