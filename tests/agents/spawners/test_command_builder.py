@@ -46,7 +46,14 @@ class TestBuildCliCommand:
 
     def test_codex_auto_approve(self):
         cmd, _env = build_cli_command("codex", auto_approve=True, prompt="hello")
-        assert cmd == ["codex", "--ask-for-approval", "never", "hello"]
+        assert cmd == [
+            "codex",
+            "--ask-for-approval",
+            "never",
+            "--disable",
+            "guardian_approval",
+            "hello",
+        ]
         assert "--approval-policy" not in cmd
         assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
         assert "--full-auto" not in cmd

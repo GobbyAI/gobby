@@ -432,6 +432,7 @@ class TestExecuteSpawn:
             assert command[0] == "codex"
             assert "resume" not in command
             assert command[1:3] == ["--ask-for-approval", "never"]
+            assert command[3:5] == ["--disable", "guardian_approval"]
             assert "--full-auto" not in command
 
             # Env is passed to the tmux spawner so the SessionStart hook can
@@ -500,6 +501,7 @@ class TestExecuteSpawn:
             command = mock_spawner.spawn.call_args.kwargs["command"]
             assert "--ask-for-approval" in command
             assert command[command.index("--ask-for-approval") + 1] == "never"
+            assert command[command.index("--disable") + 1] == "guardian_approval"
             assert "--sandbox" in command
             assert "workspace-write" in command
             assert "--full-auto" not in command
@@ -509,6 +511,7 @@ class TestExecuteSpawn:
             assert prompt_arg == request.prompt
             assert request.prompt in prompt_arg
             assert command.index("--ask-for-approval") < command.index("--sandbox")
+            assert command.index("--disable") < command.index("--sandbox")
             assert command.index("--sandbox") < command.index(prompt_arg)
             assert result.success is True
 
