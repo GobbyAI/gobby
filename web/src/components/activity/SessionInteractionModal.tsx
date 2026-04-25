@@ -7,6 +7,7 @@ import {
 } from "../chat/ui/Dialog";
 import { useMcp, type McpToolSchema } from "../../hooks/useMcp";
 import { ToolArgumentForm } from "../command-browser/ToolArgumentForm";
+import { getToolCallError, isSuccessfulToolCall } from "./toolCallStatus";
 
 interface SessionEntry {
   id: string;
@@ -257,11 +258,10 @@ export function SessionInteractionModal({
           literal,
         });
       }
-      const inner = result?.result ?? result;
-      if (inner?.success) {
+      if (isSuccessfulToolCall(result)) {
         onClose();
       } else {
-        setError(inner?.error ?? "Operation failed");
+        setError(getToolCallError(result, "Operation failed"));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Operation failed");
@@ -280,11 +280,10 @@ export function SessionInteractionModal({
           keys,
           literal: isLiteral,
         });
-        const inner = result?.result ?? result;
-        if (inner?.success) {
+        if (isSuccessfulToolCall(result)) {
           onClose();
         } else {
-          setError(inner?.error ?? "Failed to send keys");
+          setError(getToolCallError(result, "Failed to send keys"));
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to send keys");
