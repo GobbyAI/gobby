@@ -126,9 +126,22 @@ class TestDetectApprovalPrompt:
         output = "Permission required for tool request\nEnter to allow and continue\n"
         assert detector.detect_approval_prompt(output) is True
 
+    def test_detects_codex_tui_tool_call_confirmation(self) -> None:
+        detector = PromptDetector()
+        output = (
+            "Field 1/1\n"
+            "Tool call needs your approval. Reason: Request contains encrypted reasoning "
+            "and a tool call; requires user confirmation to proceed.\n"
+            "› 1. Allow   Run the tool and continue.\n"
+            "  2. Cancel  Cancel this tool call\n"
+            "enter to submit | esc to cancel\n"
+        )
+        assert detector.detect_approval_prompt(output) is True
+
     def test_no_match_without_approval_context(self) -> None:
         detector = PromptDetector()
         assert detector.detect_approval_prompt("Press Enter to continue\n") is False
+        assert detector.detect_approval_prompt("enter to submit | esc to cancel\n") is False
 
     def test_no_match_without_enter_approval_action(self) -> None:
         detector = PromptDetector()

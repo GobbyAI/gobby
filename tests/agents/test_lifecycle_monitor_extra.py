@@ -459,6 +459,29 @@ class TestApprovalPromptAutoEnter:
         )
 
     @pytest.mark.asyncio
+    async def test_sends_enter_for_codex_tui_confirmation_prompt(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = (
+            "Tool call needs your approval. Reason: Request contains encrypted reasoning "
+            "and a tool call; requires user confirmation to proceed.\n"
+            "› 1. Allow   Run the tool and continue.\n"
+            "  2. Cancel  Cancel this tool call\n"
+            "enter to submit | esc to cancel\n"
+        )
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_approval_prompts()
+
+        assert handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-approval",
+            PromptDetector.APPROVAL_DISMISS_KEYS,
+        )
+
+    @pytest.mark.asyncio
     async def test_same_approval_prompt_is_deduped(self) -> None:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()

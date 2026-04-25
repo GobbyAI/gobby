@@ -42,7 +42,10 @@ class PromptDetector:
     LOOP_DISMISS_KEYS = "y\n"
 
     APPROVAL_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"\b(?:approval|permission|allow|approve|permit)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:approval|permission|allow|approve|permit|confirmation)\b",
+            re.IGNORECASE,
+        ),
         re.compile(r"\b(?:run|execute|apply)\s+(?:this\s+)?(?:command|tool|action)", re.IGNORECASE),
     )
     APPROVAL_ENTER_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -60,6 +63,10 @@ class PromptDetector:
             r"\b(?:enter|return)\b.{0,40}\b"
             r"(?:approve|allow|permit|proceed|continue|accept|confirm)\b",
             re.IGNORECASE | re.DOTALL,
+        ),
+        re.compile(
+            r"\b(?:enter|return)\b\s+to\s+submit\b",
+            re.IGNORECASE,
         ),
     )
 
