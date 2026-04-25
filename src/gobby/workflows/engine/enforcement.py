@@ -15,6 +15,7 @@ from gobby.agents.run_completion import complete_and_notify_agent_run
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 from gobby.workflows.enforcement.blocking import (
@@ -33,6 +34,7 @@ class EnforcementMixin:
     db: DatabaseProtocol
     instance_manager: WorkflowInstanceManager
     definition_manager: LocalWorkflowDefinitionManager
+    workflow_audit: WorkflowAuditManager
 
     if TYPE_CHECKING:
         from gobby.agents.runner import AgentRunner
@@ -45,6 +47,74 @@ class EnforcementMixin:
 
         _runner: AgentRunner | None
         _completion_registry: CompletionEventRegistry | None
+
+    @staticmethod
+    def _audit_value(value: Any) -> Any:
+        try:
+            json.dumps(value)
+            return value
+        except TypeError:
+            return repr(value)
+
+    @staticmethod
+    def _step_audit_context(
+        workflow: str,
+        step: str,
+        *,
+        mcp_key: str | None = None,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        context = {"workflow": workflow, "step": step}
+        if mcp_key:
+            context["mcp_key"] = mcp_key
+        for key, value in extra.items():
+            if value is not None:
+                context[key] = EnforcementMixin._audit_value(value)
+        return context
+
+    def _audit_step_tool_call(
+        self,
+        session_id: str,
+        workflow: str,
+        step: str,
+        tool_name: str,
+        result: str,
+        *,
+        reason: str | None = None,
+        mcp_key: str | None = None,
+    ) -> None:
+        self.workflow_audit.log_tool_call(
+            session_id=session_id,
+            step=step,
+            tool_name=mcp_key or tool_name,
+            result=result,
+            reason=reason,
+            context=self._step_audit_context(workflow, step, mcp_key=mcp_key),
+        )
+
+    def _audit_step_set_variable(
+        self,
+        session_id: str,
+        workflow: str,
+        step: str,
+        mcp_key: str,
+        variable: str,
+        value: Any,
+    ) -> None:
+        self.workflow_audit.log(
+            session_id=session_id,
+            step=step,
+            event_type="set_variable",
+            result="set",
+            reason=f"Set workflow variable '{variable}'",
+            context=self._step_audit_context(
+                workflow,
+                step,
+                mcp_key=mcp_key,
+                variable=variable,
+                value=value,
+            ),
+        )
 
     def _get_step_for_session(
         self, session_id: str
@@ -160,23 +230,41 @@ class EnforcementMixin:
         # Check native tool allow-list
         if step.allowed_tools != "all":
             if tool_name not in step.allowed_tools:
+                reason = (
+                    f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                    f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
+                    f"Allowed tools: {', '.join(step.allowed_tools)}"
+                )
+                self._audit_step_tool_call(
+                    session_id,
+                    wf_name,
+                    step.name,
+                    tool_name,
+                    "block",
+                    reason=reason,
+                )
                 return HookResponse(
                     decision="block",
-                    reason=(
-                        f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-                        f"Tool '{tool_name}' is not allowed in the '{step.name}' step.\n"
-                        f"Allowed tools: {', '.join(step.allowed_tools)}"
-                    ),
+                    reason=reason,
                 )
 
         # Check native tool block-list
         if tool_name in step.blocked_tools:
+            reason = (
+                f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                f"Tool '{tool_name}' is blocked in the '{step.name}' step."
+            )
+            self._audit_step_tool_call(
+                session_id,
+                wf_name,
+                step.name,
+                tool_name,
+                "block",
+                reason=reason,
+            )
             return HookResponse(
                 decision="block",
-                reason=(
-                    f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-                    f"Tool '{tool_name}' is blocked in the '{step.name}' step."
-                ),
+                reason=reason,
             )
 
         # Check MCP tool restrictions (for call_tool)
@@ -200,23 +288,43 @@ class EnforcementMixin:
 
                 if mcp_key and step.allowed_mcp_tools != "all":
                     if not self._mcp_tool_matches(mcp_key, step.allowed_mcp_tools):
+                        reason = (
+                            f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                            f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
+                            f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}"
+                        )
+                        self._audit_step_tool_call(
+                            session_id,
+                            wf_name,
+                            step.name,
+                            tool_name,
+                            "block",
+                            reason=reason,
+                            mcp_key=mcp_key,
+                        )
                         return HookResponse(
                             decision="block",
-                            reason=(
-                                f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-                                f"MCP tool '{mcp_key}' is not allowed in the '{step.name}' step.\n"
-                                f"Allowed MCP tools: {', '.join(step.allowed_mcp_tools)}"
-                            ),
+                            reason=reason,
                         )
 
                 if mcp_key and step.blocked_mcp_tools:
                     if self._mcp_tool_matches(mcp_key, step.blocked_mcp_tools):
+                        reason = (
+                            f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                            f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
+                        )
+                        self._audit_step_tool_call(
+                            session_id,
+                            wf_name,
+                            step.name,
+                            tool_name,
+                            "block",
+                            reason=reason,
+                            mcp_key=mcp_key,
+                        )
                         return HookResponse(
                             decision="block",
-                            reason=(
-                                f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
-                                f"MCP tool '{mcp_key}' is blocked in the '{step.name}' step."
-                            ),
+                            reason=reason,
                         )
 
         return None
@@ -327,6 +435,7 @@ class EnforcementMixin:
         mcp_tool_name = tool_input.get("tool_name", "")
         if not mcp_server or not mcp_tool_name:
             return None
+        mcp_key = f"{mcp_server}:{mcp_tool_name}"
 
         # Check application-level failure in tool output
         tool_output = event.data.get("tool_output")
@@ -344,6 +453,16 @@ class EnforcementMixin:
                 result_dict = tool_output["result"]
                 if result_dict.get("success") is False or bool(result_dict.get("error")):
                     is_app_failure = True
+        if not is_app_failure:
+            self._audit_step_tool_call(
+                session_id,
+                instance.workflow_name,
+                step.name,
+                tool_name,
+                "allow",
+                reason=f"MCP tool '{mcp_key}' completed successfully",
+                mcp_key=mcp_key,
+            )
 
         handlers = step.on_mcp_error if is_app_failure else step.on_mcp_success
         handler_tool_input = dict(tool_input)
@@ -383,6 +502,14 @@ class EnforcementMixin:
                         instance.variables[var_name] = var_value
                         variables[var_name] = var_value
                         vars_changed = True
+                        self._audit_step_set_variable(
+                            session_id,
+                            instance.workflow_name,
+                            step.name,
+                            mcp_key,
+                            str(var_name),
+                            var_value,
+                        )
 
         # Skip transitions when tool failed and no error handlers modified state
         if is_app_failure and not vars_changed:
@@ -397,7 +524,10 @@ class EnforcementMixin:
             # claim -> load_skill transition before the workflow's own
             # claim_task handler ever runs (see task #12267).
             ctx = {"vars": {**variables, **instance.variables}}
-            if not transition.when or self._evaluate_condition(transition.when, ctx, "transition"):
+            transition_met = not transition.when or self._evaluate_condition(
+                transition.when, ctx, "transition"
+            )
+            if transition_met:
                 old_step = instance.current_step
                 new_step = transition.to
 
@@ -406,6 +536,20 @@ class EnforcementMixin:
                         f"Transition to unknown step '{new_step}' in workflow '{instance.workflow_name}'",
                     )
                     continue
+
+                self.workflow_audit.log_transition(
+                    session_id=session_id,
+                    from_step=old_step,
+                    to_step=new_step,
+                    reason="Transition condition met",
+                    context=self._step_audit_context(
+                        instance.workflow_name,
+                        old_step,
+                        condition=transition.when,
+                        result=True,
+                        to_step=new_step,
+                    ),
+                )
 
                 instance.current_step = new_step
                 instance.step_action_count = 0
@@ -429,7 +573,23 @@ class EnforcementMixin:
                         "vars": instance.variables,
                         "variables": variables,
                     }
-                    if self._evaluate_condition(definition.exit_condition, exit_ctx, "block"):
+                    exit_met = self._evaluate_condition(
+                        definition.exit_condition, exit_ctx, "block"
+                    )
+                    self.workflow_audit.log_exit_check(
+                        session_id=session_id,
+                        step=instance.current_step,
+                        condition=definition.exit_condition,
+                        result="met" if exit_met else "unmet",
+                        reason=("Exit condition met" if exit_met else "Exit condition was not met"),
+                        context=self._step_audit_context(
+                            instance.workflow_name,
+                            instance.current_step,
+                            condition=definition.exit_condition,
+                            result=exit_met,
+                        ),
+                    )
+                    if exit_met:
                         variables["step_workflow_complete"] = True
                         logger.info(
                             f"Exit condition met for workflow {instance.workflow_name} (session={session_id}, step={instance.current_step})",

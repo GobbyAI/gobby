@@ -19,6 +19,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.database import DatabaseProtocol
+from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
     WorkflowDefinitionRow,
@@ -239,6 +240,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
         self.instance_manager = WorkflowInstanceManager(db)
+        self.workflow_audit = WorkflowAuditManager(db)
         self._skill_manager = skill_manager
         self._event_store = metrics_event_store
         self._mcp_dispatcher = mcp_dispatcher
