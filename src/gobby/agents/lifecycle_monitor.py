@@ -734,11 +734,18 @@ class AgentLifecycleMonitor:
 
         return stalled
 
+    def _idle_timeout_seconds_for_run(self, run: AgentRun) -> int:
+        """Return the idle timeout window for a run."""
+        requested_effort = (run.requested_reasoning_effort or "").strip().lower()
+        if requested_effort == "xhigh":
+            return self._tmux_config.idle_timeout_seconds * 5
+        return self._tmux_config.idle_timeout_seconds
+
     async def _handle_idle_check(self, run: AgentRun) -> int:
         """Handle idle check for a single agent. Returns 1 if action taken, 0 otherwise.
 
-        Uses session updated_at as the primary idle signal.  If the session
-        was recently active (within idle_timeout_seconds), the agent is
+        Uses session updated_at as the primary idle signal. If the session
+        was recently active (within the run-specific idle timeout), the agent is
         considered active regardless of what the tmux pane shows.
 
         When the session is stale, the agent is considered idle.  Pane
@@ -754,6 +761,7 @@ class AgentLifecycleMonitor:
         run = latest_run
         tmux_name = run.tmux_session_name
         assert tmux_name is not None
+        idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         # --- Primary signal: session updated_at ---
         session_stale = False
@@ -766,7 +774,7 @@ class AgentLifecycleMonitor:
                 try:
                     last_update = datetime.fromisoformat(session.updated_at)
                     elapsed = (datetime.now(UTC) - last_update).total_seconds()
-                    if elapsed < self._tmux_config.idle_timeout_seconds:
+                    if elapsed < idle_timeout_seconds:
                         # Session has recent activity — agent is working
                         self._idle_detector.reset_idle(run.id)
                         return 0
@@ -814,7 +822,7 @@ class AgentLifecycleMonitor:
 
         if self._idle_detector.should_reprompt(
             run.id,
-            self._tmux_config.idle_timeout_seconds,
+            idle_timeout_seconds,
             self._tmux_config.max_reprompt_attempts,
         ):
             logger.info(f"Reprompting idle agent {run.id}")

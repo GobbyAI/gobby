@@ -63,6 +63,7 @@ def _make_terminal_run(
     timeout_seconds: float | None = None,
     child_session_id: str | None = None,
     clone_id: str | None = None,
+    requested_reasoning_effort: str | None = None,
 ) -> AgentRun:
     """Helper to create a running terminal-mode agent in the DB."""
     run = agent_run_manager.create(
@@ -72,6 +73,7 @@ def _make_terminal_run(
         run_id=run_id,
         child_session_id=child_session_id,
         timeout_seconds=timeout_seconds,
+        requested_reasoning_effort=requested_reasoning_effort,
     )
     agent_run_manager.start(run.id)
     agent_run_manager.update_runtime(
@@ -613,6 +615,196 @@ class TestCheckIdleAgents:
         # Pane capture SHOULD have been called since session was stale
         mock_capture.assert_called_once()
         mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_xhigh_session_within_scaled_timeout_skips_pane_check(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """xhigh runs should stay active within the extended idle window."""
+        import time
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+
+        child = session_manager.register(
+            external_id="child-xhigh-scaled-active",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_for_base_timeout = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (stale_for_base_timeout, child.id),
+        )
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-xhigh-scaled-active",
+            tmux_session_name="gobby-xhigh-scaled-active",
+            child_session_id=child.id,
+            requested_reasoning_effort=" XHIGH ",
+        )
+
+        state = mon._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 120
+        state.reprompt_count = 2
+
+        with (
+            patch.object(
+                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
+            ) as mock_capture,
+            patch.object(mon._tmux, "send_keys", new_callable=AsyncMock) as mock_send,
+            patch.object(mon._tmux, "kill_session", new_callable=AsyncMock) as mock_kill,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 0
+        mock_capture.assert_not_called()
+        mock_send.assert_not_called()
+        mock_kill.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "running"
+
+    @pytest.mark.asyncio
+    async def test_non_xhigh_session_past_base_timeout_uses_stale_idle_handling(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """Non-xhigh runs keep the base idle timeout."""
+        import time
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+
+        child = session_manager.register(
+            external_id="child-high-base-stale",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_for_base_timeout = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (stale_for_base_timeout, child.id),
+        )
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-high-base-stale",
+            tmux_session_name="gobby-high-base-stale",
+            child_session_id=child.id,
+            requested_reasoning_effort="high",
+        )
+
+        state = mon._idle_detector.get_state(run.id)
+        state.first_idle_at = time.monotonic() - 120
+
+        with (
+            patch.object(
+                mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
+            ) as mock_capture,
+            patch.object(
+                mon._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+            ) as mock_send,
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 1
+        mock_capture.assert_called_once()
+        mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_xhigh_session_past_scaled_timeout_can_fail_after_reprompts(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        temp_db: LocalDatabase,
+    ) -> None:
+        """xhigh runs still fail normally once the extended window expires."""
+        from datetime import UTC, datetime, timedelta
+
+        from gobby.config.tmux import TmuxConfig
+
+        config = TmuxConfig(
+            idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+        )
+        mon = AgentLifecycleMonitor(
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            check_interval_seconds=1.0,
+            tmux_config=config,
+        )
+
+        child = session_manager.register(
+            external_id="child-xhigh-scaled-stale",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_session.get("project_id"),
+        )
+        stale_for_scaled_timeout = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
+        temp_db.execute(
+            "UPDATE sessions SET updated_at = ? WHERE id = ?",
+            (stale_for_scaled_timeout, child.id),
+        )
+
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-xhigh-scaled-stale",
+            tmux_session_name="gobby-xhigh-scaled-stale",
+            child_session_id=child.id,
+            requested_reasoning_effort="xhigh",
+        )
+
+        state = mon._idle_detector.get_state(run.id)
+        state.reprompt_count = 2
+
+        with (
+            patch.object(mon._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+            patch.object(mon._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
+        ):
+            handled = await mon.check_idle_agents()
+
+        assert handled == 1
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert "idle" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
     async def test_stale_session_overrides_active_pane(
