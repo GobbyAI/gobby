@@ -493,8 +493,23 @@ def install_cmd(mode: str, dsn: str | None) -> None:
     _render_install_result(result)
 
 @postgres_cli.command("status")
-def status_cmd() -> None:
-    click.echo(asyncio.run(render_postgres_status()))
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help=(
+        "Emit the status payload as JSON on stdout (the exact schema "
+        "documented on get_postgres_status() above). Default output is "
+        "human-readable text. The cutover runbook (§6.1) uses --json."
+    ),
+)
+def status_cmd(as_json: bool) -> None:
+    payload = asyncio.run(get_postgres_status())
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        click.echo(render_postgres_status(payload))
 
 @postgres_cli.command("uninstall")
 @click.option(
@@ -687,6 +702,47 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
     click.echo("  gobby stop && gobby postgres deactivate && gobby start")
     click.echo(f"Cutover ticket: {ticket['_path']}")
     click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
+```
+
+**Cutover-ticket artifact contract (full schema)**: `_build_cutover_ticket()` produces a dict matching the JSON schema below; `_write_cutover_ticket()` serializes it to `~/.gobby/migrations/cutover-<timestamp>.json` with `indent=2, sort_keys=True`. **All fields below are required** unless explicitly marked optional. §6.1 step 11 reads `deadline_at`; §6.2 step 2 reads `capture_kind`, `capture_value`, `activated_at`, and `acknowledgement` (when present). §6.0 describes the same schema for cross-reference; this section is the authoritative source.
+
+```json
+{
+  "mode": "docker" | "native" | "external",
+  "activated_at":   "<ISO 8601 UTC, second precision>",
+  "deadline_at":    "<ISO 8601 UTC, activated_at + 48h>",
+  "gobby_version":  "<semver from gobby.__version__>",
+  "capture_kind":   "pgaudit-managed" | "pgaudit-file" | "wal-archive" | "none",
+  "capture_value":  "<absolute path | dsn-style spec | null>",
+  "verification": {
+    "state":       "ok" | "operator-attested",
+    "probed_at":   "<ISO 8601 UTC | null>",
+    "probe_detail": "<JSON-serializable result from the writability probe | null>"
+  },
+  "acknowledgement": {                           // present only when capture_kind = "none"
+    "phrase":     "I accept no-rollback risk",
+    "operator":   "<whoami output, stripped>",
+    "asked_at":   "<ISO 8601 UTC>"
+  }
+}
+```
+
+Mapping table from `_build_cutover_ticket()` parameters to fields:
+
+| Parameter             | Field              | Notes |
+|-----------------------|--------------------|-------|
+| `mode`                | `mode`             | passed verbatim |
+| (always)              | `activated_at`     | `datetime.now(UTC).isoformat(timespec='seconds')` |
+| (always)              | `deadline_at`      | `activated_at + timedelta(hours=48)` |
+| (always)              | `gobby_version`    | `gobby.__version__` |
+| `capture_kind`        | `capture_kind`     | one of the four enum values; rejected otherwise |
+| `capture_value`       | `capture_value`    | required when `capture_kind` ∈ {pgaudit-file, wal-archive}; null otherwise |
+| `verification`        | `verification`     | dict with `state`, `probed_at`, `probe_detail`; producer must set all three (probed_at = now() when `state="ok"`, null when `state="operator-attested"`) |
+| `acknowledgement`     | `acknowledgement`  | required when `capture_kind="none"`; rejected otherwise |
+
+`_write_cutover_ticket()` injects `_path` (absolute path it wrote to) into the in-memory dict before returning so the activator can echo it; the on-disk JSON does **not** include `_path`.
+
+```python
 
 @postgres_cli.command("deactivate")
 def deactivate_cmd() -> None:
@@ -1527,13 +1583,18 @@ gobby postgres migrate-from-sqlite
 
 - **Docker mode**: `gobby postgres uninstall --remove-data` (tears down the compose profile and deletes the `gobby_postgres_data` + `gobby_pgaudit_log` named volumes) followed by `gobby postgres install`. Volume deletion is the only durable reset because the import transaction rollback leaves Postgres-side WAL state and pg_search index files behind that can survive a `down`/`up` cycle.
 - **Native mode**: stop Postgres, delete the data directory the operator points us at (printed by `uninstall --remove-data`), restart, and re-run `gobby postgres install --mode native --dsn ...`. Native mode never auto-deletes a system-managed Postgres data directory; the operator runs the printed `rm -rf` themselves.
-- **External mode**: requires the **Gobby ownership contract** documented in §1.2 — the operator commits at install time to a dedicated database (`POSTGRES_DB=gobby` recommended) or schema (`SET search_path TO gobby`) that Gobby alone owns. Recovery is `DROP SCHEMA gobby CASCADE; CREATE SCHEMA gobby;` (or the database equivalent), then re-run `gobby postgres install --mode external --dsn ...`. The installer probes for ownership compliance: if Gobby's target object holds non-Gobby tables, install refuses. This is what makes the recovery command safe.
+- **External mode**: requires the **Gobby ownership contract** documented in §1.2 — the operator commits at install time to a **dedicated database** (`POSTGRES_DB=gobby` recommended) that Gobby alone owns. Per-schema isolation against a shared host database is **not supported in v1**; see §1.2 "Ownership contract for external mode." Recovery is one of two equivalent forms inside that dedicated database, both safe by virtue of the dedicated-database contract:
+  - `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (preserves the database object, drops everything Gobby owns inside it), **or**
+  - `DROP DATABASE gobby; CREATE DATABASE gobby;` if the operator has the privilege and prefers full reset.
+
+  After either form, re-run `gobby postgres install --mode external --dsn ...` to recreate the `gobby_install_ownership` sentinel, then restart the import. **Do not use `DROP SCHEMA gobby` or any `--schema`-flavored reset** — those refer to a per-schema isolation path explicitly out of scope for v1.
 
 Execution order:
 
 1. Assert daemon is stopped (refuses otherwise).
 2. Open SQLite source read-only (`file:<path>?mode=ro&immutable=1`).
 3. Compare the SQLite source schema fingerprint / semantic schema version to the expected baseline and fail early if they differ.
+3a. **External-mode preflight** (skip for `docker` / `native` modes): connect to the Postgres target and run `SELECT 1 FROM gobby_install_ownership WHERE key = 'singleton'`. If zero rows are returned, fail with the same missing-sentinel error used by `status` and `activate`: "external-ownership sentinel missing — was the database recreated or is this a different install? Re-run `gobby postgres install --mode external --dsn ...` to recreate the sentinel, then restart the import." This catches the case where an operator drops or recreates the external database between install and import; without this preflight, the importer would proceed against a target that no longer satisfies the ownership contract, defeating §1.2's design.
 4. Open Postgres target and run `apply_migrations()` to create the schema.
 5. Drop BM25 indexes created by the baseline schema so bulk load does not pay per-row index maintenance cost.
 6. Begin a single import transaction and `SET CONSTRAINTS ALL DEFERRED`. Because the Postgres baseline uses deferrable FKs, this preserves real FK validation at `COMMIT` while still allowing cyclical references to load.
@@ -1630,7 +1691,7 @@ Install-mode dispatch:
 - The `_active_install_mode()` helper is what gates which flag set is required; Docker mode rejects either flag with "not applicable in docker mode — pgAudit is the gate."
 - **Every** successful activation — Docker, native, or external — emits the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` after mode-specific gates pass. The artifact has one stable schema (see "Cutover-ticket artifact schema" below) so §6.1 step 11 (validation-window deadline tracking) and §6.2 step 2 (rollback export) can parse it the same way regardless of mode. This makes the runbook branch a structured choice that survives across mode boundaries, not a Docker-vs-non-Docker fork.
 
-**Cutover-ticket artifact schema** (`~/.gobby/migrations/cutover-<timestamp>.json`):
+**Cutover-ticket artifact schema** (`~/.gobby/migrations/cutover-<timestamp>.json`) — duplicated here for runbook context. **§1.5 is the authoritative producer spec** including the `_build_cutover_ticket()` parameter-to-field mapping table; if the two ever drift, §1.5 wins and this block is the bug:
 
 ```json
 {
@@ -1679,7 +1740,21 @@ Step-by-step:
 3. Back up `~/.gobby/gobby-hub.db` to a dated path; record the SHA-256 for later verification.
 4. `gobby postgres install` if not already installed.
 5. `gobby postgres migrate-from-sqlite --source ~/.gobby/gobby-hub.db --target $DATABASE_URL`.
-6. Verify the validation output exits 0 and that `gobby postgres status` reports the canonical completion marker — the `imported_from_sqlite_at` row in `gobby_migration_state` written by §5.1 step 12. This is the same marker `gobby postgres activate` checks before flipping `hub_backend`; if `status` cannot find it, do **not** proceed to step 7.
+6. Verify the validation output exits 0, then read the canonical completion marker out of the structured status output:
+
+   ```bash
+   gobby postgres status --json | jq -e '.migration_complete.present == true'
+   ```
+
+   This grep-and-fail-fast contract is the exact reason `gobby postgres status --json` exists (see §1.2 — the field name `migration_complete.present` is stable). If the assertion fails, `gobby postgres activate` will refuse anyway (§1.5 calls the same `_postgres_migration_complete()` helper), but failing here is louder and gives the operator the actual `gobby_migration_state` row content to look at via `... | jq '.migration_complete'`. Do **not** proceed to step 7 until this assertion passes.
+
+   For external mode, also assert the ownership sentinel is intact:
+
+   ```bash
+   gobby postgres status --json | jq -e '.ownership.sentinel_present == true'
+   ```
+
+   If this fails, the database has been recreated since install and `activate` will refuse with the same missing-sentinel error.
 7. Enable validation-window write capture on the Postgres target before activation:
    - **Docker mode**: the `pgAudit`-backed append-only audit log from §6.0 must be live and observable. The activator probes the audit log automatically; no operator flag is required. If the probe fails, activation is blocked.
    - **Native / external mode**: pass one of the two structured flags from §6.0 install-mode dispatch — `--capture-sink <type>:<location>` where `<type>` is exactly `pgaudit-file` or `wal-archive` (operator-wired capture; sink is probed and recorded) or `--accept-no-rollback-risk` (typed-phrase confirmation; recorded with operator + timestamp). A generic `--yes` bypass is intentionally not provided, and `custom:` is intentionally not supported (use `--accept-no-rollback-risk` and document your mechanism externally).
