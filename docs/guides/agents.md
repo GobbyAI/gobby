@@ -259,7 +259,7 @@ Use these to run or coordinate agents:
 - `spawn_agent`
 - `dispatch_batch`
 - `apply_persona`
-- `list_agents`
+- `list_agent_runs`
 - `list_running_agents`
 - `get_running_agent`
 - `get_agent_result`

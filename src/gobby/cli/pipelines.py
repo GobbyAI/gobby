@@ -361,18 +361,24 @@ def get_execution_manager() -> Any:
     return LocalPipelineExecutionManager(db, project_id)
 
 
-@pipelines.command("status")
+@pipelines.group("runs")
+def pipeline_runs() -> None:
+    """Manage pipeline run instances."""
+    pass
+
+
+@pipeline_runs.command("show")
 @click.argument("execution_id")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 @click.pass_context
-def status_pipeline(ctx: click.Context, execution_id: str, json_format: bool) -> None:
+def show_pipeline_run(ctx: click.Context, execution_id: str, json_format: bool) -> None:
     """Show status of a pipeline execution.
 
     Examples:
 
-        gobby pipelines status pe-abc123
+        gobby pipelines runs show pe-abc123
 
-        gobby pipelines status pe-abc123 --json
+        gobby pipelines runs show pe-abc123 --json
     """
     execution_manager = get_execution_manager()
 
@@ -569,28 +575,28 @@ def history_pipeline(ctx: click.Context, name: str, limit: int, json_format: boo
         click.echo(f"  {status_icon} {ex.id} ({ex.status.value}) - {ex.created_at}")
 
 
-@pipelines.command("executions")
+@pipeline_runs.command("list")
 @click.option(
     "--status", default=None, help="Filter by status (pending, running, completed, failed, etc.)"
 )
-@click.option("--pipeline", "pipeline_name", default=None, help="Filter by pipeline name")
+@click.option("--name", "pipeline_name", default=None, help="Filter by pipeline definition name")
 @click.option("--limit", default=20, help="Maximum number of executions to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 @click.pass_context
-def list_executions(
+def list_pipeline_runs(
     ctx: click.Context, status: str | None, pipeline_name: str | None, limit: int, json_format: bool
 ) -> None:
     """List executions across all pipelines.
 
     Examples:
 
-        gobby pipelines executions
+        gobby pipelines runs list
 
-        gobby pipelines executions --status running
+        gobby pipelines runs list --status running
 
-        gobby pipelines executions --pipeline deploy --limit 10
+        gobby pipelines runs list --name deploy --limit 10
 
-        gobby pipelines executions --json
+        gobby pipelines runs list --json
     """
     from gobby.workflows.pipeline_state import ExecutionStatus
 

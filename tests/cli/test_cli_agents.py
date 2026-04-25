@@ -169,7 +169,7 @@ class TestAgentsGroup:
         result = runner.invoke(cli, ["agents", "--help"])
 
         assert result.exit_code == 0
-        assert "Manage subagent runs" in result.output
+        assert "Manage agent definitions and runs" in result.output
 
     def test_agents_group_alone(self, runner: CliRunner) -> None:
         """Test invoking agents alone shows help or requires subcommand."""
@@ -495,16 +495,16 @@ class TestAgentsSpawnCommand:
 
 
 # ==============================================================================
-# Tests for agents list command
+# Tests for agents runs list command
 # ==============================================================================
 
 
 class TestAgentsListCommand:
-    """Tests for gobby agents list command."""
+    """Tests for gobby agents runs list command."""
 
     def test_list_help(self, runner: CliRunner) -> None:
         """Test list --help displays options."""
-        result = runner.invoke(cli, ["agents", "list", "--help"])
+        result = runner.invoke(cli, ["agents", "runs", "list", "--help"])
 
         assert result.exit_code == 0
         assert "--session" in result.output
@@ -529,7 +529,7 @@ class TestAgentsListCommand:
             mock_db.fetchall.return_value = []
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list"])
+            result = runner.invoke(cli, ["agents", "runs", "list"])
 
             assert result.exit_code == 0
             assert "No agent runs found" in result.output
@@ -569,7 +569,7 @@ class TestAgentsListCommand:
             ]
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list"])
+            result = runner.invoke(cli, ["agents", "runs", "list"])
 
             assert result.exit_code == 0
             assert "Found 1 agent run" in result.output
@@ -591,7 +591,7 @@ class TestAgentsListCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve_session.return_value = "sess-parent123"
 
-        result = runner.invoke(cli, ["agents", "list", "--session", "sess-parent123"])
+        result = runner.invoke(cli, ["agents", "runs", "list", "--session", "sess-parent123"])
 
         assert result.exit_code == 0
         assert "Found 1 agent run" in result.output
@@ -611,7 +611,7 @@ class TestAgentsListCommand:
         mock_manager.list_running.return_value = [mock_agent_run]
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["agents", "list", "--status", "running"])
+        result = runner.invoke(cli, ["agents", "runs", "list", "--status", "running"])
 
         assert result.exit_code == 0
         mock_manager.list_running.assert_called_once_with(limit=20)
@@ -651,7 +651,7 @@ class TestAgentsListCommand:
             ]
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list", "--status", "success"])
+            result = runner.invoke(cli, ["agents", "runs", "list", "--status", "success"])
 
             assert result.exit_code == 0
             assert "success" in result.output
@@ -673,7 +673,7 @@ class TestAgentsListCommand:
 
         result = runner.invoke(
             cli,
-            ["agents", "list", "--session", "sess-123", "--status", "success"],
+            ["agents", "runs", "list", "--session", "sess-123", "--status", "success"],
         )
 
         assert result.exit_code == 0
@@ -694,7 +694,7 @@ class TestAgentsListCommand:
             mock_db.fetchall.return_value = []
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list", "--limit", "5"])
+            result = runner.invoke(cli, ["agents", "runs", "list", "--limit", "5"])
 
             assert result.exit_code == 0
             # Verify limit was passed
@@ -736,7 +736,7 @@ class TestAgentsListCommand:
             ]
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list", "--json"])
+            result = runner.invoke(cli, ["agents", "runs", "list", "--json"])
 
             assert result.exit_code == 0
             data = json.loads(result.output)
@@ -789,7 +789,7 @@ class TestAgentsListCommand:
                 ]
                 mock_db_cls.return_value = mock_db
 
-                result = runner.invoke(cli, ["agents", "list"])
+                result = runner.invoke(cli, ["agents", "runs", "list"])
 
                 assert result.exit_code == 0
                 assert status in result.output
@@ -830,7 +830,7 @@ class TestAgentsListCommand:
             ]
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list"])
+            result = runner.invoke(cli, ["agents", "runs", "list"])
 
             assert result.exit_code == 0
             # Should truncate to 40 chars + ...
@@ -839,16 +839,16 @@ class TestAgentsListCommand:
 
 
 # ==============================================================================
-# Tests for agents show command
+# Tests for agents runs show command
 # ==============================================================================
 
 
 class TestAgentsShowCommand:
-    """Tests for gobby agents show command."""
+    """Tests for gobby agents runs show command."""
 
     def test_show_help(self, runner: CliRunner) -> None:
         """Test show --help displays options."""
-        result = runner.invoke(cli, ["agents", "show", "--help"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "--help"])
 
         assert result.exit_code == 0
         assert "RUN_REF" in result.output
@@ -869,7 +869,7 @@ class TestAgentsShowCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-completed123"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-completed123"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-completed123"])
 
         assert result.exit_code == 0
         assert "Agent Run: ar-completed123" in result.output
@@ -916,7 +916,7 @@ class TestAgentsShowCommand:
         ]
         mock_db_cls.return_value = mock_db
 
-        result = runner.invoke(cli, ["agents", "show", "ar-abc"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-abc"])
 
         assert result.exit_code == 0
         assert "Agent Run:" in result.output
@@ -975,7 +975,7 @@ class TestAgentsShowCommand:
         ]
         mock_db_cls.return_value = mock_db
 
-        result = runner.invoke(cli, ["agents", "show", "ar-abc"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-abc"])
 
         # ClickException causes non-zero exit code
         assert result.exit_code != 0
@@ -1002,7 +1002,7 @@ class TestAgentsShowCommand:
         mock_db.fetchall.return_value = []
         mock_db_cls.return_value = mock_db
 
-        result = runner.invoke(cli, ["agents", "show", "ar-nonexistent"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-nonexistent"])
 
         # ClickException causes non-zero exit code
         assert result.exit_code != 0
@@ -1023,7 +1023,7 @@ class TestAgentsShowCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-completed123"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-completed123", "--json"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-completed123", "--json"])
 
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -1045,7 +1045,7 @@ class TestAgentsShowCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-completed123"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-completed123"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-completed123"])
 
         assert result.exit_code == 0
         assert "Result:" in result.output
@@ -1066,7 +1066,7 @@ class TestAgentsShowCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-failed456"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-failed456"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-failed456"])
 
         assert result.exit_code == 0
         assert "Error:" in result.output
@@ -1105,7 +1105,7 @@ class TestAgentsShowCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-longprompt"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-longprompt"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-longprompt"])
 
         assert result.exit_code == 0
         assert "..." in result.output
@@ -1143,7 +1143,7 @@ class TestAgentsShowCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-longresult"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-longresult"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-longresult"])
 
         assert result.exit_code == 0
         # Should show "..." for truncated result
@@ -1752,7 +1752,7 @@ class TestEdgeCases:
             ]
             mock_db_cls.return_value = mock_db
 
-            result = runner.invoke(cli, ["agents", "list"])
+            result = runner.invoke(cli, ["agents", "runs", "list"])
 
             assert result.exit_code == 0
             # Prompt in the list output should not contain raw newlines (they are replaced)
@@ -1794,7 +1794,7 @@ class TestEdgeCases:
         mock_get_manager.return_value = mock_manager
         mock_resolve.return_value = "ar-minimal"
 
-        result = runner.invoke(cli, ["agents", "show", "ar-minimal"])
+        result = runner.invoke(cli, ["agents", "runs", "show", "ar-minimal"])
 
         assert result.exit_code == 0
         assert "Agent Run: ar-minimal" in result.output

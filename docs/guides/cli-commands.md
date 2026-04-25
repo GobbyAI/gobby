@@ -530,18 +530,34 @@ gobby agents spawn "PROMPT" --session SESSION_ID [OPTIONS]
 
 ### `gobby agents list`
 
-List agent runs.
+List agent definitions.
 
 ```bash
-gobby agents list [--session SESSION_ID] [--status STATUS]
+gobby agents list [--enabled | --disabled] [--surface SURFACE] [--json]
 ```
 
 ### `gobby agents show`
 
+Show details for an agent definition.
+
+```bash
+gobby agents show NAME [--json]
+```
+
+### `gobby agents runs list`
+
+List agent runs.
+
+```bash
+gobby agents runs list [--session SESSION_ID] [--status STATUS] [--limit N] [--json]
+```
+
+### `gobby agents runs show`
+
 Show details for an agent run.
 
 ```bash
-gobby agents show RUN_ID
+gobby agents runs show RUN_ID [--json]
 ```
 
 ### `gobby agents status`
@@ -791,12 +807,12 @@ Run a pipeline by name.
 gobby pipelines run NAME [-i KEY=VALUE ...] [--json]
 ```
 
-### `gobby pipelines status`
+### `gobby pipelines runs show`
 
 Show execution status for a pipeline run.
 
 ```bash
-gobby pipelines status EXECUTION_ID [--json]
+gobby pipelines runs show EXECUTION_ID [--json]
 ```
 
 ### `gobby pipelines approve`
@@ -823,12 +839,12 @@ Show execution history for one pipeline.
 gobby pipelines history NAME [--limit N] [--json]
 ```
 
-### `gobby pipelines executions`
+### `gobby pipelines runs list`
 
 List executions across pipelines.
 
 ```bash
-gobby pipelines executions [--status STATUS] [--pipeline NAME] [--limit N] [--json]
+gobby pipelines runs list [--status STATUS] [--name NAME] [--limit N] [--json]
 ```
 
 ### `gobby pipelines search`

@@ -3,8 +3,10 @@ Agent management CLI commands.
 
 Commands for managing subagent runs:
 - spawn: Spawn a new agent
-- list: List agent runs for a session
-- show: Show details for an agent run
+- list: List agent definitions
+- show: Show details for an agent definition
+- runs list: List agent runs for a session
+- runs show: Show details for an agent run
 - status: Check status of a running agent
 - stop: Stop a running agent and cancel the run
 - kill: Kill a running agent process (SIGTERM/SIGKILL)
@@ -19,12 +21,76 @@ import httpx
 from gobby.cli.utils import resolve_session_id
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 from gobby.storage.database import LocalDatabase
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
+from gobby.workflows.definitions import AgentDefinitionBody
 
 
 def get_agent_run_manager() -> LocalAgentRunManager:
     """Get initialized agent run manager."""
     db = LocalDatabase()
     return LocalAgentRunManager(db)
+
+
+def get_agent_definition_manager() -> LocalWorkflowDefinitionManager:
+    """Get initialized workflow definition manager for agent definitions."""
+    db = LocalDatabase()
+    return LocalWorkflowDefinitionManager(db)
+
+
+def _agent_body(row: WorkflowDefinitionRow) -> tuple[AgentDefinitionBody, dict[str, Any]]:
+    """Parse and validate an agent definition row."""
+    data = json.loads(row.definition_json)
+    if not isinstance(data, dict):
+        raise ValueError(f"Agent definition '{row.name}' is not a JSON object")
+    data.setdefault("name", row.name)
+    body = AgentDefinitionBody.model_validate(data)
+    return body, data
+
+
+def _agent_definition_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
+    """Build an agent definition summary for CLI output."""
+    body, raw = _agent_body(row)
+    return {
+        "id": row.id,
+        "name": row.name,
+        "description": row.description or body.description,
+        "provider": body.provider,
+        "model": body.model,
+        "mode": raw.get("mode"),
+        "isolation": body.isolation,
+        "surfaces": body.surfaces,
+        "has_steps": bool(body.steps),
+        "step_count": len(body.steps or []),
+        "enabled": row.enabled,
+        "source": row.source,
+        "project_id": row.project_id,
+    }
+
+
+def _agent_definition_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
+    """Build detailed agent definition output."""
+    body, raw = _agent_body(row)
+    return {
+        **_agent_definition_summary(row),
+        "base_branch": body.base_branch,
+        "timeout": body.timeout,
+        "max_turns": body.max_turns,
+        "role": body.role,
+        "goal": body.goal,
+        "personality": body.personality,
+        "instructions": body.instructions,
+        "workflows": body.workflows.model_dump(exclude_none=True),
+        "steps": [step.model_dump(exclude_none=True) for step in body.steps]
+        if body.steps
+        else None,
+        "step_variables": body.step_variables,
+        "exit_condition": body.exit_condition,
+        "blocked_tools": body.blocked_tools,
+        "blocked_mcp_tools": body.blocked_mcp_tools,
+        "sources": body.sources,
+        "tags": row.tags,
+        "raw_mode": raw.get("mode"),
+    }
 
 
 def resolve_agent_run_id(run_ref: str) -> str:
@@ -76,7 +142,7 @@ def get_daemon_url() -> str:
 
 @click.group()
 def agents() -> None:
-    """Manage subagent runs."""
+    """Manage agent definitions and runs."""
     pass
 
 
@@ -219,7 +285,105 @@ def spawn_agent_cmd(
         click.echo(f"Failed to start agent: {error}", err=True)
 
 
+@agents.group("runs")
+def agent_runs() -> None:
+    """Manage agent run instances."""
+    pass
+
+
 @agents.command("list")
+@click.option(
+    "--enabled",
+    "enabled_flag",
+    flag_value=True,
+    default=None,
+    help="Show only enabled definitions",
+)
+@click.option("--disabled", "enabled_flag", flag_value=False, help="Show only disabled definitions")
+@click.option("--surface", default=None, help="Filter by supported surface")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def list_agent_definitions(
+    enabled_flag: bool | None,
+    surface: str | None,
+    json_format: bool,
+) -> None:
+    """List agent definitions."""
+    manager = get_agent_definition_manager()
+    rows = manager.list_all(workflow_type="agent", enabled=enabled_flag)
+    summaries = [_agent_definition_summary(row) for row in rows]
+    if surface:
+        summaries = [agent for agent in summaries if surface in agent.get("surfaces", ["spawn"])]
+
+    if json_format:
+        click.echo(
+            json.dumps({"agents": summaries, "count": len(summaries)}, indent=2, default=str)
+        )
+        return
+
+    if not summaries:
+        click.echo("No agent definitions found.")
+        return
+
+    click.echo(f"Found {len(summaries)} agent definition(s):\n")
+    for agent in summaries:
+        status = "on " if agent["enabled"] else "off"
+        surfaces = ",".join(agent["surfaces"])
+        provider = agent["provider"] or "inherit"
+        model = f" {agent['model']}" if agent.get("model") else ""
+        desc = f" - {agent['description']}" if agent.get("description") else ""
+        click.echo(f"  {status}  {agent['name']}  {provider}{model}  [{surfaces}]{desc}")
+
+
+@agents.command("show")
+@click.argument("name")
+@click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+def show_agent_definition(name: str, json_format: bool) -> None:
+    """Show details for an agent definition."""
+    manager = get_agent_definition_manager()
+    row = manager.get_by_name(name)
+    if row is None or row.workflow_type != "agent":
+        click.echo(f"Agent definition not found: {name}", err=True)
+        raise SystemExit(1)
+
+    try:
+        detail = _agent_definition_detail(row)
+    except Exception as e:
+        click.echo(f"Failed to parse agent definition '{name}': {e}", err=True)
+        raise SystemExit(1) from e
+
+    if json_format:
+        click.echo(json.dumps(detail, indent=2, default=str))
+        return
+
+    click.echo(f"Agent: {detail['name']}")
+    if detail.get("description"):
+        click.echo(f"Description: {detail['description']}")
+    click.echo(f"Enabled: {detail['enabled']}")
+    click.echo(f"Provider: {detail['provider']}")
+    if detail.get("model"):
+        click.echo(f"Model: {detail['model']}")
+    click.echo(f"Isolation: {detail['isolation']}")
+    click.echo(f"Surfaces: {', '.join(detail['surfaces'])}")
+    click.echo(f"Source: {detail['source']}")
+    if detail.get("project_id"):
+        click.echo(f"Project: {detail['project_id']}")
+    if detail.get("timeout"):
+        click.echo(f"Timeout: {detail['timeout']}")
+    if detail.get("max_turns"):
+        click.echo(f"Max Turns: {detail['max_turns']}")
+    if detail.get("role"):
+        click.echo(f"\nRole:\n{detail['role']}")
+    if detail.get("goal"):
+        click.echo(f"\nGoal:\n{detail['goal']}")
+    if detail.get("personality"):
+        click.echo(f"\nPersonality:\n{detail['personality']}")
+    if detail.get("instructions"):
+        click.echo(f"\nInstructions:\n{detail['instructions']}")
+    if detail.get("steps"):
+        click.echo(f"\nSteps: {len(detail['steps'])}")
+
+
+@agent_runs.command("list")
 @click.option("--session", "-s", "session_id", help="Filter by parent session ID")
 @click.option(
     "--status",
@@ -228,7 +392,7 @@ def spawn_agent_cmd(
 )
 @click.option("--limit", "-n", default=20, help="Max runs to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def list_agents(
+def list_agent_runs(
     session_id: str | None,
     status: str | None,
     limit: int,
@@ -292,10 +456,10 @@ def list_agents(
         click.echo(f"{status_icon} {run.id[:12]}  {run.status:<10} {run.provider:<8} {prompt}")
 
 
-@agents.command("show")
+@agent_runs.command("show")
 @click.argument("run_ref")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def show_agent(run_ref: str, json_format: bool) -> None:
+def show_agent_run(run_ref: str, json_format: bool) -> None:
     """Show details for an agent run (UUID or prefix)."""
     run_id = resolve_agent_run_id(run_ref)
     manager = get_agent_run_manager()

@@ -606,7 +606,7 @@ Current `gobby-agents` tools cover agent runs plus inter-agent coordination.
 | `dispatch_batch` | Spawn multiple workers from task suggestions |
 | `apply_persona` | Apply an agent definition to the current session |
 | `get_agent_result` | Read the final result of a completed run |
-| `list_agents` | List runs for a parent session |
+| `list_agent_runs` | List runs for a parent session |
 | `list_running_agents` / `get_running_agent` | Inspect live runtime state |
 | `stop_agent` | Mark a run cancelled without killing the process |
 | `kill_agent` | Terminate the process/terminal |

@@ -242,10 +242,10 @@ def create_agents_registry(
         }
 
     @registry.tool(
-        name="list_agents",
+        name="list_agent_runs",
         description="List agent runs for a session. Defaults to current session. Accepts #N, N, UUID, or prefix for session_id.",
     )
-    async def list_agents(
+    async def list_agent_runs(
         parent_session_id: str | None = None,
         status: str | None = None,
         limit: int = 20,

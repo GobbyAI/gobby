@@ -4,7 +4,7 @@ Tests for agents.py MCP tools module.
 This file tests the agent-related MCP tools:
 - spawn_agent: Spawn a subagent with isolation support
 - get_agent_result: Get agent run result
-- list_agents: List agent runs for a session
+- list_agent_runs: List agent runs for a session
 - stop_agent: Stop a running agent (DB only)
 - end_agent_run: Complete the caller's own agent run
 - kill_agent: Kill a running agent process
@@ -102,7 +102,7 @@ class TestCreateAgentsRegistry:
         expected_tools = [
             "spawn_agent",  # Unified spawn with isolation support
             "get_agent_result",
-            "list_agents",
+            "list_agent_runs",
             "stop_agent",
             "end_agent_run",
             "kill_agent",
@@ -115,6 +115,8 @@ class TestCreateAgentsRegistry:
 
         for tool_name in expected_tools:
             assert registry.get_schema(tool_name) is not None, f"Missing tool: {tool_name}"
+
+        assert registry.get_schema("list_agents") is None
 
     def test_accepts_running_registry_for_backward_compat(self) -> None:
         """Test that running_registry param is accepted but ignored."""
@@ -178,8 +180,8 @@ class TestGetAgentResult:
         assert result["child_session_id"] == "child-sess-456"
 
 
-class TestListAgents:
-    """Tests for list_agents MCP tool."""
+class TestListAgentRuns:
+    """Tests for list_agent_runs MCP tool."""
 
     @pytest.mark.asyncio
     async def test_returns_empty_list_when_no_runs(self):
@@ -188,9 +190,9 @@ class TestListAgents:
         runner.list_runs.return_value = []
 
         registry = create_agents_registry(runner)
-        list_agents = registry._tools["list_agents"].func
+        list_agent_runs = registry._tools["list_agent_runs"].func
 
-        result = await list_agents(parent_session_id="sess-123")
+        result = await list_agent_runs(parent_session_id="sess-123")
 
         assert result["success"] is True
         assert result["runs"] == []
@@ -213,9 +215,9 @@ class TestListAgents:
         runner.list_runs.return_value = [mock_run]
 
         registry = create_agents_registry(runner)
-        list_agents = registry._tools["list_agents"].func
+        list_agent_runs = registry._tools["list_agent_runs"].func
 
-        result = await list_agents(parent_session_id="sess-123")
+        result = await list_agent_runs(parent_session_id="sess-123")
 
         assert result["success"] is True
         assert result["count"] == 1
@@ -229,9 +231,9 @@ class TestListAgents:
         runner.list_runs.return_value = []
 
         registry = create_agents_registry(runner)
-        list_agents = registry._tools["list_agents"].func
+        list_agent_runs = registry._tools["list_agent_runs"].func
 
-        await list_agents(parent_session_id="sess-123", status="running")
+        await list_agent_runs(parent_session_id="sess-123", status="running")
 
         runner.list_runs.assert_called_once_with("sess-123", status="running", limit=20)
 
@@ -242,9 +244,9 @@ class TestListAgents:
         runner.list_runs.return_value = []
 
         registry = create_agents_registry(runner)
-        list_agents = registry._tools["list_agents"].func
+        list_agent_runs = registry._tools["list_agent_runs"].func
 
-        await list_agents(parent_session_id="sess-123", limit=50)
+        await list_agent_runs(parent_session_id="sess-123", limit=50)
 
         runner.list_runs.assert_called_once_with("sess-123", status=None, limit=50)
 

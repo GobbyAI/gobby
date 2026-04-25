@@ -600,7 +600,7 @@ Useful commands for checking orchestration progress:
 gobby pipelines history orchestrator
 
 # Specific execution details
-gobby pipelines status <execution_id>
+gobby pipelines runs show <execution_id>
 
 # Running agents
 gobby agents ps

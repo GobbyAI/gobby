@@ -193,7 +193,7 @@ class TestCleanupAgents:
 
 
 # =============================================================================
-# list_agents - edge cases
+# list_agent_runs - edge cases
 # =============================================================================
 
 
@@ -203,7 +203,7 @@ class TestListAgentsEdgeCases:
         mgr = MagicMock()
         mgr.list_running.return_value = []
         mock_mgr_fn.return_value = mgr
-        result = runner.invoke(agents, ["list", "--status", "running"])
+        result = runner.invoke(agents, ["runs", "list", "--status", "running"])
         assert result.exit_code == 0
         mgr.list_running.assert_called_once_with(limit=20)
 
@@ -213,7 +213,7 @@ class TestListAgentsEdgeCases:
         self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock, runner: CliRunner
     ) -> None:
         mock_db_cls.return_value.fetchall.return_value = []
-        result = runner.invoke(agents, ["list"])
+        result = runner.invoke(agents, ["runs", "list"])
         assert result.exit_code == 0
         assert "No agent runs found" in result.output
 
@@ -223,13 +223,13 @@ class TestListAgentsEdgeCases:
         self, mock_mgr_fn: MagicMock, mock_db_cls: MagicMock, runner: CliRunner
     ) -> None:
         mock_db_cls.return_value.fetchall.return_value = []
-        result = runner.invoke(agents, ["list", "--status", "error"])
+        result = runner.invoke(agents, ["runs", "list", "--status", "error"])
         assert result.exit_code == 0
         mock_db_cls.return_value.fetchall.assert_called_once()
 
 
 # =============================================================================
-# show_agent / agent_status - edge cases
+# show_agent_run / agent_status - edge cases
 # =============================================================================
 
 
@@ -240,7 +240,7 @@ class TestShowStatusEdgeCases:
         self, mock_mgr_fn: MagicMock, mock_resolve: MagicMock, runner: CliRunner
     ) -> None:
         mock_mgr_fn.return_value.get.return_value = None
-        result = runner.invoke(agents, ["show", "run-1"])
+        result = runner.invoke(agents, ["runs", "show", "run-1"])
         assert result.exit_code == 0
         assert "Agent run not found" in result.output
 
@@ -301,7 +301,7 @@ class TestGetDaemonUrl:
 
 
 # =============================================================================
-# list_agents display output (lines 264-279)
+# list_agent_runs display output (lines 264-279)
 # =============================================================================
 
 
@@ -337,7 +337,7 @@ class TestListAgentsDisplay:
             "task_id": None,
         }
         mock_db_cls.return_value.fetchall.return_value = [mock_row]
-        result = runner.invoke(agents, ["list"])
+        result = runner.invoke(agents, ["runs", "list"])
         assert result.exit_code == 0
         assert "Found 1 agent run(s)" in result.output
         assert "claude" in result.output
@@ -350,7 +350,7 @@ class TestListAgentsDisplay:
         """Cover the session_id path (lines 228-234)."""
         run = _mock_run(status="success")
         mock_mgr_fn.return_value.list_by_session.return_value = [run]
-        result = runner.invoke(agents, ["list", "--session", "sess-123"])
+        result = runner.invoke(agents, ["runs", "list", "--session", "sess-123"])
         assert result.exit_code == 0
         assert "Found 1 agent run(s)" in result.output
 
@@ -363,12 +363,12 @@ class TestListAgentsDisplay:
         self, mock_mgr_fn: MagicMock, mock_resolve: MagicMock, runner: CliRunner
     ) -> None:
         """Cover exception path (lines 230-231)."""
-        result = runner.invoke(agents, ["list", "--session", "bad-sess"])
+        result = runner.invoke(agents, ["runs", "list", "--session", "bad-sess"])
         assert result.exit_code != 0
 
 
 # =============================================================================
-# show_agent text output (lines 296-329)
+# show_agent_run text output (lines 296-329)
 # =============================================================================
 
 
@@ -386,7 +386,7 @@ class TestShowAgentTextOutput:
             completed_at="2024-01-01T11:00:00Z",
         )
         mock_mgr_fn.return_value.get.return_value = run
-        result = runner.invoke(agents, ["show", "run-1"])
+        result = runner.invoke(agents, ["runs", "show", "run-1"])
         assert result.exit_code == 0
         assert "Agent Run:" in result.output
         assert "Status: success" in result.output
@@ -406,7 +406,7 @@ class TestShowAgentTextOutput:
         """Cover error display in show."""
         run = _mock_run(status="error", error="segfault", result=None)
         mock_mgr_fn.return_value.get.return_value = run
-        result = runner.invoke(agents, ["show", "run-1"])
+        result = runner.invoke(agents, ["runs", "show", "run-1"])
         assert result.exit_code == 0
         assert "Error: segfault" in result.output
 
@@ -418,7 +418,7 @@ class TestShowAgentTextOutput:
         """Cover JSON output path (line 296-298)."""
         run = _mock_run()
         mock_mgr_fn.return_value.get.return_value = run
-        result = runner.invoke(agents, ["show", "run-1", "--json"])
+        result = runner.invoke(agents, ["runs", "show", "run-1", "--json"])
         assert result.exit_code == 0
         assert '"id"' in result.output
 
