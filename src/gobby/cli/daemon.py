@@ -20,7 +20,6 @@ from gobby.utils.status import fetch_rich_status, format_startup_summary, format
 
 from .installers.service import (
     get_service_status,
-    service_restart,
     service_start,
     service_stop,
 )
@@ -346,20 +345,6 @@ def _wait_for_service_stop(
     return None
 
 
-def _wait_for_service_restart_shutdown(
-    http_port: int,
-    *,
-    previous_pid: int | None,
-    timeout: float = 30.0,
-    interval: float = 0.25,
-) -> float | None:
-    """Wait for the pre-restart daemon generation to disappear."""
-    if previous_pid is not None:
-        return _wait_for_process_exit(previous_pid, timeout=timeout, interval=interval)
-
-    return _wait_for_daemon_unhealthy(http_port, timeout=timeout, interval=interval)
-
-
 @click.command()
 @click.option(
     "--verbose",
@@ -619,57 +604,14 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
 def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
     """Restart the Gobby daemon (stop then start)."""
     setup_logging(verbose)
-    config = ctx.obj["config"]
 
-    # If OS service is installed, delegate to it
-    svc = get_service_status()
-    if svc.get("installed") and svc.get("enabled"):
-        previous_pid = _get_running_daemon_pid(svc)
-        click.echo(f"Restarting via {svc.get('platform', 'OS')} service manager...")
-        result = service_restart()
-        if result.get("success"):
-            if previous_pid is not None:
-                _step(f"Waiting for previous daemon (PID: {previous_pid}) to exit...")
-            else:
-                _step("Waiting for current daemon to stop responding...")
-            shutdown_elapsed = _wait_for_service_restart_shutdown(
-                config.daemon_port,
-                previous_pid=previous_pid,
-            )
-            if shutdown_elapsed is None:
-                click.echo(
-                    "Service restart returned, but the previous daemon did not stop in time",
-                    err=True,
-                )
-                sys.exit(1)
-            _step(f"Shutdown barrier passed ({shutdown_elapsed:.1f}s)")
-            _step("Waiting for replacement daemon health...")
-            elapsed = _wait_for_daemon_health(config.daemon_port)
-            if elapsed is None:
-                click.echo("Service restart completed, but daemon did not become healthy", err=True)
-                sys.exit(1)
-            click.echo(f"Daemon restarted via {result.get('method', 'service manager')}")
-            click.echo(f"Health check passed ({elapsed:.1f}s)")
-            return
-        click.echo(f"Service restart failed: {result.get('error')}", err=True)
-        click.echo("Falling back to direct restart...")
+    try:
+        ctx.invoke(stop, docker_flag=docker_flag)
+    except SystemExit as exc:
+        code = exc.code
+        if code not in (None, 0):
+            sys.exit(code if isinstance(code, int) else 1)
 
-    click.echo("Restarting Gobby daemon...")
-
-    # Stop Docker containers if requested (before daemon stop)
-    if docker_flag:
-        click.echo("Stopping Docker containers...")
-        _services_stop(get_gobby_home())
-
-    # Stop daemon using helper function (doesn't call sys.exit)
-    if not stop_daemon_util(quiet=False):
-        click.echo("Failed to stop daemon, aborting restart", err=True)
-        sys.exit(1)
-
-    # Wait for cleanup and port release (TIME_WAIT state)
-    time.sleep(3)
-
-    # Call start command (with docker flag forwarded)
     ctx.invoke(start, verbose=verbose, no_ui=no_ui, docker_flag=docker_flag)
 
 
