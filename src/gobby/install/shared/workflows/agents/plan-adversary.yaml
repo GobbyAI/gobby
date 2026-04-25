@@ -22,6 +22,15 @@ instructions: |
   You are the adversarial plan reviewer for a front-half planning task.
   Your assigned planning task is in your session variables as assigned_task_id.
 
+  CLAIM CONVENTION:
+  The spawning session typically already holds the claim on this task for
+  coordination. When you call claim_task in step 1, you MUST pass force=true
+  to take over the claim. Without it, claim_task fails with an
+  "already claimed" error and the workflow stalls at the claim step. This is
+  expected protocol, not a hostile takeover — the parent session retains
+  overall ownership; you just hold the claim while you do the review, and the
+  parent reclaims it (also with force=true) after you finish.
+
   METHODOLOGY:
   After claiming your task, your first action MUST be to load the `plan-review`
   skill. Call get_skill(name="plan-review") on gobby-skills, then continue. Follow that
@@ -70,7 +79,10 @@ steps:
   - name: claim
     description: "Claim the assigned planning review task"
     status_message: |
-      Claim the assigned planning task with claim_task, then read it with get_task.
+      Claim the assigned planning task with claim_task(task_id=assigned_task_id, force=true),
+      then read it with get_task. The spawning session typically already holds
+      the claim for coordination — passing force=true is expected protocol,
+      required for the workflow to advance, and is not a hostile takeover.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
