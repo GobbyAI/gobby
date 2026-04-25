@@ -58,7 +58,7 @@ class TemplatingMixin:
                 except (json.JSONDecodeError, TypeError):
                     pass
             elif isinstance(inner_args, dict):
-                raw_tool_input = inner_args
+                raw_tool_input = dict(inner_args)
             # Re-inject MCP routing fields so rule conditions can still access them
             for field in ("server_name", "tool_name"):
                 if field in original_tool_input and field not in raw_tool_input:

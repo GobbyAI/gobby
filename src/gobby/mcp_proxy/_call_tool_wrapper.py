@@ -16,7 +16,7 @@ class CanonicalCallToolWrapper:
 
     server_name: str | None
     tool_name: str | None
-    arguments: dict[str, Any] | None
+    arguments: str | dict[str, Any] | None
     session_id: str | None
     project_id: str | None
 
@@ -69,12 +69,27 @@ def canonicalize_call_tool_wrapper(
     hoisted from the ``arguments``/``args`` payload when present, then stripped so
     only inner tool arguments reach downstream dispatch. ``session_id`` is wrapper
     context only at the top level; ``arguments.session_id`` remains a target-tool
-    parameter.
+    parameter. If routing fields are already top-level, malformed string
+    arguments are preserved for target validation.
     """
 
-    effective_arguments = _coerce_wrapper_arguments(arguments, field_name="arguments")
-    if effective_arguments is None and args is not None:
-        effective_arguments = _coerce_wrapper_arguments(args, field_name="args")
+    raw_argument_value = arguments if arguments is not None else args
+    raw_argument_field = "arguments" if arguments is not None else "args"
+    try:
+        effective_arguments = _coerce_wrapper_arguments(
+            raw_argument_value,
+            field_name=raw_argument_field,
+        )
+    except CallToolWrapperInputError:
+        if server_name and tool_name:
+            return CanonicalCallToolWrapper(
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=raw_argument_value,
+                session_id=session_id if isinstance(session_id, str) and session_id else None,
+                project_id=project_id if isinstance(project_id, str) and project_id else None,
+            )
+        raise
 
     canonical_arguments = dict(effective_arguments) if effective_arguments is not None else None
     nested = canonical_arguments or {}

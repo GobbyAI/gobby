@@ -105,10 +105,7 @@ def prepare_arguments(
             }
 
     if isinstance(arguments, dict):
-        normalized_arguments = dict(arguments)
-        for leaked_key in ("server_name", "tool_name"):
-            normalized_arguments.pop(leaked_key, None)
-        return normalized_arguments, None
+        return dict(arguments), None
 
     return None, {
         "success": False,

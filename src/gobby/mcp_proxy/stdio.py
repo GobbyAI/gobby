@@ -231,7 +231,7 @@ class DaemonProxy:
         self,
         server_name: str,
         tool_name: str,
-        arguments: dict[str, Any] | None = None,
+        arguments: str | dict[str, Any] | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
@@ -253,11 +253,12 @@ class DaemonProxy:
         # Wait tools: use the requested timeout plus a buffer
         elif tool_name in WAIT_TOOL_NAMES:
             # Extract timeout from arguments, default to 300s if not specified
-            arg_timeout = float((arguments or {}).get("timeout", 300.0))
+            arg_map = arguments if isinstance(arguments, dict) else {}
+            arg_timeout = float(arg_map.get("timeout", 300.0))
             # Add 30s buffer for HTTP overhead
             timeout = arg_timeout + 30.0
         request_kwargs: dict[str, Any] = {
-            "json": arguments or {},
+            "json": arguments if arguments is not None else {},
             "timeout": timeout,
         }
         if project_id:

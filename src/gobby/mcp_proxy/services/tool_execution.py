@@ -6,6 +6,7 @@ from typing import Any, cast
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 
+from .schema_guidance import build_invalid_arguments_response
 from .tool_proxy_utils import safe_truncate
 
 logger = logging.getLogger("gobby.mcp.server")
@@ -18,22 +19,30 @@ def _schema_requires_session_id(input_schema: dict[str, Any]) -> bool:
 
 def _missing_target_session_id_error(
     *,
+    service: Any,
     server_name: str,
     tool_name: str,
     input_schema: dict[str, Any],
+    session_id: str | None,
 ) -> dict[str, Any]:
-    return {
-        "success": False,
-        "error": (
+    error_message = (
+        f"Missing required parameter: arguments.session_id for {server_name}:{tool_name}. "
+        "The top-level call_tool.session_id is Gobby wrapper context only; target tool "
+        "parameters must be supplied inside arguments."
+    )
+    return build_invalid_arguments_response(
+        service,
+        server_name=server_name,
+        tool_name=tool_name,
+        validation_errors=[
             f"Missing required parameter: arguments.session_id for {server_name}:{tool_name}. "
-            "The top-level call_tool.session_id is Gobby wrapper context only; target tool "
-            "parameters must be supplied inside arguments."
-        ),
-        "hint": "Pass session_id inside arguments when the target tool schema requires it.",
-        "schema": input_schema,
-        "server_name": server_name,
-        "tool_name": tool_name,
-    }
+            "The top-level call_tool.session_id is wrapper context only."
+        ],
+        input_schema=input_schema,
+        session_id=session_id,
+        error_message=error_message,
+        hint="Pass session_id inside arguments when the target tool schema requires it.",
+    )
 
 
 async def list_tools(
@@ -124,7 +133,7 @@ async def call_tool(
     service: Any,
     server_name: str,
     tool_name: str,
-    arguments: dict[str, Any] | None = None,
+    arguments: str | dict[str, Any] | None = None,
     session_id: str | None = None,
     strip_unknown: bool = False,
     enforce_workflow: bool = True,
@@ -133,8 +142,23 @@ async def call_tool(
     server_name = service._resolve_server_name(server_name)
     prepared_arguments, error = service._prepare_arguments(arguments)
     if error is not None:
-        return error
-    arguments = prepared_arguments or {}
+        input_schema: dict[str, Any] | None = None
+        try:
+            schema_result = await service.get_tool_schema(server_name, tool_name)
+            if schema_result.get("success"):
+                input_schema = schema_result.get("tool", {}).get("inputSchema", {})
+        except Exception as schema_error:
+            logger.debug("Could not fetch schema for argument preparation error: %s", schema_error)
+        return build_invalid_arguments_response(
+            service,
+            server_name=server_name,
+            tool_name=tool_name,
+            validation_errors=[error.get("error", "Invalid arguments")],
+            input_schema=input_schema,
+            session_id=session_id,
+            error_message=error.get("error"),
+        )
+    arguments = cast("dict[str, Any]", prepared_arguments or {})
 
     if service._is_proxy_namespace(server_name):
         resolved = service._resolve_server_for_tool(tool_name)
@@ -173,6 +197,7 @@ async def call_tool(
         )
         if workflow_error is not None:
             return workflow_error
+        arguments = cast("dict[str, Any]", arguments)
 
     effective_session_id = service._get_effective_session_id(session_id)
 
@@ -201,9 +226,11 @@ async def call_tool(
                     and _schema_requires_session_id(input_schema)
                 ):
                     return _missing_target_session_id_error(
+                        service=service,
                         server_name=server_name,
                         tool_name=tool_name,
                         input_schema=input_schema,
+                        session_id=effective_session_id,
                     )
                 if not arguments:
                     return await _execute_tool(
@@ -222,24 +249,28 @@ async def call_tool(
                     required = input_schema.get("required", [])
                     missing = [r for r in required if r not in arguments]
                     if missing:
-                        return {
-                            "success": False,
-                            "error": f"Missing required parameters: {missing}",
-                            "schema": input_schema,
-                            "server_name": server_name,
-                            "tool_name": tool_name,
-                        }
+                        return build_invalid_arguments_response(
+                            service,
+                            server_name=server_name,
+                            tool_name=tool_name,
+                            validation_errors=[
+                                f"Missing required parameter '{param}'" for param in missing
+                            ],
+                            input_schema=input_schema,
+                            session_id=effective_session_id,
+                            error_message=f"Missing required parameters: {missing}",
+                        )
                 else:
                     validation_errors = service._check_arguments(arguments, input_schema)
                     if validation_errors:
-                        return {
-                            "success": False,
-                            "error": f"Invalid arguments: {validation_errors}",
-                            "hint": "Review the schema below and retry with correct parameters",
-                            "schema": input_schema,
-                            "server_name": server_name,
-                            "tool_name": tool_name,
-                        }
+                        return build_invalid_arguments_response(
+                            service,
+                            server_name=server_name,
+                            tool_name=tool_name,
+                            validation_errors=validation_errors,
+                            input_schema=input_schema,
+                            session_id=effective_session_id,
+                        )
 
     return await _execute_tool(
         service=service,
@@ -310,18 +341,23 @@ async def _execute_tool(
         }
 
         if service._is_argument_error(error_message):
+            input_schema: dict[str, Any] | None = None
             try:
                 schema_result = await service.get_tool_schema(server_name, tool_name)
                 if schema_result.get("success"):
                     input_schema = schema_result.get("tool", {}).get("inputSchema", {})
-                    if input_schema:
-                        response["hint"] = (
-                            "This appears to be an argument error. "
-                            "Schema provided for self-correction."
-                        )
-                        response["schema"] = input_schema
             except Exception as schema_error:
                 logger.debug(f"Could not fetch schema for error enrichment: {schema_error}")
+            response = build_invalid_arguments_response(
+                service,
+                server_name=server_name,
+                tool_name=tool_name,
+                validation_errors=[error_message],
+                input_schema=input_schema,
+                session_id=effective_session_id,
+                error_message=error_message,
+                hint="Review the schema for the accepted arguments.",
+            )
 
         if service._fallback_resolver:
             try:

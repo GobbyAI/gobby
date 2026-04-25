@@ -399,10 +399,10 @@ class HookManager:
 
         # --- Common post-processing ---
 
-        # Auto-coerce stringified arguments in call_tool (universal fix, not rule-gated)
-        if event.data.pop("_input_coerced", False):
-            event.metadata.setdefault("_modified_input", event.data.get("tool_input", {}))
-            event.metadata.setdefault("_auto_approve", True)
+        # Stringified call_tool arguments may be normalized for rule evaluation.
+        # The MCP proxy validates/coerces the actual target arguments, so this
+        # should not become a CLI retry/update payload.
+        event.data.pop("_input_coerced", None)
 
         # Propagate rewrite_input from rule evaluation to response (PreToolUse)
         if "_modified_input" in event.metadata:

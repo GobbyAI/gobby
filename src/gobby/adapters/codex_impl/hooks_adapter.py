@@ -171,6 +171,7 @@ class CodexHooksAdapter(BaseAdapter):
         )
         if (
             response.modified_input
+            and response.decision not in ("deny", "block")
             and hook_event_name == "PreToolUse"
             and has_retry_signal
             and not self._is_wrapper_only_call_tool_rewrite(response)

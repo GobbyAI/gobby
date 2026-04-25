@@ -322,7 +322,7 @@ class ToolProxyService:
         self,
         server_name: str,
         tool_name: str,
-        arguments: dict[str, Any] | None = None,
+        arguments: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         strip_unknown: bool = False,
         enforce_workflow: bool = True,
