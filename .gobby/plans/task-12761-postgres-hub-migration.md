@@ -97,10 +97,24 @@ The installer never silently downgrades Docker → native or native → docker; 
 
 `gobby postgres install --mode external --dsn <url>` skips compose, skips installer-side pg_search install, and only writes bootstrap fields. It probes `CREATE EXTENSION IF NOT EXISTS pg_search`; on failure it exits with the upstream install command for the URL's reported `version()` platform. The user is responsible for keeping the extension installed; Gobby's role is to refuse to start against a Postgres without it.
 
-**Ownership contract for external mode.** External installs must point Gobby at a database or schema that Gobby **alone owns**. The DSN's database (or, if `--schema gobby` is passed, the named schema) must be empty at install time and must remain dedicated to Gobby thereafter. Why: failed-import recovery (§5.1) reduces to `DROP SCHEMA gobby CASCADE; CREATE SCHEMA gobby;` (or `DROP DATABASE` / `CREATE DATABASE` if the whole DB is Gobby-owned), and that command is only safe if no foreign objects live there. The installer enforces this two ways:
+**Ownership contract for external mode.** External installs must point Gobby at a **dedicated database** that Gobby **alone owns**. The DSN's database must be empty at install time (only `public` schema, no user objects) and must remain dedicated to Gobby thereafter. Per-schema isolation against a shared host database is **not supported in v1** — the failed-import recovery story (§5.1) needs an unconditional `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (or equivalent), which is only safe when nothing else lives in the database. Operators who want schema-level isolation against a shared host create a dedicated database for Gobby first; a future workstream may add `--schema` support if usage justifies it.
 
-- **At install**: probe `pg_class` filtered to the target database/schema; if any non-system tables/views/sequences exist that Gobby did not create, refuse with a clear error and an operator-facing recovery hint ("point at a fresh database / schema, or run `DROP SCHEMA <name> CASCADE; CREATE SCHEMA <name>;` first").
-- **At install**: write a sentinel row `gobby_install_ownership(installed_at TIMESTAMPTZ, gobby_version TEXT)` so subsequent operations can confirm the target is still Gobby-managed (and so an unrelated app dropping a table into the same schema later is at least detectable in `gobby postgres status`).
+The installer enforces this two ways:
+
+- **At install**: connect to the target database, enumerate `information_schema.tables` filtered to non-system schemas; if any non-Gobby objects exist, refuse with a clear error and an operator-facing recovery hint ("point Gobby at a fresh, dedicated database — `CREATE DATABASE gobby_hub;` and re-run with `--dsn postgresql://.../gobby_hub`").
+- **At install**: create the sentinel table `gobby_install_ownership` and write the install row:
+
+  ```sql
+  CREATE TABLE gobby_install_ownership (
+      key          TEXT PRIMARY KEY DEFAULT 'singleton'
+                       CHECK (key = 'singleton'),
+      installed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      gobby_version TEXT NOT NULL
+  );
+  INSERT INTO gobby_install_ownership (gobby_version) VALUES ($1);
+  ```
+
+  The `key` PK with the `'singleton'` check guarantees at most one row, so subsequent operations (`status`, `activate`, `migrate-from-sqlite`) can confirm the install is still Gobby-managed by looking for that exact row. If it is missing, `status` and `activate` both refuse with "external-ownership sentinel missing — was the database recreated or is this a different install?" §5.2 parity validation **excludes** `gobby_install_ownership` from the row-count and content-hash comparisons because it has no SQLite counterpart by design.
 
 This contract makes external mode's recovery story coherent without requiring Gobby to inspect or fence the host Postgres beyond its own object footprint.
 
@@ -378,16 +392,18 @@ def _install_native(*, gobby_home, dsn):
     )
 
 
-def _install_external(*, gobby_home, dsn, schema="public"):
+def _install_external(*, gobby_home, dsn):
     # connect with psycopg, probe CREATE EXTENSION IF NOT EXISTS pg_search
     # on missing extension, format upstream install command from server version()
     #
-    # ownership probe: enumerate non-system relations in the target schema/db.
-    # If any exist that aren't part of Gobby's expected baseline footprint,
-    # refuse with the recovery hint from "Ownership contract for external mode".
+    # ownership probe: enumerate user objects across non-system schemas in the
+    # target database. If any non-Gobby tables/views/sequences exist, refuse
+    # with the recovery hint from "Ownership contract for external mode" —
+    # point at a fresh dedicated database. v1 supports database-only ownership;
+    # per-schema isolation is not in scope.
     #
-    # on success: write the gobby_install_ownership sentinel row, then write
-    # bootstrap.yaml with database_url=<dsn> (and schema if non-default).
+    # on success: CREATE TABLE gobby_install_ownership (...) and INSERT the
+    # singleton row, then write bootstrap.yaml with database_url=<dsn>.
     ...
 
 
@@ -414,8 +430,37 @@ def uninstall_postgres(
 
 
 async def get_postgres_status(...) -> dict[str, Any]:
-    # report active mode (read from bootstrap), extension presence, healthy/unhealthy,
-    # configured DSN host+db (not password)
+    # Report a structured status payload with all of the following fields. The
+    # field names are stable so §6.1 step 6 can grep / parse them as the
+    # pre-cutover gate, and so the rollback runbook (§6.2) can read them post-
+    # cutover.
+    #
+    # {
+    #   "mode": "docker" | "native" | "external",
+    #   "dsn_host": "localhost",          # never the password
+    #   "dsn_db":   "gobby",
+    #   "healthy":  bool,                 # pg_isready
+    #   "extensions": {
+    #       "pg_search": bool,
+    #       "pgaudit":   bool,            # docker mode only — gates the cutover
+    #   },
+    #   "preload_libraries": ["pg_search", "pgaudit"],  # parsed from pg_settings
+    #   "migration_complete": {
+    #       "present": bool,              # SELECT 1 FROM gobby_migration_state
+    #                                     #   WHERE key = 'imported_from_sqlite_at'
+    #       "imported_at": "..." | null,  # value if present, ISO 8601
+    #   },
+    #   "ownership": {                    # external mode only; absent in docker/native
+    #       "sentinel_present": bool,     # gobby_install_ownership singleton row
+    #       "installed_at": "..." | null,
+    #       "gobby_version": "..." | null,
+    #   },
+    # }
+    #
+    # §6.1 step 6 blocks cutover until migration_complete.present is true.
+    # External-mode operations (`activate`, `migrate-from-sqlite`) refuse if
+    # ownership.sentinel_present is false ("external-ownership sentinel
+    # missing — was the database recreated or is this a different install?").
     ...
 ```
 
@@ -535,8 +580,14 @@ RUN test -n "$PG_SEARCH_VERSION" && test -n "$PG_SEARCH_SHA256" \
 The Dockerfile must pin an exact pg_search release artifact and checksum in the repo. Updating pg_search is a deliberate version bump, not "whatever ParadeDB ships today." Requirements:
 
 - Tag locally as `gobby-postgres-local:17-pgsearch` via the compose `build:` directive's `image:` clause. **Never push to a registry** — not GHCR, not Docker Hub, not Gobby's image registry. Distribution stays with ParadeDB upstream.
-- Start PostgreSQL with `shared_preload_libraries=pg_search` via the service command or entrypoint configuration (for example `postgres -c shared_preload_libraries=pg_search`) so the preload requirement is explicit at runtime rather than hidden in a sample-file mutation.
-- CI builds the Dockerfile on every PR that touches `src/gobby/data/postgres-pgsearch/`, runs `pg_isready` and `CREATE EXTENSION pg_search` smoke tests, and discards the resulting image. Build-only verification; no `docker push`.
+- Start PostgreSQL with the **canonical command line** shared across §1.1 (compose), §2.1 (test compose / CI), §6.0 (pgAudit setup), and this section: `postgres -c shared_preload_libraries=pg_search,pgaudit -c pgaudit.log=write`. The preload list **must include both** `pg_search` and `pgaudit`; pgAudit is required by §6.0 and the entire Docker-mode cutover gate depends on it being live at boot. Drift on this line means the Dockerfile produces an image that the runbook's pgAudit healthcheck cannot pass — exactly the bug the local-build choice exists to prevent.
+- CI builds the Dockerfile on every PR that touches `src/gobby/data/postgres-pgsearch/` and runs four smoke tests against the resulting image, **all of which must pass**:
+  1. `pg_isready` returns healthy.
+  2. `CREATE EXTENSION pg_search;` succeeds.
+  3. `CREATE EXTENSION pgaudit;` succeeds.
+  4. `SELECT setting FROM pg_settings WHERE name = 'shared_preload_libraries';` returns a value containing both `pg_search` and `pgaudit`.
+
+  After the smoke checks the image is discarded — build-only verification; no `docker push`.
 - Bump `PG_SEARCH_VERSION` and `PG_SEARCH_SHA256` together. The PR template for pg_search bumps requires (a) the SHA verified against the upstream release artifact and (b) a green CI run against the Postgres smoke/search test suite.
 - Security checklist: monitor `pg_search` / ParadeDB advisories through GitHub security alerts or CVE feeds so future bumps are tracked intentionally.
 - The same SHA pin is used by task 1.2's native-Debian/Ubuntu installer when fetching the upstream `.deb` directly. Single source of truth for "which pg_search version Gobby supports right now."
@@ -564,7 +615,7 @@ The command itself is the enforcement point for migration completion. Ship it in
     metavar="TYPE:LOCATION",
     help=(
         "Native/external mode only. Declares the operator-wired write-capture "
-        "sink (pgaudit-file:/path, wal-archive:/dsn, or custom:<spec>). "
+        "sink. TYPE must be exactly 'pgaudit-file' or 'wal-archive'. "
         "Mutually exclusive with --accept-no-rollback-risk."
     ),
 )
@@ -585,12 +636,21 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
     if not _postgres_migration_complete():  # SELECT 1 FROM gobby_migration_state WHERE key = 'imported_from_sqlite_at'
         raise click.ClickException("Run `gobby postgres migrate-from-sqlite` first")
     mode = _active_install_mode()
+    if mode == "external":
+        _require_ownership_sentinel_or_fail()  # SELECT 1 FROM gobby_install_ownership WHERE key='singleton'
+    ticket: dict[str, Any]
     if mode == "docker":
         if capture_sink or accept_no_rollback_risk:
             raise click.ClickException(
                 "Capture flags are not applicable in docker mode; pgAudit is the gate."
             )
-        _probe_pgaudit_or_fail()  # blocks if pgaudit not loaded or audit log not writable
+        probe = _probe_pgaudit_or_fail()  # blocks if pgaudit not loaded or audit log not writable
+        ticket = _build_cutover_ticket(
+            mode=mode,
+            capture_kind="pgaudit-managed",
+            capture_value=None,
+            verification={"state": "ok", "probe_detail": probe},
+        )
     else:  # native / external
         if bool(capture_sink) == bool(accept_no_rollback_risk):
             raise click.ClickException(
@@ -598,15 +658,35 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
                 "--capture-sink or --accept-no-rollback-risk."
             )
         if capture_sink:
-            _probe_capture_sink_or_fail(capture_sink)  # writability probe
-            _record_cutover_ticket(mode=mode, capture=capture_sink)
+            kind, _, location = capture_sink.partition(":")
+            if kind not in {"pgaudit-file", "wal-archive"}:
+                raise click.ClickException(
+                    f"Unknown capture-sink type {kind!r}. "
+                    f"Expected pgaudit-file or wal-archive."
+                )
+            probe = _probe_capture_sink_or_fail(kind, location)
+            ticket = _build_cutover_ticket(
+                mode=mode,
+                capture_kind=kind,
+                capture_value=location,
+                verification={"state": "ok", "probe_detail": probe},
+            )
         else:
-            _require_typed_acknowledgement("I accept no-rollback risk")
-            _record_cutover_ticket(mode=mode, capture=None)
+            ack = _require_typed_acknowledgement("I accept no-rollback risk")
+            ticket = _build_cutover_ticket(
+                mode=mode,
+                capture_kind="none",
+                capture_value=None,
+                verification={"state": "operator-attested", "probe_detail": None},
+                acknowledgement=ack,
+            )
+    _write_cutover_ticket(ticket)  # ~/.gobby/migrations/cutover-<timestamp>.json
     _backup_bootstrap()
     _set_bootstrap_field("hub_backend", "postgres")
     click.echo("hub_backend set to postgres. To roll back:")
     click.echo("  gobby stop && gobby postgres deactivate && gobby start")
+    click.echo(f"Cutover ticket: {ticket['_path']}")
+    click.echo(f"Validation-window deadline: {ticket['deadline_at']}")
 
 @postgres_cli.command("deactivate")
 def deactivate_cmd() -> None:
@@ -1486,7 +1566,8 @@ Target: `src/gobby/storage/migration/validation.py` (new)
 Runs after bulk copy. All checks must pass for the migration command to exit 0.
 
 - **Schema parity baseline**: before comparing data, verify the SQLite source schema fingerprint / semantic schema version matches the migration baseline expected by the importer. Fail early if the source schema is older/newer/drifted.
-- **Row counts**: `SELECT COUNT(*) FROM <t>` on both sides for every table; must match exactly.
+- **Postgres-only table exclusion list**: a small set of tables exists on the Postgres side without a SQLite counterpart by design and is excluded from every comparison below. Currently: `gobby_install_ownership` (external-mode ownership sentinel, §1.2), `gobby_migration_state` (cutover marker, §4.2), `schema_migrations` (applied versions). Validation iterates Postgres tables minus this list when building the comparison set; iterating SQLite tables and checking that each maps to a Postgres counterpart catches anything dropped in error.
+- **Row counts**: `SELECT COUNT(*) FROM <t>` on both sides for every table in the comparison set; must match exactly.
 - **FK integrity**: primarily validated by the commit of the deferred-constraint import transaction in step 5.1.7. Validation also runs explicit orphan checks generated from `pg_constraint` metadata so we do not trust transaction success alone.
 - **Content hashes**: for a representative set of tables (`sessions`, `tasks`, `memories`, `config_store`, `code_symbols`, `agents`, `metrics`, workflow audit), compute an order-independent hash of canonical JSON-encoded rows on both sides and compare. Order-independence is achieved by sorting by primary key before hashing; JSON encoding uses sorted keys.
 - **Sequence reseed**: for every identity column, `SELECT last_value FROM <sequence>` must equal `MAX(id) + 1` (or `MAX(id)` if the sequence `is_called=false`).
@@ -1544,9 +1625,35 @@ Install-mode dispatch:
 
 - **Docker mode**: `gobby postgres activate` blocks unless pgAudit is loaded (`SELECT 1 FROM pg_extension WHERE extname = 'pgaudit'`) AND the audit log is writable (probe write + read back). No flags required — Docker mode owns the capture mechanism.
 - **Native mode** and **external mode**: `gobby postgres activate` requires **one of two structured flags** (mutual exclusion, neither default):
-    - `--capture-sink <type>:<location>` where `<type>` is `pgaudit-file`, `wal-archive`, or `custom`, and `<location>` is the absolute path or DSN-style spec where the sink lives. The activator probes that the sink is currently writable (file existence + write-test for `pgaudit-file`, `pg_replication_slots` row for `wal-archive`, no probe for `custom` but the value is recorded verbatim). The probe's success and the sink spec are written to the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json`.
-    - `--accept-no-rollback-risk` requires the operator to type the literal phrase `I accept no-rollback risk` at a confirmation prompt (no `--yes` bypass). The phrase, the timestamp, and the operator's `whoami` are recorded in the same cutover-ticket artifact.
-- The `_active_install_mode()` helper is what gates which flag set is required; Docker mode rejects either flag with "not applicable in docker mode — pgAudit is the gate." This makes the runbook branch a structured choice that survives in the cutover artifact, not a click-through prompt.
+    - `--capture-sink <type>:<location>` where `<type>` is one of exactly two values — `pgaudit-file` (location is an absolute path the sink writes to; activator runs file existence + write-test) or `wal-archive` (location is a DSN-style spec for an archive endpoint; activator checks `pg_replication_slots` for a matching slot). A `custom` escape hatch is **deliberately not provided** — it would re-introduce the click-through risk R2-F5 closed by allowing any sink with no probe. Operators with bespoke capture mechanisms must use `--accept-no-rollback-risk` and document their mechanism externally.
+    - `--accept-no-rollback-risk` requires the operator to type the literal phrase `I accept no-rollback risk` at a confirmation prompt (no `--yes` bypass).
+- The `_active_install_mode()` helper is what gates which flag set is required; Docker mode rejects either flag with "not applicable in docker mode — pgAudit is the gate."
+- **Every** successful activation — Docker, native, or external — emits the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` after mode-specific gates pass. The artifact has one stable schema (see "Cutover-ticket artifact schema" below) so §6.1 step 11 (validation-window deadline tracking) and §6.2 step 2 (rollback export) can parse it the same way regardless of mode. This makes the runbook branch a structured choice that survives across mode boundaries, not a Docker-vs-non-Docker fork.
+
+**Cutover-ticket artifact schema** (`~/.gobby/migrations/cutover-<timestamp>.json`):
+
+```json
+{
+  "mode": "docker" | "native" | "external",
+  "activated_at":   "<ISO 8601 UTC>",
+  "deadline_at":    "<ISO 8601 UTC, activated_at + 48h>",
+  "gobby_version":  "<semver>",
+  "capture_kind":   "pgaudit-managed" | "pgaudit-file" | "wal-archive" | "none",
+  "capture_value":  "<path | dsn | null>",
+  "verification": {
+    "state":      "ok" | "operator-attested",
+    "probed_at":  "<ISO 8601 UTC | null>",
+    "probe_detail": "<stringified result from the writability probe>"
+  },
+  "acknowledgement": {                           // present only when capture_kind = "none"
+    "phrase":     "I accept no-rollback risk",
+    "operator":   "<whoami output>",
+    "asked_at":   "<ISO 8601 UTC>"
+  }
+}
+```
+
+`capture_kind="pgaudit-managed"` is the Docker branch (pgAudit lives inside Gobby's image, no sink path needed; `verification.state="ok"` with the pgAudit healthcheck output in `probe_detail`). `capture_kind="pgaudit-file"` and `wal-archive` are the native/external structured branches with a probed sink. `capture_kind="none"` is `--accept-no-rollback-risk`; verification is `operator-attested` and the `acknowledgement` block is required.
 
 Alternatives considered but not chosen for v1:
 
@@ -1575,11 +1682,12 @@ Step-by-step:
 6. Verify the validation output exits 0 and that `gobby postgres status` reports the canonical completion marker — the `imported_from_sqlite_at` row in `gobby_migration_state` written by §5.1 step 12. This is the same marker `gobby postgres activate` checks before flipping `hub_backend`; if `status` cannot find it, do **not** proceed to step 7.
 7. Enable validation-window write capture on the Postgres target before activation:
    - **Docker mode**: the `pgAudit`-backed append-only audit log from §6.0 must be live and observable. The activator probes the audit log automatically; no operator flag is required. If the probe fails, activation is blocked.
-   - **Native / external mode**: pass one of the two structured flags from §6.0 install-mode dispatch — `--capture-sink <type>:<location>` (operator-wired capture; sink is probed and recorded) or `--accept-no-rollback-risk` (typed-phrase confirmation; recorded with operator + timestamp). The cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` is the structured record of which branch was taken. A generic `--yes` bypass is intentionally not provided.
+   - **Native / external mode**: pass one of the two structured flags from §6.0 install-mode dispatch — `--capture-sink <type>:<location>` where `<type>` is exactly `pgaudit-file` or `wal-archive` (operator-wired capture; sink is probed and recorded) or `--accept-no-rollback-risk` (typed-phrase confirmation; recorded with operator + timestamp). A generic `--yes` bypass is intentionally not provided, and `custom:` is intentionally not supported (use `--accept-no-rollback-risk` and document your mechanism externally).
+   - **All modes** emit the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` after gates pass. The artifact's path is printed at the end of `activate` and must be attached to the cutover ticket. §6.2 reads it to choose the rollback export branch.
 8. `gobby postgres activate`.
 9. `gobby start`.
 10. Run the smoke suite: `gobby status`, `gobby sessions list`, `gobby tasks list`, `gobby memory search "foo"`, `gobby code search "bar"`. Each must return expected data within expected latency.
-11. Announce cutover complete; the validation window starts now. The maximum validation window is 48h from `gobby postgres activate`, recorded as an explicit deadline in the cutover ticket. If unresolved blocking regressions remain at that 48h deadline, roll back instead of extending the window silently.
+11. Announce cutover complete; the validation window starts now. The maximum validation window is 48h from `gobby postgres activate` — `deadline_at` in the cutover-ticket artifact emitted at activation. If unresolved blocking regressions remain at that deadline, roll back instead of extending the window silently. The deadline is what `gobby postgres status` should be enhanced to surface as a warning when it approaches (followup; not blocking for v1).
 
 Explicit watch-list for the validation window:
 
@@ -1599,10 +1707,11 @@ When to roll back: any validation-window regression that cannot be fixed forward
 Steps:
 
 1. `gobby stop`.
-2. Export all Postgres-side writes made during the validation window to a safe artifact before flipping `hub_backend` back. Read the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` first — it records which branch the operator took at activation, which determines the export path:
-   - **Docker mode** (`mode=docker`, no capture flag): export from the `pgAudit` append-only audit log enabled in the cutover runbook (§6.0 + §6.1 step 7). Filter by the activation timestamp recorded in the cutover ticket. Supplement with targeted `pg_dump` / SQL exports for tables that support `updated_at` filtering.
-   - **Native / external mode with `--capture-sink`** (`capture` field non-null): export from the recorded sink. The sink type and location come from the cutover ticket; the operator's runbook for that sink type is what tells you how to filter by window.
-   - **Native / external mode with `--accept-no-rollback-risk`** (`capture` field null): there is no auto-capture. Validation-window writes are forensic-only via `updated_at` filtering on tables that have it (best-effort) and the operator is expected to restore from the pre-cutover SQLite backup. The rollback ticket must reference the cutover ticket's recorded acknowledgement so the audit chain is intact.
+2. Export all Postgres-side writes made during the validation window to a safe artifact before flipping `hub_backend` back. Read the cutover-ticket artifact at `~/.gobby/migrations/cutover-<timestamp>.json` first — its `capture_kind` field selects the export path:
+   - **`capture_kind="pgaudit-managed"`** (Docker mode): export from the `pgAudit` append-only audit log inside Gobby's container (§6.0). Filter by `activated_at` from the same ticket. Supplement with targeted `pg_dump` / SQL exports for tables that support `updated_at` filtering.
+   - **`capture_kind="pgaudit-file"`** (native/external with operator-wired pgAudit): export from the path recorded in `capture_value`. Same `activated_at` window filter.
+   - **`capture_kind="wal-archive"`** (native/external with WAL archiving): export from the archive endpoint at `capture_value` for the timestamp window. The operator's runbook for their archive product is what tells you the exact export command.
+   - **`capture_kind="none"`** (native/external with `--accept-no-rollback-risk`): there is no auto-capture. Validation-window writes are forensic-only via `updated_at` filtering on tables that have it (best-effort) and the operator is expected to restore from the pre-cutover SQLite backup. The rollback ticket must include the cutover ticket's `acknowledgement` block so the audit chain is intact.
 3. `gobby postgres deactivate` (flips `hub_backend=sqlite`).
 4. The pre-cutover SQLite database is untouched; no restore needed if the rollback happens inside the validation window.
 5. `gobby start`.

@@ -7,7 +7,7 @@ This file provides guidance for developing the Gobby codebase.
 These are enforced by hooks, rules and workflows.
 
 1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
-2. **NEVER create or leave monoliths.** Keep files under 1,000 lines. You *MUST* create a refactor task if one does not already exist in gobby-tasks. Before creating that task, search for an existing open or active refactor/monolith cleanup epic and parent the task under it. Create a new epic only if no suitable open or active epic exists. Leave these for another agent to pick up.
+2. **NEVER create or leave monoliths.** Keep files under 1,000 lines. You *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Place it under the parent #12730 for the gobby project if working in gobby. Create a new epic only if no suitable open or active epic exists. Leave these tasksif th for another agent to pick up.
 3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
 4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
