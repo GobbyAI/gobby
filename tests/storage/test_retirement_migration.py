@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import get_current_version, run_migrations
+from gobby.storage.migrations import _apply_baseline, get_current_version, run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 pytestmark = pytest.mark.unit
@@ -20,12 +20,13 @@ RETIRED_PIPELINES = (
     "dev-orchestrator",
     "delivery-orchestrator",
 )
-RETIRED_AGENTS = ("conductor", "developer")
+RETIRED_AGENTS = ("conductor", "developer", "pipeline-worker")
 
 
-def _make_db(tmp_path: Path) -> LocalDatabase:
+def _make_v220_db(tmp_path: Path) -> LocalDatabase:
     db = LocalDatabase(tmp_path / "retirement.db")
-    run_migrations(db)
+    _apply_baseline(db)
+    assert get_current_version(db) == 220
     return db
 
 
@@ -64,7 +65,7 @@ def _create_workflow_definition(
 
 
 def test_retirement_migration_disables_installed_gobby_pipeline_rows(tmp_path: Path) -> None:
-    db = _make_db(tmp_path)
+    db = _make_v220_db(tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
 
     for name in RETIRED_PIPELINES:
@@ -102,7 +103,7 @@ def test_retirement_migration_disables_installed_gobby_pipeline_rows(tmp_path: P
 
 
 def test_retirement_migration_disables_installed_gobby_agent_rows(tmp_path: Path) -> None:
-    db = _make_db(tmp_path)
+    db = _make_v220_db(tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
 
     for name in RETIRED_AGENTS:
