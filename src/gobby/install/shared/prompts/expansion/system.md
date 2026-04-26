@@ -37,7 +37,9 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
       "category": "code",
       "validation": "Specific validation criteria using project commands when possible",
       "affected_files": ["src/..."],
-      "execution_group": "optional-parallel-lane"
+      "execution_group": "optional-parallel-lane",
+      "assigned_agent": "backend-developer",
+      "additional_skills": []
     }
   ],
   "dependencies": [
@@ -67,3 +69,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 7. `test_intent` must be explicit for every phase. Gobby uses it to generate deterministic `[TEST]` and `[REF]` tasks.
 8. Do not create separate `[TEST]` or `[REF]` tasks yourself.
 9. Do not invent optional scope or extra features.
+10. Assign every `code`, `config`, `docs`, or `test` leaf to an available agent using
+    the expansion-agent-selection heuristics. Use `backend-developer` as the default
+    fallback and include `additional_skills` as an array.
+11. Do not emit `planning` leaves.

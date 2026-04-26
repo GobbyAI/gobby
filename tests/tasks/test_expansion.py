@@ -7,8 +7,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
+from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
@@ -24,6 +26,17 @@ def _parent(service: ExpansionService, sample_project, *, labels: list[str] | No
         title="Lifecycle epic",
         task_type="epic",
         labels=labels or [],
+    )
+
+
+def _store_agent(service: ExpansionService, name: str, description: str) -> None:
+    body = AgentDefinitionBody(name=name, description=description, surfaces=["spawn"])
+    LocalWorkflowDefinitionManager(service.db).create(
+        name=name,
+        definition_json=body.model_dump_json(),
+        workflow_type="agent",
+        description=description,
+        enabled=True,
     )
 
 
@@ -147,3 +160,36 @@ def test_normalize_defaults_ambiguous_automated_leaf_to_backend_with_audit_marke
     assert leaf["additional_skills"] == []
     assert "## Agent Selection" in leaf["description"]
     assert "Defaulted to `backend-developer`" in leaf["description"]
+
+
+def test_normalize_selects_best_fit_agent_from_registry(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    _store_agent(service, "backend-developer", "Backend storage and MCP implementation")
+    _store_agent(service, "frontend-developer", "Frontend UI, React, CSS, and Playwright")
+    epic = _parent(service, sample_project)
+
+    spec = service.normalize_compiled_spec(
+        {
+            "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["ui"]}],
+            "tasks": [
+                {
+                    "id": "ui",
+                    "phase_id": "phase-1",
+                    "title": "Build React UI",
+                    "category": "code",
+                    "description": "Implement browser components and CSS states.",
+                    "affected_files": ["src/gobby/ui/App.tsx"],
+                }
+            ],
+            "dependencies": [],
+        },
+        task=epic,
+        plan_file=None,
+    )
+
+    leaf = spec["tasks"][0]
+    assert leaf["assigned_agent"] == "frontend-developer"
+    assert leaf["additional_skills"] == []
+    assert "## Agent Selection" not in leaf["description"]

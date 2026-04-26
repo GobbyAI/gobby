@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -20,6 +21,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks.commits import extract_mentioned_files
 from gobby.utils.json_helpers import extract_json_object
 from gobby.utils.project_context import get_project_context
@@ -32,6 +34,47 @@ _DEFAULT_AGENT = "backend-developer"
 _STAGE_LABEL_PREFIX = "stage-:"
 _EXPANSION_STAGES = frozenset(
     {"plan_review", "test_arch", "expanding", "dev", "qa", "holistic_review", "pr"}
+)
+_FRONTEND_SIGNALS = frozenset(
+    {
+        "accessibility",
+        "browser",
+        "client",
+        "component",
+        "css",
+        "eslint",
+        "frontend",
+        "lighthouse",
+        "playwright",
+        "react",
+        "routing",
+        "storybook",
+        "svelte",
+        "ui",
+        "vite",
+        "vue",
+        "webpack",
+    }
+)
+_BACKEND_SIGNALS = frozenset(
+    {
+        "api",
+        "backend",
+        "cli",
+        "daemon",
+        "database",
+        "mcp",
+        "migration",
+        "mypy",
+        "pytest",
+        "ruff",
+        "scheduler",
+        "server",
+        "sqlite",
+        "storage",
+        "workflow",
+        "worker",
+    }
 )
 _BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "install" / "shared" / "prompts"
 
@@ -91,7 +134,78 @@ def _additional_skills(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _agent_selection_fields(task_item: dict[str, Any]) -> tuple[str | None, list[str] | None, str]:
+def _leaf_signal_text(task_item: dict[str, Any]) -> str:
+    values = [
+        task_item.get("title"),
+        task_item.get("description"),
+        task_item.get("category"),
+        " ".join(str(label) for label in task_item.get("labels") or []),
+        " ".join(str(file_path) for file_path in task_item.get("affected_files") or []),
+    ]
+    return " ".join(str(value).lower() for value in values if value)
+
+
+def _available_agent_names(agent_definitions: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(agent["name"])
+        for agent in agent_definitions
+        if agent.get("enabled", True) and agent.get("name")
+    }
+
+
+def list_agent_definitions(
+    def_manager: LocalWorkflowDefinitionManager,
+    enabled: bool | None = None,
+    project_id: str | None = None,
+    surface_filter: str | None = None,
+) -> dict[str, Any]:
+    """List agent definitions for expansion without importing the MCP tool layer."""
+    rows = def_manager.list_all(workflow_type="agent", enabled=enabled, project_id=project_id)
+    agents: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            body = json.loads(row.definition_json)
+        except json.JSONDecodeError:
+            continue
+        surfaces = body.get("surfaces", ["spawn"])
+        agent = {
+            "id": row.id,
+            "name": row.name,
+            "description": row.description or body.get("description"),
+            "surfaces": surfaces,
+            "enabled": row.enabled,
+            "source": row.source,
+            "project_id": row.project_id,
+        }
+        if surface_filter and surface_filter not in surfaces:
+            continue
+        agents.append(agent)
+    return {"success": True, "agents": agents, "count": len(agents)}
+
+
+def _select_agent_from_registry(
+    task_item: dict[str, Any],
+    agent_definitions: list[dict[str, Any]],
+) -> str | None:
+    available = _available_agent_names(agent_definitions)
+    if not available:
+        return None
+
+    signal_text = _leaf_signal_text(task_item)
+    frontend_score = sum(1 for signal in _FRONTEND_SIGNALS if signal in signal_text)
+    backend_score = sum(1 for signal in _BACKEND_SIGNALS if signal in signal_text)
+
+    if "frontend-developer" in available and frontend_score > backend_score:
+        return "frontend-developer"
+    if "backend-developer" in available and backend_score > 0:
+        return "backend-developer"
+    return None
+
+
+def _agent_selection_fields(
+    task_item: dict[str, Any],
+    agent_definitions: list[dict[str, Any]],
+) -> tuple[str | None, list[str] | None, str]:
     """Normalize expansion agent-selection fields for an emitted leaf task."""
     category = str(task_item.get("category", "code"))
     description = str(task_item.get("description") or "")
@@ -101,6 +215,10 @@ def _agent_selection_fields(task_item: dict[str, Any]) -> tuple[str | None, list
     assigned_agent = task_item.get("assigned_agent")
     if assigned_agent:
         return str(assigned_agent), _additional_skills(task_item.get("additional_skills")), description
+
+    selected_agent = _select_agent_from_registry(task_item, agent_definitions)
+    if selected_agent:
+        return selected_agent, _additional_skills(task_item.get("additional_skills")), description
 
     return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)
 
@@ -396,7 +514,9 @@ class ExpansionService:
         self.dep_manager = TaskDependencyManager(self.db)
         self.af_manager = TaskAffectedFileManager(self.db)
         self.project_manager = LocalProjectManager(self.db)
+        self.definition_manager = LocalWorkflowDefinitionManager(self.db)
         self.prompt_loader = PromptLoader(db=self.db)
+        self._agent_definition_cache: dict[str | None, list[dict[str, Any]]] = {}
 
     def validate_plan_file(self, plan_path: Path) -> dict[str, Any]:
         """Validate a plan file exists and identify phase headings."""
@@ -795,6 +915,25 @@ class ExpansionService:
             )
         return normalized
 
+    def _list_agent_definitions_for_selection(
+        self,
+        project_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """List spawn-capable agent definitions once per project for expansion selection."""
+        if project_id not in self._agent_definition_cache:
+            result = list_agent_definitions(
+                self.definition_manager,
+                enabled=True,
+                project_id=project_id,
+                surface_filter="spawn",
+            )
+            raw_agents = result.get("agents") if result.get("success") else []
+            agents = raw_agents if isinstance(raw_agents, list) else []
+            self._agent_definition_cache[project_id] = [
+                agent for agent in agents if isinstance(agent, dict)
+            ]
+        return self._agent_definition_cache[project_id]
+
     def validate_compiled_spec(self, compiled_spec: dict[str, Any]) -> dict[str, Any]:
         """Validate compiled-spec structure and dependency integrity."""
         errors: list[str] = []
@@ -1113,11 +1252,15 @@ class ExpansionService:
 
         phase_by_id = {phase["id"]: phase for phase in normalized_phases}
         dependencies: list[dict[str, str]] = []
+        agent_definitions = self._list_agent_definitions_for_selection(task.project_id)
         for i, task_item in enumerate(raw_tasks):
             phase_id = task_item.get("phase_id") or normalized_phases[0]["id"]
             stable_id = task_item.get("id") or f"task-{i + 1:03d}"
             affected_files = list(task_item.get("affected_files") or [])
-            assigned_agent, additional_skills, description = _agent_selection_fields(task_item)
+            assigned_agent, additional_skills, description = _agent_selection_fields(
+                task_item,
+                agent_definitions,
+            )
             normalized_task = {
                 "id": stable_id,
                 "phase_id": phase_id,
@@ -1207,6 +1350,7 @@ class ExpansionService:
         index_to_id: dict[int, str] = {}
         phases: list[dict[str, Any]] = []
         phase_num_to_id: dict[int, str] = {}
+        agent_definitions = self._list_agent_definitions_for_selection(task.project_id)
 
         for phase_num in sorted(raw_phase_map.keys()):
             phase_id = f"phase-{phase_num}"
@@ -1222,7 +1366,10 @@ class ExpansionService:
                 index_to_id[global_index] = stable_id
                 phase_task_ids.append(stable_id)
                 affected_files = list(subtask.get("affected_files") or [])
-                assigned_agent, additional_skills, description = _agent_selection_fields(subtask)
+                assigned_agent, additional_skills, description = _agent_selection_fields(
+                    subtask,
+                    agent_definitions,
+                )
                 normalized_tasks.append(
                     {
                         "id": stable_id,
