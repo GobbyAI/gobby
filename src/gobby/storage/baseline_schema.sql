@@ -286,6 +286,23 @@ CREATE TABLE tasks (
     validation_criteria TEXT,
     validation_fail_count INTEGER DEFAULT 0,
     dispatch_failure_count INTEGER DEFAULT 0,
+    lifecycle TEXT NOT NULL DEFAULT 'open'
+        CHECK(lifecycle IN (
+            'open',
+            'plan_review',
+            'test_arch',
+            'expanding',
+            'in_development',
+            'holistic_review',
+            'pr',
+            'merging',
+            'merged'
+        )),
+    allow_automation INTEGER NOT NULL DEFAULT 0 CHECK(allow_automation IN (0, 1)),
+    yolo INTEGER NOT NULL DEFAULT 0 CHECK(yolo IN (0, 1)),
+    isolation TEXT NOT NULL DEFAULT 'worktree' CHECK(isolation IN ('none', 'worktree', 'clone')),
+    assigned_agent TEXT,
+    additional_skills TEXT,
     commits TEXT,
     escalated_at TEXT,
     escalation_reason TEXT,
@@ -310,6 +327,7 @@ CREATE INDEX idx_tasks_lifecycle_stage ON tasks(lifecycle_stage);
 CREATE INDEX idx_tasks_closed_session ON tasks(closed_in_session_id);
 CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
+CREATE INDEX idx_tasks_dispatch_scan ON tasks(allow_automation, lifecycle, status);
 
 CREATE TABLE task_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -321,6 +339,47 @@ CREATE TABLE task_dependencies (
 );
 CREATE INDEX idx_deps_task ON task_dependencies(task_id);
 CREATE INDEX idx_deps_depends_on ON task_dependencies(depends_on);
+
+CREATE TABLE task_dispatch_mutex (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    lease_until TEXT,
+    lease_holder TEXT,
+    run_id TEXT,
+    action_kind TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_dispatch_mutex_scan ON task_dispatch_mutex(lease_until, run_id);
+
+CREATE TABLE task_artifacts (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    plan_file_path TEXT,
+    worktree_path TEXT,
+    worktree_id TEXT,
+    clone_path TEXT,
+    clone_id TEXT,
+    target_branch TEXT,
+    expansion_run_id TEXT,
+    expansion_attempts INTEGER NOT NULL DEFAULT 0,
+    pr_url TEXT,
+    merge_commit_sha TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+        (worktree_path IS NULL) = (worktree_id IS NULL)
+        AND (clone_path IS NULL) = (clone_id IS NULL)
+        AND (worktree_path IS NULL OR clone_path IS NULL)
+    )
+);
+
+CREATE TABLE task_lifecycle_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    from_state TEXT,
+    to_state TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    by_actor TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_lifecycle_events_task ON task_lifecycle_events(task_id, created_at);
 
 CREATE TABLE expansion_runs (
     id TEXT PRIMARY KEY,
