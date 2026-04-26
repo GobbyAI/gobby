@@ -2013,8 +2013,8 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "Use MCP instead" in result["systemMessage"]
         assert "Run create_task first" in result["systemMessage"]
 
-    def test_pre_tool_use_rewrite_blocks_and_surfaces_retry_input(self) -> None:
-        """PreToolUse rewrites block and tell Codex how to retry safely."""
+    def test_pre_tool_use_rewrite_does_not_surface_retry_input(self) -> None:
+        """PreToolUse rewrites proceed without telling Codex to retry."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         adapter = CodexHooksAdapter()
@@ -2026,23 +2026,15 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         )
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
-        assert result["decision"] == "block"
-        assert (
-            result["reason"]
-            == "Retry the tool call by resending the corrected input from the hook message "
-            "verbatim. Do not reformulate it."
-        )
-        assert result["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-        assert (
-            result["hookSpecificOutput"]["permissionDecisionReason"]
-            == "Retry the tool call by resending the corrected input from the hook message "
-            "verbatim. Do not reformulate it."
-        )
-        assert "updatedInput" not in result["hookSpecificOutput"]
+        rendered = repr(result)
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "hookSpecificOutput" not in result
         assert "Bare python is not allowed" in result["systemMessage"]
-        assert "Do not add, remove, or rename fields." in result["systemMessage"]
-        assert "uv run python hello.py" in result["systemMessage"]
+        assert "uv run python hello.py" not in result["systemMessage"]
+        assert "Retry this tool call" not in rendered
+        assert "resending the corrected input" not in rendered
+        assert "Do not add, remove, or rename fields" not in rendered
 
     def test_pre_tool_use_wrapper_only_call_tool_rewrite_does_not_emit_retry_blob(self) -> None:
         """Wrapper-only call_tool reshapes should auto-heal without visible retry JSON."""
