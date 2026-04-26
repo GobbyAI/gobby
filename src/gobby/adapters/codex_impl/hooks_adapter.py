@@ -121,7 +121,10 @@ class CodexHooksAdapter(BaseAdapter):
             and hook_event_name == "PreToolUse"
         ):
             logger.debug(
-                "Codex PreToolUse modified_input ignored; proxy applies rewrites server-side"
+                "Codex PreToolUse hook returned modified_input; Codex does not support "
+                "updatedInput. Proxy will apply rewrite at dispatch via "
+                "apply_before_tool_enforcement. Decision=%s.",
+                response.decision or "allow",
             )
 
         if response.decision in ("deny", "block"):

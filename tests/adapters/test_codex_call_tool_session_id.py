@@ -115,6 +115,4 @@ def test_modified_input_allow_path_logs_debug_without_retry(
         result = adapter.translate_from_hook_response(response, hook_type="PreToolUse")
 
     _assert_no_retry_block(result)
-    assert "Codex PreToolUse modified_input ignored; proxy applies rewrites server-side" in (
-        caplog.text
-    )
+    assert "Codex PreToolUse hook returned modified_input" in (caplog.text)
