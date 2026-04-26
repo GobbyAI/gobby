@@ -330,7 +330,7 @@ The blast-radius variable-length path query interpolates depth into the Cypher (
 
 ### 3.1 Implement FalkorDB installer (Docker-only) [category: code] (depends: 1.1)
 
-Target: `src/gobby/cli/installers/falkor.py` (new file), modeled on `src/gobby/cli/installers/neo4j.py`
+Target: `src/gobby/cli/installers/falkor.py` (new file, modeled on `src/gobby/cli/installers/neo4j.py`); `src/gobby/cli/installers/__init__.py` (R20-F2 — export `install_falkordb` / `uninstall_falkordb`, remove the `install_neo4j` / `uninstall_neo4j` exports so consumers cannot import the deleted module after § 3.4)
 
 Create `src/gobby/cli/installers/falkor.py` exposing two public functions: `install_falkordb(*, password: str | None, gobby_home: Path | None = None) -> dict[str, Any]` and `uninstall_falkordb(*, gobby_home: Path | None = None, purge: bool = False) -> dict[str, Any]`. Mirror the existing Neo4j installer's overall shape (compose-yaml ensure, subprocess invocation, config update, health wait).
 
@@ -612,6 +612,8 @@ The uninstall invoker mirrors the existing `_run_neo4j_uninstall` shape and pass
 
 **Wizard wiring (cross-references Phase 6.2):** the wizard's `Services.tsx` invokes `runGobby(["install", "--falkordb", ...optional --falkordb-password])`. This is the exact reason the `--falkordb` service-targeting flag exists — without it, the wizard would have to either re-run the full installer (re-doing CLI hooks etc.) or shell out to a Python entry point that bypasses Click. Phase 6.2 keeps using the args list shown above; this section guarantees the flag actually exists.
 
+**Cleanup after callsite rename (R20-F2):** once `_run_falkordb_install` / `_run_falkordb_uninstall` are wired and the install/uninstall surface tests pass, DELETE `src/gobby/cli/installers/neo4j.py`. Its only consumers were `install.py` and `_install_prompts.py`, both rewritten in this task; § 3.1's R20-F2 target update removes the `__init__.py` exports so nothing else imports it. Also rename or delete the corresponding tests at `tests/cli/installers/test_neo4j.py` (rename to `test_falkor.py` and adapt fixtures, OR delete if the FalkorDB installer ships its own dedicated test module). Without these deletions, § 4.3's residual `rg` sweep would fail on the still-present Neo4j source AND its tests.
+
 ### 3.5 Rename bootstrap neo4j_password to falkordb_password end-to-end [category: code] (depends: 1.1, 3.1)
 
 Target: `src/gobby/config/bootstrap.py` (BootstrapConfig + load_bootstrap), `src/gobby/cli/daemon.py` (`_services_start` consumer), `src/gobby/cli/installers/falkor.py` (`_write_bootstrap_password` writer added in 3.1)
@@ -666,7 +668,13 @@ if config.databases.neo4j.url:
 # `is_falkordb_enabled(config.databases)` always returns False after install,
 # and `gobby start` never appends the `falkordb` compose profile. Wire both stores
 # from the daemon's LocalDatabase before the predicate check.
-db = LocalDatabase(_resolve_db_path(bootstrap))
+# R20-F1: there is no `_resolve_db_path` helper in cli/daemon.py. Resolve the
+# DB path from the already-loaded BootstrapConfig directly. `database_path` is
+# the canonical bootstrap field (load_bootstrap returns it from `gobby_home /
+# "bootstrap.yaml"` or the Pydantic default). expanduser() handles `~/.gobby/...`
+# values when `gobby_home` is the operator's home directory.
+db_path = Path(bootstrap.database_path).expanduser()
+db = LocalDatabase(db_path)
 config_store = ConfigStore(db)
 secret_store = SecretStore(db)
 config = load_config(
@@ -847,7 +855,7 @@ Find every `getattr(server.memory_manager, "_neo4j_client", None)` and replace w
 
 Search broadly for any other `_neo4j_client` references with `grep -rn '_neo4j_client' src/gobby/` and rename all hits.
 
-### 4.3 Sweep daemon-wide for residual Neo4j references [category: refactor] (depends: Phase 2, 3.3, 3.6)
+### 4.3 Sweep daemon-wide for residual Neo4j references [category: refactor] (depends: 1.3, 3.4, 3.5, 4.1, 4.2, Phase 2, 3.3, 3.6)
 
 Target (verify each, edit any that touches Neo4j):
 
@@ -1594,6 +1602,8 @@ The knowledge graph backend has been replaced with FalkorDB.
 
 Implement by registering `--neo4j-password` on `install` and `--neo4j` on `uninstall` as `click.option(... hidden=True)` whose handler immediately raises `click.UsageError` with the message above. This way `--help` does not advertise them, but typo-tolerant users (and anyone running an old script) get a real explanation instead of "no such option".
 
+**Residual-sweep allowlist (R20-F4 cross-reference):** the literal `neo4j` strings introduced by these hidden hard-fail handlers are required (Click must register the old option names to produce the migration error). § 8.3 row #20's `rg` sweep allowlist therefore explicitly includes `src/gobby/cli/install.py`'s deprecation handlers — these refs are intentional, not stale. § 4.3's daemon-wide sweep also skips this file's deprecation block for the same reason.
+
 ### 8.2 Add startup-time stale-config warning [category: code] (depends: 3.6, 4.3)
 
 Target: `src/gobby/runner_init.py` (or wherever the daemon's startup health/sanity checks fire)
@@ -1698,7 +1708,7 @@ Target: this is operational/manual work, not a code edit. Document the matrix be
 | 17 | Pre-seed user-tuned values: `INSERT INTO config_store (key, value) VALUES ('databases.falkordb.rrf_k', '80')` (and `graph_min_score`=0.7). Then run `gobby uninstall --falkordb` and check `~/.gobby/bootstrap.yaml` plus `SELECT key FROM config_store WHERE key LIKE 'databases.falkordb.%'`. | `falkordb_password` key is removed from bootstrap (R5-F1 split-brain fix). Connection/auth keys removed: `databases.falkordb.host`, `databases.falkordb.port`, `databases.falkordb.requirepass`. **Secret name (R14-F4):** `config_key_to_secret_name('databases.falkordb.requirepass')` resolves to `requirepass` (NOT `auth` — `auth` is the Neo4j-era secret name). Verify with `SELECT name FROM secrets WHERE name = 'requirepass'` returning zero rows after uninstall. **Tunables preserved (R7-F3 contract):** `databases.falkordb.rrf_k` still equals `80`, `databases.falkordb.graph_min_score` still equals `0.7` — uninstall does NOT use a blanket `DELETE WHERE key LIKE 'databases.falkordb.%'`. |
 | 18 | **Upgrade path:** seed `~/.gobby/services/docker-compose.yml` with the OLD Neo4j-era template (or use a real existing-install fixture), then run `gobby install`. Verify with `docker compose -f ~/.gobby/services/docker-compose.yml ps` and `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <pw> PING` (the `-T` flag disables TTY allocation so this works under noninteractive subprocess execution — the install path will fail without it). | Compose file is refreshed to the FalkorDB template (R6-F1 fix); previously-running Neo4j container is stopped (no orphans); FalkorDB container starts on the `falkordb` profile and reaches healthy state; `redis-cli ... PING` returns `PONG` |
 | 19 | Set `databases.falkordb.requirepass` to a value via `/api/config` PUT, then GET it back via `/api/config`. Repeat with the `gobby-config` MCP tool (`set_config` then `get_config`). | Both surfaces return the value masked (`********`); raw DB inspection (`sqlite3 ~/.gobby/gobby-hub.db`) shows `$secret:requirepass` in `config_store` and the encrypted value in `secrets` (R6-F2 fix verifies `requirepass` is treated as a secret across both supported surfaces — there is no `gobby config` CLI to test) |
-| 20 | `rg -l 'neo4j\|Neo4j\|NEO4J' src/gobby/ web/src/` (Python repo) AND `rg -l 'neo4j\|Neo4j\|NEO4J' crates/` (run from gobby-cli repo root) | Only intentional refs remain — Python: bootstrap migration helper, storage migration that drops old keys, CHANGELOG; Rust: CHANGELOG only |
+| 20 | `rg -l 'neo4j\|Neo4j\|NEO4J' src/gobby/ web/src/` (Python repo) AND `rg -l 'neo4j\|Neo4j\|NEO4J' crates/` (run from gobby-cli repo root) | Only intentional refs remain. Python allowlist: bootstrap migration helper (3.5), storage migration that drops old keys (3.6), `src/gobby/cli/install.py`'s hidden `--neo4j` / `--neo4j-password` deprecation handlers (R20-F4 — Click must register the literal old flag names to produce § 8.1's hard-fail migration error), CHANGELOG. Rust allowlist: CHANGELOG only. |
 | 21 | **Step-6 failure path** (R11-F2): chmod `~/.gobby/bootstrap.yaml` to read-only after staging the install (or move the parent dir to read-only mid-flight via a test fixture), then run `gobby install --falkordb`. The container is up and `_update_config` succeeds, but `_write_bootstrap_password` fails. | Installer returns `success: False` (NOT `success: True` with a warning) AND the error message names `gobby uninstall --falkordb` as the cleanup verb AND `compose_running: True` is set in the result dict so the wizard/CLI can surface the right operator action. Verifies the installer does not inherit the `bootstrap_ok` warning-on-failure pattern from the live Neo4j installer. |
 | 22 | **Password update + restart** (R13-F2): with FalkorDB installed and running, set `databases.falkordb.requirepass` to a NEW value via `/api/config` PUT. WITHOUT restarting, run `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <NEW_pw> PING` — must return `WRONGPASS`/`NOAUTH` (container still on old password). Then `gobby restart`, repeat — must return `PONG` (container recreated by `_services_start` with the new value from `config.databases.falkordb.requirepass`). Repeat the same flow via `gobby-config set_config`. | First PING returns `WRONGPASS`/`NOAUTH`; restart succeeds; second PING returns `PONG`. The `/api/config` PUT response and the `gobby-config set_config` response BOTH include `restart_required: true` plus a human-readable hint when the changed key is `databases.falkordb.requirepass`. Verifies `_services_start` (3.5) sources the resolved `config.databases.falkordb.requirepass` rather than the stale `bootstrap.falkordb_password`, and that the runtime config surface tells the operator to restart. |
 
