@@ -9,6 +9,7 @@ Tools included:
 - Expansion (8): start/get/latest/resume/cancel/validate run, QA result, plan validation
 - Front half (1): front_half_tick
 - Affected files (4): set, get, find_overlaps, wire_from_run
+- Artifacts (5): set/get artifact pointers and append idempotent description sections
 - GitHub (2): import_github_issues, link_task_to_github_issue
 - Reindex (1): reindex_tasks
 """
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_github import create_github_registry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_ops_affected_files_registry
+from gobby.mcp_proxy.tools.tasks._artifacts import create_ops_artifact_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._front_half import create_front_half_registry
@@ -74,6 +76,9 @@ def create_task_ops_registry(
 
     # Merge ops affected files tools (set, get, find_overlaps, wire_from_run)
     registry.merge_from(create_ops_affected_files_registry(ctx))
+
+    # Merge artifact mutation tools for merge/expansion-qa/holistic-reviewer agents
+    registry.merge_from(create_ops_artifact_registry(ctx))
 
     # Merge GitHub integration tools (2 tools)
     registry.merge_from(create_github_registry(ctx))
