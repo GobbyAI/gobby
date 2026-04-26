@@ -6,6 +6,7 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,6 +27,12 @@ from gobby.utils.project_context import get_project_context
 logger = logging.getLogger(__name__)
 
 _TDD_CATEGORIES = frozenset({"code", "config"})
+AUTOMATED_LEAF_CATEGORIES = frozenset({"code", "config", "docs", "test"})
+_DEFAULT_AGENT = "backend-developer"
+_STAGE_LABEL_PREFIX = "stage-:"
+_EXPANSION_STAGES = frozenset(
+    {"plan_review", "test_arch", "expanding", "dev", "qa", "holistic_review", "pr"}
+)
 _BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "install" / "shared" / "prompts"
 
 
@@ -46,6 +53,56 @@ def _extract_phase_from_title(subtask: dict[str, Any]) -> int | None:
 def _get_subtask_phase(subtask: dict[str, Any]) -> int:
     """Get a phase number for a legacy subtask, or 0 when unphased."""
     return _extract_phase_number(subtask) or _extract_phase_from_title(subtask) or 0
+
+
+def _skipped_stages(task: Task) -> set[str]:
+    """Return resolved stage skip labels from a task, ignoring profile sugar labels."""
+    stages: set[str] = set()
+    for label in task.labels or []:
+        if not isinstance(label, str) or not label.startswith(_STAGE_LABEL_PREFIX):
+            continue
+        stage = label.removeprefix(_STAGE_LABEL_PREFIX).strip()
+        if stage:
+            stages.add(stage)
+    return stages
+
+
+def _dev_is_only_enabled_stage(task: Task) -> bool:
+    skipped = _skipped_stages(task)
+    return "dev" not in skipped and _EXPANSION_STAGES - skipped == {"dev"}
+
+
+def _append_agent_selection_marker(description: str) -> str:
+    """Record deterministic fallback agent selection in the leaf description."""
+    marker = (
+        "## Agent Selection\n"
+        "Defaulted to `backend-developer` because no registry agent selection was provided."
+    )
+    if "## Agent Selection" in description:
+        return description
+    return f"{description.rstrip()}\n\n{marker}".strip()
+
+
+def _additional_skills(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(skill) for skill in value]
+    return [str(value)]
+
+
+def _agent_selection_fields(task_item: dict[str, Any]) -> tuple[str | None, list[str] | None, str]:
+    """Normalize expansion agent-selection fields for an emitted leaf task."""
+    category = str(task_item.get("category", "code"))
+    description = str(task_item.get("description") or "")
+    if category not in AUTOMATED_LEAF_CATEGORIES:
+        return None, None, description
+
+    assigned_agent = task_item.get("assigned_agent")
+    if assigned_agent:
+        return str(assigned_agent), _additional_skills(task_item.get("additional_skills")), description
+
+    return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)
 
 
 _PHASE_HEADING_RE = re.compile(r"##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+)")
@@ -366,6 +423,8 @@ class ExpansionService:
             raise ValueError(f"Parent task {run.parent_task_id} not found")
         self.run_manager.start(run_id)
         self.run_manager.append_log(run_id, level="info", message="Starting expansion compile")
+        if _dev_is_only_enabled_stage(task):
+            return self._complete_dev_only_run(run_id, task)
 
         phase_sections = self._load_phase_sections(run.plan_file, task)
         if len(phase_sections) >= 2:
@@ -417,8 +476,35 @@ class ExpansionService:
             raise ValueError(f"Expansion run {run_id} not found")
         if run.compiled_spec is None:
             run = await self.compile_run(run_id)
+        if run.compiled_spec is None and run.status == "completed":
+            return run
         if auto_apply:
             return self.apply_run(run.id, session_id=session_id)
+        return run
+
+    def _complete_dev_only_run(self, run_id: str, task: Task) -> ExpansionRun:
+        """Complete dev-only builds without creating expansion children."""
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE tasks SET lifecycle = 'in_development', updated_at = ? WHERE id = ?",
+                (now, task.id),
+            )
+        self.run_manager.append_log(
+            run_id,
+            level="info",
+            message="Skipping expansion because dev is the only enabled stage",
+            extra={"skipped_stages": sorted(_skipped_stages(task))},
+        )
+        run = self.run_manager.save_apply_result(
+            run_id,
+            task_id_map={task.id: task.id},
+            created_task_ids=[],
+            checkpoints={"dev_only_skip": True},
+            completed=True,
+        )
+        if run is None:
+            raise RuntimeError(f"Expansion run {run_id} disappeared after dev-only completion")
         return run
 
     def apply_run(self, run_id: str, *, session_id: str | None) -> ExpansionRun:
@@ -544,6 +630,8 @@ class ExpansionService:
                         validation_criteria=task_item.get("validation"),
                         created_in_session_id=session_id,
                         labels=task_label_map.get(task_item["id"]),
+                        assigned_agent=task_item.get("assigned_agent"),
+                        additional_skills=task_item.get("additional_skills"),
                     )
                     created_id = create_result["task"]["id"]
                     created_task_map[task_item["id"]] = created_id
@@ -736,6 +824,9 @@ class ExpansionService:
                 )
             if not task_item.get("title"):
                 errors.append(f"Task {task_item.get('id')} is missing a title")
+            category = str(task_item.get("category", "code"))
+            if category not in AUTOMATED_LEAF_CATEGORIES:
+                errors.append(f"Task {task_item.get('id')} has unsupported category:{category}")
 
         for phase in phases:
             phase_task_ids = phase.get("task_ids") or []
@@ -964,10 +1055,12 @@ class ExpansionService:
         if file_context:
             research_sections.append(file_context)
 
+        skipped_stages = sorted(_skipped_stages(task))
         return {
             "task_id": task.id,
             "title": task.title,
             "description": task.description or "",
+            "skipped_stages": skipped_stages,
             "context_str": "\n\n".join(research_sections),
             "research_str": file_context or "No repository files were selected for context.",
             "plan_file": run.plan_file or "",
@@ -1024,11 +1117,12 @@ class ExpansionService:
             phase_id = task_item.get("phase_id") or normalized_phases[0]["id"]
             stable_id = task_item.get("id") or f"task-{i + 1:03d}"
             affected_files = list(task_item.get("affected_files") or [])
+            assigned_agent, additional_skills, description = _agent_selection_fields(task_item)
             normalized_task = {
                 "id": stable_id,
                 "phase_id": phase_id,
                 "title": task_item.get("title") or f"Task {i + 1}",
-                "description": task_item.get("description") or "",
+                "description": description,
                 "priority": int(task_item.get("priority", 2)),
                 "task_type": task_item.get("task_type", "task"),
                 "category": task_item.get("category", "code"),
@@ -1036,6 +1130,8 @@ class ExpansionService:
                 "affected_files": affected_files,
                 "execution_group": task_item.get("execution_group")
                 or task_item.get("parallel_group"),
+                "assigned_agent": assigned_agent,
+                "additional_skills": additional_skills,
             }
             tasks.append(normalized_task)
             phase_by_id.setdefault(
@@ -1126,12 +1222,13 @@ class ExpansionService:
                 index_to_id[global_index] = stable_id
                 phase_task_ids.append(stable_id)
                 affected_files = list(subtask.get("affected_files") or [])
+                assigned_agent, additional_skills, description = _agent_selection_fields(subtask)
                 normalized_tasks.append(
                     {
                         "id": stable_id,
                         "phase_id": phase_id,
                         "title": subtask.get("title") or f"Task {global_index + 1}",
-                        "description": subtask.get("description") or "",
+                        "description": description,
                         "priority": int(subtask.get("priority", 2)),
                         "task_type": subtask.get("task_type", "task"),
                         "category": subtask.get("category", "code"),
@@ -1139,6 +1236,8 @@ class ExpansionService:
                         or subtask.get("validation_criteria"),
                         "affected_files": affected_files,
                         "execution_group": subtask.get("parallel_group"),
+                        "assigned_agent": assigned_agent,
+                        "additional_skills": additional_skills,
                     }
                 )
                 if subtask.get("parallel_group"):

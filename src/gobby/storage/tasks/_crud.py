@@ -92,6 +92,8 @@ def create_task(
     labels: list[str] | None = None,
     category: str | None = None,
     validation_criteria: str | None = None,
+    assigned_agent: str | None = None,
+    additional_skills: list[str] | None = None,
     github_issue_number: int | None = None,
     github_pr_number: int | None = None,
     github_repo: str | None = None,
@@ -107,6 +109,9 @@ def create_task(
 
     # Serialize labels
     labels_json = json.dumps(labels) if labels else None
+    additional_skills_json = (
+        json.dumps(additional_skills) if additional_skills is not None else None
+    )
     task_id = ""
 
     # Default validation status
@@ -142,9 +147,10 @@ def create_task(
                         labels, status, created_at, updated_at,
                         validation_status, category,
                         validation_criteria, validation_fail_count,
+                        assigned_agent, additional_skills,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -165,6 +171,8 @@ def create_task(
                         validation_status,
                         category,
                         validation_criteria,
+                        assigned_agent,
+                        additional_skills_json,
                         github_issue_number,
                         github_pr_number,
                         github_repo,

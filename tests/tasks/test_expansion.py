@@ -42,6 +42,22 @@ def test_skipped_stages_helper_parses_resolved_stage_labels_not_profiles(
     assert helper(epic) == {"qa", "holistic_review"}
 
 
+def test_skipped_stages_helper_ignores_dev_only_profile_without_resolved_labels(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    helper = expansion_module._skipped_stages
+    profile_only = _parent(service, sample_project, labels=["profile:dev-only"])
+    resolved = _parent(
+        service,
+        sample_project,
+        labels=["profile:dev-only", "stage-:qa", "stage-:pr"],
+    )
+
+    assert helper(profile_only) == set()
+    assert helper(resolved) == {"qa", "pr"}
+
+
 def test_automated_leaf_categories_are_explicit() -> None:
     assert expansion_module.AUTOMATED_LEAF_CATEGORIES == {"code", "config", "docs", "test"}
 

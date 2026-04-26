@@ -211,6 +211,8 @@ class LocalTaskManager:
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
+        assigned_agent: str | None = None,
+        additional_skills: list[str] | None = None,
         github_issue_number: int | None = None,
         github_pr_number: int | None = None,
         github_repo: str | None = None,
@@ -234,6 +236,8 @@ class LocalTaskManager:
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
+            assigned_agent=assigned_agent,
+            additional_skills=additional_skills,
             github_issue_number=github_issue_number,
             github_pr_number=github_pr_number,
             github_repo=github_repo,
@@ -844,6 +848,8 @@ class LocalTaskManager:
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
+        assigned_agent: str | None = None,
+        additional_skills: list[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create a task and return result dict."""
@@ -859,6 +865,8 @@ class LocalTaskManager:
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
+            assigned_agent=assigned_agent,
+            additional_skills=additional_skills,
         )
         return {"task": task.to_dict()}
 
