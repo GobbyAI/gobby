@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 
-from gobby.hooks.inbox import _compute_sleep_seconds, _load_envelope, drain_hook_inbox_once
+from gobby.hooks.inbox import (
+    _compute_sleep_seconds,
+    _load_envelope,
+    _quarantine_file,
+    drain_hook_inbox_once,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -112,6 +117,21 @@ def test_load_envelope_quarantines_non_utf8_files(tmp_path: Path) -> None:
     assert quarantined.read_bytes() == b"\xff\xfe\x00bad-json"
     meta = json.loads((inbox_dir / "quarantine" / f"{envelope_path.name}.meta.json").read_text())
     assert meta["reason"] == "invalid_json"
+
+
+def test_quarantine_missing_file_is_handled_as_race(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+
+    with caplog.at_level("DEBUG", logger="gobby.hooks.inbox"):
+        quarantined = _quarantine_file(envelope_path, reason="invalid_json", detail="missing")
+
+    assert quarantined is True
+    assert "disappeared before quarantine" in caplog.text
+    assert "Failed to quarantine hook inbox file" not in caplog.text
 
 
 def test_compute_sleep_seconds_clamps_negative_jitter() -> None:
