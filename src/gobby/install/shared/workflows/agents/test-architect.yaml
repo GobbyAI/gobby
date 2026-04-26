@@ -38,13 +38,13 @@ instructions: |
   ### Regression
   - **§<plan-section>**: <bug class to defend against>
 
-  ### Contract / Cross-Surface
+  ### Contract
   - **§<plan-section>**: <surfaces that must agree>
 
-  ### Test Infrastructure
+  ### Infrastructure
   - **<infra need>**: <new fixture, helper module, harness>
 
-  Do NOT write `### N.N` task sections. Only Test Infrastructure items become
+  Do NOT write `### N.N` task sections. Only Infrastructure items become
   [category: test] leaves during later expansion. If unit tests are enough, write:
 
   ## Test Architecture
