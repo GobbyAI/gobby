@@ -427,12 +427,21 @@ Pick (A) for 0.4.0 — the rollback in (B) introduces another failure surface (t
 
 ```python
 def _update_config(*, host: str, port: int, password: str) -> None:
+    # R19-F5: host, port, and the requirepass secret MUST persist atomically.
+    # Without `db.transaction()`, each `store.set(...)` autocommits — a failure
+    # in `store.set_secret(...)` after host/port have been written leaves
+    # `databases.falkordb.host`/`port` in config_store while the secret is
+    # absent, making `is_falkordb_installed()` return True for an install that
+    # cannot authenticate. The transaction wraps all three writes so a failure
+    # rolls back the whole _update_config step (matches the per-step failure
+    # semantics above: step 5 failure means NO credentials are persisted).
     db = LocalDatabase(...)
     store = ConfigStore(db)
-    store.set("databases.falkordb.host", host, source="install")
-    store.set("databases.falkordb.port", port, source="install")
     secret_store = SecretStore(db)
-    store.set_secret("databases.falkordb.requirepass", password, secret_store, source="install")
+    with db.transaction():
+        store.set("databases.falkordb.host", host, source="install")
+        store.set("databases.falkordb.port", port, source="install")
+        store.set_secret("databases.falkordb.requirepass", password, secret_store, source="install")
 ```
 
 The `databases.falkordb.mode` key is **dropped** — there is only one mode (Docker), so no routing needed. `is_falkordb_installed` (3.3) keys off the presence of the host/port keys instead.
@@ -710,7 +719,7 @@ Target: `src/gobby/storage/_migration_registry.py` (register the new migration h
 
 The SQLite migration surface lives at `src/gobby/storage/_migration_registry.py` (declarative list of migration entries) plus `src/gobby/storage/migrations.py` (runner). Add a new entry to the registry list — versioned one above the current highest entry. The runner picks it up automatically; no runner changes.
 
-Migrations run with a raw `sqlite3.Connection`. `ConfigStore.clear_secret` requires both a `db` and a `SecretStore`, which is heavier than the migration context. Use raw SQL against the actual table names. **Critical:** preserve backend-agnostic tunables (`graph_search`, `graph_min_score`, `rrf_k`, `graph_name`) that should survive the backend swap — they describe KG behavior, not backend connection details.
+Migrations are registered as `MigrationAction = str | Callable[[LocalDatabase], None]` (R19-F2 — verified live in the registry contract). The runner calls `action(db)` for callables and expects `db.execute(...)` calls; the runner wraps each migration in its own transaction. Use raw SQL against the actual table names. **Critical:** preserve backend-agnostic tunables (`graph_search`, `graph_min_score`, `rrf_k`, `graph_name`) that should survive the backend swap — they describe KG behavior, not backend connection details.
 
 ```python
 # Connection/auth keys — drop on migration (these are Neo4j-specific)
@@ -719,8 +728,13 @@ NEO4J_CONNECTION_KEYS = ("url", "auth", "database", "host", "port")
 # Behavior tunables — migrate from databases.neo4j.* to databases.falkordb.* if user-overridden
 NEO4J_TUNABLE_KEYS = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
 
-def migrate_neo4j_to_falkordb_config_keys(conn: sqlite3.Connection) -> None:
+def migrate_neo4j_to_falkordb_config_keys(db: LocalDatabase) -> None:
     """Migrate user-tuned graph behavior; drop Neo4j-specific connection/auth keys.
+
+    R19-F2: signature is `Callable[[LocalDatabase], None]` per the live
+    MigrationAction contract — NOT `(conn: sqlite3.Connection)`. The runner
+    calls `action(db)` and provides transaction semantics around the call;
+    use `db.execute(...)` for every write.
 
     Tunables (graph_search, graph_min_score, rrf_k, graph_name) describe KG behavior
     that is backend-agnostic — these survive the backend swap. The user's tuning of
@@ -741,7 +755,7 @@ def migrate_neo4j_to_falkordb_config_keys(conn: sqlite3.Connection) -> None:
     #    has overridden the default and we don't want to clobber any value that was somehow
     #    already written under the new key)
     for key in NEO4J_TUNABLE_KEYS:
-        conn.execute(
+        db.execute(
             "INSERT OR IGNORE INTO config_store (key, value, source, is_secret) "
             "SELECT REPLACE(key, 'databases.neo4j.', 'databases.falkordb.'), value, source, is_secret "
             "FROM config_store WHERE key = ?",
@@ -749,7 +763,7 @@ def migrate_neo4j_to_falkordb_config_keys(conn: sqlite3.Connection) -> None:
         )
     # 2. Drop ALL databases.neo4j.* keys (tunables already copied above; connection
     #    keys + the `$secret:auth` reference do not survive)
-    conn.execute("DELETE FROM config_store WHERE key LIKE 'databases.neo4j.%'")
+    db.execute("DELETE FROM config_store WHERE key LIKE 'databases.neo4j.%'")
     # 3. Drop the orphaned encrypted secret if and only if nothing else references the
     #    secret name. CRITICAL (R13-F1): config_store.value holds JSON-encoded strings —
     #    ConfigStore.set_secret writes `json.dumps(f"$secret:{name}")` (verified at
@@ -759,7 +773,7 @@ def migrate_neo4j_to_falkordb_config_keys(conn: sqlite3.Connection) -> None:
     #    legitimate non-Neo4j key still resolves to last-segment `auth`. Use
     #    `json_quote(...)` (or `json_extract(value, '$') = '$secret:auth'`) to compare
     #    against the JSON-encoded form.
-    conn.execute(
+    db.execute(
         "DELETE FROM secrets WHERE name = 'auth' "
         "AND NOT EXISTS (SELECT 1 FROM config_store WHERE value = json_quote('$secret:auth'))"
     )
@@ -1210,9 +1224,15 @@ Correct shape:
 
 ```rust
 fn resolve_falkordb_config(db_path: &Path, quiet: bool) -> Option<FalkorConfig> {
-    // Match the connection-open pattern used by the existing resolve_neo4j_config
-    // (open_db_readonly returns Option, .ok() bails silently on missing/locked DBs).
-    let conn = open_db_readonly(db_path)?;
+    // R19-F3: there is no `open_db_readonly` helper in the live config.rs.
+    // Mirror the existing `resolve_neo4j_config` exactly — open SQLite read-only
+    // via `rusqlite::Connection::open_with_flags(...)` and set a busy_timeout
+    // so a long-running daemon writer does not deadlock the read client.
+    let conn = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ).ok()?;
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
 
     // Env var > config_store > None. Use `or_else` so env wins WITHOUT short-circuiting
     // the config_store fallback; do NOT apply `?` until after env+config_store have both
@@ -1498,7 +1518,7 @@ The Falkor crate's `with_params(HashMap<String, String>)` only carries string va
 
 - **String IDs** (`$id`, `$project`, `$path`): wrap each value with `cypher_string_literal(s)` (the helper in § 7.2 — single-quotes and backslash-escapes) BEFORE inserting into the `with_params` map (R17-F3). `with_params` does a textual `CYPHER key=value` prepend, so a raw `gobby` value would produce `CYPHER project=gobby` (Cypher identifier), not `CYPHER project='gobby'` (string literal); pre-quoting at the call site makes the substitution a valid string-literal expression. For `$ids` lists in `find_callers_batch` and `find_callees_batch`, interpolate as a Cypher list literal directly into the query string after wrapping each id with `cypher_string_literal`. Example: `format!("target.id IN [{}]", ids.iter().map(|i| cypher_string_literal(i)).collect::<Vec<_>>().join(", "))` produces `target.id IN ['id1', 'id2', 'id3']`. Do NOT split into N queries — that defeats the batch-call performance goal.
 - **`$offset` / `$limit`** in `find_callers`, `find_usages`, `find_callers_batch`, `find_callees_batch`: clamp to `[0, MAX_LIMIT]` (use the same constants the Neo4j path uses today), then interpolate directly into the Cypher as `SKIP <n> LIMIT <m>`. Drop the `$offset` / `$limit` Cypher param names entirely.
-- **Blast-radius depth** in `blast_radius_query(depth)`: already interpolated per the existing pattern (clamped 1-5 in `blast_radius_query`). Keep that as-is.
+- **Blast-radius depth + limit** in `blast_radius_query(depth, limit)` (R19-F4): depth is already interpolated (clamped 1-5). Update the function to ALSO take a `limit` argument (clamp to `[1, MAX_LIMIT]`) and interpolate it as `LIMIT <n>` into the query string. DROP the `$limit` Cypher param name from the blast-radius query — leaving it unbound after numeric params are removed from `with_params` would fail at runtime. After this and the `$offset` / `$limit` interpolation above, NO `$offset`, `$limit`, or `$ids` placeholder may remain in any of the 8 ported FalkorDB read queries; add a query-string assertion in the unit tests that scans for those placeholder names and fails if any survive.
 - **String project/id params**: pre-wrapped via `cypher_string_literal` at the call site (see the String IDs bullet above) — `with_params` then carries the already-quoted Cypher literal as-is.
 
 After this change, `with_params` is only ever called with string entries (or omitted when there are no string params). Numeric clauses do not flow through param binding at all.
@@ -1597,10 +1617,13 @@ def _check_stale_neo4j_config(db: LocalDatabase) -> None:
     secret. Use the same `json_quote('$secret:auth')` orphan guard as 3.6's R13-F1
     fix; the runtime path is raw-SQL for symmetry with the migration path.
     """
-    with db.connect() as conn:
-        rows = conn.execute(
-            "SELECT key FROM config_store WHERE key LIKE 'databases.neo4j.%'"
-        ).fetchall()
+    # R19-F1: use the live LocalDatabase API. `db.connect()` does not exist;
+    # the read path is `db.fetchall(...)` and the write path is `db.execute(...)`
+    # inside a `with db.transaction():` block (which provides BEGIN/COMMIT/ROLLBACK
+    # semantics; all `db.execute` calls inside it participate in one transaction).
+    rows = db.fetchall(
+        "SELECT key FROM config_store WHERE key LIKE 'databases.neo4j.%'"
+    )
     if not rows:
         return
     keys = ", ".join(r[0] for r in rows)
@@ -1611,22 +1634,22 @@ def _check_stale_neo4j_config(db: LocalDatabase) -> None:
         keys,
     )
     NEO4J_TUNABLE_KEYS = ("graph_search", "graph_min_score", "rrf_k", "graph_name")
-    with db.transaction() as conn:
+    with db.transaction():
         # 1. Migrate user-tuned behavior values (mirror 3.6's policy)
         for key in NEO4J_TUNABLE_KEYS:
-            conn.execute(
+            db.execute(
                 "INSERT OR IGNORE INTO config_store (key, value, source, is_secret) "
                 "SELECT REPLACE(key, 'databases.neo4j.', 'databases.falkordb.'), value, source, is_secret "
                 "FROM config_store WHERE key = ?",
                 (f"databases.neo4j.{key}",),
             )
         # 2. Drop all stale databases.neo4j.* keys (including the $secret:auth reference row)
-        conn.execute(
+        db.execute(
             "DELETE FROM config_store WHERE key LIKE 'databases.neo4j.%'"
         )
         # 3. Drop orphaned `auth` secret only when no surviving config row references it.
         #    Same JSON-encoded guard as 3.6 (R13-F1) — bare `value = '$secret:auth'` matches nothing.
-        conn.execute(
+        db.execute(
             "DELETE FROM secrets WHERE name = 'auth' "
             "AND NOT EXISTS (SELECT 1 FROM config_store WHERE value = json_quote('$secret:auth'))"
         )
@@ -1687,7 +1710,7 @@ If any check fails, that branch does not merge. Fix and re-run the full matrix.
 
 **Goal**: Update all user-facing and developer-facing documentation in both repos.
 
-### 9.1 Update Python repo documentation [category: docs] (depends: Phase 1, 2, 3, 4, 5, 6, 8)
+### 9.1 Update Python repo documentation [category: docs] (depends: Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 8)
 
 Target: `README.md`, `CLAUDE.md`, `CHANGELOG.md`, any `docs/**/*.md` mentioning Neo4j
 
@@ -1707,7 +1730,7 @@ Sweep with `rg -l Neo4j /Users/josh/Projects/gobby` (excluding source code alrea
 
 **Follow-up note:** native local-install support (without Docker) is deferred to 0.4.1 or later. Filing a follow-up task is part of the 0.4.0 release punch list — see the migration plan task tree under #12746 for the deferred-work item.
 
-### 9.2 Update Rust repo documentation [category: docs] (depends: Phase 7, 8)
+### 9.2 Update Rust repo documentation [category: docs] (depends: Phase 7, Phase 8)
 
 Target: `/Users/josh/Projects/gobby-cli/README.md`, `CLAUDE.md`, `AGENTS.md`, `CHANGELOG.md`, `crates/gcode/README.md`
 
