@@ -32,6 +32,12 @@ from gobby.storage.tasks._dispatch_mutex import (
     sweep_expired,
 )
 from gobby.storage.tasks._id import generate_task_id
+from gobby.storage.tasks._lifecycle_events import (
+    TaskLifecycleEvent,
+    TaskLifecycleEventManager,
+    list_lifecycle_events,
+    record_lifecycle_event,
+)
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
@@ -60,6 +66,8 @@ __all__ = [
     "TaskDispatchMutexManager",
     "TaskArtifacts",
     "TaskArtifactManager",
+    "TaskLifecycleEvent",
+    "TaskLifecycleEventManager",
     # Exceptions
     "SeqNumCollisionError",
     "TaskIDCollisionError",
@@ -83,6 +91,8 @@ __all__ = [
     "clear_artifacts",
     "clear_isolation_pair",
     "increment_expansion_attempts",
+    "record_lifecycle_event",
+    "list_lifecycle_events",
     # Constants
     "PRIORITY_MAP",
     "VALID_CATEGORIES",

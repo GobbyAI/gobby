@@ -69,3 +69,34 @@ def test_record_lifecycle_event_appends_ordered_audit_rows(temp_db, sample_proje
     assert events[1].by_actor == "holistic-reviewer"
     assert not hasattr(manager, "update_lifecycle_event")
     assert not hasattr(manager, "delete_lifecycle_event")
+
+
+def test_module_helpers_return_id_and_list_newest_first(temp_db, sample_project) -> None:
+    from gobby.storage.tasks import list_lifecycle_events, record_lifecycle_event
+
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Lifecycle event",
+    )
+
+    first_id = record_lifecycle_event(
+        temp_db,
+        task.id,
+        from_state=None,
+        to_state="plan_review",
+        reason="operator requested build",
+        by_actor="cli",
+    )
+    second_id = record_lifecycle_event(
+        temp_db,
+        task.id,
+        from_state="plan_review",
+        to_state="test_arch",
+        reason="plan approved",
+        by_actor="holistic-reviewer",
+    )
+
+    events = list_lifecycle_events(temp_db, task.id)
+    assert isinstance(first_id, int)
+    assert isinstance(second_id, int)
+    assert [event.id for event in events] == [second_id, first_id]
