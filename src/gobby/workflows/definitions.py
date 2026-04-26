@@ -358,6 +358,7 @@ class AgentDefinitionBody(BaseModel):
     enabled: bool = True
     deprecated: bool = False
     deprecated_reason: str | None = None
+    skills: dict[str, list[str]] = Field(default_factory=dict)
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)

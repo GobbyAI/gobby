@@ -103,11 +103,15 @@ steps:
         action: set_variable
         variable: review_complete
         value: true
+      - server: gobby-tasks
+        tool: close_task
+        when: "vars.review_approved and tool_input.reason == 'qa_approved' and tool_input.commit_sha"
+        action: set_variable
+        variable: review_complete
+        value: true
     transitions:
-      - to: close
-        when: "vars.review_approved"
       - to: terminate
-        when: "vars.review_complete"
+        when: "vars.review_approved and vars.review_complete"
 
   - name: close
     description: "Close approved task"
