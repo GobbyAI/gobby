@@ -1,14 +1,13 @@
 # Drawbridge UI batch — 11 pending annotations + 1 reported bug
 
-> **Round 2 revision** — addresses Round 1 adversary findings F1–F8 (recorded in #12911 description). Key changes:
+> **Round 3 revision** — addresses Round 2 adversary findings F1–F4 (recorded in #12911 description). Key changes:
 >
-> - **§1.5 split** — user's "chip on Sessions tab when local model" ask stays as §1.5 (Sessions tab), and #11199's "Local chip on agent cards" becomes new **§1.6** targeting `AgentsTab.tsx` + backend `is_local`.
-> - **§2.1 root cause replaced** — live `/api/admin/usage` returns `by_source: {claude: ...}` only AND `by_model` includes an `unknown` bucket, despite 512 codex sessions. Bug is in source/model attribution in `SessionTokenTracker.get_usage_summary()` aggregation, not "Codex parser returns usage=None" (that hypothesis was wrong — `_parse_event_msg` does emit `TokenUsage`). Plan now requires lifecycle-level repro.
-> - **§2.1 / §2.2 endpoint URLs corrected** — `/api/admin/usage` and `/api/admin/tokens/timeseries` (previous draft cited non-existent `/api/sessions/usage-breakdown` and `/api/admin/token-timeseries`).
-> - **§3.2 strengthened** — captures the offending Codex developer-message body as a committed test fixture; targets `splitProtocolContent` in `protocolContent.ts` (the actual collapsed-Protocol code path), not just `Markdown.tsx`'s stripping regex; flags backend `transcript_renderer.py` for parallel review.
-> - **§3.3 + §1.6 add dependency on #12917** — `ToolCallCard.tsx` (1008 lines) and `AgentsTab.tsx` (1050 lines) violate the <1000-line rule; refactor task #12917 was created by the adversary under #12730.
-> - **§4.1 root cause confirmed** — `web/src/components/chat/ChatPage.tsx:169-172` has the offending `useEffect(() => { if (isMobile && isPinned) setIsPinned(false) }, [isMobile, isPinned, setIsPinned])`. Fix: gate the close on the desktop→mobile *transition* via `useRef` so user-initiated open isn't immediately reverted. Test target moved from `ActivityPanel.test.tsx` to a `ChatPage` integration harness.
-> - **§1.2 alias cleanup** — explicit deletion step folded into §1.6 wrap-up.
+> - **§1.5 + §1.6 LOCAL predicate corrected** — `model: local` is resolved into `daemon_config.local.model` at spawn time, so `agent_run.model` stores the resolved string (e.g. `qwen-coder-32b`); `LOCAL_PROVIDERS + gpt-oss-*` misses common shapes like `provider='claude', model=<local_cfg.model>`. Plan now defines `is_local_model(provider, model, *, local_cfg)` whose primary check is `model == local_cfg.model`, with provider-set + `gpt-oss-*` as fallback. Same predicate is consumed by both §1.5 (Sessions tab) and §1.6 (#11199 agent cards).
+> - **§3.2 test API corrected** — `splitProtocolContent(content, idPrefix)` (2 args) returns `{ type: 'text', content }` or `{ type: 'tool_call', call }` (with `call.tool_type === 'protocol'`); previous draft used wrong field names (`kind`/`text`/`'protocol'`). Test snippet rewritten to match the actual exported type.
+> - **§4.1 test surface corrected** — existing `ChatPage.test.tsx` mocks `useActivityPanel` so `togglePanel` is a bare spy (and is missing from the mock entirely); a click can never flip `isPinned`, so the cascade is unobservable. Plan now requires either a stateful `useActivityPanel` mock backed by real `useState` or use of the real hook + real `AgentStatusBar`. Test code rewritten accordingly.
+> - **§1.6 + §3.3 dependency notation removed** — `(depends: refactor #12917)` is invalid plan-draft syntax; expansion only accepts `(depends: 1.2)` or `(depends: Phase N)` and cannot wire a plan task to external #12917. Both sections drop the bad notation; the in-plan extraction step (`AgentCard.tsx` for §1.6, `JsonBlock.tsx` for §3.3) is the load-bearing mechanism that brings each file under 1000 lines, and stays in scope as part of the same commit. #12917 remains as prose context only.
+>
+> Round 2 changes (still in force from F1–F8 of Round 1): §1.5 split into §1.5 (Sessions tab) + §1.6 (#11199 agent cards); §2.1 root-cause replaced with attribution-failure hypothesis + failing-lifecycle-test gate; §2.1/§2.2 endpoint URLs corrected (`/api/admin/usage`, `/api/admin/tokens/timeseries`); §3.2 captures a committed Codex fixture and targets `splitProtocolContent` first; §4.1 retargeted to `ChatPage.tsx:169-172` with `useRef`-gated transition; §1.2 alias cleanup folded into §1.6 wrap-up.
 
 ## Overview
 
@@ -22,7 +21,7 @@ Land the 10 pending Drawbridge freeform annotations from `.moat/moat-tasks-detai
 - Token Efficiency chart fix (§2.2) preserves visual design; only the green-tooltip-shows-0 bug is fixed by dropping `stackId="tokens"`.
 - Granularity selector (§2.3) is **deleted**, not hidden; granularity derives from `hours` (≤6h → `30m`, ≤168h → `1h`, else `1d`).
 - Sessions filter dropdown blue (§3.1) applies only to the collapsed trigger; expanded menu styling stays.
-- §3.3 (ToolCallCard wrap) and §1.6 (AgentsTab) touch files over 1000 lines. Each declares a `depends: refactor #12917` so the line-cap rule is satisfied at execution time. The implementing agent must NOT inflate either file further; a narrow extraction (e.g., a `JsonBlock` component for §3.3, an `AgentCard` row component for §1.6) lands in the same commit if #12917 hasn't merged yet.
+- §3.3 (ToolCallCard wrap) and §1.6 (AgentsTab) touch files over 1000 lines. The line-cap rule is satisfied via in-section extraction: a `JsonBlock` component for §3.3 and an `AgentCard` row component for §1.6, each landing in the same commit and bringing the host file under 1000 lines. Refactor task **#12917** is referenced as prose context only — `(depends:)` plan-draft syntax does not accept external task refs and is not used here.
 - Backend changes (§2.1 attribution fix, §1.6 `is_local` field) ship in their own commits.
 - DO NOT run the full pytest suite (CLAUDE.md). Run scoped tests only.
 - Verification must use Chrome DevTools at `http://localhost:60889/#chat` (Vite dev server port; the daemon HTTP API is at 60887).
@@ -134,84 +133,141 @@ Re-test row height: a base-sized row in `.tree-node` may need vertical padding a
 
 ### 1.5 LOCAL chip variant on Sessions tab rows [category: code] (depends: 1.2)
 
-Target: `web/src/components/activity/SessionsTab.tsx`, `web/src/components/chat/styles/sessions-tab.css`
+Target: `web/src/components/activity/SessionsTab.tsx`, `web/src/components/chat/styles/sessions-tab.css`. Backend dependency: §1.6 ships the canonical `is_local` predicate in Python; this task wires up the matching frontend predicate against the **session** payload (model + provider).
 
-User ask (separate from #11199): Sessions tab rows running against a local model get a `LOCAL` chip alongside TMUX/WEB/SB. `WatchingSessionEntry.provider: string` is already plumbed (line 42 of `SessionsTab.tsx`).
+User ask (separate from #11199): Sessions tab rows running against a daemon local model get a `LOCAL` chip alongside TMUX/WEB/SB. The same predicate semantics from §1.6 apply: a session is local when its stored model equals the daemon's configured local model, OR when its provider is in the explicit local set, OR when its model name matches the `gpt-oss-*` heuristic.
 
-Local detection rules — confirm against `src/gobby/llm/` provider definitions on first edit and use whatever the catalog actually emits. Initial implementation:
+**Required frontend wiring (read first):**
 
-- If `provider` ∈ `{"lmstudio", "ollama", "llamacpp", "local"}` → LOCAL.
-- If `provider` ∈ `{"openai", "openai_compatible"}` AND `entry.label` (the displayed model name) starts with `gpt-oss-` (currently `gpt-oss-120b` is in the sessions table) → LOCAL.
+`WatchingSessionEntry` already exposes `provider: string` and `label: string` (the model name shown to the user). The daemon's local model name is NOT currently exposed on the session payload — the dashboard would need it to do model-equality comparison client-side. Two options, decide on first edit:
 
-If only `gpt-oss-*` model-name detection is reliable in this repo, ship with that and a TODO to revisit when explicit local providers land.
+1. **Preferred**: extend the sessions API payload to include a backend-computed `is_local: bool` per session row, using the same `is_local_model(provider, model, *, local_cfg)` helper introduced in §1.6 step 1. Map to `isLocal` on the frontend. The frontend chip then reads `entry.isLocal` directly — no client-side comparison or `LOCAL_PROVIDERS` set needed.
+2. **Fallback (only if extending the sessions payload is out of scope for this commit)**: expose `daemon_config.local.model` on a config endpoint the SessionsTab already consumes (or via `useDaemonConfig` if one exists), and replicate the predicate in TS. This is strictly inferior — it duplicates logic the backend already owns.
 
-```ts
-const LOCAL_PROVIDERS = new Set(['lmstudio', 'ollama', 'llamacpp', 'local'])
+**This plan ships option 1.** §1.6 already defines `is_local_model` in Python; §1.5 reuses it on the sessions route.
 
-function getLocalBadge(entry: WatchingSessionEntry): { label: string; className: string } | null {
-  if (LOCAL_PROVIDERS.has(entry.provider)) {
-    return { label: 'LOCAL', className: 'chip--local' }
-  }
-  if (entry.label?.toLowerCase().includes('gpt-oss')) {
-    return { label: 'LOCAL', className: 'chip--local' }
-  }
-  return null
-}
-```
+Backend changes (single commit with §1.6 backend changes):
 
-Add to `renderBadges`:
-
-```ts
-const badges = [
-  getSessionTypeBadge(entry.sessionType),
-  getSandboxBadge(entry.sandboxEnabled),
-  getAgentBadge(entry.agentRunId),
-  getLocalBadge(entry),
-].filter(...).sort(...)
-```
-
-CSS rule:
-
-```css
-.chip--local {
-  background: color-mix(in srgb, #8b5cf6 15%, transparent);
-  color: #8b5cf6;
-}
-```
-
-(Violet to differentiate from cyan TMUX and blue WEB.)
-
-**Validation criteria**: Start a session against an LM Studio or `gpt-oss-*` model. The Sessions tab row for that session shows a `LOCAL` chip alongside TMUX/WEB. Cloud-model sessions (Claude, Codex with cloud GPT, Gemini cloud) do NOT show the chip.
-
-### 1.6 LOCAL chip on Workflows agent cards [category: code] (depends: 1.2, refactor #12917)
-
-Linked gobby-task: **#11199** ("Add Local chip to agent cards in web UI"). Claim and link this commit.
-
-Target backend: `src/gobby/agents/registry.py` and the route(s) in `src/gobby/servers/routes/` that emit running-agent and agent-definition payloads (grep `agent_run` / `running_agents` / agent-definitions endpoints in `src/gobby/servers/routes/`).
-
-Target frontend: `web/src/components/workflows/AgentsTab.tsx` (currently 1050 lines — see refactor caveat below) and any subcomponents that render an agent card.
-
-Backend changes:
-
-1. Add a computed `is_local: bool` field to the agent-run/agent-definition payloads. Source the model from the agent-run record (or, for agent-defs, from the configured provider/model). Use the same detection ruleset as §1.5 (`LOCAL_PROVIDERS` set + `gpt-oss-*` model-name fallback) — define the predicate once in Python under `src/gobby/llm/` (e.g., `is_local_model(provider: str | None, model: str | None) -> bool`) and import it from the routes.
-2. The matching frontend type (the `AgentDefInfo` interface in `AgentsTab.tsx:20`, plus the running-agent shape) gets `isLocal: boolean` (camelCase on the wire, mapped from the JSON `is_local`).
+1. Find the route that emits `WatchingSessionEntry` payload (grep `watching_sessions` / `WatchingSessionEntry` in `src/gobby/servers/routes/`). Add a computed `is_local` field per row using `is_local_model(session.provider, session.model, local_cfg=daemon_config.local)`.
 
 Frontend changes:
 
-3. In `AgentsTab.tsx` agent-card render (find the JSX block that renders one card; likely uses `AgentDefInfo`), add the `LOCAL` chip when `def.isLocal === true`. Use the same `chip chip--local` className as §1.5 — no parallel CSS.
+2. Add `isLocal: boolean` to `WatchingSessionEntry` (line ~42 of `SessionsTab.tsx`).
+3. Add `getLocalBadge`:
 
-Refactor caveat:
+   ```ts
+   function getLocalBadge(entry: WatchingSessionEntry): { label: string; className: string } | null {
+     return entry.isLocal ? { label: 'LOCAL', className: 'chip--local' } : null
+   }
+   ```
 
-`AgentsTab.tsx` is 1050 lines, over the CLAUDE.md 1000-line cap. Refactor task **#12917** (under #12730) covers the broader monolith breakup. This task declares `depends: #12917`. If #12917 hasn't merged when this task is picked up, the implementing agent extracts a single `AgentCard.tsx` row component as part of this commit (move the ~50–80 lines of card rendering JSX into a new file, import it back into `AgentsTab.tsx`) so the resulting file lands under 1000 lines. Do NOT add to `AgentsTab.tsx` without that extraction.
+4. Add to `renderBadges`:
+
+   ```ts
+   const badges = [
+     getSessionTypeBadge(entry.sessionType),
+     getSandboxBadge(entry.sandboxEnabled),
+     getAgentBadge(entry.agentRunId),
+     getLocalBadge(entry),
+   ].filter(...).sort(...)
+   ```
+
+5. CSS rule (added once, consumed by §1.6 too):
+
+   ```css
+   .chip--local {
+     background: color-mix(in srgb, #8b5cf6 15%, transparent);
+     color: #8b5cf6;
+   }
+   ```
+
+   (Violet to differentiate from cyan TMUX and blue WEB.)
+
+**Validation criteria**:
+- Backend: `curl` the watching-sessions route while a daemon-local session is running (e.g., one started with `model: local` resolved to `daemon_config.local.model`). The row's `is_local` is `true`. A Claude/Codex/Gemini cloud session shows `is_local: false`.
+- Frontend: that same session shows a violet `LOCAL` chip alongside TMUX/WEB/SB in the Sessions tab. Cloud-model sessions do NOT show the chip.
+- Edge case: a session whose `model` matches `daemon_config.local.model` but whose `provider` is `claude` (because the SDK was reused with a custom endpoint) ALSO shows `LOCAL` — that's the whole point of the model-equality check.
+
+### 1.6 LOCAL chip on Workflows agent cards [category: code] (depends: 1.2)
+
+Linked gobby-task: **#11199** ("Add Local chip to agent cards in web UI"). Claim and link this commit.
+
+Target backend: `src/gobby/llm/` (new `is_local_model` predicate), `src/gobby/agents/registry.py`, and the route(s) in `src/gobby/servers/routes/` that emit running-agent and agent-definition payloads (grep `agent_run` / `running_agents` / agent-definitions endpoints in `src/gobby/servers/routes/`).
+
+Target frontend: `web/src/components/workflows/AgentsTab.tsx` (currently 1050 lines — see extraction caveat below) and any subcomponents that render an agent card.
+
+**LOCAL detection contract (load-bearing — read this carefully):**
+
+`model: local` is resolved into `daemon_config.local.model` at spawn time (see `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` and `src/gobby/servers/chat_session.py`). By the time an `AgentRun` record is persisted, `agent_run.model` holds the resolved name (e.g. `qwen-coder-32b` or whatever `local_cfg.model` is set to), NOT the literal `"local"`. A `LOCAL_PROVIDERS + gpt-oss-*` heuristic alone misses common shapes like `provider='claude', model=<local_cfg.model>` (Claude SDK pointed at a local OpenAI-compatible endpoint).
+
+The canonical predicate must therefore be **model-equality first**:
+
+```python
+# src/gobby/llm/local_detection.py (new)
+from typing import Optional
+from gobby.config.app import LocalConfig
+
+LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama", "llamacpp", "local"})
+
+def is_local_model(
+    provider: Optional[str],
+    model: Optional[str],
+    *,
+    local_cfg: Optional[LocalConfig],
+) -> bool:
+    """Return True iff (provider, model) identifies a daemon-local model.
+
+    Precedence:
+      1. Model equals the daemon's configured local model name (the resolution target
+         of `model: "local"`). This is the strongest signal — a Claude SDK pointed
+         at a local OpenAI-compatible endpoint via env override still hits this path.
+      2. Provider is in the explicit local providers set.
+      3. Model name matches the `gpt-oss-*` heuristic (repo-specific fallback for
+         OpenAI-compatible local serves; covers older sessions where local_cfg.model
+         was a different name).
+    """
+    if local_cfg and model and local_cfg.model and model == local_cfg.model:
+        return True
+    if provider and provider.lower() in LOCAL_PROVIDERS:
+        return True
+    if model and "gpt-oss" in model.lower():
+        return True
+    return False
+```
+
+**Test coverage required (write before implementation):**
+
+`tests/llm/test_local_detection.py` (new) covers:
+- `is_local_model("claude", "qwen-coder-32b", local_cfg=LocalConfig(model="qwen-coder-32b", url="http://127.0.0.1:1234"))` → `True` (model equality wins despite `provider='claude'`).
+- `is_local_model("lmstudio", "anything", local_cfg=None)` → `True` (provider set fallback).
+- `is_local_model("openai", "gpt-oss-120b", local_cfg=None)` → `True` (heuristic fallback).
+- `is_local_model("claude", "claude-opus-4-7", local_cfg=LocalConfig(model="qwen-coder-32b", url="..."))` → `False`.
+- `is_local_model(None, None, local_cfg=None)` → `False`.
+
+Backend changes:
+
+1. Add `src/gobby/llm/local_detection.py` with `is_local_model` (above) and the test file. This module is consumed by both §1.5 (sessions route) and §1.6 (agents route).
+2. Add a computed `is_local: bool` field to the agent-run and agent-definition payloads emitted by `src/gobby/servers/routes/` (grep `agent_run` / `running_agents` / agent-definitions endpoints — confirm exact route file on first edit). For agent-runs: call `is_local_model(run.provider, run.model, local_cfg=daemon_config.local)`. For agent-definitions: call with the configured provider/model from the definition.
+3. The matching frontend type — the `AgentDefInfo` interface near the top of `AgentsTab.tsx` plus the running-agent shape — gets `isLocal: boolean` (camelCase on the wire, mapped from the JSON `is_local`).
+
+Frontend changes:
+
+4. In the `AgentsTab.tsx` agent-card JSX (the block that renders one card from `AgentDefInfo` or the running-agent shape), add the `LOCAL` chip when `def.isLocal === true`. Use the same `chip chip--local` className introduced in §1.5 — no parallel CSS.
+
+Extraction (in-scope for this commit — see Constraints):
+
+5. `AgentsTab.tsx` is 1050 lines, over the CLAUDE.md 1000-line cap. Extract a single `AgentCard.tsx` row component as part of this commit: move the ~50–80 lines of card rendering JSX into a new file `web/src/components/workflows/AgentCard.tsx`, import it back into `AgentsTab.tsx`. The post-edit `AgentsTab.tsx` MUST be under 1000 lines. (Refactor task #12917 covers the broader monolith breakup — if it lands first, this extraction may already be done; verify before re-extracting.)
 
 Wrap-up step (in this same commit, after the chip ships):
 
-4. Delete the `.session-kind-badge*` aliases introduced in §1.2 from `web/src/components/chat/styles/sessions-tab.css`. Confirm `gcode search-content "session-kind-badge"` returns ZERO matches across the repo (TSX consumers were migrated in §1.2, §1.3, §1.5; this commit completes the cleanup).
+6. Delete the `.session-kind-badge*` aliases introduced in §1.2 from `web/src/components/chat/styles/sessions-tab.css`. Confirm `gcode search-content "session-kind-badge"` returns ZERO matches across the repo (TSX consumers were migrated in §1.2, §1.3, §1.5; this commit completes the cleanup).
 
 **Validation criteria**:
-- Backend `GET /api/agents/<...>` (or whatever the running-agents/agent-definitions route is — confirm with `gcode search "agent route"` on first edit) returns `is_local: true` for an LM Studio / `gpt-oss-*` agent and `is_local: false` for a Claude / cloud agent.
+- Unit tests in `tests/llm/test_local_detection.py` all pass.
+- Backend route returns `is_local: true` for an agent run whose `model` matches `daemon_config.local.model` (regardless of `provider`) and `is_local: false` for a Claude/cloud agent. Confirm with `curl`.
 - Workflows tab → Agents shows a `LOCAL` chip on local-model agent cards. Cloud agents do NOT show the chip.
-- `wc -l web/src/components/workflows/AgentsTab.tsx` returns < 1000 (extracted via `AgentCard.tsx` if #12917 hasn't merged).
+- `wc -l web/src/components/workflows/AgentsTab.tsx` returns < 1000.
+- `wc -l web/src/components/workflows/AgentCard.tsx` returns > 0 (extraction landed).
 - `gcode search-content "session-kind-badge"` returns 0 matches anywhere in the repo (CSS aliases deleted, no TSX consumers).
 - gobby-task #11199 closed via this commit.
 
@@ -360,20 +416,36 @@ User-visible symptom: Codex sessions in the Watching panel render `<system_instr
 
 **Diagnose and fix:**
 
-4. Write a failing Vitest in `web/src/components/chat/__tests__/protocolContent.test.ts`:
+4. Write a failing Vitest in `web/src/components/chat/__tests__/protocolContent.test.ts`. The actual exported API is `splitProtocolContent(content: string, idPrefix: string): ProtocolContentSegment[]` where each segment is either `{ type: 'text', content: string }` or `{ type: 'tool_call', call: ToolCall }`, and protocol-derived tool calls have `call.tool_type === 'protocol'` (see `makeProtocolToolCall` in `protocolContent.ts:126-151`):
+
    ```ts
+   import { describe, it, expect } from 'vitest'
    import { splitProtocolContent } from '../protocolContent'
    import fixture from './fixtures/codex-protocol-leak.txt?raw'
 
-   it('collapses leaked Codex system_instructions into a single protocol segment', () => {
-     const segments = splitProtocolContent(fixture)
-     const visible = segments.filter(s => s.kind === 'text').map(s => s.text).join('\n')
-     // Body contains "request_user_input availability" only inside the protocol block;
-     // visible text must not contain that phrase.
-     expect(visible).not.toContain('request_user_input availability')
-     expect(segments.filter(s => s.kind === 'protocol').length).toBeGreaterThanOrEqual(1)
+   describe('splitProtocolContent — Codex leak regression', () => {
+     it('collapses leaked Codex system_instructions into protocol tool calls', () => {
+       const segments = splitProtocolContent(fixture, 'codex-protocol-leak')
+
+       const visible = segments
+         .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
+         .map(s => s.content)
+         .join('\n')
+
+       const protocolCalls = segments.filter(
+         (s): s is { type: 'tool_call'; call: { tool_type: string } } =>
+           s.type === 'tool_call' && s.call.tool_type === 'protocol',
+       )
+
+       // Body contains "request_user_input availability" only inside the protocol block;
+       // visible text must not contain that phrase post-fix.
+       expect(visible).not.toContain('request_user_input availability')
+       expect(protocolCalls.length).toBeGreaterThanOrEqual(1)
+     })
    })
    ```
+
+   The `?raw` import requires Vitest's vite-style asset handling. The repo's existing `vite.config.ts` / `vitest.config.ts` already supports it (used elsewhere in the codebase) — if the import fails, add `assetsInclude: ['**/*.txt']` to the Vitest config rather than working around it.
 5. Run the test — it should fail. The error message tells you whether the leak originates in `splitProtocolContent` (most likely — the visible text contains the protocol body) or somewhere downstream. If `splitProtocolContent` is the culprit:
    - The non-greedy regex in the splitter terminates early when the body contains a triple-backtick code fence with `</tag>` text inside, OR when nested same-name tags appear.
    - Switch the offending regex to a balanced tokenizer: walk forward from each `<tag…>` opening, count `<tag>` / `</tag>` depth (ignoring text inside `` `…` `` inline code and triple-backtick fences), close on depth 0.
@@ -386,17 +458,17 @@ User-visible symptom: Codex sessions in the Watching panel render `<system_instr
 - Open a Codex session (use one from `~/.codex/sessions/2026/04/24/`) in the Watching panel via Chrome DevTools at `http://localhost:60889/#chat`. The `system_instructions` / `permissions instructions` content stays inside the collapsed "Protocol" block. Expanding the block reveals the content; collapsing hides it.
 - If §3.2.7 fired, backend renderer test (e.g. `tests/sessions/test_transcript_renderer.py`) also asserts the captured body produces a single tool_chain block.
 
-### 3.3 Wrap tool-call args/result instead of horizontal scroll [category: code] (depends: refactor #12917)
+### 3.3 Wrap tool-call args/result instead of horizontal scroll [category: code]
 
-Target: `web/src/components/chat/ToolCallCard.tsx` (currently 1008 lines — see refactor caveat below) and `web/src/components/chat/UnknownBlockCard.tsx`.
+Target: `web/src/components/chat/ToolCallCard.tsx` (currently 1008 lines — see extraction caveat below) and `web/src/components/chat/UnknownBlockCard.tsx`.
 
 Find the `<pre>` blocks that render tool-call args and result JSON. Per `gcode search-content "overflow-x"`, both files have `overflow-x` on JSON-display blocks. Replace `overflow-x-auto` with `whitespace-pre-wrap break-words` Tailwind utilities (or `break-all` if URLs/long identifiers overflow). Keep the `<pre>` tag for monospace and indentation.
 
 Don't strip `overflow-x` from layout containers (panels, tabs); only from JSON/code display blocks.
 
-Refactor caveat:
+Extraction (in-scope for this commit — see Constraints):
 
-`ToolCallCard.tsx` is 1008 lines, just over the CLAUDE.md 1000-line cap. This task declares `depends: #12917` (refactor of the chat monoliths). If #12917 hasn't merged when this task is picked up, the implementing agent extracts a `JsonBlock` component (the `<pre>` + className logic for args/result JSON; ~30–60 lines including any related copy-button or syntax-highlight wrapper) into a new file `web/src/components/chat/JsonBlock.tsx` as part of the same commit. The refactor must bring `ToolCallCard.tsx` below 1000 lines.
+`ToolCallCard.tsx` is 1008 lines, just over the CLAUDE.md 1000-line cap. The implementing agent extracts a `JsonBlock` component (the `<pre>` + className logic for args/result JSON; ~30–60 lines including any related copy-button or syntax-highlight wrapper) into a new file `web/src/components/chat/JsonBlock.tsx` as part of the same commit. The extraction must bring `ToolCallCard.tsx` below 1000 lines. (Refactor task #12917 covers the broader monolith breakup — if it lands first, this extraction may already be done; verify before re-extracting.)
 
 **Validation criteria**:
 - Open a tool call with long args/result JSON (e.g. a `gobby-tasks.list_tasks` call with a long response). No horizontal scrollbar appears in the args/result block. Long lines wrap.
@@ -484,15 +556,89 @@ useEffect(() => {
 }, [isMobile, setIsPinned]);
 ```
 
-Test target: the integration test must mount enough of `ChatPage` to reproduce the cascade — an `ActivityPanel`-only render cannot trigger this effect because the effect lives in `ChatPage`. Use `web/src/components/chat/__tests__/ChatPage.test.tsx` (already exists per `gcode search-content "useActivityPanel"` showing the file's mock setup). Add a new `it()` block that:
+**Test target — must mount the real cascade:**
 
-- Mocks `useIsMobile` to return `true` from initial render.
-- Renders `ChatPage` with the mocked `useActivityPanel` providing `isPinned=false`, `setIsPinned=spy`.
-- Fires `userEvent.click` on the toggle button (`aria-label="Show activity panel"`).
-- After the click resolves, asserts `setIsPinned` was called once with `true`, then NOT called again with `false` within `await waitFor(() => ..., { timeout: 100 })`.
-- Asserts the toggle's `aria-label` ends as "Hide activity panel" and stays there.
+The integration test must mount enough of `ChatPage` to reproduce the cascade. The existing `ChatPage.test.tsx` mocks `useActivityPanel` like this:
 
-Then add a second `it()` covering the desktop→mobile transition: starts with `useIsMobile=false` and `isPinned=true`, then re-renders with `useIsMobile=true`, asserts `setIsPinned(false)` IS called (so the intentional auto-close behavior is preserved when the user resizes the window).
+```ts
+vi.mock('../../activity/useActivityPanel', () => ({
+  useActivityPanel: () => ({
+    activeTab: 'artifacts',
+    closeIfAutoOpened: vi.fn(),
+    isPinned: false,
+    panelWidth: 320,
+    setActiveTab: vi.fn(),
+    setIsPinned: vi.fn(),     // bare spy — never flips state
+    setPanelWidth: vi.fn(),
+    showTab: vi.fn(),
+    // togglePanel missing entirely
+  }),
+}))
+```
+
+That mock is unfit for purpose for §4.1: a click on the toggle calls a no-op `setIsPinned`, `isPinned` never re-renders to `true`, the `useEffect` at line 169-172 never runs against `isPinned=true`, and the bug's cascade is unobservable. The new tests need stateful behavior. Two viable patterns — pick whichever the implementing agent finds cleaner during the rewrite:
+
+**Option A — stateful mock backed by real `useState`:**
+
+Wrap the existing mock in a closure that holds React state. Apply this mock only to the new `describe('ChatPage mobile auto-close', ...)` block via `vi.mock` + `vi.unmock` or a separate test file (e.g., `ChatPage.mobile.test.tsx`) so the existing tests keep their bare-spy mock:
+
+```ts
+import { useState, useCallback } from 'react'
+// ...
+vi.mock('../../activity/useActivityPanel', () => ({
+  useActivityPanel: () => {
+    const [isPinned, setIsPinned] = useState(false)
+    const togglePanel = useCallback(() => setIsPinned(prev => !prev), [])
+    return {
+      activeTab: 'artifacts',
+      closeIfAutoOpened: vi.fn(),
+      isPinned,
+      panelWidth: 320,
+      setActiveTab: vi.fn(),
+      setIsPinned,
+      setPanelWidth: vi.fn(),
+      showTab: vi.fn(),
+      togglePanel,
+    }
+  },
+}))
+```
+
+The mocked `AgentStatusBar` (or the real one if not mocked elsewhere) MUST call `togglePanel` — verify by reading the actual `AgentStatusBar` toggle handler. Whichever it calls (`togglePanel` vs `setIsPinned(prev => !prev)`), the stateful mock supports both.
+
+**Option B — use the real `useActivityPanel` hook:**
+
+`vi.unmock('../../activity/useActivityPanel')` at the top of the new describe block, then mount `ChatPage` normally. The real hook initializes `isPinned` from `localStorage` / `window.innerWidth >= 1100`; force `isPinned=false` initial state by stubbing `localStorage.getItem(STORAGE_KEY_PINNED)` → `'false'` and `window.innerWidth` → `375` before render. This is more faithful to production but requires more setup.
+
+**Required test cases:**
+
+```ts
+describe('ChatPage mobile auto-close', () => {
+  it('does NOT auto-close when user toggles pin on mobile', async () => {
+    // Mock useIsMobile -> true
+    // Use stateful useActivityPanel mock (Option A)
+    render(<ChatPage {...props} />)
+    const toggle = screen.getByRole('button', { name: /show activity panel/i })
+    await userEvent.click(toggle)
+    // Wait one tick + a small buffer for the effect to (incorrectly) re-fire
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: /hide activity panel/i })).toBeInTheDocument(),
+      { timeout: 100 },
+    )
+    // Confirm it stays — no second flip back to "Show"
+    await new Promise(r => setTimeout(r, 50))
+    expect(screen.getByRole('button', { name: /hide activity panel/i })).toBeInTheDocument()
+  })
+
+  it('DOES auto-close on desktop -> mobile transition with panel pinned', async () => {
+    // Start: useIsMobile=false, useActivityPanel state isPinned=true
+    // Re-render with: useIsMobile=true (mock the hook to flip its return value)
+    // Assert: button label flips to "Show activity panel"
+  })
+})
+```
+
+Read the real `AgentStatusBar` component first (`gcode outline web/src/components/chat/AgentStatusBar.tsx` then `gcode symbol <toggle handler>`) to confirm the exact `aria-label` strings and which prop the toggle calls (`onTogglePanel`, `togglePanel`, etc.). Match those in the mock.
 
 **Validation criteria**:
 - Open `http://localhost:60889/#chat` in Chrome DevTools mobile emulation (viewport `375x800x2,mobile,touch`, `isMobile=true`).
@@ -515,13 +661,13 @@ Then add a second `it()` covering the desktop→mobile transition: starts with `
 | 1.3 | drawbridge `df52…d997` (chips not highlighted text) | open |
 | 1.4 | drawbridge `8651…d6ac` (font size match Sessions) | open |
 | 1.5 | (user ask — Sessions tab LOCAL chip; no Drawbridge ref) | open |
-| 1.6 | gobby-task **#11199** (LOCAL chip on agent cards), depends: refactor #12917 | open |
+| 1.6 | gobby-task **#11199** (LOCAL chip on agent cards) — extracts `AgentCard.tsx` in same commit | open |
 | 2.1 | drawbridge `82e5…1604` (usage stats only Claude — attribution fix) | open |
 | 2.2 | drawbridge `dd0a…1b28` (chart hover green=0) | open |
 | 2.3 | drawbridge `e53b…f561` (granularity tied to time range) | open |
 | 3.1 | drawbridge `ef1c…df97` (dropdown blue) | open |
 | 3.2 | drawbridge `e49d…1ee3` (Codex Protocol leak — fixture-driven) | open |
-| 3.3 | drawbridge `70c1…4d80` (wrap not scroll), depends: refactor #12917 | open |
+| 3.3 | drawbridge `70c1…4d80` (wrap not scroll) — extracts `JsonBlock.tsx` in same commit | open |
 | 3.4 | drawbridge `aab7…ac30` (scroll bottom on session click) | open |
 | 4.1 | (user-reported, no Drawbridge ref) — `ChatPage.tsx:169-172` fix | open |
 
@@ -529,13 +675,13 @@ Then add a second `it()` covering the desktop→mobile transition: starts with `
 
 ```text
 Plan Verification:
-✓ No explicit test tasks found (TDD wrappers will be auto-inserted)
+✓ Test specifications are explicit (Vitest in §3.2, ChatPage integration tests in §4.1, pytest in §1.6, lifecycle test in §2.1) — TDD wrappers will be auto-inserted around each
 ✓ Dependency tree is valid:
-    - 1.3, 1.5 depend on 1.2 (chip class)
-    - 1.6 depends on 1.2 (chip class) and refactor #12917 (file size)
-    - 3.3 depends on refactor #12917 (file size)
+    - 1.3, 1.5, 1.6 depend on 1.2 (chip class)
     - Phase 4 depends on Phase 3 (sequencing only — no shared files)
     - No cycles
+✓ All `(depends:)` references are to in-plan task numbers or phases — no external task IDs in plan-draft notation
+✓ File-size compliance handled in-section: §1.6 extracts `AgentCard.tsx`, §3.3 extracts `JsonBlock.tsx`. Both bring their host file under 1000 lines in the same commit. Refactor task #12917 is referenced as prose context only.
 ✓ Categories assigned correctly (code/refactor only)
 ✓ Phase headings use canonical `## Phase N: Name` form
 ✓ Task sections are self-contained: every section names exact files, line numbers, code snippets, and validation steps

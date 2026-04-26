@@ -18,6 +18,7 @@ Implementation is parented to planning epic **#12902**. After approval, `/gobby 
   - `tests/mcp_proxy/tools/test_pipelines.py` — 1,299 lines (#12766 covers split)
   - `web/src/components/workflows/ReportsPage.tsx` — 1,434 lines (#12920 covers split)
   - `tests/workflows/test_stop_gates_rules.py` — 1,384 lines (#12921 covers split)
+  - `docs/guides/cli-commands.md` — 1,423 lines (#12947 covers split) — touched by §6.3
   Post-PR, `src/gobby/workflows/pipeline_executor.py` (~963) and `src/gobby/storage/pipelines.py` (~780) must stay under 1,000 — extract a focused module if pagination/rename churn pushes either over.
 - **MCP test surface**: 3 files. `tests/mcp_proxy/tools/test_pipelines.py` (1,299) — runtime/list/search/get suite. `tests/mcp_proxy/tools/workflows/test_pipelines.py` (433) — workflow-tooling-specific. `tests/mcp_proxy/tools/test_pipeline_query.py` (196) — `_pipeline_query.py` helpers. Rename touches all three.
 - **Drift sweep** is a real test: assert no live user-facing pipeline-execution terms remain in routes, MCP names, response keys, CLI/web labels, installed YAML, skills, active guides, **runtime instruction strings (`src/gobby/conductor/manager.py`, `src/gobby/mcp_proxy/stdio.py`)**, **WebSocket broadcast emission**, and **cron storage**. Allowlist: migration code, archived docs under `docs/plans/completed/`, `PipelineExecutor.execute` implementation verbs, and unrelated non-pipeline `execution` contexts.
@@ -88,6 +89,8 @@ Use a recursive walker that descends dicts and lists. Be conservative:
 **Data rewrite for `inter_session_messages.metadata_json`**: this column stores cross-session pending-message metadata that is keyed for completion-notification dedupe lookups (`src/gobby/storage/inter_session_messages.py:225-227` joins on `$.completion_id | $.run_id | $.execution_id`). Live in-flight rows may carry `metadata_json = {"execution_id": "pe-...", ...}` for completion notifications generated before the upgrade. Walk each row, parse the JSON, and rename any top-level key `execution_id` → `run_id` (preserve the value verbatim — `pe-…` IDs remain opaque legacy values per the constraints). This is the prerequisite for §2.6's SQL OR-branch removal: after the migration, no live row can have only `execution_id` in its metadata, so the lookup can drop the fallback safely.
 
 **Data rewrite for installed `workflow_definitions` prose** (install-time-sync gap fix): bundled-content sync is install-time only (`src/gobby/cli/installers/shared.py`); YAML version bumps in §6.1 don't propagate to existing rows on user restart. Migration 221 updates rows in place. **Bundled-row predicate** (verified against `workflow_definitions.py` + `sync_pipelines.py:138` + `sync_rules.py:124`): `source = 'installed' AND project_id IS NULL AND tags LIKE '%"gobby"%'` — the `source` enum is `installed | agent | project | custom` (no `bundled`); bundled-sync creates rows with `source='installed'`, no project, `gobby` tag in JSON-encoded `tags`. For every matching row, apply §6.1's prose substitutions to JSON string values: `pipeline execution worker` → `pipeline run worker`; `Pipeline Execution Mode` → `Pipeline Run Mode`; `pipeline execution agent` → `pipeline run agent`; `Review completed pipeline executions` → `Review completed pipeline runs`; `Pipeline Execution` heading → `Pipeline Run`; `<name> execution is already running` → `<name> run is already in progress`; `(?i)\bpipeline executions?\b` → `pipeline run(s)`. Walker scoped to predicate so `source='custom'` or non-`gobby`-tagged rows untouched. Validation: seed v220 with a predicate-matching row carrying old prose, migrate, assert `definition_json` matches none of the old patterns above and contains the new noun.
+
+**Data rewrite for installed `skills` rows** (same install-time-sync gap for gobby-owned bundled skills — `sync_bundled_skills` runs at install time only). Migration 221 also updates `skills`. **Predicate** (verified against `src/gobby/skills/sync.py:77-79,121` — `is_gobby_owned()` checks `bool(skill.metadata and "gobby" in skill.metadata)`, sync writes `source="installed"`): `source = 'installed' AND project_id IS NULL AND metadata LIKE '%"gobby"%'`. For every matching row, rewrite `content` applying: tool-name renames per the table above; CLI examples (`gobby pipelines history` → `gobby pipelines runs list --name <NAME>`; `status <ID>` → `runs show <ID>`; `list-runs` → `runs list`; `search` → `runs search`); URL examples (`/api/pipelines/executions` → `/api/pipelines/runs`); `execution_id` → `run_id` only inside backticks/code fences (not in prose); `(?i)\bpipeline executions?\b` → `pipeline run(s)`. Validation: seed v220 with a `metadata={"gobby":{"audience":"all"}}` skill row whose `content` contains the literal old strings; migrate; assert the row no longer contains any old literal and contains the new ones; assert a non-gobby skill row (no `gobby` metadata key) is bit-for-bit unchanged.
 
 **Registration**: append to the migration list in `_migration_registry.py` after the current head; bump the registry's notion of head to 221.
 
@@ -753,16 +756,11 @@ For each skill: bump the `version:` field in the SKILL.md frontmatter so `sync_b
 
 ### 6.3 Update active docs [category: docs]
 
-Target: `docs/guides/pipelines.md`
+Targets (all four files have live execution-named refs, verified by `rg`): `docs/guides/pipelines.md` (290), `docs/guides/workflows-overview.md` (156), `docs/guides/mcp-tools.md` (841), `docs/guides/cli-commands.md` (1,423 — pre-existing monolith, **#12947 covers split**, scope here is rename-only edits).
 
-- Rewrite the tool list at lines 29–39 (the explore found 8 execution tools listed verbatim): `get_pipeline_status` → `get_pipeline_run`; `list_pipeline_executions` → `list_pipeline_runs`; `search_pipeline_executions` → `search_pipeline_runs`. Other tools unchanged.
-- Update example HTTP URLs (`/api/pipelines/executions/...`) → `/api/pipelines/runs/...`.
-- Update example CLI commands (`gobby pipelines list-runs`, `status`, etc.) → `gobby pipelines runs list/show/search`.
-- Update example response shapes to include `total_count`, `limit`, `offset`, `status_summary`.
+**Substitution rules** (apply across all four files): tool names per §1.1 table (`get_pipeline_status` → `get_pipeline_run`, etc.); URL examples (`/api/pipelines/executions` → `/api/pipelines/runs`); CLI examples (`gobby pipelines history`/`status <ID>`/`list-runs`/`search` → `gobby pipelines runs list --name <NAME>`/`runs show <ID>`/`runs list`/`runs search`); response-key `execution_id` → `run_id`; prose `(?i)\bpipeline executions?\b` → `pipeline run(s)`; pagination shape (`total_count`, `limit`, `offset`, `status_summary`) added to example responses in `pipelines.md` and `mcp-tools.md`. **In `cli-commands.md`**: delete the obsolete `gobby pipelines history` section entirely; rewrite the `search` section to `runs search QUERY`; do not restructure beyond rename edits. **Allowlist**: `PipelineExecutor.execute` implementation-verb mentions; archived plans under `docs/plans/completed/`.
 
-**Out of scope**: archived plans under `docs/plans/completed/` (per spec allowlist). Do not touch.
-
-`validation_criteria`: `docs/guides/pipelines.md` references no execution-named tools, routes, or commands. Example responses include the new pagination shape.
+`validation_criteria`: `rg -n 'get_pipeline_status|list_pipeline_executions|search_pipeline_executions|/api/pipelines/executions|gobby pipelines (history|status|list-runs)\b|(?i)\bpipeline executions?\b' docs/guides/` returns zero matches outside `PipelineExecutor.execute` allowlist contexts. Example responses in `pipelines.md` and `mcp-tools.md` include the new pagination shape.
 
 ---
 
@@ -912,7 +910,10 @@ FORBIDDEN_SURFACES = [
          r'\blist_pipeline_executions\b',
          r'\bsearch_pipeline_executions\b',
          r'/api/pipelines/executions',
-         r'(?i)\bpipeline executions?\b'],
+         r'(?i)\bpipeline executions?\b',
+         r'\bgobby pipelines history\b',
+         r'\bgobby pipelines status\b',
+         r'\bgobby pipelines list-runs\b'],
     ),
 ]
 
