@@ -243,8 +243,8 @@ class WakeDispatcher:
     @staticmethod
     def _notification_completion_id(metadata: dict[str, Any]) -> str | None:
         """Resolve the stable id used to dedupe completion notifications."""
-        value = metadata.get("completion_id") or metadata.get("run_id") or metadata.get(
-            "execution_id"
+        value = (
+            metadata.get("completion_id") or metadata.get("run_id") or metadata.get("execution_id")
         )
         return str(value) if value else None
 

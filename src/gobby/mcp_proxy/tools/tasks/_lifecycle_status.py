@@ -311,9 +311,7 @@ def register_mark_task_review_approved(
             f"Approved #{task.seq_num}" if task.seq_num else f"Approved {task_id}"
         )
         try:
-            ctx.session_var_manager.set_variable(
-                resolved_session_id, "adversary_verdict", verdict
-            )
+            ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
 
@@ -447,9 +445,7 @@ def register_mark_task_review_rejected(
             stock = f"Rejected #{task.seq_num}" if task.seq_num else f"Rejected {task_id}"
         verdict = signoff_summary or stock
         try:
-            ctx.session_var_manager.set_variable(
-                resolved_session_id, "adversary_verdict", verdict
-            )
+            ctx.session_var_manager.set_variable(resolved_session_id, "adversary_verdict", verdict)
         except Exception:
             pass  # nosec B110 # best-effort signoff
 
