@@ -124,6 +124,20 @@ class TaskLifecycleEventManager:
             params = (task_id, limit)
         return [TaskLifecycleEvent.from_row(row) for row in self.db.fetchall(sql, params)]
 
+    def list_events(
+        self,
+        task_id: str,
+        *,
+        limit: int | None = None,
+        newest_first: bool = False,
+    ) -> list[TaskLifecycleEvent]:
+        """Compatibility alias for callers that use the shorter name."""
+        return self.list_lifecycle_events(
+            task_id,
+            limit=limit,
+            newest_first=newest_first,
+        )
+
 
 def record_lifecycle_event(
     db: DatabaseProtocol,
@@ -135,14 +149,18 @@ def record_lifecycle_event(
     *,
     by: str | None = None,
 ) -> int:
-    return TaskLifecycleEventManager(db).record_lifecycle_event(
-        task_id,
-        from_state,
-        to_state,
-        reason,
-        by_actor,
-        by=by,
-    ).id
+    return (
+        TaskLifecycleEventManager(db)
+        .record_lifecycle_event(
+            task_id,
+            from_state,
+            to_state,
+            reason,
+            by_actor,
+            by=by,
+        )
+        .id
+    )
 
 
 def list_lifecycle_events(

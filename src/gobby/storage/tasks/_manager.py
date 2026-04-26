@@ -19,6 +19,7 @@ from gobby.storage.tasks._aggregates import (
 from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
 )
+from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._crud import (
     cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
@@ -59,6 +60,7 @@ from gobby.storage.tasks._lifecycle import (
 from gobby.storage.tasks._lifecycle import (
     unlink_commit as _unlink_commit,
 )
+from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
@@ -141,6 +143,14 @@ class LocalTaskManager:
         self._change_listeners: list[Callable[[], Any]] = []
         self._searcher: TaskFTS5Searcher | None = None
 
+    @property
+    def artifacts(self) -> TaskArtifactManager:
+        return TaskArtifactManager(self.db)
+
+    @property
+    def lifecycle_events(self) -> TaskLifecycleEventManager:
+        return TaskLifecycleEventManager(self.db)
+
     def add_change_listener(self, listener: Callable[[], Any]) -> None:
         """Add a listener to be called when tasks change."""
         self._change_listeners.append(listener)
@@ -162,42 +172,15 @@ class LocalTaskManager:
         self._run_change_listeners()
 
     def compute_path_cache(self, task_id: str) -> str | None:
-        """Compute the hierarchical path for a task.
-
-        Traverses up the parent chain to build a dotted path from seq_nums.
-        Format: 'ancestor_seq.parent_seq.task_seq' (e.g., '1.3.47')
-
-        Args:
-            task_id: The task ID to compute path for
-
-        Returns:
-            Dotted path string (e.g., '1.3.47'), or None if task not found
-            or any task in the chain is missing a seq_num.
-        """
+        """Compute the hierarchical dotted path for a task."""
         return compute_path_cache(self.db, task_id)
 
     def update_path_cache(self, task_id: str) -> str | None:
-        """Compute and store the path_cache for a task.
-
-        Args:
-            task_id: The task ID to update
-
-        Returns:
-            The computed path, or None if computation failed
-        """
+        """Compute and store the path_cache for a task."""
         return update_path_cache(self.db, task_id)
 
     def update_descendant_paths(self, task_id: str) -> int:
-        """Update path_cache for a task and all its descendants.
-
-        Use this after reparenting a task to cascade path updates.
-
-        Args:
-            task_id: The root task ID to start updating from
-
-        Returns:
-            Number of tasks updated
-        """
+        """Update path_cache for a task and all descendants."""
         return update_descendant_paths(self.db, task_id)
 
     def create_task(
@@ -331,6 +314,12 @@ class LocalTaskManager:
         linear_issue_id: MaybeUnset[str | None] = UNSET,
         linear_team_id: MaybeUnset[str | None] = UNSET,
         validation_override_reason: MaybeUnset[str | None] = UNSET,
+        lifecycle: MaybeUnset[str | None] = UNSET,
+        allow_automation: MaybeUnset[bool | None] = UNSET,
+        yolo: MaybeUnset[bool | None] = UNSET,
+        isolation: MaybeUnset[Isolation | str | None] = UNSET,
+        assigned_agent: MaybeUnset[str | None] = UNSET,
+        additional_skills: MaybeUnset[list[str] | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
         """Update metadata fields only.
@@ -395,6 +384,12 @@ class LocalTaskManager:
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
             validation_override_reason=validation_override_reason,
+            lifecycle=lifecycle,
+            allow_automation=allow_automation,
+            yolo=yolo,
+            isolation=isolation,
+            assigned_agent=assigned_agent,
+            additional_skills=additional_skills,
         )
 
         # If parent_task_id was changed, update path_cache for this task and all descendants

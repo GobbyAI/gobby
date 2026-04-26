@@ -17,6 +17,7 @@ from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
     Isolation,
+    Lifecycle,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -431,6 +432,12 @@ def update_task(
     linear_issue_id: MaybeUnset[str | None] = UNSET,
     linear_team_id: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
+    lifecycle: MaybeUnset[str | None] = UNSET,
+    allow_automation: MaybeUnset[bool | None] = UNSET,
+    yolo: MaybeUnset[bool | None] = UNSET,
+    isolation: MaybeUnset[Isolation | str | None] = UNSET,
+    assigned_agent: MaybeUnset[str | None] = UNSET,
+    additional_skills: MaybeUnset[list[str] | None] = UNSET,
 ) -> bool:
     """Internal storage primitive for task field updates.
 
@@ -514,6 +521,28 @@ def update_task(
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = ?")
         params.append(validation_override_reason)
+    if lifecycle is not UNSET:
+        if lifecycle is None:
+            raise ValueError("lifecycle cannot be None")
+        updates.append("lifecycle = ?")
+        params.append(Lifecycle(cast(str, lifecycle)).value)
+    if allow_automation is not UNSET:
+        updates.append("allow_automation = ?")
+        params.append(int(bool(allow_automation)))
+    if yolo is not UNSET:
+        updates.append("yolo = ?")
+        params.append(int(bool(yolo)))
+    if isolation is not UNSET:
+        if isolation is None:
+            raise ValueError("isolation cannot be None")
+        updates.append("isolation = ?")
+        params.append(Isolation(cast(str, isolation)).value)
+    if assigned_agent is not UNSET:
+        updates.append("assigned_agent = ?")
+        params.append(assigned_agent)
+    if additional_skills is not UNSET:
+        updates.append("additional_skills = ?")
+        params.append(json.dumps(additional_skills) if additional_skills is not None else None)
     normalized_status = _normalize_legacy_status(status) if status is not UNSET else None
     next_lifecycle_stage = current_task.lifecycle_stage
     if lifecycle_stage is not UNSET:
