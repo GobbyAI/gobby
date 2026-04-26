@@ -47,12 +47,12 @@ This plan does NOT prescribe the extraction shape that #12919 chooses; that's #1
 Instead, this gate is enforced **operationally** by 1.3's own preconditions:
 
 1. The task expander materializes 1.1 as a `category: manual` task with the close conditions above as `validation_criteria`. (If the expander's LLM compiler also emits a `1.3 depends_on 1.1` edge, that's a bonus belt-and-suspenders, but the design does not depend on it.)
-2. **1.3's task body itself includes a hard precondition** (added in 1.3's prose) requiring the implementer to verify both close conditions BEFORE making any code changes: (a) `gobby tasks get #12919 --json` shows `state.is_closed == true`, (b) `wc -l src/gobby/hooks/event_handlers/_session_start.py < 1000`. If either is unmet, the implementer must escalate the task with reason `"#12919 not yet closed; _session_start.py monolith gate (1.1) still open"` rather than starting the edit.
+2. **1.3's task body itself includes a hard precondition** (added in 1.3's prose) requiring the implementer to verify both close conditions BEFORE making any code changes: (a) `gobby-tasks.get_task(task_id="#12919")` via the MCP `call_tool` path returns `state.is_closed == true`, (b) `wc -l src/gobby/hooks/event_handlers/_session_start.py` reports < 1000. If either is unmet, the implementer must escalate the task with reason `"#12919 not yet closed; _session_start.py monolith gate (1.1) still open"` rather than starting the edit.
 3. 1.1 stays open as a tracking task and is closed by hand (or by an automation watching #12919) when both conditions hold.
 
 This is operational, not DB-enforced, but is enforceable by current tooling: implementers (human or autonomous) read task bodies before claiming, and the explicit "MUST verify before any code changes" precondition is the same shape as other gating criteria in this codebase.
 
-Validation criteria: 1.1 task exists with `category: manual` and the documented `validation_criteria`. 1.3's task body contains the explicit pre-edit gate-check prose (verifiable by reading the rendered task description). If the LLM compiler does happen to emit a `1.3 depends_on 1.1` edge, `gobby tasks get <1.3-task-ref> --json` shows `1.1` in `dependencies.blocked_by` — but absence of that edge does NOT fail this validation; the operational gate in 1.3's body is the load-bearing mechanism.
+Validation criteria: 1.1 task exists with `category: manual` and the documented `validation_criteria`. 1.3's task body contains the explicit pre-edit gate-check prose (verifiable by reading the rendered task description). If the LLM compiler does happen to emit a `1.3 depends_on 1.1` edge, `gobby-tasks.get_task(task_id="<1.3-task-ref>")` returns `1.1` in `dependencies.blocked_by` — but absence of that edge does NOT fail this validation; the operational gate in 1.3's body is the load-bearing mechanism.
 
 ### 1.2 Add `MemoryRecallHelperConfig` (single field) to `DaemonConfig` [category: code]
 
@@ -1006,10 +1006,17 @@ Required cleanup steps the implementer MUST preserve (any omission is a regressi
 
 Refactor existing `async def stop_agent(run_id: str) -> dict[str, Any]:` to delegate: `return await _stop_run(run_id)`. No external behavior change — this is a pure extract.
 
-Step 2 — add the new public MCP tool in the same factory closure:
+Step 2 — add the new public MCP tool in the same factory closure, using the same `@registry.tool(...)` decorator pattern as the surrounding tools (`stop_agent`, `kill_agent`, `end_agent_run`, etc.) — HEAD's `create_agents_registry` constructs `registry = InternalToolRegistry(...)` and registers tools via that decorator. There is no `server` variable in this closure; using `@server.tool()` would be a NameError:
 
 ```python
-@server.tool()
+@registry.tool(
+    name="cancel_stale_helpers",
+    description=(
+        "Cancel all still-running runs of an agent spawned by a parent "
+        "session. Used by the priority-5 cancel rule to ensure freshness "
+        "before delivery on each parent turn."
+    ),
+)
 async def cancel_stale_helpers(
     parent_session_id: str,
     agent_name: str,
@@ -1087,7 +1094,7 @@ Validation criteria: tool callable via `mcp__gobby__call_tool(server_name="gobby
 Phase 3 wires up rules and an agent definition that REFERENCE Phase 1 and Phase 2 outputs. None of Phase 3 will function correctly until those outputs are merged. Per the round-8 adversary finding, the current task expander does NOT deterministically emit cross-phase `tasks.dependencies` edges from header annotations, so we cannot rely on the dependency engine to block Phase 3 on Phase 1/2 outputs. The implementer is operationally responsible for this gating. Before claiming or working any Phase 3 task, verify ALL of:
 
 - Phase 1: 1.2 (`MemoryRecallHelperConfig`) merged. 1.3 (config thread + `parent_turn_seq` seed in `_session_start.py`) merged AND 1.1 monolith gate closed. 1.4 (helper YAML) present in `src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml` and synced to `workflow_definitions` (verifiable via `gobby agents show memory-recall-helper --json`).
-- Phase 2: 2.1 (`send_message` `from_session` default), 2.2 (`_check_agent_tool_enforcement` reorder), 2.3 (`get_cancelled_session_ids`), 2.4 (delivery + same-turn dedup formatters in `EffectsMixin`), 2.5 (`cancel_stale_helpers` MCP tool) ALL merged. Verify 2.5 by calling `mcp__gobby__call_tool(server="gobby-agents", tool="cancel_stale_helpers", arguments={"parent_session_id":"#<self>","agent_name":"memory-recall-helper"})` and observing a successful `{"success": true, ...}` response.
+- Phase 2: 2.1 (`send_message` `from_session` default), 2.2 (`_check_agent_tool_enforcement` reorder), 2.3 (`get_cancelled_session_ids`), 2.4 (delivery + same-turn dedup formatters in `EffectsMixin`), 2.5 (`cancel_stale_helpers` MCP tool) ALL merged. Verify 2.5 by calling `mcp__gobby__call_tool(server_name="gobby-agents", tool_name="cancel_stale_helpers", arguments={"parent_session_id":"#<self>","agent_name":"memory-recall-helper"})` and observing a successful `{"success": true, ...}` response. (Note: the wrapper schema uses `server_name` and `tool_name`, NOT `server`/`tool` — the latter are valid only inside rule `mcp_call` effects, not the top-level wrapper call.)
 
 If any output is missing, escalate the Phase 3 task with a specific reason naming the missing output. Do NOT proceed.
 
