@@ -485,14 +485,40 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
         assert result["continue"] is True
+        assert "reason" not in result
         assert "stopReason" not in result
         assert "decision" not in result
         hso = result["hookSpecificOutput"]
         assert hso["hookEventName"] == "PreToolUse"
         assert hso["permissionDecision"] == "deny"
         assert hso["permissionDecisionReason"] == (
-            "Rule enforced by Gobby: [block-and-teach-code-index]\nUse gcode."
+            "Gobby blocked [block-and-teach-code-index]: Use gcode."
         )
+
+    def test_pre_tool_use_block_compacts_rule_reason_and_preserves_action(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="block",
+            reason=(
+                "Rule enforced by Gobby: [require-task-creation-skill-loaded]\n"
+                "Task lifecycle tools require the task creation skill.\n"
+                'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+            ),
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "Gobby blocked [require-task-creation-skill-loaded]: "
+                    "Task lifecycle tools require the task creation skill; "
+                    'Call get_skill(name="task-creation") on gobby-skills, then continue.'
+                ),
+            },
+        }
 
     def test_block_decision(self) -> None:
         adapter = ClaudeCodeAdapter()

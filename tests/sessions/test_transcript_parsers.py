@@ -780,6 +780,47 @@ class TestClaudeExpandLine:
         assert msgs[0].tool_name == "Read"
         assert msgs[0].tool_use_id == "toolu_xyz"
 
+    def test_parse_lines_collapses_hook_blocking_error_and_tool_result(self, parser) -> None:
+        """Claude emits hook_blocking_error and tool_result for one denied tool call."""
+        lines = [
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "hook_blocking_error",
+                    "toolUseID": "toolu_blocked",
+                    "content": "Gobby blocked [require-uv]: Use uv instead.",
+                    "timestamp": "2024-01-01T12:00:00Z",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_blocked",
+                                "content": "Gobby blocked [require-uv]: Use uv instead.",
+                                "is_error": True,
+                            }
+                        ],
+                    },
+                    "timestamp": "2024-01-01T12:00:01Z",
+                }
+            ),
+        ]
+
+        msgs = parser.parse_lines(lines)
+
+        assert len(msgs) == 1
+        msg = msgs[0]
+        assert isinstance(msg, ParsedMessage)
+        assert msg.role == "tool"
+        assert msg.content_type == "tool_result"
+        assert msg.tool_use_id == "toolu_blocked"
+        assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
+
     def test_expand_unknown_type_returns_empty(self, parser) -> None:
         """Unknown message type returns empty list."""
         line = json.dumps({"type": "progress", "timestamp": "2024-01-01T12:00:00Z"})

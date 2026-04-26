@@ -994,6 +994,66 @@ class TestReadUndigestedTurns:
         assert result[1] == ("Follow-up question", "Final answer")
 
     @pytest.mark.asyncio
+    async def test_hook_blocking_error_tool_result_counts_once(self, tmp_path) -> None:
+        """Claude hook block duplicate records do not create extra digest exchanges."""
+        transcript = tmp_path / "transcript.jsonl"
+        import json
+
+        with open(transcript, "w") as f:
+            for turn in (
+                {
+                    "type": "user",
+                    "message": {"role": "user", "content": "Run the command"},
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_blocked",
+                                "name": "Bash",
+                                "input": {"command": "python script.py"},
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "system",
+                    "subtype": "hook_blocking_error",
+                    "toolUseID": "toolu_blocked",
+                    "content": "Gobby blocked [require-uv]: Use uv instead.",
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_blocked",
+                                "content": "Gobby blocked [require-uv]: Use uv instead.",
+                                "is_error": True,
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "I will use uv instead."}],
+                    },
+                },
+            ):
+                f.write(json.dumps(turn) + "\n")
+
+        result = await _read_undigested_turns(str(transcript), "claude", 0)
+
+        assert result == [("Run the command", "I will use uv instead.")]
+
+    @pytest.mark.asyncio
     async def test_all_digested_falls_back_to_last(self, tmp_path) -> None:
         """When digested_count >= len(pairs), returns last pair as fallback."""
         transcript = tmp_path / "transcript.jsonl"

@@ -6,6 +6,7 @@ migration from the existing HookManager.execute() method.
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -29,6 +30,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_RULE_BLOCK_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]\s*(.*)$", re.DOTALL)
+_GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
+
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {
         ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
@@ -40,6 +44,53 @@ DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
         ClaudeDecisionStyle.NONE,
     }
 )
+
+
+def _first_sentence(text: str) -> str:
+    if not text:
+        return ""
+    for delimiter in (". ", "! ", "? "):
+        if delimiter in text:
+            head, _sep, _tail = text.partition(delimiter)
+            return f"{head.strip()}{delimiter.strip()}"
+    return text.strip()
+
+
+def _compact_claude_pre_tool_deny_reason(reason: str) -> str:
+    """Return a compact one-line Claude PreToolUse denial reason for rule blocks."""
+    match = _RULE_BLOCK_REASON_RE.match(reason.strip())
+    if not match:
+        return reason
+
+    rule_name = match.group(1)
+    body = match.group(2).strip()
+    if not body:
+        return f"Gobby blocked [{rule_name}]."
+
+    body = " ".join(line.strip() for line in body.splitlines() if line.strip())
+    body = re.sub(r"\s+", " ", body).strip()
+
+    action = ""
+    skill_match = _GET_SKILL_RE.search(body)
+    if skill_match:
+        start = body.rfind(".", 0, skill_match.start()) + 1
+        end = body.find(".", skill_match.end())
+        action = body[start : end + 1 if end != -1 else len(body)].strip()
+    else:
+        for marker in ("Retry ", "Use ", "Run ", "Call "):
+            idx = body.find(marker)
+            if idx > 0:
+                action = _first_sentence(body[idx:])
+                break
+
+    short_reason = _first_sentence(body)
+    if action and short_reason == action:
+        action = ""
+
+    if action:
+        short_reason = short_reason.rstrip(".!?")
+        return f"Gobby blocked [{rule_name}]: {short_reason}; {action}"
+    return f"Gobby blocked [{rule_name}]: {short_reason}"
 
 
 class ClaudeCodeAdapter(BaseAdapter):
@@ -265,7 +316,12 @@ class ClaudeCodeAdapter(BaseAdapter):
                 if permission_decision:
                     hook_output["permissionDecision"] = permission_decision
                     if normalized_reason:
-                        hook_output["permissionDecisionReason"] = normalized_reason
+                        permission_reason = normalized_reason
+                        if is_denied:
+                            permission_reason = _compact_claude_pre_tool_deny_reason(
+                                normalized_reason
+                            )
+                        hook_output["permissionDecisionReason"] = permission_reason
                 if response.modified_input is not None and permission_decision != "deny":
                     hook_output["updatedInput"] = response.modified_input
         elif decision_style == ClaudeDecisionStyle.PERMISSION_REQUEST:

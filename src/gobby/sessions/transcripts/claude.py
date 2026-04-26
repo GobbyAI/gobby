@@ -50,6 +50,94 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         """
         super().__init__(cli_name="claude", session_id=session_id, logger_instance=logger_instance)
 
+    @staticmethod
+    def _load_json_for_dedupe(line: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _tool_use_id_from_turn(turn: dict[str, Any]) -> str | None:
+        for key in ("toolUseID", "toolUseId", "tool_use_id", "tool_useID"):
+            value = turn.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+        message = turn.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    for key in ("tool_use_id", "toolUseID", "toolUseId"):
+                        value = block.get(key)
+                        if isinstance(value, str) and value:
+                            return value
+        return None
+
+    @staticmethod
+    def _is_hook_blocking_error(turn: dict[str, Any]) -> bool:
+        return (
+            turn.get("type") == "hook_blocking_error"
+            or turn.get("subtype") == "hook_blocking_error"
+            or turn.get("error_type") == "hook_blocking_error"
+        )
+
+    @classmethod
+    def _is_tool_result_for(cls, turn: dict[str, Any], tool_use_id: str) -> bool:
+        if turn.get("type") == "tool_result" and cls._tool_use_id_from_turn(turn) == tool_use_id:
+            return True
+
+        message = turn.get("message")
+        if not isinstance(message, dict):
+            return False
+        content = message.get("content")
+        if not isinstance(content, list):
+            return False
+
+        return any(
+            isinstance(block, dict)
+            and block.get("type") == "tool_result"
+            and block.get("tool_use_id") == tool_use_id
+            for block in content
+        )
+
+    @classmethod
+    def _collapse_hook_blocking_turns(cls, turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Drop Claude's duplicate model-facing tool_result after a hook block."""
+        collapsed: list[dict[str, Any]] = []
+        idx = 0
+        while idx < len(turns):
+            turn = turns[idx]
+            tool_use_id = cls._tool_use_id_from_turn(turn)
+            if (
+                tool_use_id
+                and cls._is_hook_blocking_error(turn)
+                and idx + 1 < len(turns)
+                and cls._is_tool_result_for(turns[idx + 1], tool_use_id)
+            ):
+                collapsed.append(turn)
+                idx += 2
+                continue
+            collapsed.append(turn)
+            idx += 1
+        return collapsed
+
+    @classmethod
+    def _extract_hook_blocking_content(cls, turn: dict[str, Any]) -> str:
+        for key in ("content", "message", "error", "reason"):
+            value = turn.get(key)
+            if isinstance(value, str) and value:
+                return value
+            if isinstance(value, dict):
+                content = value.get("content")
+                if isinstance(content, str) and content:
+                    return content
+        return "Claude Code hook blocked this tool call."
+
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
     ) -> list[dict[str, Any]]:
@@ -70,8 +158,12 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             >>> len(last_msgs)
             6  # 3 pairs = 6 messages
         """
+        turns = self._collapse_hook_blocking_turns(turns)
         messages: list[dict[str, str]] = []
         for turn in reversed(turns):
+            if self._is_hook_blocking_error(turn):
+                continue
+
             # Claude Code transcript structure has message nested
             message = turn.get("message", {})
             role = message.get("role")
@@ -86,7 +178,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                             text_parts.append(block.get("text", ""))
                     content = " ".join(text_parts)
 
-                messages.insert(0, {"role": role, "content": str(content)})
+                content = str(content).strip()
+                if not content:
+                    continue
+
+                messages.insert(0, {"role": role, "content": content})
                 if len(messages) >= num_pairs * 2:
                     break
         return messages
@@ -311,7 +407,20 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 message_id=message_id,
             )
 
-        if msg_type == "user":
+        if self._is_hook_blocking_error(data):
+            content = self._extract_hook_blocking_content(data)
+            results.append(
+                _make_msg(
+                    role="tool",
+                    content=content,
+                    content_type="tool_result",
+                    tool_name=data.get("tool_name"),
+                    tool_result={"content": content, "is_error": True},
+                    tool_use_id=self._tool_use_id_from_turn(data),
+                )
+            )
+
+        elif msg_type == "user":
             msg_data = data.get("message", {})
             content_val = msg_data.get("content", "")
 
@@ -457,7 +566,15 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         tool_result = None
         tool_use_id = None
 
-        if msg_type == "user":
+        if self._is_hook_blocking_error(data):
+            role = "tool"
+            content_type = "tool_result"
+            content = self._extract_hook_blocking_content(data)
+            tool_name = data.get("tool_name")
+            tool_use_id = self._tool_use_id_from_turn(data)
+            tool_result = {"content": content, "is_error": True}
+
+        elif msg_type == "user":
             role = "user"
             msg_data = data.get("message", {})
             content_val = msg_data.get("content", "")
@@ -617,12 +734,26 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         parsed_messages: list[ParsedMessage | ParsedToolEvent] = []
         current_index = start_index
 
-        for line in lines:
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx]
+            data = self._load_json_for_dedupe(line)
+            tool_use_id = self._tool_use_id_from_turn(data) if data is not None else None
+            skip_next = (
+                data is not None
+                and tool_use_id is not None
+                and self._is_hook_blocking_error(data)
+                and idx + 1 < len(lines)
+                and (next_data := self._load_json_for_dedupe(lines[idx + 1])) is not None
+                and self._is_tool_result_for(next_data, tool_use_id)
+            )
+
             expanded = self._expand_line(line, current_index)
             for msg in expanded:
                 msg.index = current_index
                 parsed_messages.append(msg)
                 current_index += 1
+            idx += 2 if skip_next else 1
 
         return parsed_messages
 
