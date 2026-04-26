@@ -202,6 +202,36 @@ Specific Cypher rewrites in `src/gobby/memory/services/knowledge_graph.py`:
 - `find_related_memory_ids` (≈line 891) — variable-length path traversal; FalkorDB supports `[*1..N]` up to depth 5, current clamp is already ≤3
 - `search_graph` substring fallback (≈line 980) — `toLower` and `CONTAINS` both supported; no change
 
+**Canonical activation predicate (single source of truth across 2.1, 2.2, 3.3, 3.5, 4.1, and the 4.3 sweep):**
+
+```python
+def is_falkordb_enabled(databases: "DatabasesConfig") -> bool:
+    """The ONE rule for whether the daemon should construct a FalkorClient.
+
+    Takes the `DatabasesConfig` instance directly (NOT a top-level config wrapper)
+    so the predicate matches the actual call-site shapes:
+      - `runner_init.py` already binds `db_cfg = runner.config.databases` (verified
+        live at line 328) → call as `is_falkordb_enabled(db_cfg)`, where `db_cfg`
+        is `DatabasesConfig`. Inside the body, read `databases.falkordb.requirepass`
+        — NOT `databases.databases.falkordb.requirepass` (which would AttributeError).
+      - `_services_start` in `cli/daemon.py` holds a top-level `config: DaemonConfig`
+        → call as `is_falkordb_enabled(config.databases)`.
+
+    Returns True only when the user has explicitly configured FalkorDB by
+    seeding a non-empty `requirepass` value. Default `host`/`port` values
+    alone never enable the backend — that protects fresh installs and
+    post-uninstall config from accidentally instantiating an unauthenticated
+    FalkorClient or wiring CodeGraph against a missing service.
+    """
+    return bool(databases.falkordb.requirepass)
+```
+
+Every runtime gate in the daemon — `runner_init.py`'s `MemoryManager`/`CodeGraph` construction (2.1, 2.2), `_services_start`'s docker-compose profile selection (3.5), the admin payload's `configured` flag (4.1), and the daemon-wide sweep (4.3) — uses this single predicate. `is_falkordb_installed()` (3.3) remains a separate, narrower function ("did the installer ever write host/port keys?") for the specific question of "should `gobby status` display install state?" — it intentionally returns True for an installed-but-unconfigured edge case so the operator sees the difference between "not installed" and "installed but credentials missing."
+
+The two predicates and where each is used:
+- `is_falkordb_enabled(databases)` — runtime construction gate (the daemon must NOT instantiate FalkorClient unless this is true). Argument is a `DatabasesConfig`, not a top-level config object.
+- `is_falkordb_installed(db)` — status-payload-only ("did the installer run?", drives `installed=true/false` in `gobby status` and `/api/admin/status`)
+
 **`MemoryManager` constructor surface — verified live, not assumed:**
 
 `MemoryManager.__init__` (in `src/gobby/memory/manager.py`) currently takes flat Neo4j-shaped kwargs:
@@ -235,7 +265,7 @@ These kwargs are passed in by `src/gobby/runner_init.py` (the daemon startup wir
    - `neo4j_rrf_k` → `falkordb_rrf_k`
    - Update internal attributes (`self._neo4j_graph_search` → `self._falkordb_graph_search`, etc.) and every internal use site
 2. **Inside `MemoryManager`:** swap the `Neo4jClient(...)` construction for `FalkorClient(host=falkordb_host, port=falkordb_port, password=falkordb_password, graph_name=falkordb_graph_name)`. Update `self._neo4j_client` attribute → `self._falkor_client`. Update the `KnowledgeGraphService(neo4j_client=...)` ctor call to pass `falkor_client=...` (matching the renamed param on the service).
-3. **`runner_init.py`:** the call site that constructs `MemoryManager(...)` reads the legacy Neo4j config off `db_cfg`. Update it to read `db_cfg.databases.falkordb.{host, port, requirepass, graph_name, graph_search, graph_min_score, rrf_k}` and pass under the new kwarg names. **Note `requirepass`, not `password`** — the FalkorConfig field name from 1.1.
+3. **`runner_init.py`:** the call site that constructs `MemoryManager(...)` already binds `db_cfg = runner.config.databases` (verified live at line 328) — so `db_cfg` is a `DatabasesConfig` instance, not a top-level config wrapper. Wrap the entire FalkorDB construction in `if is_falkordb_enabled(db_cfg):` (the canonical predicate defined at the top of this section — it accepts a `DatabasesConfig` directly); inside the branch, read `db_cfg.falkordb.{host, port, requirepass, graph_name, graph_search, graph_min_score, rrf_k}` (NOT `db_cfg.databases.falkordb.*` — that would AttributeError because `db_cfg` is already the inner object) and pass under the new kwarg names. **Note `requirepass`, not `password`** — the FalkorConfig field name from 1.1. When `is_falkordb_enabled(db_cfg)` is False, `MemoryManager` is constructed with `falkordb_host=None` (or whatever sentinel matches the existing "no graph backend" path) so `KnowledgeGraphService` and `CodeGraph` are not wired in. The same predicate gates the `CodeGraph(falkor_client=...)` construction in 2.2.
 
 In `KnowledgeGraphService.__init__`, rename the `neo4j_client` parameter to `falkor_client` and the `self._neo4j` attribute to `self._falkor`. Update every `self._neo4j.X(…)` call site within the service.
 
@@ -258,7 +288,7 @@ Schema setup in CodeGraph likely creates indexes/constraints on `CodeSymbol.id`,
 
 **Construction site — verified live, not assumed:** `src/gobby/code_index/context.py` does NOT construct the graph client; `CodeIndexContext.graph` is just a property returning `self._graph`. The actual `CodeGraph(neo4j_client=...)` call lives in `src/gobby/runner_init.py` (alongside the MemoryManager construction in 2.1) and the resulting instance is injected into `CodeIndexContext`. Make the runtime swap there:
 
-1. **`src/gobby/runner_init.py`:** replace the `Neo4jClient(...)` + `CodeGraph(neo4j_client=client)` construction with `FalkorClient(host=db_cfg.databases.falkordb.host, port=db_cfg.databases.falkordb.port, password=db_cfg.databases.falkordb.requirepass, graph_name="gobby_code")` + `CodeGraph(falkor_client=client)`. Note the **different `graph_name`** — code graph (`gobby_code`) and memory KG (`gobby_kg`) are separate FalkorDB graphs in the same instance.
+1. **`src/gobby/runner_init.py`:** wrap the construction in `if is_falkordb_enabled(db_cfg):` (canonical predicate — see 2.1; `db_cfg` is the `runner.config.databases` binding from line 328, a `DatabasesConfig` instance). Inside the branch, replace the `Neo4jClient(...)` + `CodeGraph(neo4j_client=client)` construction with `FalkorClient(host=db_cfg.falkordb.host, port=db_cfg.falkordb.port, password=db_cfg.falkordb.requirepass, graph_name="gobby_code")` + `CodeGraph(falkor_client=client)` (NOT `db_cfg.databases.falkordb.*` — that would AttributeError; see 2.1's call-site note). When the predicate is False, leave `CodeIndexContext._graph = None` so reads degrade gracefully (matches the existing "no graph" path). Note the **different `graph_name`** — code graph (`gobby_code`) and memory KG (`gobby_kg`) are separate FalkorDB graphs in the same instance.
 2. **`src/gobby/code_index/graph.py` (`CodeGraph.__init__`):** rename the `neo4j_client` constructor parameter to `falkor_client` and update internal attributes (`self._neo4j` → `self._falkor`) and every internal use site.
 3. **`src/gobby/code_index/context.py`:** if the typing imports reference `Neo4jClient`, update to `FalkorClient`. Do not change construction logic — there is none in this file.
 
@@ -286,11 +316,26 @@ Add a `_resolve_falkordb_password(password: str | None) -> str` helper with the 
 2. **Existing config_store secret** at `databases.falkordb.requirepass` (read via `SecretStore`); if present, reuse the same value so re-running `gobby install --falkordb` is idempotent and does not lock the user out of an existing data dir
 3. **Generated value** — `secrets.token_urlsafe(24)` if neither of the above is set
 
-After resolution, `install_falkordb` writes the resolved value to **both**:
-1. `_update_config(...)` — encrypts the value into the `secrets` table, references it from `config_store` under `databases.falkordb.requirepass`
-2. `_write_bootstrap_password(resolved, gobby_home)` — persists into `~/.gobby/bootstrap.yaml` under `falkordb_password` so `_services_start` (3.5) can read it on `gobby start` for the docker-compose env injection
+After resolution, `install_falkordb` writes the resolved value to **both** stores. **Persistence ordering is fixed and matches the ordered Docker install steps below — credential writes happen AFTER the health check passes, not before:**
 
-Both writes must complete before health-check failure cleanup, otherwise a half-installed install loses credentials.
+1. `_update_config(...)` — encrypts the value into the `secrets` table, references it from `config_store` under `databases.falkordb.requirepass` (step 5 in the install sequence below)
+2. `_write_bootstrap_password(resolved, gobby_home)` — persists into `~/.gobby/bootstrap.yaml` under `falkordb_password` so `_services_start` (3.5) can read it on `gobby start` for the docker-compose env injection (step 6 in the install sequence below)
+
+**Failure semantics — pinned per step (do NOT copy the live Neo4j installer's `bootstrap_ok` warning-on-failure pattern):**
+
+The current `install_neo4j` at `src/gobby/cli/installers/neo4j.py:153-165` writes config first, then runs `bootstrap_ok = _write_bootstrap_password(...)` and **returns `success: True` even when `bootstrap_ok is False`** — only attaching a `warning` field. That pattern is the exact split-brain this section is designed to prevent: config_store would hold the new `databases.falkordb.requirepass` secret while `~/.gobby/bootstrap.yaml` lacks `falkordb_password`, so the next `gobby start` would inject the stale-or-default bootstrap password into the docker-compose env while daemon clients authenticate with the config_store secret. Different passwords on the same running service.
+
+The FalkorDB installer must NOT inherit that pattern. Failure semantics for each ordered step:
+
+- **Steps 1-4 (Docker check, compose refresh, `compose up`, health check):** if any fails, neither persistence write happens — the resolved password lives only in memory and is discarded. The user retries `gobby install --falkordb` from scratch; password resolution starts over (existing config_store secret is still empty, generates a fresh value if no flag passed). This avoids the half-installed-with-credentials state where a future install picks up a stale secret pointing to a service that never came up.
+- **Step 5 (`_update_config`):** if this fails (e.g., disk full mid-encrypt), the running container is left up but `_write_bootstrap_password` does NOT execute. The install returns `{"success": False, "error": "Failed to persist FalkorDB credentials to config_store; run `gobby uninstall --falkordb` to clean up the running container, then retry."}`. The operator must run uninstall (which is now safe because steps 5-6 wrote nothing) before retrying.
+- **Step 6 (`_write_bootstrap_password`):** if this fails after step 5 succeeded, the install MUST NOT report success — that is the split-brain. Two acceptable behaviors; pick exactly one:
+    - **(A) Fail loudly with cleanup instruction** (recommended; matches step 5 semantics): return `{"success": False, "error": "FalkorDB is running and credentials are persisted to config_store, but the bootstrap.yaml write failed. Run `gobby uninstall --falkordb` to roll back the container + config_store, then retry.", "compose_running": True}`. Operator runs uninstall + retry. The `compose_running: True` flag is for the wizard/CLI to surface the "container is up but uninstall is required" state clearly.
+    - **(B) Self-roll-back:** call `ConfigStore.clear_secret("databases.falkordb.requirepass", secret_store)` AND `subprocess.run(["docker", "compose", "-f", str(compose_file), "--profile", "falkordb", "down"], ...)` to undo step 5 + step 3. Then return failure with a clean retry path.
+
+Pick (A) for 0.4.0 — the rollback in (B) introduces another failure surface (the cleanup itself can fail) and the UX is the same operator action either way (retry after `gobby uninstall --falkordb`). Document the choice inline in the installer so a future contributor doesn't quietly switch to a `bootstrap_ok` warning pattern.
+
+**Validation matrix coverage:** Phase 8.3 must include a row that exercises the step-6-failure path explicitly — e.g., make `~/.gobby/bootstrap.yaml` read-only after the installer launches the container, then verify the install returns `success: False` (NOT `success: True` with a warning) AND the operator-facing error message names `gobby uninstall --falkordb` as the cleanup verb.
 
 **Bootstrap split-brain fix (R5-F1):** the bootstrap file is a *write target* of the installer (so the daemon's `_services_start` can find a password on cold start), but is **never read** by the installer's password-resolution chain. This means `uninstall_falkordb` must clear `falkordb_password` from `~/.gobby/bootstrap.yaml` alongside the config_store entries — otherwise a subsequent install picks up a generated value (because config_store is empty), but the daemon picks up the old stale bootstrap value, and the docker-compose container comes up authenticating against the new value while `_services_start`'s env injection uses the old. They desynchronize silently.
 
@@ -301,8 +346,9 @@ The resolved value is returned in the installer's result dict as `password` so `
 1. Check Docker is available; abort with `Docker not found. Install Docker to use FalkorDB.` (mirrors the existing Neo4j installer's Docker check verbatim)
 2. **Refresh the compose file** (NOT just "ensure exists" — this catches the existing-install upgrade path): unconditionally overwrite `~/.gobby/services/docker-compose.yml` from the bundled template. The current `_ensure_unified_compose` in `src/gobby/cli/installers/qdrant.py` is a `if not dest.exists(): copy` — that helper would leave a stale Neo4j-era compose file in place on upgrade, so `docker compose --profile falkordb up` would find no `falkordb` profile and silently fail. Add a sibling helper `_refresh_unified_compose(services_dir)` that always copies, AND first stops any running profiles from the old file (`docker compose --profile neo4j down` if the old file exists, ignoring failure) so the upgrade does not orphan the Neo4j container.
 3. Run `docker compose --profile falkordb up -d --remove-orphans` with `GOBBY_FALKORDB_PASSWORD=<resolved_password>` in the env. The compose template (Phase 3.2) maps that env into `REDIS_ARGS="--requirepass $GOBBY_FALKORDB_PASSWORD"` for the container — Redis auth lives on `REDIS_ARGS`, not `FALKORDB_ARGS` (the latter is reserved for FalkorDB module options like `MAX_QUEUED_QUERIES`).
-4. Health check: `docker compose exec falkordb redis-cli -a "$GOBBY_FALKORDB_PASSWORD" PING` must return `PONG` (poll up to 60s; treat `NOAUTH`/`WRONGPASS` as a hard failure, not a transient health miss)
-5. `_update_config(host="127.0.0.1", port=16379, password=<resolved_password>)` — port 16379 is the host-side mapping from the compose template (avoids collision with system Redis on 6379)
+4. Health check: `docker compose -f <compose_file> exec -T falkordb redis-cli -a "$GOBBY_FALKORDB_PASSWORD" PING` must return `PONG` (poll up to 60s; treat `NOAUTH`/`WRONGPASS` as a hard failure, not a transient health miss). On failure, return early — do NOT proceed to credential persistence (steps 5-6). **The `-T` flag is required**: `docker compose exec` allocates a TTY by default, and the installer runs this through `subprocess.run(..., capture_output=True, ...)` which has no TTY — without `-T`, exec fails with `the input device is not a TTY` before Redis is even pinged, making a healthy container look like a failed install. Same `-f <compose_file>` pinning as steps 2-3 so the exec hits the unified compose at `~/.gobby/services/docker-compose.yml`, not whatever might exist in the daemon's CWD.
+5. `_update_config(host="127.0.0.1", port=16379, password=<resolved_password>)` — port 16379 is the host-side mapping from the compose template (avoids collision with system Redis on 6379). On failure, return early — do NOT proceed to step 6 (the operator must `gobby uninstall --falkordb` to clean up the running container before retry).
+6. `_write_bootstrap_password(<resolved_password>, gobby_home)` — only after `_update_config` succeeds. Persists into `~/.gobby/bootstrap.yaml` under `falkordb_password` so `_services_start` (3.5) can find the value for compose-env injection on subsequent `gobby start` invocations.
 
 **FalkorDB Browser:** the official `falkordb/falkordb` image bundles the browser on container port 3000. The compose template (3.2) maps it to host port 13000. The success message surfaces `http://localhost:13000` as the browser URL.
 
@@ -520,15 +566,34 @@ The old `neo4j_password` YAML key is silently ignored (Pydantic-style — unreco
 
 ```python
 # OLD (delete):
+config = load_config()                       # bootstrap/Pydantic defaults only — config_store invisible
 env["GOBBY_NEO4J_PASSWORD"] = bootstrap.neo4j_password
 if config.databases.neo4j.url:
     profiles.append("neo4j")
 
 # NEW:
+# CRITICAL: load_config() with no arguments reads only bootstrap.yaml + Pydantic
+# defaults — it does NOT see the installer-written `databases.falkordb.requirepass`
+# secret in config_store. Without explicitly passing the ConfigStore + SecretStore,
+# `is_falkordb_enabled(config.databases)` always returns False after install,
+# and `gobby start` never appends the `falkordb` compose profile. Wire both stores
+# from the daemon's LocalDatabase before the predicate check.
+db = LocalDatabase(_resolve_db_path(bootstrap))
+config_store = ConfigStore(db)
+secret_store = SecretStore(db)
+config = load_config(
+    config_file=...,                       # whatever path _services_start already resolves (or omit if load_config supports it)
+    config_store=config_store,
+    secret_resolver=secret_store.get,      # MUST be `.get`, NOT `.resolve` — see resolver-contract note below
+)
 env["GOBBY_FALKORDB_PASSWORD"] = bootstrap.falkordb_password
-if config.databases.falkordb.requirepass:  # presence indicates configured/enabled
+if is_falkordb_enabled(config.databases):  # canonical predicate (2.1) — pass DatabasesConfig, not the top-level config
     profiles.append("falkordb")
 ```
+
+**Resolver-contract note (verified live, R12-F1):** `load_config(secret_resolver=...)` at `src/gobby/config/app.py:240-245` invokes the resolver as `value = secret_resolver(name)` where `name` is the secret-store key extracted from a `$secret:NAME` reference. The contract is `Callable[[str], str | None]`. The daemon's main load path at `src/gobby/runner_init.py:202-205` passes `runner.secret_store.get` — that is the correct method. `SecretStore.resolve` is a different method that returns the literal name string back, so passing it would silently return the string `"requirepass"` instead of the decrypted FalkorDB password — `is_falkordb_enabled(config.databases)` would then be True for the wrong reason and the daemon would attempt to authenticate against FalkorDB with the literal string `"requirepass"`. Mirror the `runner_init.py` pattern exactly.
+
+**Test coverage required:** seed `config_store` with `databases.falkordb.requirepass = '$secret:requirepass'`, seed the `secrets` row with the encrypted plaintext, call `load_config(config_store=cs, secret_resolver=ss.get)`, assert `config.databases.falkordb.requirepass == <plaintext>`. Without this test, a future contributor switching `.get` ↔ `.resolve` won't get a CI signal.
 
 This is the consumer the reviewer flagged as half-migrated — without this rewrite, `gobby start` would still try to inject `GOBBY_NEO4J_PASSWORD` into the docker-compose env and read the dead `bootstrap.neo4j_password` field. The 4.3 daemon-wide sweep should have caught this if missed; this section calls it out explicitly so 3.5's scope is unambiguous.
 
@@ -639,7 +704,7 @@ from gobby.cli.services import get_falkordb_status
 falkor_client = getattr(server.memory_manager, "_falkor_client", None)
 falkor_cfg = server.config.databases.falkordb
 status = await get_falkordb_status(
-    db=server.db,  # config_store source-of-truth lives in the daemon's LocalDatabase
+    db=server.services.database,  # MUST be `.services.database`, NOT `.db` — verified live (R12-F2)
     host=falkor_cfg.host,
     port=falkor_cfg.port,
     password=falkor_cfg.requirepass,  # FalkorConfig field renamed to avoid secret-name collision; see 1.1
@@ -651,6 +716,8 @@ memory_stats["falkordb"] = {
     "url": status["url"],
 }
 ```
+
+**HTTPServer attribute note (verified live, R12-F2):** the live `HTTPServer` does NOT expose `server.db`. The daemon's `LocalDatabase` is reached through `server.services.database`, matching the existing access pattern in the same `_health.py` file (lines 272 and 361 both use `server.services.database`). Writing `server.db` would raise `AttributeError`, the route would fall into the broad exception path, and `memory.falkordb` would emit `{"configured": False, "installed": False, "healthy": False, "url": None}` even when FalkorDB is correctly installed and running — the dashboard pill (5.2) would silently show "not configured" for every user. Test coverage: add an admin status route test that uses a server mock exposing only `services.database` and verifies `memory.falkordb.installed` reads through `get_falkordb_status` rather than the fallback path.
 
 Replace the empty-fallback path (line 259) similarly: `memory_stats["falkordb"] = {"configured": False, "installed": False, "healthy": False, "url": None}`.
 
@@ -985,7 +1052,7 @@ Manual verification (this is the `[category: manual]` work — observe results, 
 
 0. **Bundle freshness check:** `git status src/gobby/install/shared/setup/setup.mjs` — confirm the regenerated bundle from 6.3 is staged. If it is not, the wizard will run the OLD bundle and none of the 6.1/6.2 changes will be observable. Re-run the build script before continuing.
 1. `rm ~/.gobby/setup_state.json && gobby setup` — wizard runs cleanly from cold (note underscore in filename)
-2. Walk through the Services step, accept the install → wizard advances to Launch with summary "FalkorDB: installed"; verify `docker compose ps` shows the FalkorDB container healthy; verify the FalkorDB Browser at `http://localhost:13000` loads; verify `gobby status` reports FalkorDB healthy
+2. Walk through the Services step, accept the install → wizard advances to Launch with summary "FalkorDB: installed"; verify `docker compose -f ~/.gobby/services/docker-compose.yml ps` shows the FalkorDB container healthy; verify the FalkorDB Browser at `http://localhost:13000` loads; verify `gobby status` reports FalkorDB healthy
 3. `gobby uninstall --falkordb` to clean up
 4. Repeat the wizard with the **--password** path (`[p]` in the Y/N/P prompt); verify the custom password is accepted and persisted
 5. **Migration test:** create a `~/.gobby/setup_state.json` with the old `neo4j_installed: true, neo4j_password_set: false` fields; rerun `gobby setup`; verify state.ts migrator rewrites it to `falkordb_*` fields and the wizard does not crash
@@ -1025,24 +1092,63 @@ In the `Context` struct, replace `pub neo4j: Option<Neo4jConfig>` with `pub falk
 
 In `Context::resolve`, replace `let neo4j = resolve_neo4j_config(&db_path, quiet);` with `let falkordb = resolve_falkordb_config(&db_path, quiet);` and update the struct literal accordingly.
 
-Replace the `resolve_neo4j_config` function (≈lines 292-351) with `resolve_falkordb_config` reading the new config_store keys:
+Replace the `resolve_neo4j_config` function (≈lines 292-351) with `resolve_falkordb_config`. **The helper names and patterns must match the live `gobby-cli` codebase, not invented ones** — the prior draft referenced `read_config_key` and `resolve_secrets`, neither of which exist. Verified live (via `grep` against `crates/gcode/src/config.rs` and `crates/gcode/src/secrets.rs`):
+
+- `read_config_value(conn: &rusqlite::Connection, key: &str) -> Option<String>` — defined in `config.rs:275`. Returns the raw config_store value or `None` if missing.
+- `secrets::resolve_config_value(value: &str, db_path: &Path) -> anyhow::Result<String>` — defined in `secrets.rs:94`. Resolves both `$secret:<name>` references (decrypts via Fernet) AND `${ENV_VAR}` patterns. The existing `resolve_neo4j_config` uses it via `match secrets::resolve_config_value(&v, db_path) { ... }` with a warning-on-error fallback; mirror that pattern.
+- The existing `resolve_neo4j_config` builds raw values as `std::env::var(...).ok().or_else(|| read_config_value(&conn, "databases.neo4j.<key>"))` — env var precedence is enforced by short-circuiting `or_else` BEFORE the `?` operator. The prior draft inverted this (read config_store with `?` first, then applied env), which broke the env-only configuration path.
+
+Correct shape:
 
 ```rust
 fn resolve_falkordb_config(db_path: &Path, quiet: bool) -> Option<FalkorConfig> {
-    // Env var overrides take priority
-    let env_host = std::env::var("GOBBY_FALKORDB_HOST").ok();
-    let env_port = std::env::var("GOBBY_FALKORDB_PORT").ok().and_then(|s| s.parse().ok());
-    let env_password = std::env::var("GOBBY_FALKORDB_PASSWORD").ok();
-
-    // Load from config_store
+    // Match the connection-open pattern used by the existing resolve_neo4j_config
+    // (open_db_readonly returns Option, .ok() bails silently on missing/locked DBs).
     let conn = open_db_readonly(db_path)?;
-    let host_raw = read_config_key(&conn, "databases.falkordb.host")?;
-    let port_raw = read_config_key(&conn, "databases.falkordb.port")?;
-    let password_raw = read_config_key(&conn, "databases.falkordb.requirepass");
 
-    let host = env_host.unwrap_or_else(|| resolve_secrets(&host_raw));
-    let port: u16 = env_port.unwrap_or_else(|| resolve_secrets(&port_raw).parse().unwrap_or(6379));
-    let password = env_password.or_else(|| password_raw.map(|raw| resolve_secrets(&raw)));
+    // Env var > config_store > None. Use `or_else` so env wins WITHOUT short-circuiting
+    // the config_store fallback; do NOT apply `?` until after env+config_store have both
+    // been checked, otherwise env-only configuration silently fails.
+    let host_raw: Option<String> = std::env::var("GOBBY_FALKORDB_HOST")
+        .ok()
+        .or_else(|| read_config_value(&conn, "databases.falkordb.host"));
+    let port_raw: Option<String> = std::env::var("GOBBY_FALKORDB_PORT")
+        .ok()
+        .or_else(|| read_config_value(&conn, "databases.falkordb.port"));
+    let password_raw: Option<String> = std::env::var("GOBBY_FALKORDB_PASSWORD")
+        .ok()
+        .or_else(|| read_config_value(&conn, "databases.falkordb.requirepass"));
+
+    // Resolve $secret: / ${VAR} references for any value that came from config_store.
+    // Mirror the existing resolve_neo4j_config error-handling: log + fall back to None
+    // on resolve failure rather than aborting the whole client.
+    let host = match host_raw {
+        Some(raw) => match secrets::resolve_config_value(&raw, db_path) {
+            Ok(v) => v,
+            Err(e) => {
+                if !quiet { eprintln!("warning: failed to resolve FalkorDB host: {e}"); }
+                return None;
+            }
+        },
+        None => return None,  // host is required; no graph backend without it
+    };
+    let port: u16 = match port_raw {
+        Some(raw) => match secrets::resolve_config_value(&raw, db_path) {
+            Ok(v) => v.parse().unwrap_or(16379),  // 16379 matches the docker-compose host-side mapping (3.2)
+            Err(_) => 16379,
+        },
+        None => 16379,
+    };
+    let password = match password_raw {
+        Some(raw) => match secrets::resolve_config_value(&raw, db_path) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                if !quiet { eprintln!("warning: failed to resolve FalkorDB password: {e}"); }
+                None
+            }
+        },
+        None => None,
+    };
 
     Some(FalkorConfig {
         host,
@@ -1053,17 +1159,26 @@ fn resolve_falkordb_config(db_path: &Path, quiet: bool) -> Option<FalkorConfig> 
 }
 ```
 
-The Rust crate reads the **code** graph (`gobby_code`), not the memory KG (`gobby_kg`). Hardcode `graph_name = "gobby_code"`.
+The Rust crate reads the **code** graph (`gobby_code`), not the memory KG (`gobby_kg`). Hardcode `graph_name = "gobby_code"`. Default port is `16379` (host-side mapping from the compose template in 3.2), not `6379` — the prior draft used `6379`, which would break against the actual installer.
+
+**Test coverage** (mirror the existing Neo4j resolver tests in `config.rs`):
+
+1. config_store-only host/port/password → resolved values returned
+2. env-only `GOBBY_FALKORDB_HOST` / `GOBBY_FALKORDB_PORT` / `GOBBY_FALKORDB_PASSWORD` (no config_store rows) → env values used (this is the path the prior draft broke)
+3. env override of an existing config_store host → env wins
+4. config_store value of `$secret:requirepass` (with the encrypted secret seeded in `secrets`) → `resolve_config_value` decrypts to plaintext
+5. Missing host → returns `None` (no FalkorDB client)
 
 ### 7.2 Pin FalkorClient API shape and result-conversion contract [category: code] (depends: 7.1)
 
 Target: `/Users/josh/Projects/gobby-cli/crates/gcode/src/falkor.rs` (new — skeleton only), `/Users/josh/Projects/gobby-cli/crates/gcode/Cargo.toml`, `/Users/josh/Projects/gobby-cli/crates/gcode/src/search/graph_boost.rs` (mutability change to `with_neo4j`)
 
-Pin the wrapper contract before porting any queries. The `falkordb` Rust crate (v0.2.x) does not match the loose `params: Option<serde_json::Value>` shape from the prior draft. Real constraints:
+Pin the wrapper contract before porting any queries. The `falkordb` Rust crate (v0.2.x) does not match the loose `params: Option<serde_json::Value>` shape from the prior draft. Real constraints (verified against docs.rs for `falkordb` 0.2 — R12-F3):
 
 - `SyncGraph` is **not thread-safe** and is used **mutably** in the official examples. The wrapper must hold `&mut SyncGraph`.
-- `QueryBuilder::with_params` accepts `HashMap<String, String>` (or types that implement `IntoIterator<Item=(impl ToString, impl ToString)>`), **not** arbitrary `serde_json::Value`. All param values must be stringified at the call site.
-- `QueryBuilder::execute` returns `QueryResult<LazyResultSet<FalkorValue>>`. Iteration yields `Vec<FalkorValue>` per record (positionally aligned with the result header). `FalkorValue` is an enum (`String`, `I64`, `F64`, `Bool`, `Null`, `Array`, `Map`, `Node`, `Edge`, `Path`, `Point`).
+- `QueryBuilder::with_params(self, params: &'a HashMap<String, String>)` takes a **borrowed** map, not an owned one. The map MUST live until `execute()` is called — the borrow extends through the builder chain. Binding the params to a local `let params: HashMap<String, String> = ...;` BEFORE constructing the builder, then passing `&params`, is the correct pattern. Constructing the map inline as `with_params(p)` (consuming) does not compile against the v0.2 signature.
+- All param values must be stringified at the call site (the map's value type is `String`, not arbitrary `serde_json::Value`). **Numeric values** (e.g., `$offset`, `$limit`, blast-radius depth) are NOT supported as typed parameters and must be interpolated as Cypher numeric literals into the query string after clamping at the call site (see 7.3 for the exact handling per query).
+- `QueryBuilder::execute` returns `QueryResult<LazyResultSet<'_>>` — note the `'_` is a **lifetime**, not a type parameter. `QueryResult.header` is `Vec<String>` (column-name strings directly — NOT a Vec of structs with `.name` fields; the prior draft's `result.header.iter().map(|h| h.name.clone())` does not compile). Iterate as `result.header.iter().cloned()` or `result.header.clone()`. Iterating `result.data` yields `Vec<FalkorValue>` per record (positionally aligned with the header). `FalkorValue` is an enum (`String`, `I64`, `F64`, `Bool`, `Null`, `Array`, `Map`, `Node`, `Edge`, `Path`, `Point`).
 - The current `with_neo4j` wrapper hands out `&Neo4jClient` (shared); the FalkorDB version hands out `&mut FalkorClient` to the closure. **The mutability lives on the local `FalkorClient` binding inside `with_falkor`, NOT on `Context`** — `Context` continues to store the immutable config (`FalkorConfig`) and `with_falkor` constructs a fresh client per call from that config (mirroring how the current `with_neo4j` constructs a `Neo4jClient` per call). Callers continue to pass `&Context`; no `&mut Context` cascade through `commands/graph.rs` or `search/graph_boost.rs`.
 
 In `Cargo.toml`:
@@ -1116,30 +1231,45 @@ impl FalkorClient {
     /// FalkorDB crate's HashMap<String, String> contract; numeric/list values
     /// must be encoded as Cypher literals before reaching this layer (the 8 read
     /// queries already do this — no JSON values in their params).
+    ///
+    /// Implementation note: `QueryBuilder::with_params` borrows the map (`&'a HashMap<String, String>`),
+    /// so the map MUST live until `execute()` is called. Binding to a local before
+    /// constructing the builder (rather than passing inline) is REQUIRED for the
+    /// borrow to outlive the builder chain.
     pub fn query(
         &mut self,
         cypher: &str,
         params: Option<HashMap<String, String>>,
     ) -> anyhow::Result<Vec<Row>> {
-        let mut builder = self.graph.query(cypher);
-        if let Some(p) = params {
-            builder = builder.with_params(p);
-        }
-        let result = builder.execute()?;
+        let result = match params.as_ref() {
+            Some(p) => self.graph.query(cypher).with_params(p).execute()?,
+            None => self.graph.query(cypher).execute()?,
+        };
         Ok(parse_falkor_result(result))
     }
 }
 
 /// Map FalkorDB QueryResult records into Row dicts keyed by column alias.
-/// Header order = record value order. FalkorValue → serde_json::Value:
+/// Header order = record value order. `result.header` is `Vec<String>` (column names
+/// directly — NOT structs with `.name` fields; verified against falkordb 0.2 docs).
+/// FalkorValue → serde_json::Value:
 /// String/I64/F64/Bool/Null map directly; Array/Map recurse; Node/Edge/Path
 /// flatten to {labels|type, properties} maps via their .properties() / .labels().
 fn parse_falkor_result(
-    result: falkordb::QueryResult<falkordb::LazyResultSet<FalkorValue>>,
+    result: falkordb::QueryResult<falkordb::LazyResultSet<'_>>,
 ) -> Vec<Row> {
-    // Implementation: extract .header() column names, iterate .data() records,
-    // zip header names with record values, convert each FalkorValue to serde_json::Value.
-    // ...
+    // Implementation:
+    //   let header: Vec<String> = result.header.clone();   // Vec<String> directly — no .name field
+    //   let mut rows: Vec<Row> = Vec::new();
+    //   for record in result.data {  // record: Vec<FalkorValue>
+    //       let row: Row = header.iter().zip(record.into_iter())
+    //           .map(|(name, val)| (name.clone(), falkor_value_to_json(val)))
+    //           .collect();
+    //       rows.push(row);
+    //   }
+    //   rows
+    // FalkorValue → serde_json::Value conversion: helper fn `falkor_value_to_json`
+    // matches the FalkorValue enum variants and recurses for Array/Map.
 }
 
 /// Graceful-degradation wrapper. Hands out &mut FalkorClient to the closure
@@ -1189,7 +1319,16 @@ Verbatim queries to port (from `crates/gcode/src/neo4j.rs:184-393`):
 7. `get_imports`: `MATCH (f:CodeFile {path: $path, project: $project})-[:IMPORTS]->(m:CodeModule) RETURN m.name AS module_name`
 8. `blast_radius` (built by `blast_radius_query(depth)`): variable-length path with `OPTIONAL MATCH` for file path
 
-**Param marshaling:** every `params` value must be a `String` per the `with_params(HashMap<String, String>)` contract from 7.2. For `find_callers_batch`/`find_callees_batch`, the `$ids` list parameter cannot be passed as a Rust `Vec<String>` directly — interpolate it as a Cypher list literal in the query string instead (e.g., `target.id IN ['id1', 'id2', 'id3']`), or split into N separate single-id queries. Pick one and document the choice.
+**Param marshaling — explicit handling per query:**
+
+The Falkor crate's `with_params(HashMap<String, String>)` only carries string values. Every existing query that uses non-string params must be rewritten to interpolate those values into the Cypher string at the call site (after clamping/validation, since these are query-shape values, not user data — no SQL-injection surface). The exact handling per query:
+
+- **String IDs** (`$id`, `$project`, `$path`, `$ids`): pass through `with_params` as `(name, value.to_string())` entries. For `$ids` lists in `find_callers_batch` and `find_callees_batch`, interpolate as a Cypher list literal in the query string after escaping each id with the existing `_validate_cypher_identifier` style helper (or a new `escape_cypher_string` helper that quotes and backslash-escapes). Example: `target.id IN ['id1', 'id2', 'id3']` constructed via `format!`. Do NOT split into N queries — that defeats the batch-call performance goal.
+- **`$offset` / `$limit`** in `find_callers`, `find_usages`, `find_callers_batch`, `find_callees_batch`: clamp to `[0, MAX_LIMIT]` (use the same constants the Neo4j path uses today), then interpolate directly into the Cypher as `SKIP <n> LIMIT <m>`. Drop the `$offset` / `$limit` Cypher param names entirely.
+- **Blast-radius depth** in `blast_radius_query(depth)`: already interpolated per the existing pattern (clamped 1-5 in `blast_radius_query`). Keep that as-is.
+- **String project/id params**: `with_params` carries them as-is.
+
+After this change, `with_params` is only ever called with string entries (or omitted when there are no string params). Numeric clauses do not flow through param binding at all.
 
 Keep `row_to_graph_result` unchanged (still maps `Row -> GraphResult` with field-precedence fallbacks). The `Row = HashMap<String, serde_json::Value>` type stays.
 
@@ -1321,7 +1460,7 @@ Target: this is operational/manual work, not a code edit. Document the matrix be
 | 6 | `uv run ruff check src/` | Exit 0 |
 | 7 | `cd web && npm run type-check && npm run test && npm run build` | All exit 0 (script names per `web/package.json`: `type-check`, `test`, `build`) |
 | 8 | `gobby setup` end-to-end (clean state) | Wizard completes; FalkorDB installed via Docker; `setup_state.json` shows `falkordb_*` fields populated |
-| 9 | `gobby setup` end-to-end with `[p]` (custom password) | Wizard accepts password; persisted in config_store + bootstrap; `docker compose -f ~/.gobby/services/docker-compose.yml exec falkordb redis-cli -a <pw> PING` returns `PONG` (use `exec` not host-side `-p 16379` so the test cannot be misled by an unrelated host-side Redis on port 16379) |
+| 9 | `gobby setup` end-to-end with `[p]` (custom password) | Wizard accepts password; persisted in config_store + bootstrap; `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <pw> PING` returns `PONG` (use `exec -T` not host-side `-p 16379` so the test cannot be misled by an unrelated host-side Redis on port 16379; `-T` disables TTY allocation so the command works under noninteractive shells / CI / scripts) |
 | 10 | `gobby setup` migration test (pre-existing `neo4j_*` state file) | Wizard rewrites to `falkordb_*` without crashing |
 | 11 | `cargo test -p gobby-code && cargo build --release -p gobby-code` | Exit 0 |
 | 12 | `gcode index .` against a known fixture project, then `gcode callers <known_function>` | Returns expected callers; results match a saved fixture diff |
@@ -1329,10 +1468,11 @@ Target: this is operational/manual work, not a code edit. Document the matrix be
 | 14 | `gcode search "<query>"` with graph-boost enabled | Returns ranked results with graph-boosted entries |
 | 15 | Browser memory page loads, 3D graph renders, dashboard shows "FalkorDB connected" pill | Visual confirmation in browser |
 | 16 | Daemon restart with stale `databases.neo4j.*` keys present in config_store | Logs the warning from 8.2 and deletes the keys |
-| 17 | `gobby uninstall --falkordb` then check `~/.gobby/bootstrap.yaml` | `falkordb_password` key is removed (R5-F1 split-brain fix); `databases.falkordb.*` config_store entries cleared |
-| 18 | **Upgrade path:** seed `~/.gobby/services/docker-compose.yml` with the OLD Neo4j-era template (or use a real existing-install fixture), then run `gobby install`. Verify with `docker compose -f ~/.gobby/services/docker-compose.yml ps` and `docker compose -f ~/.gobby/services/docker-compose.yml exec falkordb redis-cli -a <pw> PING`. | Compose file is refreshed to the FalkorDB template (R6-F1 fix); previously-running Neo4j container is stopped (no orphans); FalkorDB container starts on the `falkordb` profile and reaches healthy state; `redis-cli ... PING` returns `PONG` |
+| 17 | Pre-seed user-tuned values: `INSERT INTO config_store (key, value) VALUES ('databases.falkordb.rrf_k', '80')` (and `graph_min_score`=0.7). Then run `gobby uninstall --falkordb` and check `~/.gobby/bootstrap.yaml` plus `SELECT key FROM config_store WHERE key LIKE 'databases.falkordb.%'`. | `falkordb_password` key is removed from bootstrap (R5-F1 split-brain fix). Connection/auth keys removed: `databases.falkordb.host`, `databases.falkordb.port`, `databases.falkordb.requirepass` (the `auth` secret in `secrets` table also cleared). **Tunables preserved (R7-F3 contract):** `databases.falkordb.rrf_k` still equals `80`, `databases.falkordb.graph_min_score` still equals `0.7` — uninstall does NOT use a blanket `DELETE WHERE key LIKE 'databases.falkordb.%'`. |
+| 18 | **Upgrade path:** seed `~/.gobby/services/docker-compose.yml` with the OLD Neo4j-era template (or use a real existing-install fixture), then run `gobby install`. Verify with `docker compose -f ~/.gobby/services/docker-compose.yml ps` and `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <pw> PING` (the `-T` flag disables TTY allocation so this works under noninteractive subprocess execution — the install path will fail without it). | Compose file is refreshed to the FalkorDB template (R6-F1 fix); previously-running Neo4j container is stopped (no orphans); FalkorDB container starts on the `falkordb` profile and reaches healthy state; `redis-cli ... PING` returns `PONG` |
 | 19 | Set `databases.falkordb.requirepass` to a value via `/api/config` PUT, then GET it back via `/api/config`. Repeat with the `gobby-config` MCP tool (`set_config` then `get_config`). | Both surfaces return the value masked (`********`); raw DB inspection (`sqlite3 ~/.gobby/gobby-hub.db`) shows `$secret:requirepass` in `config_store` and the encrypted value in `secrets` (R6-F2 fix verifies `requirepass` is treated as a secret across both supported surfaces — there is no `gobby config` CLI to test) |
 | 20 | `rg -l 'neo4j\|Neo4j\|NEO4J' src/gobby/ web/src/` (Python repo) AND `rg -l 'neo4j\|Neo4j\|NEO4J' crates/` (run from gobby-cli repo root) | Only intentional refs remain — Python: bootstrap migration helper, storage migration that drops old keys, CHANGELOG; Rust: CHANGELOG only |
+| 21 | **Step-6 failure path** (R11-F2): chmod `~/.gobby/bootstrap.yaml` to read-only after staging the install (or move the parent dir to read-only mid-flight via a test fixture), then run `gobby install --falkordb`. The container is up and `_update_config` succeeds, but `_write_bootstrap_password` fails. | Installer returns `success: False` (NOT `success: True` with a warning) AND the error message names `gobby uninstall --falkordb` as the cleanup verb AND `compose_running: True` is set in the result dict so the wizard/CLI can surface the right operator action. Verifies the installer does not inherit the `bootstrap_ok` warning-on-failure pattern from the live Neo4j installer. |
 
 If any check fails, that branch does not merge. Fix and re-run the full matrix.
 
@@ -1353,7 +1493,7 @@ Sweep with `rg -l Neo4j /Users/josh/Projects/gobby` (excluding source code alrea
 - `CHANGELOG.md` — add a 0.4.0 entry under **"Breaking changes"** with the following content:
   - Lead: "Replaced Neo4j with FalkorDB as the knowledge graph backend. FalkorDB is Docker-only in 0.4.0 (a native local-install path is planned for a follow-up release). The `--neo4j-password` install option and the `--neo4j` uninstall flag have been **removed** (not aliased) and will hard-fail with a migration error pointing to `--falkordb`."
   - Upgrade steps:
-    1. `gobby uninstall --neo4j` is no longer available. Manually stop and remove the Neo4j Docker service: `docker compose --profile neo4j down -v` if previously installed.
+    1. `gobby uninstall --neo4j` is no longer available. Manually stop and remove the Neo4j Docker service: `docker compose -f ~/.gobby/services/docker-compose.yml --profile neo4j down -v` if previously installed (the gobby installer keeps the unified compose file at `~/.gobby/services/docker-compose.yml` — the `-f` flag is required because there is no `docker-compose.yml` in the working directory).
     2. `gobby install` (auto-installs FalkorDB alongside Qdrant) or `gobby install --falkordb` (service-only); pass `--falkordb-password <value>` for a custom password.
     3. Knowledge graph and code graph data are not migrated; re-run `rebuild_knowledge_graph` (MCP tool) for memory and `gcode index <project>` for the code graph.
     4. The `gobby-cli` Rust crate must be upgraded to a matching FalkorDB-era version (`gcode 0.7.0+`) — see the cross-repo validation matrix in Phase 8.
