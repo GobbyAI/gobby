@@ -87,6 +87,8 @@ Use a recursive walker that descends dicts and lists. Be conservative:
 
 **Data rewrite for `inter_session_messages.metadata_json`**: this column stores cross-session pending-message metadata that is keyed for completion-notification dedupe lookups (`src/gobby/storage/inter_session_messages.py:225-227` joins on `$.completion_id | $.run_id | $.execution_id`). Live in-flight rows may carry `metadata_json = {"execution_id": "pe-...", ...}` for completion notifications generated before the upgrade. Walk each row, parse the JSON, and rename any top-level key `execution_id` → `run_id` (preserve the value verbatim — `pe-…` IDs remain opaque legacy values per the constraints). This is the prerequisite for §2.6's SQL OR-branch removal: after the migration, no live row can have only `execution_id` in its metadata, so the lookup can drop the fallback safely.
 
+**Data rewrite for installed `workflow_definitions` prose** (install-time-sync gap fix): bundled-content sync is install-time only (`src/gobby/cli/installers/shared.py`); YAML version bumps in §6.1 don't propagate to existing rows on user restart. Migration 221 updates rows in place. **Bundled-row predicate** (verified against `workflow_definitions.py` + `sync_pipelines.py:138` + `sync_rules.py:124`): `source = 'installed' AND project_id IS NULL AND tags LIKE '%"gobby"%'` — the `source` enum is `installed | agent | project | custom` (no `bundled`); bundled-sync creates rows with `source='installed'`, no project, `gobby` tag in JSON-encoded `tags`. For every matching row, apply §6.1's prose substitutions to JSON string values: `pipeline execution worker` → `pipeline run worker`; `Pipeline Execution Mode` → `Pipeline Run Mode`; `pipeline execution agent` → `pipeline run agent`; `Review completed pipeline executions` → `Review completed pipeline runs`; `Pipeline Execution` heading → `Pipeline Run`; `<name> execution is already running` → `<name> run is already in progress`; `(?i)\bpipeline executions?\b` → `pipeline run(s)`. Walker scoped to predicate so `source='custom'` or non-`gobby`-tagged rows untouched. Validation: seed v220 with a predicate-matching row carrying old prose, migrate, assert `definition_json` matches none of the old patterns above and contains the new noun.
+
 **Registration**: append to the migration list in `_migration_registry.py` after the current head; bump the registry's notion of head to 221.
 
 **Idempotency**: re-running the migration on an already-migrated DB must be a no-op. Guard each ALTER and INDEX op.
@@ -393,40 +395,15 @@ Rename mapping (apply to every gcode/rg hit):
 | `_get_execution_manager` (closure helper) | `_get_run_manager` |
 | `execution_manager_getter` (parameter) | `run_manager_getter` |
 
-**Special-case notes** (non-mechanical context the implementing agent must handle deliberately, on top of the gcode-driven mechanical sweep):
+**Special-case notes** (non-mechanical context — implementing agent runs the gcode sweep first, then attends to these):
 
-**`src/gobby/runner.py`**: line 140 dataclass attribute.
+- **`src/gobby/runner_init.py:709-713`**: heartbeat-construction guard `RuntimeError("pipeline_execution_manager required for heartbeat")` rewrites to `RuntimeError("pipeline_run_manager required for heartbeat")` — message text matters for `tests/test_runner_init.py` assertions.
+- **`src/gobby/hooks/factory.py:484-490`**: hook-side pipeline executor is constructed inside a broad `except Exception` block — silent failure mode on rename mismatch. Verify the construction succeeds in `tests/hooks/test_factory.py` rather than relying on the absence of an exception.
+- **`src/gobby/app_context.py:67`**: attribute carries a comment annotation (`# LocalPipelineExecutionManager`) — update the comment alongside the rename so a future reader doesn't mis-resolve the type.
+- **`src/gobby/mcp_proxy/registries.py:190`**: `execution_manager_getter` is a closure-captured lambda; the renamed `run_manager_getter` must remain a closure over the renamed outer variable. Verify the closure binding.
+- **`src/gobby/communications/reactions.py:117`**: `ReactionHandler` reads `self._services.pipeline_execution_manager` → `pipeline_run_manager`. The renamed `_services` container attribute is owned by the runner-side wiring; this caller is downstream.
 
-**`src/gobby/runner_init.py`** (8 sites): rename runner attribute + downstream kwargs (`execution_manager=` → `run_manager=` for `PipelineExecutor`/`ApprovalManager`/`PipelineHeartbeat`/`ConductorManager`; `pipeline_execution_manager=` → `pipeline_run_manager=` for registry/container). Sites: 535 (init), 629 (`_LPEM` → `_LPRM`), 634 (kwarg), 709-713 (heartbeat guard + RuntimeError + kwarg), 748 (kwarg), 863 (container kwarg). Confirm `ConductorManager(run_manager=...)` via rg.
-
-**`src/gobby/app_context.py`**: line 67 attribute `pipeline_execution_manager: Any | None = None  # LocalPipelineExecutionManager` → `pipeline_run_manager: Any | None = None  # LocalPipelineRunManager`; line 173 local `execution_manager = self.pipeline_execution_manager` → `run_manager = self.pipeline_run_manager` (audit surrounding function for downstream `execution_manager` references).
-
-**`src/gobby/servers/http.py`**: line 176 kwarg `pipeline_execution_manager=services.pipeline_execution_manager` → `pipeline_run_manager=services.pipeline_run_manager` (audit for any other `LocalPipelineExecutionManager` references).
-
-**`src/gobby/mcp_proxy/registries.py`**: line 62 parameter `pipeline_execution_manager: LocalPipelineExecutionManager | None = None` → `pipeline_run_manager: LocalPipelineRunManager | None = None`; line 98 docstring (`Pipeline execution manager for tracking executions` → `Pipeline run manager for tracking runs`); line 190 lambda (`execution_manager_getter=lambda: pipeline_execution_manager` → `run_manager_getter=lambda: pipeline_run_manager`) plus the downstream `execution_manager_getter` consumer in registry-binding code. Audit for any other `execution_manager` references.
-
-**`src/gobby/mcp_proxy/tools/workflows/__init__.py`**: line 71 function `def create_workflows_registry(... execution_manager_getter: Callable[[], Any | None] | None = None, ...)` → `... run_manager_getter: ...`; line 91 docstring (`execution_manager_getter: Callable returning LocalPipelineExecutionManager` → `run_manager_getter: Callable returning LocalPipelineRunManager`); line 648-652 forwarded call `register_pipeline_tools(... execution_manager_getter=execution_manager_getter, ...)` → `register_pipeline_tools(... run_manager_getter=run_manager_getter, ...)`. Update the `__all__` export list (line 66) only if the symbol name itself changes (it doesn't — the function name `create_workflows_registry` is preserved, just the parameter renames).
-
-**`src/gobby/mcp_proxy/tools/workflows/_pipelines.py`** (additional manager-getter targets beyond the prose-rewrite work in §3.2): line 100 import (`from gobby.storage.pipelines import LocalPipelineExecutionManager`) → `LocalPipelineRunManager`; line 103 instantiation (`em = LocalPipelineExecutionManager(db=db, project_id="")`) → `em = LocalPipelineRunManager(...)`; line 111 function `def register_pipeline_tools(... execution_manager_getter: ..., ...)` → `... run_manager_getter: ...`; line 128 docstring (`execution_manager_getter: Callable returning LocalPipelineExecutionManager` → `run_manager_getter: Callable returning LocalPipelineRunManager`); line 136 closure-bound helper `_get_execution_manager = execution_manager_getter or (lambda: None)` → `_get_run_manager = run_manager_getter or (lambda: None)`; lines 275, 340, 355 call sites `em = _get_execution_manager()` → `em = _get_run_manager()`. Audit the rest of the file for any other `_get_execution_manager` references and rename.
-
-**`src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py`**: line 50 `class PipelineExecutionManager(Protocol):` → `class PipelineRunManager(Protocol):`. Update every type annotation that uses this Protocol (lines 79, 154, 164, 318, 334, 533, 546, 604, 611) — both the type reference (`PipelineExecutionManager` → `PipelineRunManager`) and the parameter name (`execution_manager:` → `run_manager:`). Update every docstring mention of `LocalPipelineExecutionManager instance` → `LocalPipelineRunManager instance`. Update every `if not execution_manager:` (lines 170, 346, 617) → `if not run_manager:`. Audit for any other `execution_manager` parameter or local rename per the same pattern.
-
-**`src/gobby/hooks/factory.py`**: lines 484-490 construct a hook-side pipeline executor inside a broad `except Exception` block — silent failure mode on rename mismatch. Rename import (`LocalPipelineExecutionManager` → `LocalPipelineRunManager`), local (`pipeline_mgr = LocalPipelineRunManager(...)`), and `PipelineExecutor(... execution_manager=pipeline_mgr, ...)` kwarg → `run_manager=pipeline_mgr`. Audit lines 43, 77, 101 for `PipelineExecutor` annotations.
-
-**`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`**: lines 472-474 import and construct `LocalPipelineExecutionManager` for agent-run completion-subscriber persistence (restart-recovery path). Rename import + instantiation to `LocalPipelineRunManager`.
-
-**Tests**: `tests/hooks/test_factory.py` and `tests/mcp_proxy/tools/spawn_agent/test_factory.py` (or closest — gcode `search "test_factory"`) update fixtures from `LocalPipelineExecutionManager` to `LocalPipelineRunManager`; assert hook-side executor constructs.
-
-**`src/gobby/communications/reactions.py`**:
-
-- Line 117: `pipelines = self._services.pipeline_execution_manager` → `pipelines = self._services.pipeline_run_manager`. The `_services` container has the renamed attribute per the runner/app_context renames above. Audit `ReactionHandler.handle_*` methods that approve or reject pipeline runs via emoji reactions — those flow into the same manager and may have other `execution_id` / `pipeline_execution_manager` references.
-
-**Tests**:
-
-- `tests/test_app_context.py` (or equivalent service-container test) — assert the renamed attribute and any constructor signatures.
-- `tests/mcp_proxy/test_registries.py` — assert the registry binding receives `pipeline_run_manager` kwarg.
-- `tests/communications/test_reactions.py` — assert the reaction-handler approval flow reads from `_services.pipeline_run_manager`.
-- `tests/test_runner_init.py` (if present) — assert the heartbeat guard raises with the renamed message.
+**Tests**: gcode-driven enumeration extends to `tests/`. Run `gcode search` for each old symbol filtered to `tests/` and update every match. Concrete fixture-bearing modules likely affected: `tests/test_app_context.py`, `tests/mcp_proxy/test_registries.py`, `tests/communications/test_reactions.py`, `tests/test_runner_init.py`, `tests/hooks/test_factory.py`, `tests/mcp_proxy/tools/spawn_agent/test_factory.py`. The reaction-handler approval flow continues to function end-to-end (verify by an integration-shaped reaction → approval → run-state-change test).
 
 `validation_criteria`: **canonical gate** — `gcode search "<symbol>" | jq '.total'` returns 0 for every symbol in the rename mapping table above (`LocalPipelineExecutionManager`, `PipelineExecutionManager`, `pipeline_execution_manager`, `execution_manager`, `_get_execution_manager`, `execution_manager_getter`), and `rg -l "<symbol>" src/gobby/ tests/ web/src/` returns no non-allowlisted matches. Allowlist: `src/gobby/storage/_migration_registry.py`, `src/gobby/storage/migrations/`, `tests/test_pipeline_runs_drift_sweep.py`, `docs/plans/completed/`, plan/task files. Behavioral verifications: reaction-handler approval flow functions (`tests/communications/test_reactions.py`); heartbeat guard raises `pipeline_run_manager required for heartbeat` (runner-init tests); MCP workflow registry forwards `run_manager_getter` end-to-end (`tests/mcp_proxy/test_registries.py` + `tests/mcp_proxy/tools/test_pipelines.py`); hook-side executor constructs with `run_manager=` (`tests/hooks/test_factory.py`); spawn-agent subscriber persistence instantiates `LocalPipelineRunManager` (`tests/mcp_proxy/tools/spawn_agent/test_factory.py`).
 
@@ -600,6 +577,8 @@ Reshape command surface using Click groups. Keep top-level **definition** verbs 
 
 **User-facing prose**: rewrite Click command docstrings (which become CLI help text) and `click.echo()` error strings from "pipeline execution(s)" to "pipeline run(s)". Concrete sites at draft-time (6 matches via `rg -ni "pipeline execution" src/gobby/cli/pipelines.py`): line 349 (`click.echo(f"Pipeline execution failed: {e}", err=True)`), 354 (`"""Get pipeline execution manager instance."""`), 375 (`"""Show status of a pipeline execution.`), 451 (`"""Approve a pipeline execution waiting for approval.`), 489 (`"""Reject a pipeline execution waiting for approval.`), plus one more. Rewrite each.
 
+**Python identifiers in `src/gobby/cli/pipelines.py`** (per the gcode-driven enumeration constraint above): `def get_execution_manager()` (line 353) → `def get_run_manager()`; every `execution_manager` local/parameter → `run_manager`; every `click.argument('execution_id')` → `click.argument('run_id')`; every `click.argument('parent_execution_id')` → `click.argument('parent_run_id')`. JSON response keys emitted by `--json` mode (`{"execution_id": ..., "execution": {...}}`) → `{"run_id": ..., "run": {...}}` to match the HTTP/MCP response shape from §3.1/§3.2. Manager method calls update per §1.3 renames: `get_execution(...)` → `get_run(...)`, `list_executions(...)` → `list_runs(...)`, `search_executions(...)` → `search_runs(...)`, `get_steps_for_execution(...)` → `get_steps_for_run(...)`. Validation: `gcode search "execution_manager"` and `gcode search "execution_id"` filtered to `src/gobby/cli/pipelines.py` return zero results; `tests/cli/test_pipelines.py` (touch only required lines per the 1,239-line ceiling) and `tests/cli/test_pipelines_coverage.py` updated assertions reference `run_id`/`run` JSON keys.
+
 **Output**: human-readable list output should print a footer like `Showing 1–50 of 234 (use --offset 50 for next page)` when `total_count > limit`. JSON mode emits the full pagination dict.
 
 **Backwards compat**: NONE. Old commands (`status`, `list-runs`, `search`, `history`) are removed.
@@ -749,7 +728,7 @@ Files identified by the explore (11 direct refs):
   - `auto-run-pipeline.yaml`: `## Pipeline Execution Mode` → `## Pipeline Run Mode`; `"You are a pipeline execution agent"` → `"You are a pipeline run agent"`.
   - The 6 pipelines that emit `"Skipped: another <name> execution is already running"` (e.g., `orchestrator.yaml:50`): rewrite each to `"Skipped: another <name> run is already in progress"` — the noun changes from `execution` to `run`, and the verb phrase from `is already running` to `is already in progress` to avoid a noun/verb collision (`run is already running` reads awkwardly).
 
-**Bump `version` field on each updated YAML** so the on-startup sync detects drift via hash comparison and the new content takes effect (per CLAUDE.md *Templates vs Active Enforcement* — drift is detected via hash comparison at runtime).
+**Bump `version` field on each updated YAML** so the install-time sync (`gobby install`) detects drift via hash comparison and re-installs the new content. Note: bundled-content sync is install-time only — the daemon does not auto-sync on startup outside dev mode. For existing user upgrades that don't run `gobby install`, the migration 221 prose rewrite in §1.1 covers installed `workflow_definitions` rows directly. Two paths: install-time sync for fresh installs and re-installs; migration 221 for in-place upgrades.
 
 `validation_criteria`: ripgrep across `src/gobby/install/shared/workflows/` for the literals `pipeline_executions`, `step_executions`, `parent_execution_id`, `execution_id`, `output.executions`, `get_pipeline_status`, `list_pipeline_executions`, `search_pipeline_executions` returns zero matches. Each updated YAML has its `version` field bumped. The bundled-content sync test (or manual re-init of `~/.gobby/gobby-hub.db`) confirms updated definitions install cleanly.
 
@@ -838,7 +817,10 @@ FORBIDDEN_SURFACES = [
         ['src/gobby/cli/pipelines.py'],
         [r'\bpipeline_executions\b', r'\bstep_executions\b',
          r'\blist-runs\b', r'\bhistory_pipeline\b',
-         r'(?i)\bpipeline executions?\b'],
+         r'(?i)\bpipeline executions?\b',
+         r'\bexecution_id\b', r'\bparent_execution_id\b',
+         r'\bget_execution_manager\b', r'\bexecution_manager\b',
+         r'\bLocalPipelineExecutionManager\b', r'\bPipelineExecution\b'],
     ),
     (
         'config_prose',
