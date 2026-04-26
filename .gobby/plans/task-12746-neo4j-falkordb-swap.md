@@ -434,6 +434,12 @@ class ResolvedFalkorPassword(NamedTuple):
 2. **Existing config_store secret** at `databases.falkordb.requirepass` (read via `SecretStore` constructed from `gobby_home`); if present, reuse the same value so re-running `gobby install --falkordb` is idempotent and does not lock the user out of an existing data dir → `source='reused'`
 3. **Generated value** — `secrets.token_urlsafe(24)` if neither of the above is set → `source='generated'`
 
+**Charset validation (R25-F1 + R27-F1 — owned executable instructions):** before returning the resolved value, call `validate_falkordb_password(resolved_value)` (defined in `src/gobby/config/persistence.py`, see § 1.1). Import as `from gobby.config.persistence import validate_falkordb_password`. Apply to ALL three precedence branches:
+
+- **Provided** path: a `ValueError` from the validator surfaces as a `click.UsageError` from `install` whose message is the validator's exception text — non-zero exit, stderr, no Docker container started, no config_store / bootstrap writes (verified by inspecting both stores after the failed call). The CLI integration test in `tests/cli/test_cli_install.py` (owned by § 8.1) MUST cover at least one rejected sample (e.g. `gobby install --falkordb-password "has space"` exits 1, prints the "must not contain whitespace" message, leaves config_store unchanged).
+- **Reused** path: by definition the value already passed validation when first persisted (the field_validator on `FalkorConfig.requirepass` ran on the original write), so the call is essentially a defense-in-depth re-check. If it does fail (e.g. a hand-edited DB), abort the install with the same operator-actionable error rather than reusing a now-invalid value.
+- **Generated** path: `secrets.token_urlsafe(24)` produces URL-safe base64 (alphabet `[A-Za-z0-9_-]`), which always passes the validator by construction. The call is a smoke check; add a unit test that generates 100 passwords and asserts every one validates clean (catches a future drift in the generator that drops outside the validator's accepted charset).
+
 `install_falkordb` consumes the structured return verbatim into the result dict per the contract above:
 
 ```python
@@ -1058,6 +1064,13 @@ After the change:
 3. Add a config-MCP-tool test that `call_tool("gobby-config", "get_config", {"key": "databases.falkordb.requirepass"})` masks the value, matching the existing `auth.password` MCP-tool mask behavior. (No `gobby config` CLI exists today — verified via `gobby --help`. The `/api/config` route + the `gobby-config` MCP tools are the only config surfaces in scope.)
 4. If config import/export goes through a separate code path (check `src/gobby/cli/pack.py` or wherever YAML round-tripping lives), add a test that the exported YAML masks or omits the secret value rather than emitting plaintext.
 
+**Pre-persist password validation (R27-F1) — owned executable instructions for routes + MCP:**
+
+Both write surfaces (`/api/config` PUT in `src/gobby/servers/routes/configuration.py` AND `set_config` in `src/gobby/mcp_proxy/tools/config.py`) MUST call `validate_falkordb_password(value)` (imported as `from gobby.config.persistence import validate_falkordb_password`) BEFORE invoking `ConfigStore.set_secret(...)` whenever the key being written is `databases.falkordb.requirepass`. On `ValueError`:
+
+- **Route handler:** return HTTP 422 (Unprocessable Entity) with body `{"detail": "<validator message>", "key": "databases.falkordb.requirepass"}`. Do NOT call `set_secret`. Do NOT include `restart_required` on the failure response (that signal is reserved for successful changes that need a container restart). Add a route-level test that submits each rejected sample from § 1.1's test list (whitespace, tab, newline, control char, non-ASCII), asserts HTTP 422 with the exact validator message, and verifies `SELECT value FROM config_store WHERE key = 'databases.falkordb.requirepass'` is unchanged from its prior value (or absent if never set).
+- **MCP tool:** return the standard `{"success": False, "error": "<validator message>"}` shape that the rest of `mcp_proxy/tools/config.py` uses for input-validation failures. Same pre-persist guarantee: nothing reaches `ConfigStore.set_secret` when validation fails. Add an `mcp_proxy/tools/test_config.py` test mirroring the route-level coverage. (This validation lives at the route + MCP boundary specifically — the FalkorConfig field_validator from § 1.1 also runs on `load_config(...)`, but failing at load time would surface a Pydantic ValidationError with no HTTP shape; the explicit validator call gives the operator a clean 422/MCP-error before any persistence happens.)
+
 **Restart semantics (R13-F2):** updating `databases.falkordb.requirepass` via `/api/config` PUT or `gobby-config set_config` changes the daemon's auth source on the next `load_config(...)`, but the running FalkorDB Docker container is NOT auto-recreated — it continues to authenticate against the previous `--requirepass` value (set when it started). The operator MUST `gobby restart` (or `gobby start` after `gobby stop`) for `_services_start` (3.5) to recreate the container with the new password from `config.databases.falkordb.requirepass`. The route handler and MCP tool MUST surface this in the success response — set `restart_required: true` on the response body and include a human-readable hint like ``Run `gobby restart` for the new FalkorDB password to take effect on the running container.`` Add a route-level test that asserts both fields are present in the response body when the changed key is `databases.falkordb.requirepass`, and a parallel test for the `gobby-config set_config` MCP tool. Validation matrix #22 (8.3) exercises the end-to-end flow.
 
 This task is a **prerequisite for any UI / API change that exposes the FalkorDB password value**. Without it, the new field is exposed as plaintext via every config surface.
@@ -1273,6 +1286,18 @@ if (password) {
   args.push("--falkordb-password", password);
 }
 ```
+
+**Custom-password validation flow (R27-F1) — owned executable instructions for the `[p]` branch:**
+
+When the user picks `[p]` and types a custom password, the wizard MUST mirror the same charset rule that § 1.1's `validate_falkordb_password` enforces (printable ASCII, no whitespace / control / non-ASCII). Implement it as a TS-side guard `validateFalkorPassword(value: string): string | null` (returns the rejection message or null) in `web/src/setup/steps/Services.tsx` (or a sibling `web/src/setup/utils/password.ts` if more than one wizard step ever needs it). On invalid input:
+
+- Stay in the `password` phase. Do NOT advance to `installing`. Do NOT call `runGobby(...)`. Do NOT call `finish(...)`.
+- Render the rejection message inline above the input field so the operator can edit and resubmit without leaving the wizard.
+- Track the failure as wizard state (e.g. `passwordError: string | null`) so the message clears when the operator types a new value.
+
+When the rule does pass, the wizard proceeds to `installing` and runs `runGobby(args)`. If the underlying CLI (§ 3.1) ALSO rejects the value (defense in depth — for instance the operator's environment somehow lets a non-ASCII paste through the TS layer), parse the `validate_falkordb_password` ValueError text from the CLI stderr, transition back to `password` with the same `passwordError` surface, and DO NOT call `finish(...)` or set `falkordb_password_set=true`. The wizard is the operator's primary install path, so a silent "done" on a rejected password is the worst possible UX — keep the user in the loop until either a valid password lands AND the install succeeds, or they explicitly back out via `[n]`.
+
+Add a wizard-level test (in whatever harness `web/src/setup/__tests__/` uses) covering: (a) `[p]` + a whitespace password keeps the user in `password` phase with the message visible, (b) `[p]` + a valid punctuation password proceeds to `installing` and reaches `done` with `falkordb_password_set=true`, (c) the CLI-side rejection path (mocked) bounces back to `password`. The end-to-end manual verification in § 6.4 covers the live wizard run; this test pins the per-component logic so a future refactor cannot regress the silent-success path.
 
 `finish()` writes:
 
