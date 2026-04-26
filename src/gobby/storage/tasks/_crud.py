@@ -7,6 +7,7 @@ Functions take a database protocol instance as their first parameter.
 import json
 import logging
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -15,6 +16,7 @@ from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
+    Isolation,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -37,6 +39,29 @@ _LEGACY_TASK_STATUSES = {
     "closed",
     "escalated",
 }
+
+
+def _normalize_skip_stage_labels(skip_stage_labels: Iterable[str]) -> list[str]:
+    """Return stable, de-duplicated stage labels to add during build cascade."""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw_label in skip_stage_labels:
+        label = raw_label.strip()
+        if not label or label in seen:
+            continue
+        labels.append(label)
+        seen.add(label)
+    return labels
+
+
+def _decode_labels(labels_json: str | None) -> list[str]:
+    """Decode task labels from storage, tolerating legacy nulls."""
+    if not labels_json:
+        return []
+    parsed: object = json.loads(labels_json)
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str)]
 
 
 def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
@@ -296,6 +321,83 @@ def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
     tasks = [Task.from_row(row) for row in rows]
     hydrate_task_blocking_state(db, tasks)
     return tasks
+
+
+def cascade_build_state_to_subtree(
+    db: DatabaseProtocol,
+    epic_id: str,
+    isolation: Isolation | str,
+    yolo: bool,
+    skip_stage_labels: Iterable[str],
+    allow_automation: bool,
+) -> int:
+    """Apply build dispatch state to an epic and every descendant task.
+
+    The cascade intentionally only touches dispatch controls and stage-skip
+    labels. Agent assignment, additional skills, and lifecycle fields remain
+    task-local decisions.
+
+    Returns the number of tasks updated, including the root epic.
+    """
+    normalized_isolation = Isolation(isolation).value
+    labels_to_add = _normalize_skip_stage_labels(skip_stage_labels)
+    now = datetime.now(UTC).isoformat()
+
+    with db.transaction_immediate() as conn:
+        rows = conn.execute(
+            """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id
+                FROM tasks
+                WHERE id = ?
+                UNION ALL
+                SELECT child.id
+                FROM tasks child
+                JOIN subtree parent ON child.parent_task_id = parent.id
+            )
+            SELECT id, labels
+            FROM tasks
+            WHERE id IN (SELECT id FROM subtree)
+            """,
+            (epic_id,),
+        ).fetchall()
+
+        if not rows:
+            raise ValueError(f"Task {epic_id} not found")
+
+        update_params: list[tuple[str, int, int, str, str, str]] = []
+        for row in rows:
+            labels = _decode_labels(cast(str | None, row["labels"]))
+            known_labels = set(labels)
+            for label in labels_to_add:
+                if label not in known_labels:
+                    labels.append(label)
+                    known_labels.add(label)
+            update_params.append(
+                (
+                    json.dumps(labels),
+                    int(allow_automation),
+                    int(yolo),
+                    normalized_isolation,
+                    now,
+                    cast(str, row["id"]),
+                )
+            )
+
+        conn.executemany(
+            """
+            UPDATE tasks
+            SET labels = ?,
+                allow_automation = ?,
+                yolo = ?,
+                isolation = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            update_params,
+        )
+
+    return len(rows)
 
 
 def update_task(

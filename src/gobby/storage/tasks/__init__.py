@@ -22,6 +22,7 @@ from gobby.storage.tasks._artifacts import (
     set_artifact,
     set_artifacts_atomic,
 )
+from gobby.storage.tasks._crud import cascade_build_state_to_subtree
 from gobby.storage.tasks._dispatch_mutex import (
     DispatchMutex,
     TaskDispatchMutexManager,
@@ -79,6 +80,7 @@ __all__ = [
     "validate_category",
     "normalize_priority",
     "order_tasks_hierarchically",
+    "cascade_build_state_to_subtree",
     "get_mutex",
     "acquire_mutex",
     "release_mutex",

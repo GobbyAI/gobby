@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,9 @@ from gobby.storage.tasks._aggregates import (
 )
 from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
+)
+from gobby.storage.tasks._crud import (
+    cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
 from gobby.storage.tasks._crud import (
     create_task as _create_task,
@@ -60,6 +63,7 @@ from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
+    Isolation,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -399,6 +403,26 @@ class LocalTaskManager:
 
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def cascade_build_state_to_subtree(
+        self,
+        epic_id: str,
+        isolation: Isolation | str,
+        yolo: bool,
+        skip_stage_labels: Iterable[str],
+        allow_automation: bool,
+    ) -> int:
+        """Apply build dispatch state to an epic and every descendant task."""
+        updated_count = _cascade_build_state_to_subtree(
+            self.db,
+            epic_id=epic_id,
+            isolation=isolation,
+            yolo=yolo,
+            skip_stage_labels=skip_stage_labels,
+            allow_automation=allow_automation,
+        )
+        self._notify_listeners()
+        return updated_count
 
     def reconcile_task_state(
         self,
