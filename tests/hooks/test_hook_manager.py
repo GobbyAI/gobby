@@ -830,7 +830,7 @@ class TestResolveSessionRefsInToolInput:
         manager._resolve_session_refs_in_tool_input(event)
 
         assert event.data["tool_input"]["arguments"]["session_id"] == "uuid-def-456"
-        assert event.metadata.get("_session_refs_resolved") is True
+        assert "_session_refs_resolved" not in event.metadata
 
     def test_uuid_passthrough_no_rewrite(
         self, manager_with_mocks: HookManager, make_event: Callable
