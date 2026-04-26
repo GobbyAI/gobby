@@ -136,3 +136,32 @@ def test_nested_call_tool_session_ref_creates_modified_input(
         "arguments": {"session_id": "target-session-uuid"},
     }
     assert response.auto_approve is True
+
+
+def test_top_level_set_variable_preserves_session_ref(
+    manager_with_mocks: HookManager,
+) -> None:
+    manager = manager_with_mocks
+    _prepare_manager_for_before_tool(manager)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-external-id",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={
+            "tool_name": "mcp__gobby__set_variable",
+            "tool_input": {
+                "name": "loaded_skills",
+                "value": "brevity",
+                "session_id": "#3",
+            },
+        },
+        machine_id="test-machine",
+    )
+    event.project_id = "proj-1"
+
+    response = manager._handle_internal(event)
+
+    assert event.data["tool_input"]["session_id"] == "#3"
+    assert response.modified_input is None
+    manager._session_manager.resolve_session_reference.assert_not_called()
