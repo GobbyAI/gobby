@@ -933,8 +933,8 @@ with:
 
 ```python
 from gobby.cli.services import get_falkordb_status
+from gobby.config.persistence import is_falkordb_enabled  # R26-F1: required import for the predicate-driven `configured`
 
-falkor_client = getattr(server.memory_manager, "_falkor_client", None)
 falkor_cfg = server.config.databases.falkordb
 status = await get_falkordb_status(
     db=server.services.database,  # MUST be `.services.database`, NOT `.db` — verified live (R12-F2)
@@ -943,13 +943,16 @@ status = await get_falkordb_status(
     password=falkor_cfg.requirepass,  # FalkorConfig field renamed to avoid secret-name collision; see 1.1
 )
 memory_stats["falkordb"] = {
-    # R25-F3: drive `configured` from the config predicate, not the live client. After a
+    # R25-F3 + R26-F1: drive `configured` from the config predicate, not the live client. After a
     # health-check failure § 4.3 nulls `_falkor_client` (via `clear_graph_clients()`), so
     # a `_falkor_client is not None` check would render `{installed: True, healthy: False,
     # configured: False}` — the dashboard pill (5.2) maps that triple to "FalkorDB not
     # configured" / status `unknown`, hiding the real disconnected/unhealthy state from
     # operators. `is_falkordb_enabled(databases)` keys off `requirepass` which survives
     # health-check clears, so `configured` stays True until the operator runs uninstall.
+    # The pre-R25-F3 draft also bound a `falkor_client = getattr(server.memory_manager, "_falkor_client", None)`
+    # local that has been removed (R26-F1) — it was unused after the predicate switch and would
+    # have tripped Ruff F841 (unused variable) at lint time.
     "configured": is_falkordb_enabled(server.config.databases),
     "installed": status["installed"],
     "healthy": status["healthy"],
@@ -965,7 +968,7 @@ The dict key change from `neo4j` → `falkordb` is the load-bearing contract cha
 
 **Tests (R21-F1) — owned by this task:**
 
-- `tests/servers/routes/test_admin.py` (R22-F4 — explicit ownership; this file currently asserts the `memory.neo4j` admin payload). Update the asserted payload key from `memory.neo4j` to `memory.falkordb`; verify the `configured` flag is driven by the `_falkor_client` attribute; verify `installed`/`healthy` come through `get_falkordb_status`. Add the R12-F2 test coverage requirement: a server mock exposing only `services.database` (NOT `db`) so a future regression to `server.db` would be caught.
+- `tests/servers/routes/test_admin.py` (R22-F4 — explicit ownership; this file currently asserts the `memory.neo4j` admin payload). Update the asserted payload key from `memory.neo4j` to `memory.falkordb`. Verify (R26-F1 — corrected from the earlier `_falkor_client`-driven assertion which is the exact behavior R25-F3 removed): `configured` is driven by `is_falkordb_enabled(server.config.databases)` — a payload built when `requirepass` is set returns `configured=True` regardless of `_falkor_client`'s state. Add a focused regression case where `server.memory_manager._falkor_client is None`, `server.memory_manager._kg_service is None` (the post-health-check-failure state from § 4.3.a), `server.config.databases.falkordb.requirepass` is set, `installed=True`, `healthy=False`, AND assert the payload still carries `configured=True` — that's the exact triple that drives `SystemHealthCard` to render disconnected/unhealthy instead of the misleading not-configured/unknown state. Verify `installed` / `healthy` come through `get_falkordb_status`. Add the R12-F2 coverage requirement: a server mock exposing only `services.database` (NOT `db`) so a future regression to `server.db` would be caught.
 - `tests/utils/test_utils_status.py` (R22-F4) — update the daemon-status helpers' Neo4j references to FalkorDB; assert the new `is_falkordb_installed` / `get_falkordb_status` paths are what the status output threads through; cover the installed-but-unconfigured edge case (3.3) so the status output distinguishes that state from "not installed" (the two-tier semantics from § 3.3 are observable here).
 
 This task introduces the `memory.falkordb` payload key (the load-bearing contract for Phase 5's frontend rename) — the test must move with the source.
@@ -1018,7 +1021,7 @@ Two specific edits in `runner_lifecycle.py`:
 
 a. **Health-check failure path:** the periodic FalkorDB health check (currently named for Neo4j; rename per the sweep above) MUST, on unhealthy return, clear BOTH backend reference paths — call `runner.memory_manager.clear_graph_clients()` (the new method added in § 2.1 step 4; it nulls BOTH `_falkor_client` AND `_kg_service` because `KnowledgeGraphService` holds its own client reference per R24-F2 — a code path that just zeroes `_falkor_client` would leave `_kg_service` non-None, allowing memory graph routes and graph-augmented search to keep using a stale wrapper while the status payload claims graph features are disabled) AND call `runner.code_indexer.clear_graph_client()` (the new sync method added in § 2.2 — note `runner.code_indexer` IS the `CodeIndexContext` instance, R24-F1, NOT a wrapper with a `.context` property; using `runner.code_indexer.context.clear_graph_client()` would AttributeError at first health-check tick). This makes `/api/memories/...` and `/api/code-index/...` routes fall back to the "graph unavailable" path simultaneously, matching the user-visible single-backend semantics — partial degradation (memory works, code-index doesn't, or vice versa) is a confusing operator UX and a frequent source of false bug reports.
 b. **Shutdown ordering:** in the runner's shutdown sequence, await `runner.code_indexer.close_graph_client()` (the new async method added in § 2.2 — same `runner.code_indexer` direct attribute, no `.context` indirection per R24-F1) BEFORE calling `LocalDatabase.close()`. The MemoryManager already has its own `close()` plumbing; ensure both close paths fire even if one raises (use `try/except/finally` around the pair so one client's close failure does not strand the other connection open).
-c. **Sync worker reference (R25-F2):** the live `sync_worker_loop` (`src/gobby/code_index/sync_worker.py`) is started with `graph=runner.code_indexer.graph` resolved at startup time and held as a local for the loop's lifetime. Calling `clear_graph_client()` only nulls `CodeIndexContext._graph` — the running loop still owns the stale `CodeGraph` reference and would keep writing to a dead FalkorDB client every pass. Two acceptable resolutions; pick one explicitly in this task: **(c.i, preferred)** change `sync_worker_loop`'s signature to accept `context: CodeIndexContext` (or a `Callable[[], CodeGraph | None]` getter) and re-read `context.graph` at the top of every iteration — naturally tracks `clear_graph_client()` without further coordination; OR **(c.ii)** keep the existing by-value parameter, but on health-check failure cancel and restart the sync worker (await `runner.code_index_sync_task.cancel()`, then re-spawn with the new graph reference once health recovers; this path requires a startup-only health check, NOT a periodic one, since cancel/restart loops are noisy). Pick c.i unless there is a concrete reason not to. Either way, add a regression test that clears the graph client mid-run, marks one file pending, drives a sync tick, and asserts the OLD `CodeGraph` test double's write methods were NOT called after the unhealthy tick.
+c. **Sync worker reference (R25-F2 + R26-F2 — pinned to a single executable approach):** the live `sync_worker_loop` (`src/gobby/code_index/sync_worker.py`) is started with `graph=runner.code_indexer.graph` resolved at startup time and held as a local for the loop's lifetime. Calling `clear_graph_client()` only nulls `CodeIndexContext._graph` — the running loop still owns the stale `CodeGraph` reference and would keep writing to a dead FalkorDB client every pass. **The implementation:** change `sync_worker_loop`'s signature from `graph: CodeGraph` to `context: CodeIndexContext` and re-read `context.graph` at the top of EVERY iteration (binding to a local `graph = context.graph` immediately so the rest of the iteration sees a stable view; if `graph is None` the iteration short-circuits to a sleep-and-continue, leaving any pending sync rows queued for the next healthy state). Update the runner-start callsite that constructs the task to pass `context=runner.code_indexer` instead of `graph=runner.code_indexer.graph`. This naturally tracks `clear_graph_client()` without any additional coordination; the loop's degradation is automatic and matches the route-level "graph unavailable" path simultaneously. Add a regression test that clears the graph client mid-run, marks one file pending, drives a sync tick, and asserts the OLD `CodeGraph` test double's write methods were NOT called after the unhealthy tick. **(Rejected alternative, recorded for context only:** cancel/restart the sync worker on health-failure via `runner.code_index_sync_task.cancel()` plus re-spawn on recovery — rejected because it requires demoting the periodic health-check to startup-only, churns the asyncio task tree on every flap, and produces noisy logs. NOT executable plan content.)
 
 **Tests (R21-F1 + R22-F4 + R23-F2) — owned by this task:**
 
@@ -1044,11 +1047,9 @@ The `requirepass` field name is intentional (chosen in 1.1 to avoid the `passwor
 - The config MCP tools (`get_config`, `set_config` in `mcp_proxy/tools/config.py`) would do the same
 - Config import/export would round-trip the password as plain text in YAML
 
-Two equally valid fixes — pick one and apply consistently:
+**Implementation (R26-F3 — pinned to a single executable approach):** add the literal string `"requirepass"` to the `_SECRET_SUFFIXES` tuple in `src/gobby/storage/config_store.py`. One-line change. Because `is_secret_key_name` checks `last_part.endswith(suffix)` against each entry, this catches `databases.falkordb.requirepass` AND any future `*.requirepass` keys automatically without per-key allowlist maintenance. The plain string `"requirepass"` is unique enough across the existing config namespace (verified — no other dotted key ends in this segment) that the `endswith` match is safe.
 
-**Option A (preferred):** Add `requirepass` to `_SECRET_SUFFIXES`. One-line change in `config_store.py`. Catches any future `*.requirepass` keys automatically.
-
-**Option B:** Add an explicit allowlist for `databases.falkordb.requirepass` in `is_secret_key_name`. More targeted, less risk of false positives, but requires updating the allowlist for each new non-suffix-matching secret.
+**(Rejected alternative, recorded for context only:** an explicit allowlist for `databases.falkordb.requirepass` in `is_secret_key_name` would be more targeted but requires updating the allowlist for every new non-suffix-matching secret, scattering policy across both data and code. NOT executable plan content.)
 
 After the change:
 
