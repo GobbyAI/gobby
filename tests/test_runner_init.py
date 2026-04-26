@@ -125,8 +125,8 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.memory_manager is None
 
-    def test_init_with_memory_sync_manager(self) -> None:
-        """Test MemorySyncManager initialization when enabled."""
+    def test_init_with_memory_sync_manager_does_not_import_jsonl(self) -> None:
+        """Test MemorySyncManager initializes without automatic JSONL import."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
         mock_config.websocket = None
@@ -155,7 +155,33 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.memory_sync_manager == mock_memory_sync_manager
-            mock_memory_sync_manager.import_sync.assert_called_once()
+            mock_memory_sync_manager.import_sync.assert_not_called()
+
+    def test_init_task_sync_manager_does_not_import_jsonl(self) -> None:
+        """Test TaskSyncManager initializes without automatic JSONL import."""
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_config.websocket = None
+        mock_config.session_lifecycle = MagicMock()
+        mock_config.message_tracking = None
+        mock_config.memory_sync = MagicMock()
+        mock_config.memory_sync.enabled = False
+
+        mock_task_sync_manager = MagicMock()
+
+        patches = create_base_patches(mock_config=mock_config)
+        patches = [p for p in patches if "TaskSyncManager" not in str(p)]
+        patches.append(
+            patch("gobby.runner_init.TaskSyncManager", return_value=mock_task_sync_manager)
+        )
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+
+            runner = GobbyRunner()
+
+            assert runner.task_sync_manager == mock_task_sync_manager
+            mock_task_sync_manager.import_from_jsonl.assert_not_called()
 
     def test_init_memory_sync_manager_exception(self) -> None:
         """Test MemorySyncManager initialization exception is handled."""

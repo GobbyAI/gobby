@@ -431,17 +431,9 @@ def init_services(runner: GobbyRunner) -> None:
     # Task Sync Manager
     runner.task_sync_manager = TaskSyncManager(runner.task_manager)
 
-    # Import synced tasks before wiring export listener
-    # (e.g. from git on a new machine with more tasks than local DB)
-    try:
-        runner.task_sync_manager.import_from_jsonl()
-        logger.info("Initial task sync import completed")
-    except Exception as e:
-        logger.warning(f"Task sync import failed: {e}")
-
     # NOTE: Startup export removed to avoid git noise (#10198).
-    # The pre-commit hook exports and stages JSONL files at commit time.
-    # Import above pulls in changes from git; export deferred to commit.
+    # JSONL files are backup/export artifacts. Reads are explicit only via CLI/MCP.
+    # The pre-push hook exports and stages JSONL files before push.
 
     # Initialize Memory Sync Manager (Phase 7) & Wire up listeners
     runner.memory_sync_manager = None
@@ -454,17 +446,9 @@ def init_services(runner: GobbyRunner) -> None:
                     config=runner.config.memory_sync,
                 )
                 # No per-change listener — the file is a backup, not a live mirror.
-                # Export happens at: pre-commit hook, CLI `memory backup`, or explicit sync_export.
-                logger.debug("MemorySyncManager initialized (export on commit/CLI only)")
-
-                # Import synced memories before exporting
-                # (e.g. from git on a new machine with more memories than local DB)
-                try:
-                    imported = runner.memory_sync_manager.import_sync()
-                    if imported > 0:
-                        logger.info(f"Imported {imported} memories from sync file")
-                except (OSError, ValueError) as e:
-                    logger.warning(f"Memory import failed: {e}")
+                # Export happens via pre-push hook, CLI `memory backup`, or explicit sync_export.
+                # Import happens only through explicit restore/import commands.
+                logger.debug("MemorySyncManager initialized (backup/export only)")
 
             except Exception as e:
                 logger.error(f"Failed to initialize MemorySyncManager: {e}")

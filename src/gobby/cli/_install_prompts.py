@@ -390,7 +390,7 @@ def _run_git_hooks_install(
 ) -> None:
     """Run install + echo for Git hooks."""
     click.echo("-" * 40)
-    click.echo("Git Hooks (Task Auto-Sync)")
+    click.echo("Git Hooks (Verification + JSONL Export)")
     click.echo("-" * 40)
 
     result = installer(project_path)
@@ -404,6 +404,10 @@ def _run_git_hooks_install(
         if result.get("skipped"):
             click.echo("Skipped:")
             for hook in result["skipped"]:
+                click.echo(f"  - {hook}")
+        if result.get("removed_legacy_imports"):
+            click.echo("Removed legacy import hooks:")
+            for hook in result["removed_legacy_imports"]:
                 click.echo(f"  - {hook}")
         if not result.get("installed") and not result.get("skipped"):
             click.echo("No hooks to install")

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Removed in 0.2.28: continuous sync machinery (trigger_export, _process_export_queue,
 # stop, shutdown, debounce state). The DB is the source of truth; JSONL export now
-# happens on-demand via pre-commit hook, daemon shutdown, and MCP tools.
+# happens on-demand via pre-push hook, CLI, and MCP tools. JSONL import is explicit.
 
 
 def _parse_timestamp(ts: str) -> datetime:

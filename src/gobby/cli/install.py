@@ -106,7 +106,7 @@ __all__ = [
     "--git-hooks",
     "hooks_flag",
     is_flag=True,
-    help="Install Git hooks for task auto-sync (pre-commit, post-merge, post-checkout)",
+    help="Install Git hooks for verification, JSONL export, and code indexing",
 )
 @click.option(
     "--all",
@@ -172,7 +172,7 @@ def install(
     By default (no flags), installs hooks globally (one-time setup).
     Use --project to install per-project instead (legacy behavior).
     Use --claude, --gemini, --qwen, --codex to install only to specific CLIs.
-    Use --hooks to install Git hooks for task auto-sync.
+    Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
     """
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"

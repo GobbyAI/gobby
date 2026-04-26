@@ -5,8 +5,8 @@ bidirectional sync mechanism - memories are stored in the database via
 MemoryBackendProtocol. This module handles:
 
 - Backup export to .gobby/memories.jsonl for disaster recovery
-- One-time migration import from existing JSONL files
-- On-demand backup via CLI, pre-commit hook, and daemon shutdown
+- Explicit restore/import from existing JSONL files
+- On-demand backup via CLI, pre-push hook, and MCP export
 
 Classes:
     MemoryBackupManager: Main backup manager (formerly MemorySyncManager)
@@ -51,8 +51,8 @@ class MemoryBackupManager:
     This is a backup/export utility, NOT a sync mechanism. Memories are stored
     in the database (via the configured backend) and this class provides:
     - JSONL backup export (to .gobby/memories.jsonl)
-    - One-time migration import from existing JSONL files
-    - On-demand backup via CLI, pre-commit hook, and daemon shutdown
+    - Explicit restore/import from existing JSONL files
+    - On-demand backup via CLI, pre-push hook, and MCP export
 
     For actual memory storage, see gobby.memory.backends.
     """
@@ -142,7 +142,7 @@ class MemoryBackupManager:
         """
         Import memories from filesystem synchronously (blocking).
 
-        Used on startup to restore memories from a synced JSONL file
+        Used by explicit restore/import commands to restore memories from a JSONL file
         (e.g. pulled from git on a new machine) before exporting.
         Only imports if the JSONL file has more entries than the DB.
         """
