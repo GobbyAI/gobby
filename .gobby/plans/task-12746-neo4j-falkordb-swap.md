@@ -183,6 +183,14 @@ The `query()` parser must collapse FalkorDB's response into the same `list[dict[
 
 Do **not** leave `src/gobby/memory/neo4j_client.py` in place; that file is removed in 1.3.
 
+**Tests (R21-F1) — owned by this task:**
+
+- `tests/memory/test_neo4j_client.py` → rename to `tests/memory/test_falkor_client.py`. Rewrite assertions that reach into Neo4j HTTP transport details (auth header shape, /db/<db>/query/v2 endpoint, etc.) to target the FalkorDB redis-asyncio path; preserve coverage of every public method on the FalkorClient surface added here.
+- `tests/memory/test_neo4j_write_methods.py` → rename to `tests/memory/test_falkor_write_methods.py`. Update the asserted Cypher strings to FalkorDB dialect per § 2.1's translation table (e.g. `timestamp()` instead of `datetime()`, `vecf32(...)` instead of `db.create.setNodeVectorProperty`).
+- `tests/memory/test_neo4j_vector_search.py` → rename to `tests/memory/test_falkor_vector_search.py`. Update the vector-index DDL assertions to `CREATE VECTOR INDEX FOR ... OPTIONS {dimension, similarityFunction}` and `db.idx.vector.queryNodes(label, prop, k, vecf32(emb))` (NOT `db.index.vector.queryNodes(idx_name, k, emb)`).
+
+These renames must land in the same PR as `falkor_client.py` itself — leaving the old test files in place would block § 8.3 row #4's `pytest tests/memory/` run with import errors against the deleted `gobby.memory.neo4j_client` module.
+
 ### 1.3 Delete neo4j_client.py and update memory module exports [category: refactor] (depends: 1.2, Phase 2)
 
 Target: `src/gobby/memory/neo4j_client.py` (delete), `src/gobby/memory/__init__.py`
@@ -283,6 +291,14 @@ In `KnowledgeGraphService.__init__`, rename the `neo4j_client` parameter to `fal
 
 The `add_to_graph` method's dynamic multi-label MERGE (≈line 184): `MERGE (n:Capitalize(entity_type):_Entity {entity_key: $key})` — FalkorDB supports multi-label MERGE but the parser is strict about whitespace. Smoke-test against realistic entity-type inputs.
 
+**Tests (R21-F1) — owned by this task:**
+
+- `tests/memory/test_knowledge_graph.py` — update every Cypher-string assertion to FalkorDB dialect; replace `Neo4jClient` fixtures with `FalkorClient` (or a shared fake from `tests/memory/test_falkor_client.py`); update vector-index + secret-name assertions per the § 2.1 translation table.
+- `tests/memory/test_graph_search_integration.py` — update RRF-merge expectations to use FalkorDB graph + Qdrant vector results; rename any `neo4j` fixture identifiers; ensure `is_falkordb_enabled` gating is exercised end-to-end.
+- `tests/memory/test_manager.py`, `tests/memory/test_manager_graph_search.py`, `tests/memory/test_manager_knowledge_graph_wiring.py` — update `MemoryManager.__init__` kwargs from `neo4j_*` to `falkordb_*` (host, port, password, graph_name, graph_search, graph_min_score, rrf_k); replace any `_neo4j_client` attribute checks with `_falkor_client`; update the `runner_init.py` wiring tests to assert the `is_falkordb_enabled(db_cfg)` gate is checked AND that the daemon imports the predicate from `gobby.config.persistence` (R17-F5) rather than redefining locally.
+
+These updates run as part of this task — the `neo4j_*` kwargs and `_neo4j_client` attribute disappear here, so leaving the tests stale would block § 8.3 row #4 immediately.
+
 ### 2.2 Translate CodeGraph Cypher and wire CodeGraph construction at runner_init [category: code] (depends: 1.2, 2.1)
 
 Target: `src/gobby/code_index/graph.py`, `src/gobby/runner_init.py` (where `CodeGraph(neo4j_client=...)` is actually constructed and injected into `CodeIndexContext`), `src/gobby/code_index/context.py` (only for the `CodeGraph | None` typing reference — the context itself does not instantiate the client)
@@ -323,6 +339,12 @@ Schema setup in CodeGraph likely creates indexes/constraints on `CodeSymbol.id`,
 Verify `src/gobby/code_index/sync_worker.py` (the worker that consumes `/api/code-index/invalidate` POSTs from gobby-cli) only goes through `CodeGraph` — it should not hold a separate `Neo4jClient` reference. If it does, swap that too.
 
 The blast-radius variable-length path query interpolates depth into the Cypher (depth clamped to 1-5); FalkorDB supports this pattern.
+
+**Tests (R21-F1) — owned by this task:**
+
+- `tests/code_index/test_graph.py` — update every Cypher-string assertion to FalkorDB dialect; replace `Neo4jClient` fixtures with `FalkorClient`; rename `CodeGraph(neo4j_client=...)` ctor calls to `CodeGraph(falkor_client=...)`; assert the `is_falkordb_enabled(db_cfg)` gate is what the runner_init code path checks (imported from `gobby.config.persistence`, NOT a local helper).
+
+The CodeGraph constructor signature changes here, so the test must move with the source.
 
 ## Phase 3: Python — Installer, Bootstrap, and CLI Flags
 
@@ -488,6 +510,12 @@ In the `volumes:` section at the bottom of the file, remove `gobby_neo4j_data` a
 
 The `neo4j` profile name is replaced by `falkordb`. The `all` profile remains so `docker compose --profile all up -d` brings up everything.
 
+**Tests (R21-F1) — owned by this task:**
+
+- `tests/cli/installers/test_qdrant_installer.py` — update the compose-template assertions that currently reference the `neo4j` service block, the `gobby_neo4j_data` / `gobby_neo4j_logs` volumes, and the `neo4j` profile name. Replace with the new `falkordb` service (image `falkordb/falkordb:latest`, ports `16379:6379` + `13000:3000`, REDIS_ARGS auth, `gobby_falkordb_data` volume, `falkordb` + `all` profiles). Rename or split into a sibling `test_falkordb_installer.py` if the assertions become unwieldy.
+
+The compose template is rewritten here; the test must move with it.
+
 ### 3.3 Replace services.py status helpers with FalkorDB equivalents [category: code] (depends: 1.1)
 
 Target: `src/gobby/cli/services.py`
@@ -543,6 +571,12 @@ async def get_falkordb_status(
 The two-tier model — `installed` from config_store, `healthy` from a live `PING` — gives the admin payload (4.1) and `gobby status` the right granularity: a freshly installed Docker container that has not yet finished starting reads `installed=true, healthy=false` so the operator sees an actionable status; a truly absent install reads `installed=false, healthy=false` and is silently skipped from the status payload.
 
 Update every caller of the old `is_neo4j_*` / `get_neo4j_status` functions in this file and elsewhere (find via `grep -rn 'is_neo4j_\|get_neo4j_status' src/gobby/`). The admin `_health.py` route (covered in Phase 4) is the largest consumer.
+
+**Tests (R21-F1) — owned by this task:**
+
+- `tests/cli/test_services.py` — replace every `is_neo4j_installed`, `is_neo4j_healthy`, `get_neo4j_status` callsite with the FalkorDB equivalents; update the two-tier `installed`/`healthy` semantics assertions (presence of `databases.falkordb.host` + `databases.falkordb.port` in config_store → installed; PING success → healthy).
+
+This task replaces those helpers in source; the test must move with them.
 
 ### 3.4 Rename Neo4j CLI flags to FalkorDB and add service-targeting flag [category: code] (depends: 3.1, 3.3)
 
@@ -612,7 +646,14 @@ The uninstall invoker mirrors the existing `_run_neo4j_uninstall` shape and pass
 
 **Wizard wiring (cross-references Phase 6.2):** the wizard's `Services.tsx` invokes `runGobby(["install", "--falkordb", ...optional --falkordb-password])`. This is the exact reason the `--falkordb` service-targeting flag exists — without it, the wizard would have to either re-run the full installer (re-doing CLI hooks etc.) or shell out to a Python entry point that bypasses Click. Phase 6.2 keeps using the args list shown above; this section guarantees the flag actually exists.
 
-**Cleanup after callsite rename (R20-F2):** once `_run_falkordb_install` / `_run_falkordb_uninstall` are wired and the install/uninstall surface tests pass, DELETE `src/gobby/cli/installers/neo4j.py`. Its only consumers were `install.py` and `_install_prompts.py`, both rewritten in this task; § 3.1's R20-F2 target update removes the `__init__.py` exports so nothing else imports it. Also rename or delete the corresponding tests at `tests/cli/installers/test_neo4j.py` (rename to `test_falkor.py` and adapt fixtures, OR delete if the FalkorDB installer ships its own dedicated test module). Without these deletions, § 4.3's residual `rg` sweep would fail on the still-present Neo4j source AND its tests.
+**Cleanup after callsite rename (R20-F2 + R21-F1):** once `_run_falkordb_install` / `_run_falkordb_uninstall` are wired and the install/uninstall surface tests pass, DELETE `src/gobby/cli/installers/neo4j.py`. Its only consumers were `install.py` and `_install_prompts.py`, both rewritten in this task; § 3.1's R20-F2 target update removes the `__init__.py` exports so nothing else imports it.
+
+**Tests owned by this task (R21-F1):**
+
+- `tests/cli/installers/test_neo4j_installer.py` (NOT `test_neo4j.py` — R21-F1 corrected the prior filename) → rename to `tests/cli/installers/test_falkordb_installer.py`. Update assertions for the new install steps (Docker check, compose refresh + `--profile falkordb up`, `redis-cli -a $PW PING` health check with `-T`, `_update_config` atomicity per R19-F5, `_write_bootstrap_password` step-6 failure semantics per R11-F2 + R20 testing). Cover the three `password_source` paths from R13-F3 (`generated`, `provided`, `reused`).
+- `tests/cli/test_cli_neo4j.py` → rename to `tests/cli/test_cli_falkordb.py`. Update the Click-flag assertions for the new flag surface (`--falkordb`, `--falkordb-password`, `--no-ext-services`, `gobby uninstall --falkordb`). Also assert that the hidden `--neo4j-password` and `--neo4j` flags raise `click.UsageError` with the migration message from § 8.1 (R20-F4 — these literal flag-name strings live in source by design and are allowlisted in § 8.3 row #20).
+
+Without these renames, § 4.3's residual `rg` sweep AND § 8.3 row #4's pytest run both fail on the still-present Neo4j-named test files.
 
 ### 3.5 Rename bootstrap neo4j_password to falkordb_password end-to-end [category: code] (depends: 1.1, 3.1)
 
@@ -847,6 +888,12 @@ Replace the empty-fallback path (line 259) similarly: `memory_stats["falkordb"] 
 
 The dict key change from `neo4j` → `falkordb` is the load-bearing contract change for Phase 5 (frontend).
 
+**Tests (R21-F1) — owned by this task:**
+
+- The admin status route tests (search `tests/servers/routes/` for `_health` or `memory.neo4j` payload assertions; the most likely location is a `test_admin_status.py` or `test_health_routes.py` that exercises `/api/admin/status`). Update the asserted payload key from `memory.neo4j` to `memory.falkordb`; verify the `configured` flag is driven by the `_falkor_client` attribute; verify `installed`/`healthy` come through `get_falkordb_status`. Add the R12-F2 test coverage requirement: a server mock exposing only `services.database` (NOT `db`) so a future regression to `server.db` would be caught.
+
+This task introduces the `memory.falkordb` payload key (the load-bearing contract for Phase 5's frontend rename) — the test must move with the source.
+
 ### 4.2 Rename _neo4j_client references in memory routes [category: refactor] (depends: Phase 2)
 
 Target: `src/gobby/servers/routes/memory.py:277, 301`
@@ -854,6 +901,12 @@ Target: `src/gobby/servers/routes/memory.py:277, 301`
 Find every `getattr(server.memory_manager, "_neo4j_client", None)` and replace with `getattr(server.memory_manager, "_falkor_client", None)`. Also rename any local variable named `neo4j_client` to `falkor_client` in this file. The endpoint paths (`/api/memories/graph/entities`, `/api/memories/graph/entities/{key}/neighbors`) stay the same — frontend continues calling them with no change.
 
 Search broadly for any other `_neo4j_client` references with `grep -rn '_neo4j_client' src/gobby/` and rename all hits.
+
+**Tests (R21-F1) — owned by this task:**
+
+- `tests/servers/routes/test_memory_routes.py` — replace every `_neo4j_client` attribute-access assertion with `_falkor_client`; rename any local fixture variables; the route paths (`/api/memories/graph/entities`, `/api/memories/graph/entities/{key}/neighbors`) stay the same — frontend continues calling them with no change, so test the routes still respond with the new client wired in.
+
+This rename happens here in source; the route test must move with it.
 
 ### 4.3 Sweep daemon-wide for residual Neo4j references [category: refactor] (depends: 1.3, 3.4, 3.5, 4.1, 4.2, Phase 2, 3.3, 3.6)
 
