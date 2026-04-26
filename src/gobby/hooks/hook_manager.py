@@ -40,6 +40,7 @@ from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.session_types import HookSessionManager
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.telemetry.tracing import create_span
+from gobby.utils.session_refs import try_resolve_session_field
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -527,27 +528,12 @@ class HookManager:
 
         Returns True if the field was rewritten.
         """
-        val = d.get(field)
-        if not isinstance(val, str):
-            return False
-
-        ref = val.lstrip("#") if val.startswith("#") else val
-        if not ref.isdigit():
-            return False  # Already a UUID or prefix — no resolution needed
-
-        try:
-            resolved = self._session_manager.resolve_session_reference(val, project_id)
-            if resolved != val:
-                d[field] = resolved
-                return True
-        except ValueError as e:
-            self.logger.debug(f"Could not resolve session ref '{val}': {e}")
-        except Exception as e:
-            self.logger.warning(
-                f"Unexpected error resolving session ref '{val}': {e}", exc_info=True
-            )
-
-        return False
+        return try_resolve_session_field(
+            d,
+            field,
+            session_manager=self._session_manager,
+            project_id=project_id,
+        )
 
     @staticmethod
     def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:
