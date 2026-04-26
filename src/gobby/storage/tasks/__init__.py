@@ -9,6 +9,19 @@ This package provides task management functionality including:
 All public symbols are re-exported for backward compatibility.
 """
 
+from gobby.storage.tasks._artifacts import (
+    ArtifactCheckConstraintError,
+    TaskArtifactConstraintError,
+    TaskArtifactManager,
+    TaskArtifacts,
+    clear_artifact,
+    clear_artifacts,
+    clear_isolation_pair,
+    get_artifacts,
+    increment_expansion_attempts,
+    set_artifact,
+    set_artifacts_atomic,
+)
 from gobby.storage.tasks._dispatch_mutex import (
     DispatchMutex,
     TaskDispatchMutexManager,
@@ -45,10 +58,14 @@ __all__ = [
     "Isolation",
     "DispatchMutex",
     "TaskDispatchMutexManager",
+    "TaskArtifacts",
+    "TaskArtifactManager",
     # Exceptions
     "SeqNumCollisionError",
     "TaskIDCollisionError",
     "TaskNotFoundError",
+    "TaskArtifactConstraintError",
+    "ArtifactCheckConstraintError",
     # Functions
     "generate_task_id",
     "validate_category",
@@ -59,6 +76,13 @@ __all__ = [
     "release_mutex",
     "clear_by_run_id",
     "sweep_expired",
+    "get_artifacts",
+    "set_artifact",
+    "set_artifacts_atomic",
+    "clear_artifact",
+    "clear_artifacts",
+    "clear_isolation_pair",
+    "increment_expansion_attempts",
     # Constants
     "PRIORITY_MAP",
     "VALID_CATEGORIES",

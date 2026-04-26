@@ -1,0 +1,235 @@
+"""Task artifact pointer storage helpers."""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from gobby.storage.database import DatabaseProtocol
+
+_ARTIFACT_FIELDS = frozenset(
+    {
+        "plan_file_path",
+        "worktree_path",
+        "worktree_id",
+        "clone_path",
+        "clone_id",
+        "target_branch",
+        "expansion_run_id",
+        "expansion_attempts",
+        "pr_url",
+        "merge_commit_sha",
+    }
+)
+
+
+class TaskArtifactConstraintError(ValueError):
+    """Raised when artifact state violates an isolation-family invariant."""
+
+    def __init__(self, predicate: str, message: str):
+        self.predicate = predicate
+        super().__init__(message)
+
+
+ArtifactCheckConstraintError = TaskArtifactConstraintError
+
+
+@dataclass(frozen=True)
+class TaskArtifacts:
+    task_id: str
+    plan_file_path: str | None = None
+    worktree_path: str | None = None
+    worktree_id: str | None = None
+    clone_path: str | None = None
+    clone_id: str | None = None
+    target_branch: str | None = None
+    expansion_run_id: str | None = None
+    expansion_attempts: int = 0
+    pr_url: str | None = None
+    merge_commit_sha: str | None = None
+    updated_at: str | None = None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> TaskArtifacts:
+        return cls(
+            task_id=row["task_id"],
+            plan_file_path=row["plan_file_path"],
+            worktree_path=row["worktree_path"],
+            worktree_id=row["worktree_id"],
+            clone_path=row["clone_path"],
+            clone_id=row["clone_id"],
+            target_branch=row["target_branch"],
+            expansion_run_id=row["expansion_run_id"],
+            expansion_attempts=int(row["expansion_attempts"] or 0),
+            pr_url=row["pr_url"],
+            merge_commit_sha=row["merge_commit_sha"],
+            updated_at=row["updated_at"],
+        )
+
+
+def _validate_field_names(fields: set[str]) -> None:
+    unknown = fields - _ARTIFACT_FIELDS
+    if unknown:
+        allowed = ", ".join(sorted(_ARTIFACT_FIELDS))
+        unknown_display = ", ".join(sorted(unknown))
+        raise ValueError(f"Unknown task artifact field(s): {unknown_display}. Allowed: {allowed}.")
+
+
+def _validate_constraints(values: dict[str, Any]) -> None:
+    worktree_path_set = values.get("worktree_path") is not None
+    worktree_id_set = values.get("worktree_id") is not None
+    clone_path_set = values.get("clone_path") is not None
+    clone_id_set = values.get("clone_id") is not None
+
+    if worktree_path_set != worktree_id_set:
+        raise TaskArtifactConstraintError(
+            "worktree_pair",
+            "worktree_path and worktree_id must be set or cleared together",
+        )
+    if clone_path_set != clone_id_set:
+        raise TaskArtifactConstraintError(
+            "clone_pair",
+            "clone_path and clone_id must be set or cleared together",
+        )
+    if worktree_path_set and clone_path_set:
+        raise TaskArtifactConstraintError(
+            "isolation_family_xor",
+            "worktree and clone artifact families are mutually exclusive",
+        )
+
+
+class TaskArtifactManager:
+    """CRUD wrapper for sparse task artifact pointers."""
+
+    def __init__(self, db: DatabaseProtocol):
+        self.db = db
+        self._ensure_table()
+
+    def _ensure_table(self) -> None:
+        """Create the table for focused tests before the canonical migration lands."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_artifacts (
+                    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                    plan_file_path TEXT,
+                    worktree_path TEXT,
+                    worktree_id TEXT,
+                    clone_path TEXT,
+                    clone_id TEXT,
+                    target_branch TEXT,
+                    expansion_run_id TEXT,
+                    expansion_attempts INTEGER NOT NULL DEFAULT 0,
+                    pr_url TEXT,
+                    merge_commit_sha TEXT,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CHECK (
+                        (worktree_path IS NULL) = (worktree_id IS NULL)
+                        AND (clone_path IS NULL) = (clone_id IS NULL)
+                        AND (worktree_path IS NULL OR clone_path IS NULL)
+                    )
+                )
+                """
+            )
+
+    def get_artifacts(self, task_id: str) -> TaskArtifacts:
+        row = self.db.fetchone("SELECT * FROM task_artifacts WHERE task_id = ?", (task_id,))
+        if row is None:
+            return TaskArtifacts(task_id=task_id)
+        return TaskArtifacts.from_row(row)
+
+    def set_artifact(self, task_id: str, field: str, value: str | int | None) -> TaskArtifacts:
+        return self.set_artifacts_atomic(task_id, **{field: value})
+
+    def set_artifacts_atomic(self, task_id: str, **fields: str | int | None) -> TaskArtifacts:
+        _validate_field_names(set(fields))
+        current = asdict(self.get_artifacts(task_id))
+        next_values = {
+            field: current[field] for field in _ARTIFACT_FIELDS if field != "expansion_attempts"
+        }
+        next_values["expansion_attempts"] = int(current["expansion_attempts"] or 0)
+        next_values.update(fields)
+        if next_values["expansion_attempts"] is None:
+            next_values["expansion_attempts"] = 0
+        next_values["expansion_attempts"] = int(next_values["expansion_attempts"])
+        _validate_constraints(next_values)
+
+        columns = sorted(_ARTIFACT_FIELDS)
+        placeholders = ", ".join("?" for _ in columns)
+        update_clause = ", ".join(f"{column} = excluded.{column}" for column in columns)
+        params = [task_id, *(next_values[column] for column in columns)]
+
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO task_artifacts (
+                    task_id, {", ".join(columns)}, updated_at
+                )
+                VALUES (?, {placeholders}, CURRENT_TIMESTAMP)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    {update_clause},
+                    updated_at = CURRENT_TIMESTAMP
+                """,  # nosec B608 - columns are validated static allowlist values.
+                tuple(params),
+            )
+        return self.get_artifacts(task_id)
+
+    def clear_artifact(self, task_id: str, field: str) -> TaskArtifacts:
+        _validate_field_names({field})
+        return self.set_artifacts_atomic(task_id, **{field: None})
+
+    def clear_artifacts(self, task_id: str) -> bool:
+        with self.db.transaction() as conn:
+            cursor = conn.execute("DELETE FROM task_artifacts WHERE task_id = ?", (task_id,))
+            return cursor.rowcount > 0
+
+    def clear_isolation_pair(self, task_id: str, family: str) -> TaskArtifacts:
+        if family == "worktree":
+            return self.set_artifacts_atomic(task_id, worktree_path=None, worktree_id=None)
+        if family == "clone":
+            return self.set_artifacts_atomic(task_id, clone_path=None, clone_id=None)
+        raise ValueError("family must be 'worktree' or 'clone'")
+
+    def increment_expansion_attempts(self, task_id: str) -> int:
+        current = self.get_artifacts(task_id)
+        next_attempts = current.expansion_attempts + 1
+        self.set_artifacts_atomic(task_id, expansion_attempts=next_attempts)
+        return next_attempts
+
+
+def get_artifacts(db: DatabaseProtocol, task_id: str) -> TaskArtifacts:
+    return TaskArtifactManager(db).get_artifacts(task_id)
+
+
+def set_artifact(
+    db: DatabaseProtocol,
+    task_id: str,
+    field: str,
+    value: str | int | None,
+) -> TaskArtifacts:
+    return TaskArtifactManager(db).set_artifact(task_id, field, value)
+
+
+def set_artifacts_atomic(
+    db: DatabaseProtocol,
+    task_id: str,
+    **fields: str | int | None,
+) -> TaskArtifacts:
+    return TaskArtifactManager(db).set_artifacts_atomic(task_id, **fields)
+
+
+def clear_artifact(db: DatabaseProtocol, task_id: str, field: str) -> TaskArtifacts:
+    return TaskArtifactManager(db).clear_artifact(task_id, field)
+
+
+def clear_artifacts(db: DatabaseProtocol, task_id: str) -> bool:
+    return TaskArtifactManager(db).clear_artifacts(task_id)
+
+
+def clear_isolation_pair(db: DatabaseProtocol, task_id: str, family: str) -> TaskArtifacts:
+    return TaskArtifactManager(db).clear_isolation_pair(task_id, family)
+
+
+def increment_expansion_attempts(db: DatabaseProtocol, task_id: str) -> int:
+    return TaskArtifactManager(db).increment_expansion_attempts(task_id)
