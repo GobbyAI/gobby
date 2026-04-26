@@ -25,13 +25,39 @@ instructions: |
   requested test architecture artifact. Focus on risks, coverage, and the test
   strategy needed to guide downstream implementation and QA.
 
-  When the artifact is ready for review, call mark_task_needs_review on the
-  assigned stage task. If the necessary context is missing, escalate the stage task.
+  Write structured prose only under this exact section shape:
+
+  ## Test Architecture
+
+  ### Integration
+  - **§<plan-section>**: <what to verify>
+
+  ### E2E
+  - **§<plan-section>**: <full-flow scenario>
+
+  ### Regression
+  - **§<plan-section>**: <bug class to defend against>
+
+  ### Contract / Cross-Surface
+  - **§<plan-section>**: <surfaces that must agree>
+
+  ### Test Infrastructure
+  - **<infra need>**: <new fixture, helper module, harness>
+
+  Do NOT write `### N.N` task sections. Only Test Infrastructure items become
+  [category: test] leaves during later expansion. If unit tests are enough, write:
+
+  ## Test Architecture
+
+  Unit tests sufficient - no additional test types recommended.
+
+  When the artifact is ready, self-approve the assigned stage task with
+  mark_task_review_approved. If the necessary context is missing, escalate the stage task.
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
-  - Do NOT call mark_task_review_approved or mark_task_review_rejected.
+  - Do NOT call mark_task_review_rejected.
   - Do NOT spawn other agents.
   - Do NOT terminate without calling kill_agent.
   - Always use `uv run` for Python commands.
@@ -76,20 +102,19 @@ steps:
     description: "Draft the test architecture artifact"
     status_message: |
       Write the requested test architecture artifact. When ready, submit the
-      stage task for review with mark_task_needs_review. If blocked on missing
+      stage task with mark_task_review_approved. If blocked on missing
       context, escalate the stage task.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
-      - "gobby-tasks:mark_task_review_approved"
       - "gobby-tasks:mark_task_review_rejected"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
       - server: gobby-tasks
-        tool: mark_task_needs_review
+        tool: mark_task_review_approved
         action: set_variable
         variable: handoff_ready
         value: true

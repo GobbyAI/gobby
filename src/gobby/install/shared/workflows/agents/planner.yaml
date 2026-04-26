@@ -39,8 +39,11 @@ instructions: |
   - If the requirements are still insufficient, do not guess. Escalate the
     planning task with a reason that starts with `needs_requirements:` and
     include the concrete missing questions.
-  - When the plan is ready for review, call `mark_task_needs_review` on the
-    planning task and mention the plan artifact path in your review notes.
+  - When the plan is ready for review, first check whether the planning task
+    has the `planning-current-verdict:rejected` label. If present, call
+    remove_label to clear that label before resubmitting. Then call
+    `mark_task_needs_review` on the planning task and mention the plan artifact
+    path in your review notes.
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.

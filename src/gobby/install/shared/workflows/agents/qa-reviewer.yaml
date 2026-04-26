@@ -15,7 +15,9 @@ instructions: |
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
   2. REVIEW: Check diff, verify tests, check code quality
   3. DECIDE:
-     - APPROVE: Call mark_task_review_approved if code is good
+     - APPROVE: Call mark_task_review_approved if code is good, then call
+       close_task with reason="qa_approved" and the developer commit_sha from
+       the worktree task context
      - ESCALATE: Call escalate_task with detailed reason if significant issues remain
        after your review (Fix minor issues yourself — commit fixes before approving)
   4. TERMINATE: Call kill_agent to shut down
@@ -30,7 +32,7 @@ instructions: |
   Human triage can later de_escalate the task to the appropriate next lifecycle stage.
 
   CRITICAL RULES:
-  - Do NOT call close_task — blocked by workflow. Approve or escalate only.
+  - After approval, close the task with close_task(reason="qa_approved", commit_sha=<developer commit sha>).
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — the merge agent handles pushing.
   - Approval or escalation must happen before the workflow may end the turn and terminate.
@@ -81,11 +83,10 @@ steps:
       1. Check diff: git diff, git log
       2. Run tests: uv run pytest <test_file> -v
       3. Fix minor issues if needed, commit fixes
-      4. APPROVE: call mark_task_review_approved
+      4. APPROVE: call mark_task_review_approved, then close_task with reason="qa_approved" and commit_sha
       5. ESCALATE (significant issues): call escalate_task with detailed reason
     allowed_tools: "all"
     blocked_mcp_tools:
-      - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
@@ -93,6 +94,11 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: mark_task_review_approved
+        action: set_variable
+        variable: review_approved
+        value: true
+      - server: gobby-tasks
+        tool: close_task
         action: set_variable
         variable: review_complete
         value: true
