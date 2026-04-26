@@ -5,6 +5,8 @@ from typing import Any, cast
 
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
+from gobby.utils.project_context import get_project_context
+from gobby.utils.session_refs import try_resolve_session_field
 
 from .schema_guidance import build_invalid_arguments_response
 from .tool_proxy_utils import safe_truncate
@@ -159,6 +161,22 @@ async def call_tool(
             error_message=error.get("error"),
         )
     arguments = cast("dict[str, Any]", prepared_arguments or {})
+
+    hook_manager = service._resolve_hook_manager()
+    session_manager = getattr(hook_manager, "_session_manager", None) if hook_manager else None
+    project_ctx = get_project_context()
+    project_id = project_ctx.get("id") if project_ctx else None
+    if not isinstance(project_id, str):
+        project_id = None
+    if project_id is None:
+        manager_project_id = getattr(getattr(service, "_mcp_manager", None), "project_id", None)
+        project_id = manager_project_id if isinstance(manager_project_id, str) else None
+    try_resolve_session_field(
+        arguments,
+        "session_id",
+        session_manager=session_manager,
+        project_id=project_id,
+    )
 
     if service._is_proxy_namespace(server_name):
         resolved = service._resolve_server_for_tool(tool_name)

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import mcp_proxy
 
 pytestmark = pytest.mark.unit
@@ -26,14 +27,29 @@ def _make_session_manager() -> MagicMock:
     return session_manager
 
 
-def _make_server() -> MagicMock:
+def _make_server() -> tuple[MagicMock, MagicMock]:
+    session_manager = _make_session_manager()
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = None
+    mcp_manager.call_tool = AsyncMock(return_value={"success": True, "ok": True})
+
+    internal_manager = MagicMock()
+    internal_manager.is_internal.return_value = False
+
+    hook_manager = SimpleNamespace(_session_manager=session_manager)
+
     server = MagicMock()
-    server.session_manager = _make_session_manager()
-    server.tool_proxy = MagicMock()
-    server.tool_proxy.call_tool = AsyncMock(return_value={"success": True, "ok": True})
+    server.session_manager = session_manager
+    server.tool_proxy = ToolProxyService(
+        mcp_manager=mcp_manager,
+        internal_manager=internal_manager,
+        validate_arguments=False,
+        hook_manager_resolver=lambda: hook_manager,
+    )
+    server.tool_proxy._emit_synthetic_after_tool = AsyncMock()
     server._internal_manager = None
     server.mcp_manager = None
-    return server
+    return server, mcp_manager
 
 
 def _make_stdio_request() -> MagicMock:
@@ -48,13 +64,13 @@ def _make_stdio_request() -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_stdio_rest_path_resolves_arguments_session_id_before_dispatch() -> None:
-    server = _make_server()
+    server, mcp_manager = _make_server()
     request = _make_stdio_request()
 
     await mcp_proxy("gobby-sessions", "get_session", request, server)
 
-    server.session_manager.resolve_session_reference.assert_called_once_with("#3", "proj-1")
-    server.tool_proxy.call_tool.assert_awaited_once_with(
+    server.session_manager.resolve_session_reference.assert_any_call("#3", "proj-1")
+    mcp_manager.call_tool.assert_awaited_once_with(
         "gobby-sessions",
         "get_session",
         {"session_id": SESSION_UUID_3},
