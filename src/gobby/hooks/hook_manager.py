@@ -410,13 +410,6 @@ class HookManager:
             response.modified_input = event.metadata.pop("_modified_input")
             response.auto_approve = event.metadata.pop("_auto_approve", False)
 
-        # If we resolved #N session refs but no rule/coercion set _modified_input,
-        # create one so Claude Code sends UUIDs to the MCP server
-        if event.metadata.pop("_session_refs_resolved", False):
-            if not response.modified_input:
-                response.modified_input = event.data.get("tool_input", {})
-                response.auto_approve = True
-
         raw_tool_input = event.metadata.get("raw_tool_input")
         if isinstance(raw_tool_input, dict):
             response.metadata.setdefault("_raw_tool_input", copy.deepcopy(raw_tool_input))
