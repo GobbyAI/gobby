@@ -1156,16 +1156,22 @@ gobby skills meta NAME --get KEY
 
 ---
 
-## Orchestration Entry Points
+## Dispatch Entry Points
 
-Current orchestration is driven through pipelines and optional scheduled ticks,
-not a separate `gobby conductor` command group.
+Current task automation starts with `gobby build`, which writes dispatch state
+onto a plan, epic, or leaf task and kicks the state-driven dispatcher.
 
 Use:
 
-- `gobby pipelines run ...` for one-shot orchestration runs
-- `gobby cron ...` to schedule recurring orchestration ticks
+- `gobby build <plan_file>` to create and automate a planning epic from a plan
+- `gobby build <#taskref>` to opt an existing epic or leaf into automation
+- `gobby build --profile quick|review|full|full-yolo|auto ...` to use a
+  build-time preset
+- `gobby pipelines run ...` for deterministic sequences outside task dispatch
 - `gobby agents ...` for direct worker management when needed
+
+The old conductor command surface is retired. Any remaining references to it in
+templates should be treated as tombstone or migration context.
 
 ---
 

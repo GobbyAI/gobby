@@ -1,165 +1,159 @@
 # Orchestration
 
-Current Gobby orchestration is **pipeline-based**. There is no separate
-orchestration server in the live daemon. Multi-agent flows are built by
-composing pipelines, task state, agent runtime, isolation managers, and
-completion events.
+Current Gobby orchestration is **state-driven dispatch**. Task automation is
+driven by task lifecycle, explicit build state, deterministic rules, and
+bounded agent spawning.
 
-This guide describes the current model.
+Pipelines still exist for deterministic sequences and approval gates. They are
+not the main task-dispatch loop.
 
-## The Current Stack
+## Current Stack
 
-Orchestration spans several MCP servers:
-
-| Server | Role in orchestration |
+| Component | Role |
 | --- | --- |
-| `gobby-workflows` | Run pipelines, inspect executions, wait for completion, evaluate helper expressions |
-| `gobby-tasks` | Find ready work, claim/review/close tasks, inspect dependency state |
-| `gobby-agents` | Spawn workers, dispatch batches, inspect runs, message or command descendants |
-| `gobby-worktrees` | Create and manage worktree isolation |
-| `gobby-clones` | Create and manage clone isolation |
-| `gobby-merge` | Resolve merge conflicts in landing flows |
+| `src/gobby/dispatch/rules.py` | Ordered lifecycle rules that decide the next action for a task |
+| `src/gobby/dispatch/dispatcher.py` | Heartbeat scanner that evaluates rules and executes actions |
+| `gobby-tasks` | Task lifecycle, dependencies, readiness, claims, review, close, and escalation |
+| `gobby-tasks-ops` | Build, expansion-run, artifact, audit-marker, and affected-file helper tools |
+| `gobby-agents` | Worker spawning, runtime inspection, messaging, and commands |
+| `gobby-worktrees` / `gobby-clones` | Isolation setup, sync, merge, and cleanup |
+| `gobby-merge` | Conflict-resolution flows used at the merge boundary |
 
-That is the control plane today.
+## Dispatch Model
 
-## Canonical Orchestration Model
+The dispatcher scans tasks that have `allow_automation=true`, then evaluates
+ordered rules over:
 
-The bundled `orchestrator` and `dev-orchestrator` pipelines are the reference
-patterns:
+- lifecycle stage
+- task status
+- labels, including `stage-:<name>` skip labels
+- `yolo`
+- `isolation`
+- `assigned_agent` and `additional_skills`
+- artifact state in `task_artifacts`
+- dependency and claim state
 
-1. Scan task state.
-2. Determine whether the target is a standalone task or an epic tree.
-3. Resolve or create isolation for the orchestration target.
-4. Count currently active claims.
-5. Suggest ready work.
-6. Dispatch developer or reviewer agents.
-7. Exit.
+Rules return explicit actions such as spawn an agent, start expansion, create
+worktree/clone isolation, advance lifecycle, append an audit marker, or
+escalate. The dispatcher does not make model calls. Reasoning happens in the
+spawned agent for that stage.
 
-The loop itself is **tick-based**, not an infinite in-process agent loop. A
-cron trigger or outer caller re-runs the pipeline on a schedule.
+## Adding A Rule
 
-## Bundled Building Blocks
+Rules live in `src/gobby/dispatch/rules.py`.
 
-### Pipelines
+1. Add a focused predicate for one lifecycle stage or recovery case.
+2. Read task state and artifacts through existing helpers.
+3. Return a typed action, or `None` when the rule does not apply.
+4. Register the rule in the ordered list near related lifecycle rules.
+5. Add tests for the rule and for any lifecycle/storage transition it depends on.
 
-Current bundled orchestration pipelines include:
+Rule ordering matters. Earlier rules should handle gates and recovery paths;
+later rules should do the side-effecting dispatch once prerequisites are true.
 
-- `orchestrator`
-- `dev-orchestrator`
+## Build Entry Points
 
-Both live under `src/gobby/install/shared/workflows/pipelines/`.
+`gobby build` is the operator surface that turns a plan, epic, or leaf task into
+dispatchable state.
 
-### Agent Definitions
+All entry points call the same shared service in `src/gobby/build/service.py`:
 
-Common orchestration-facing agent definitions include:
+| Surface | Entry point |
+| --- | --- |
+| CLI | `gobby build <plan_file>` or `gobby build <#taskref>` |
+| MCP | `gobby-tasks-ops:build_task` |
+| HTTP | `POST /api/build` |
 
-- `developer`
-- `qa-reviewer`
-- `merge`
-- `conductor`
+The shared service resolves profiles and flags into stored state, returns a
+`BuildResult`, and kicks an immediate dispatcher tick.
 
-The `conductor` definition is a persona for orchestration decisions. It is not
-a standalone orchestration server or a separate command surface.
+## Build State
+
+| Field | Meaning |
+| --- | --- |
+| `allow_automation` | Opt-in gate. Tasks without it are ignored by dispatch. |
+| `yolo` | Deterministic fallback mode. Rules avoid escalation where a defined fallback exists. |
+| `isolation` | `none`, `worktree`, or `clone`. Epic isolation is created before leaf dispatch. |
+| `stage-:<name>` labels | Stage skips. Profiles resolve to labels at build time. |
+| `assigned_agent` | Leaf agent selected by expansion or `gobby build --agent`. |
+| `additional_skills` | Extra skills included when dispatching the leaf agent. |
+
+Profiles such as `quick`, `review`, `full`, and `full-yolo` are build-time
+sugar. The dispatcher reads resolved task fields and labels, not profile names.
+
+## Dispatch Tables
+
+### `task_dispatch_mutex`
+
+Per-task lease table for side-effecting dispatch actions. The dispatcher
+acquires a lease before acting, releases it after the action, sweeps expired
+leases on startup, and uses force-release only for operator recovery.
+
+Normal access pattern: `acquire_mutex(...)` -> execute one action ->
+`release_mutex(...)`.
+
+### `task_artifacts`
+
+Sparse pointer table for plan paths, target branch, isolation artifacts,
+expansion runs, PR URL, and future merge SHA. Most tasks have no row.
+
+Write related fields atomically. Worktree and clone artifacts must be written
+and cleared as path/ID pairs.
+
+### `task_lifecycle_events`
+
+Append-only lifecycle audit. Lifecycle transition helpers write rows with
+`from_state`, `to_state`, `reason`, and `by_actor`. Readers use this table for
+history, diagnostics, and UI timelines.
+
+## Agent Slot Cap
+
+The dispatcher enforces the global `max_active_agents` cap from build config
+(default 10). When the cap is full, the candidate waits for the next heartbeat.
+There is no separate persistent queue; task state is the queue.
 
 ## Typical Flow
 
-Here is the current orchestration shape in practical terms:
-
 ```text
-run_pipeline(orchestrator)
-  -> gobby-tasks:list_tasks / list_ready_tasks / suggest_next_task
-  -> gobby-worktrees or gobby-clones: get/create isolation
-  -> gobby-agents:dispatch_batch or spawn_agent
-  -> worker claims task and runs its step workflow
-  -> parent waits on completion events or checks task state next tick
-  -> review/merge work happens through task state + merge tooling
+gobby build <plan-or-task>
+  -> write allow_automation/yolo/isolation/stage labels/artifacts
+  -> record initial task_lifecycle_events row
+  -> kick dispatcher tick
+dispatcher tick
+  -> scan opted-in tasks
+  -> evaluate src/gobby/dispatch/rules.py in order
+  -> acquire task_dispatch_mutex
+  -> execute one action
+  -> release mutex
+spawned agent
+  -> claims/reviews/closes/escalates through task lifecycle tools
+next tick
+  -> re-evaluate task state and continue
 ```
 
-## Isolation Strategy
+## Retired Templates
 
-Orchestration chooses an isolation mode per flow:
+The legacy LLM-driven conductor tick and overlapping orchestration pipelines
+are retired. Their bundled templates remain in place as disabled tombstones so
+sync preserves installed DB rows:
 
-| Isolation | When it fits |
-| --- | --- |
-| `worktree` | Default isolated development inside the same repo |
-| `clone` | Full isolation when a separate clone is safer or required |
-| `none` | Review, merge, or read-only helper work |
+- `orchestrator.yaml`
+- `front-half-orchestrator.yaml`
+- `dev-orchestrator.yaml`
+- `delivery-orchestrator.yaml`
+- `conductor.yaml`
 
-The orchestrator resolves existing isolation first and only creates a new
-worktree or clone when needed.
+Tombstoned templates should have `enabled: false`, `deprecated: true`, a
+`deprecated_reason`, and no active steps.
 
-## Dispatch Patterns
+## PR And Merge Boundary
 
-### Single Worker
-
-Use `gobby-agents:spawn_agent` when a pipeline is handing off one bounded job.
-
-### Batch Dispatch
-
-Use `gobby-agents:dispatch_batch` when `suggest_next_task` or a similar task
-selection flow returns multiple non-conflicting pieces of work.
-
-### Current Session Persona
-
-Use `gobby-agents:apply_persona` when the caller should behave like an
-orchestrator or worker without spawning another child session.
-
-## Completion And Coordination
-
-There are two main coordination mechanisms:
-
-### Completion Events
-
-Pipelines and parents use completion IDs to block or resume:
-
-- `gobby-workflows:wait_for_completion`
-- pipeline `wait` steps
-
-This is how orchestration waits on child agents or nested pipelines.
-
-### Inter-Agent Messaging
-
-For richer parent/child coordination, use `gobby-agents` messaging tools:
-
-- `send_message`
-- `send_command`
-- `activate_command`
-- `complete_command`
-- `deliver_pending_messages`
-- `wait_for_command`
-
-Messaging is useful when a parent needs to redirect or constrain a descendant
-without baking every branch into pipeline YAML.
-
-## Task-Centric View
-
-A good mental model is that orchestration is mostly task-state management plus
-dispatch:
-
-- `list_ready_tasks` finds work that is unblocked.
-- `suggest_next_task` prioritizes among ready tasks.
-- worker agents claim tasks themselves via `claim_task`.
-- review and merge phases are represented through task statuses such as
-  `needs_review`, `review_approved`, and `escalated`.
-
-That keeps orchestration declarative: the pipeline reacts to task state instead
-of storing a second shadow scheduler.
-
-## Recommended Entry Points
-
-Use one of these depending on what you are building:
-
-- `gobby-workflows:run_pipeline` for orchestration runs
-- `gobby-cron` or `gobby cron ...` to trigger orchestration on a schedule
-- `gobby-agents:spawn_agent` or `dispatch_batch` for worker dispatch
-- `gobby-workflows:wait_for_completion` for blocking callers
-
-If you find yourself looking for a dedicated orchestration server or older
-one-shot orchestration tools, you are reading an older design. The current
-system does that work in pipelines and shared MCP servers instead.
+Task #12728 owns real PR creation and richer merge/conflict automation. Current
+dispatch can reach the PR/merge lifecycle boundary and use existing merge tools,
+but PR authoring and complete conflict-resolution policy are follow-up work.
 
 ## Related Guides
 
-- [Pipelines](./pipelines.md) for execution semantics
+- [Pipelines](./pipelines.md) for deterministic sequence execution
 - [Agents](./agents.md) for worker definitions and messaging
 - [MCP Tools](./mcp-tools.md) for the current server/tool surface

@@ -84,6 +84,9 @@ uv run gobby pipelines status <id>     # Check execution status
 uv run gobby pipelines approve <token> # Approve waiting pipeline
 uv run gobby pipelines reject <token>  # Reject waiting pipeline
 uv run gobby pipelines import <file>   # Import external pipeline file
+
+# Dispatch/build entry point
+uv run gobby build <plan_or_task>      # Opt a plan, epic, or leaf task into state dispatch
 ```
 
 **Coverage threshold**: 80% (enforced in CI and pre-push)
@@ -158,13 +161,16 @@ src/gobby/
 │   ├── loader.py         # YAML workflow/rule loading and sync
 │   └── ...               # Actions, observers, state, templates
 │
+├── dispatch/             # State-driven task dispatch
+│   ├── rules.py          # Ordered lifecycle dispatch rules
+│   └── dispatcher.py     # Cron heartbeat scanner and action executor
+│
+├── build/                # gobby build shared service
+│   └── service.py        # CLI, MCP, and HTTP build core
+│
 ├── memory/               # Persistent memory system
 │   ├── manager.py        # MemoryManager
 │   └── embeddings.py     # Embedding-based recall
-│
-├── conductor/            # Orchestration daemon
-│   ├── loop.py           # Conductor loop
-│   └── token_tracker.py  # Token budget tracking
 │
 ├── skills/               # Skill management
 │   ├── loader.py         # SkillLoader (filesystem, GitHub, ZIP)
@@ -216,6 +222,62 @@ They are bundled with the software and synced to the `workflow_definitions` DB t
 startup with `enabled: true` by default. Existing DB rows are never overwritten — drift is
 detected via hash comparison at runtime. The DB is the source of truth for what's active,
 not the YAML template files.
+
+### Dispatch Architecture
+
+Gobby task automation is state-driven dispatch. The dispatcher is a deterministic
+heartbeat that scans tasks with `allow_automation=true`, evaluates ordered lifecycle
+rules, acquires a per-task mutex, and executes the selected action.
+
+Dispatch rules live in `src/gobby/dispatch/rules.py`. To add a rule:
+
+1. Add a small rule function that checks task lifecycle, status, labels, artifacts,
+   and automation fields.
+2. Return an explicit action such as spawn, start expansion, create isolation,
+   advance lifecycle, append audit marker, or escalate.
+3. Register it in the ordered rule list near the stage it belongs to.
+4. Keep the rule deterministic. Prompting belongs in spawned agents; the dispatcher
+   only routes state.
+
+Build state is resolved before dispatch:
+
+- `allow_automation` is the opt-in gate. Backlog tasks stay invisible until `gobby build`
+  enables them.
+- `yolo` means rules choose deterministic fallbacks instead of escalating when possible.
+- `isolation` is explicit task state: `none`, `worktree`, or `clone`.
+- Stage skips are stored as `stage-:<name>` labels. Profiles such as `quick`, `review`,
+  `full`, and `full-yolo` are CLI/MCP/HTTP sugar that resolve to stage skips, isolation,
+  and yolo at build time.
+- `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
+  falls back to `backend-developer` with an audit marker.
+
+`gobby build` is the single entry point for turning a plan, epic, or leaf task into
+dispatchable state. The CLI command, MCP tool (`gobby-tasks-ops:build_task`), and HTTP
+route (`POST /api/build`) must all call the shared build service in
+`src/gobby/build/service.py`, returning the same `BuildResult`.
+
+Concurrency and audit data are adjacent to tasks:
+
+- `task_dispatch_mutex` stores short-lived leases. Dispatcher code is the normal writer:
+  acquire before side effects, release in `finally`, sweep expired leases on startup, and
+  use the force-release escape hatch only for operator recovery.
+- `task_artifacts` stores sparse pointers such as `plan_file_path`, `target_branch`,
+  worktree/clone path and ID pairs, expansion run IDs, PR URL, and future merge SHA.
+  Write related fields atomically, especially worktree/clone pairs.
+- `task_lifecycle_events` is append-only audit. Lifecycle helpers write it when
+  advancing stages; readers use it for history and diagnostics.
+
+The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10). When
+the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
+state.
+
+Retired orchestration templates stay in place as disabled tombstones so bundled sync keeps
+their DB rows stable. `orchestrator.yaml`, `front-half-orchestrator.yaml`,
+`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, and the old `conductor.yaml` agent
+must be `enabled: false`, `deprecated: true`, and contain no active steps. Real PR
+creation and richer merge/conflict handling are tracked in task #12728; this dispatcher
+only reaches the PR/merge boundary and uses existing merge tools where they are already
+available.
 
 ## Code Conventions
 
