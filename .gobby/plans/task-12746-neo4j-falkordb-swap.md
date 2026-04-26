@@ -120,6 +120,44 @@ def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
 
 Every downstream consumer imports it as `from gobby.config.persistence import is_falkordb_enabled`. No local re-implementations; no wrapper modules. The function lives next to `DatabasesConfig` because it operates on that exact type.
 
+**Password validator (R25-F1) — single source of truth for charset constraints:**
+
+Add `validate_falkordb_password(value: str) -> str` to this same module. The Docker compose template (§ 3.2) interpolates the password through shell-expanded `REDIS_ARGS=--requirepass ${GOBBY_FALKORDB_PASSWORD}` and a `redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING` healthcheck — both forms break (or worse, silently misauth) on whitespace, control characters, and unquoted shell metachars even after R25-F1 quotes the healthcheck. The Rust crate (§ 7.2) percent-encodes for `falkor://` URLs, so it accepts strictly more characters than Docker can round-trip — the migration's password contract must be the intersection.
+
+```python
+def validate_falkordb_password(value: str) -> str:
+    """Reject FalkorDB passwords whose Docker boundary cannot round-trip.
+
+    Permitted: printable ASCII excluding whitespace and control characters.
+    Rejected: empty/None, any whitespace (space, tab, newline, etc.), any
+    ASCII control character (0x00-0x1F, 0x7F), and high-bit/non-ASCII characters
+    (Docker shell expansion is byte-oriented; safer to ban non-ASCII outright
+    than to debug edge cases per locale).
+
+    Raises ``ValueError`` with an operator-actionable message naming the rule
+    that failed. CLI / wizard / /api/config / gobby-config all funnel through
+    this single validator so the rule is consistent across ingress points.
+    """
+    if not value:
+        raise ValueError("FalkorDB password must not be empty")
+    if any(ch.isspace() for ch in value):
+        raise ValueError("FalkorDB password must not contain whitespace")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+        raise ValueError("FalkorDB password must not contain ASCII control characters")
+    if any(ord(ch) > 0x7E for ch in value):
+        raise ValueError("FalkorDB password must use printable ASCII only (Docker round-trip constraint)")
+    return value
+```
+
+Wire it as a `@field_validator("requirepass")` on `FalkorConfig` (only when `value is not None` — the default-None case is the unconfigured state, not a validation failure), AND call it explicitly from:
+
+- `src/gobby/cli/installers/falkor.py::_resolve_falkordb_password` (§ 3.1) — validate the user's `--falkordb-password` value AND any auto-generated password (the generator must produce values that pass validation by construction; add a unit test asserting 100/100 generated passwords validate clean).
+- The Ink wizard's `[p]` custom-password handler (§ 6.x) — surface the `ValueError` message inline so the operator can pick a different value without dropping out of the wizard.
+- `/api/config` PUT for `databases.falkordb.requirepass` (§ 4.4) — return HTTP 422 with the validator's message when validation fails; do NOT persist a partially-validated value.
+- `gobby-config set_config` (§ 4.4) — same surface, MCP error response.
+
+The validator's tests live in `tests/config/test_persistence.py` (already owned by § 1.1 per R22-F4): cover empty, whitespace, tab, newline, control char, high-bit char, and at least three accepted punctuation passwords (`Pa$$w0rd!`, `aB-3.7=z`, `xyz_123-ABC`).
+
 **Tests (R21-F1 + R22-F4) — owned by this task:**
 
 - `tests/config/test_persistence.py` — replace every `Neo4jConfig` import and assertion with `FalkorConfig`; add coverage for `is_falkordb_enabled(databases)` returning True only when `requirepass` is set (and False on default/unconfigured); update `graph_min_score` field-validator tests to point at the new host class. Without this, the test file fails to import the moment § 1.1 deletes `Neo4jConfig`.
@@ -177,7 +215,7 @@ All methods must keep the **same names and parameter shapes** as `Neo4jClient`:
 - `async def ensure_memory_graph_schema(self) -> None` — see Phase 2.1 for the FalkorDB-dialect Cypher
 - `async def ensure_vector_index(self, dimension: int, similarity: str = "cosine", index_name: str = "entity_embedding_index") -> None` — **`dimension` is required, not defaulted** (closes the 1536-default footgun)
 - `async def ensure_supporting_index(self, label: str, prop: str) -> None` — issues `CREATE INDEX FOR (n:Label) ON (n.prop)`, swallows "already indexed" errors. **Must be called before every `ensure_unique_constraint(label, prop)` call** — FalkorDB requires a supporting exact-match index to back any unique constraint.
-- `async def ensure_unique_constraint(self, label: str, prop: str) -> None` — sends `GRAPH.CONSTRAINT CREATE <graph_name> UNIQUE NODE Label PROPERTIES 1 prop` as a Redis command (out-of-band, not via `query()`). Then **polls `db.constraints()` until the constraint reaches `OPERATIONAL` status**, with a 30s timeout. Raise `FalkorQueryError` on `FAILED` status (signals pre-existing data violates the constraint).
+- `async def ensure_unique_constraint(self, label: str, prop: str) -> None` — sends `GRAPH.CONSTRAINT CREATE <graph_name> UNIQUE NODE Label PROPERTIES 1 prop` as a Redis command (out-of-band, not via `query()`). Then polls constraint status by running the **Cypher procedure** `CALL db.constraints()` against the selected graph (NOT a client-side `self._db.constraints()` method — `falkordb-py` does not expose constraints as a `FalkorDB` attribute, R25-F4). Concretely: `await self._graph.ro_query("CALL db.constraints()")` (or `await self.query("CALL db.constraints()")` since `query()` already wraps the same plumbing) and parse the returned rows by `type`, `label`, `properties`, `entitytype`, `status`. Loop with a sleep until the row matching `(type=UNIQUE, label, properties=[prop], entitytype=NODE)` reports `status=OPERATIONAL`, with a 30s timeout. Raise `FalkorQueryError` on `status=FAILED` (signals pre-existing data violates the constraint). The literal-method form (`self._db.constraints()`) would AttributeError on the first startup tick before any writes; pin the Cypher form so this hard startup gate cannot silently turn off.
 - `async def merge_node`, `async def merge_relationship`, `async def set_node_vector` — same signatures as Neo4jClient counterparts
 - `async def get_entity_graph`, `async def get_entity_neighbors`, `async def vector_search`, `async def execute_read`, `async def execute_write`, `async def ping` — same signatures
 - `_validate_cypher_identifier(value: str, kind: str)` — keep the existing identifier-validation helper for safe Cypher interpolation
@@ -518,7 +556,17 @@ falkordb:
   volumes:
     - gobby_falkordb_data:/data
   healthcheck:
-    test: ["CMD-SHELL", "redis-cli -a $$GOBBY_FALKORDB_PASSWORD PING | grep -q PONG"]
+    # R25-F1: quote the password expansion via YAML single-quoted scalar so the inner
+    # double-quotes pass through to the shell verbatim. The shell then sees
+    # redis-cli -a "$GOBBY_FALKORDB_PASSWORD" PING (one quoted argument); without the
+    # inner quotes a whitespace-bearing password would word-split into multiple argv
+    # entries and silently misauth. The validator in § 1.1 already rejects whitespace
+    # + control chars, but the quoted form is defense-in-depth against future
+    # relaxations and matches Docker's recommended pattern for any variable-substituted
+    # argument.
+    test:
+      - CMD-SHELL
+      - 'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG'
     interval: 10s
     timeout: 5s
     retries: 5
@@ -895,7 +943,14 @@ status = await get_falkordb_status(
     password=falkor_cfg.requirepass,  # FalkorConfig field renamed to avoid secret-name collision; see 1.1
 )
 memory_stats["falkordb"] = {
-    "configured": falkor_client is not None,
+    # R25-F3: drive `configured` from the config predicate, not the live client. After a
+    # health-check failure § 4.3 nulls `_falkor_client` (via `clear_graph_clients()`), so
+    # a `_falkor_client is not None` check would render `{installed: True, healthy: False,
+    # configured: False}` — the dashboard pill (5.2) maps that triple to "FalkorDB not
+    # configured" / status `unknown`, hiding the real disconnected/unhealthy state from
+    # operators. `is_falkordb_enabled(databases)` keys off `requirepass` which survives
+    # health-check clears, so `configured` stays True until the operator runs uninstall.
+    "configured": is_falkordb_enabled(server.config.databases),
     "installed": status["installed"],
     "healthy": status["healthy"],
     "url": status["url"],
@@ -963,6 +1018,7 @@ Two specific edits in `runner_lifecycle.py`:
 
 a. **Health-check failure path:** the periodic FalkorDB health check (currently named for Neo4j; rename per the sweep above) MUST, on unhealthy return, clear BOTH backend reference paths — call `runner.memory_manager.clear_graph_clients()` (the new method added in § 2.1 step 4; it nulls BOTH `_falkor_client` AND `_kg_service` because `KnowledgeGraphService` holds its own client reference per R24-F2 — a code path that just zeroes `_falkor_client` would leave `_kg_service` non-None, allowing memory graph routes and graph-augmented search to keep using a stale wrapper while the status payload claims graph features are disabled) AND call `runner.code_indexer.clear_graph_client()` (the new sync method added in § 2.2 — note `runner.code_indexer` IS the `CodeIndexContext` instance, R24-F1, NOT a wrapper with a `.context` property; using `runner.code_indexer.context.clear_graph_client()` would AttributeError at first health-check tick). This makes `/api/memories/...` and `/api/code-index/...` routes fall back to the "graph unavailable" path simultaneously, matching the user-visible single-backend semantics — partial degradation (memory works, code-index doesn't, or vice versa) is a confusing operator UX and a frequent source of false bug reports.
 b. **Shutdown ordering:** in the runner's shutdown sequence, await `runner.code_indexer.close_graph_client()` (the new async method added in § 2.2 — same `runner.code_indexer` direct attribute, no `.context` indirection per R24-F1) BEFORE calling `LocalDatabase.close()`. The MemoryManager already has its own `close()` plumbing; ensure both close paths fire even if one raises (use `try/except/finally` around the pair so one client's close failure does not strand the other connection open).
+c. **Sync worker reference (R25-F2):** the live `sync_worker_loop` (`src/gobby/code_index/sync_worker.py`) is started with `graph=runner.code_indexer.graph` resolved at startup time and held as a local for the loop's lifetime. Calling `clear_graph_client()` only nulls `CodeIndexContext._graph` — the running loop still owns the stale `CodeGraph` reference and would keep writing to a dead FalkorDB client every pass. Two acceptable resolutions; pick one explicitly in this task: **(c.i, preferred)** change `sync_worker_loop`'s signature to accept `context: CodeIndexContext` (or a `Callable[[], CodeGraph | None]` getter) and re-read `context.graph` at the top of every iteration — naturally tracks `clear_graph_client()` without further coordination; OR **(c.ii)** keep the existing by-value parameter, but on health-check failure cancel and restart the sync worker (await `runner.code_index_sync_task.cancel()`, then re-spawn with the new graph reference once health recovers; this path requires a startup-only health check, NOT a periodic one, since cancel/restart loops are noisy). Pick c.i unless there is a concrete reason not to. Either way, add a regression test that clears the graph client mid-run, marks one file pending, drives a sync tick, and asserts the OLD `CodeGraph` test double's write methods were NOT called after the unhealthy tick.
 
 **Tests (R21-F1 + R22-F4 + R23-F2) — owned by this task:**
 
@@ -1816,6 +1872,7 @@ Target: this is operational/manual work, not a code edit. Document the matrix be
 | 20 | `rg -l 'neo4j\|Neo4j\|NEO4J' src/gobby/ web/src/ tests/` (Python repo, R22-F4: `tests/` added) AND `rg -l 'neo4j\|Neo4j\|NEO4J' crates/` (run from gobby-cli repo root) | Only intentional refs remain. Python source allowlist: bootstrap migration helper (3.5), storage migration that drops old keys (3.6), `src/gobby/cli/install.py`'s hidden `--neo4j` / `--neo4j-password` deprecation handlers (R20-F4 — Click must register the literal old flag names to produce § 8.1's hard-fail migration error), CHANGELOG. Tests allowlist (R22-F4): `tests/cli/test_install_coverage.py`, `tests/cli/test_install_prompts.py`, `tests/cli/test_cli_install.py` may legitimately reference `--neo4j` / `--neo4j-password` to exercise the deprecation hard-fail path (§ 8.1's tests own those refs); migration-test fixtures in `tests/storage/` may seed the OLD `databases.neo4j.*` keys to verify the 3.6 + 8.2 cleanup. All other `tests/` references must be gone. Rust allowlist: CHANGELOG only. |
 | 21 | **Step-6 failure path** (R11-F2): chmod `~/.gobby/bootstrap.yaml` to read-only after staging the install (or move the parent dir to read-only mid-flight via a test fixture), then run `gobby install --falkordb`. The container is up and `_update_config` succeeds, but `_write_bootstrap_password` fails. | Installer returns `success: False` (NOT `success: True` with a warning) AND the error message names `gobby uninstall --falkordb` as the cleanup verb AND `compose_running: True` is set in the result dict so the wizard/CLI can surface the right operator action. Verifies the installer does not inherit the `bootstrap_ok` warning-on-failure pattern from the live Neo4j installer. |
 | 22 | **Password update + restart** (R13-F2): with FalkorDB installed and running, set `databases.falkordb.requirepass` to a NEW value via `/api/config` PUT. WITHOUT restarting, run `docker compose -f ~/.gobby/services/docker-compose.yml exec -T falkordb redis-cli -a <NEW_pw> PING` — must return `WRONGPASS`/`NOAUTH` (container still on old password). Then `gobby restart`, repeat — must return `PONG` (container recreated by `_services_start` with the new value from `config.databases.falkordb.requirepass`). Repeat the same flow via `gobby-config set_config`. | First PING returns `WRONGPASS`/`NOAUTH`; restart succeeds; second PING returns `PONG`. The `/api/config` PUT response and the `gobby-config set_config` response BOTH include `restart_required: true` plus a human-readable hint when the changed key is `databases.falkordb.requirepass`. Verifies `_services_start` (3.5) sources the resolved `config.databases.falkordb.requirepass` rather than the stale `bootstrap.falkordb_password`, and that the runtime config surface tells the operator to restart. |
+| 23 | **Password charset validator (R25-F1):** drive every ingress with one accepted password (e.g. `Pa$$w0rd!`) and one rejected password from each banned class — empty string, whitespace (`hunter 2`), tab (`a\tb`), control char (`a\x01b`), high-bit non-ASCII (`café`). For each rejected sample, attempt the value via `gobby install --falkordb-password <value>`, the wizard `[p]` custom-password handler, `/api/config` PUT for `databases.falkordb.requirepass`, and `gobby-config set_config`. | All accepted samples persist successfully; the round-trip in row #19 confirms the masked retrieval. All rejected samples surface the validator's `ValueError` message at the appropriate layer (CLI exit 1 with stderr text, wizard inline re-prompt, HTTP 422 from `/api/config`, MCP error from `gobby-config`); none of the rejected values are persisted (verify `SELECT value FROM config_store WHERE key = 'databases.falkordb.requirepass'` after each rejected attempt — value must be unchanged from the prior accepted state). Additionally, with the accepted punctuation password installed, `docker compose ... exec -T falkordb redis-cli -a "<pw>" PING` returns `PONG` — confirms the quoted-healthcheck change in § 3.2 round-trips operator-realistic passwords through the shell boundary. |
 
 If any check fails, that branch does not merge. Fix and re-run the full matrix.
 
