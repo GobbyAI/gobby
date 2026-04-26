@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -18,10 +17,6 @@ from gobby.adapters.codex_impl.shared import (
     TOOL_MAP as SHARED_TOOL_MAP,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.mcp_proxy._call_tool_wrapper import (
-    CallToolWrapperInputError,
-    canonicalize_call_tool_wrapper,
-)
 
 if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
@@ -60,46 +55,6 @@ class CodexHooksAdapter(BaseAdapter):
 
     def __init__(self, hook_manager: HookManager | None = None):
         self._hook_manager = hook_manager
-
-    @staticmethod
-    def _is_wrapper_only_call_tool_rewrite(response: HookResponse) -> bool:
-        modified_input = response.modified_input
-        if not isinstance(modified_input, dict):
-            return False
-
-        normalized_tool_name = response.metadata.get("_normalized_tool_name")
-        if normalized_tool_name not in {
-            "call_tool",
-            "mcp__gobby__call_tool",
-            "mcp_gobby_call_tool",
-        }:
-            return False
-
-        raw_tool_input = response.metadata.get("_raw_tool_input")
-        if not isinstance(raw_tool_input, dict):
-            return False
-
-        try:
-            original_wrapper = canonicalize_call_tool_wrapper(
-                server_name=raw_tool_input.get("server_name"),
-                tool_name=raw_tool_input.get("tool_name"),
-                arguments=raw_tool_input.get("arguments"),
-                args=raw_tool_input.get("args"),
-                session_id=raw_tool_input.get("session_id"),
-                project_id=raw_tool_input.get("project_id"),
-            )
-            rewritten_wrapper = canonicalize_call_tool_wrapper(
-                server_name=modified_input.get("server_name"),
-                tool_name=modified_input.get("tool_name"),
-                arguments=modified_input.get("arguments"),
-                args=modified_input.get("args"),
-                session_id=modified_input.get("session_id"),
-                project_id=modified_input.get("project_id"),
-            )
-        except CallToolWrapperInputError:
-            return False
-
-        return original_wrapper == rewritten_wrapper
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Convert Codex hooks.json payload to HookEvent."""
@@ -160,54 +115,14 @@ class CodexHooksAdapter(BaseAdapter):
             logger=logger,
         )
 
-        # Codex CLI 0.120.0 rejects ``updatedInput`` and ``permissionDecision=allow``
-        # for PreToolUse hooks. When Gobby wants to rewrite a tool call, block the
-        # current execution and tell the model exactly how to retry instead.
-        has_retry_signal = bool(
-            response.auto_approve
-            or normalized_reason
-            or response.context
-            or response.system_message
-        )
         if (
             response.modified_input
             and response.decision not in ("deny", "block")
             and hook_event_name == "PreToolUse"
-            and has_retry_signal
-            and not self._is_wrapper_only_call_tool_rewrite(response)
         ):
-            retry_reason = (
-                normalized_reason
-                or "Retry the tool call by resending the corrected input from the hook message "
-                "verbatim. Do not reformulate it."
+            logger.debug(
+                "Codex PreToolUse modified_input ignored; proxy applies rewrites server-side"
             )
-            retry_parts: list[str] = []
-            if response.system_message:
-                retry_parts.append(response.system_message)
-            if response.context:
-                retry_parts.append(response.context)
-            retry_parts.append(
-                "Retry this tool call by resending the corrected input below verbatim. "
-                "Do not add, remove, or rename fields.\n"
-                f"{json.dumps(response.modified_input, indent=2, sort_keys=True)}"
-            )
-            retry_result: dict[str, Any] = {
-                "decision": "block",
-                "reason": retry_reason,
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": retry_reason,
-                },
-            }
-            retry_result["systemMessage"] = truncate_additional_context(
-                "\n\n".join(retry_parts),
-                contributor_sizes={
-                    f"retry_part_{idx}": len(part) for idx, part in enumerate(retry_parts, start=1)
-                },
-                logger=logger,
-            )
-            return retry_result
 
         if response.decision in ("deny", "block"):
             if hook_event_name == "PreToolUse":
