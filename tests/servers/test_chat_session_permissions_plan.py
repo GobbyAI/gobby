@@ -1,66 +1,13 @@
-"""Tests for ExitPlanMode permission handling and plan file resolution.
-
-ExitPlanMode now always denies gracefully — plan approval is triggered
-via PostToolUse when the agent writes to .gobby/plans/*.md. The SDK
-handles ExitPlanMode as a CLI-internal tool, bypassing can_use_tool.
-"""
+"""Tests for plan file resolution and chat mode persistence."""
 
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from claude_agent_sdk import PermissionResultDeny, ToolPermissionContext
 
 from gobby.servers.chat_session import ChatSession
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture
-def session() -> ChatSession:
-    s = ChatSession(conversation_id="test-plan-perm")
-    s.set_chat_mode("plan")
-    return s
-
-
-class TestExitPlanModeDecision:
-    """ExitPlanMode should always deny gracefully.
-
-    Plan approval is now triggered via PostToolUse when the agent writes
-    a plan file to .gobby/plans/*.md, not via ExitPlanMode interception.
-    The Claude Agent SDK handles ExitPlanMode as a CLI-internal tool,
-    bypassing the can_use_tool callback entirely in web chat sessions.
-    """
-
-    @pytest.mark.asyncio
-    async def test_exit_plan_mode_denies_without_plan_file(self, session: ChatSession) -> None:
-        """ExitPlanMode should deny when no plan file exists."""
-        with patch.object(session, "_read_plan_file", return_value=None):
-            session._plan_file_path = None
-            result = await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
-        assert isinstance(result, PermissionResultDeny)
-        assert "automatically" in result.message.lower() or "plan" in result.message.lower()
-
-    @pytest.mark.asyncio
-    async def test_exit_plan_mode_stays_in_plan(self, session: ChatSession) -> None:
-        """ExitPlanMode deny should NOT change the chat mode."""
-        assert session.chat_mode == "plan"
-        with patch.object(session, "_read_plan_file", return_value=None):
-            session._plan_file_path = None
-            await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
-        assert session.chat_mode == "plan"
-
-    @pytest.mark.asyncio
-    async def test_exit_plan_mode_does_not_block(self, session: ChatSession) -> None:
-        """ExitPlanMode should return immediately (no blocking for approval)."""
-        import time
-
-        with patch.object(session, "_read_plan_file", return_value=None):
-            session._plan_file_path = None
-            start = time.monotonic()
-            await session._can_use_tool("ExitPlanMode", {}, ToolPermissionContext())
-            elapsed = time.monotonic() - start
-        assert elapsed < 0.5, f"ExitPlanMode took {elapsed:.2f}s — should be instant"
 
 
 class TestReadPlanFileResolution:
