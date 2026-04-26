@@ -1,13 +1,17 @@
 # Drawbridge UI batch — 11 pending annotations + 1 reported bug
 
-> **Round 3 revision** — addresses Round 2 adversary findings F1–F4 (recorded in #12911 description). Key changes:
+> **Round 5 revision (final adversarial round)** — addresses Round 4 adversary findings F1–F4 (recorded in #12911 description). All four were structural plumbing issues in §1.6. Key changes:
 >
-> - **§1.5 + §1.6 LOCAL predicate corrected** — `model: local` is resolved into `daemon_config.local.model` at spawn time, so `agent_run.model` stores the resolved string (e.g. `qwen-coder-32b`); `LOCAL_PROVIDERS + gpt-oss-*` misses common shapes like `provider='claude', model=<local_cfg.model>`. Plan now defines `is_local_model(provider, model, *, local_cfg)` whose primary check is `model == local_cfg.model`, with provider-set + `gpt-oss-*` as fallback. Same predicate is consumed by both §1.5 (Sessions tab) and §1.6 (#11199 agent cards).
-> - **§3.2 test API corrected** — `splitProtocolContent(content, idPrefix)` (2 args) returns `{ type: 'text', content }` or `{ type: 'tool_call', call }` (with `call.tool_type === 'protocol'`); previous draft used wrong field names (`kind`/`text`/`'protocol'`). Test snippet rewritten to match the actual exported type.
-> - **§4.1 test surface corrected** — existing `ChatPage.test.tsx` mocks `useActivityPanel` so `togglePanel` is a bare spy (and is missing from the mock entirely); a click can never flip `isPinned`, so the cascade is unobservable. Plan now requires either a stateful `useActivityPanel` mock backed by real `useState` or use of the real hook + real `AgentStatusBar`. Test code rewritten accordingly.
-> - **§1.6 + §3.3 dependency notation removed** — `(depends: refactor #12917)` is invalid plan-draft syntax; expansion only accepts `(depends: 1.2)` or `(depends: Phase N)` and cannot wire a plan task to external #12917. Both sections drop the bad notation; the in-plan extraction step (`AgentCard.tsx` for §1.6, `JsonBlock.tsx` for §3.3) is the load-bearing mechanism that brings each file under 1000 lines, and stays in scope as part of the same commit. #12917 remains as prose context only.
+> - **§1.6 step 0 migration uses real registration pattern** — Round 4 F1: registry pattern is `MIGRATIONS: list[tuple[int, str, MigrationAction]]` in `src/gobby/storage/_migration_registry.py` (existing pattern: `(220, "Add terminal_reason to agent_runs", "ALTER TABLE …")`). New entry at version 221 (or whatever's next). PLUS: add the column to `baseline_schema.sql`'s existing `CREATE TABLE agent_runs` (line 135) and `CREATE TABLE sessions` (line 175) so fresh installs match. NO bare function in `migrations.py`.
+> - **§1.6 spawn-time write threads through real chain** — Round 4 F2: real call chain is `spawn_agent_impl` → `SpawnRequest` → `execute_spawn()` → `_spawn_*_terminal()` → `prepare_terminal_spawn()` (`src/gobby/agents/spawn.py`) → `LocalAgentRunManager.create()` AND `ChildSessionManager.create_child_session(ChildSessionConfig)`. Plan now spells out threading: add `is_local: bool = False` to `SpawnRequest`, `prepare_terminal_spawn(...)` (next to existing `requested_reasoning_effort` etc.), `ChildSessionConfig` (next to existing `sandbox_enabled: bool = False`), and `LocalAgentRunManager.create(..., is_local: bool = False)`. ALSO pass `model=effective_model` through `prepare_terminal_spawn` → `agent_run_mgr.create` (currently the model is dropped — `agent_runs.model` is NULL for terminal-spawned runs today; this fix incidentally restores it).
+> - **§1.6 + §1.5 session-creation paths corrected** — Round 4 F3: actual storage files are `src/gobby/storage/session_models.py` + `src/gobby/storage/sessions/_crud.py` + `src/gobby/storage/sessions/_manager.py` (NOT `src/gobby/storage/sessions.py` — that path doesn't exist; previous draft was wrong). Plan now names them. Three creation paths get explicit treatment: (a) terminal child via `prepare_terminal_spawn` → `ChildSessionConfig.is_local`; (b) web chat via `routes/sessions/core.py` + `routes/agent_spawn.py` calling `session_manager.create_web_chat_session()` — compute `is_local = (requested_model == "local")` BEFORE local-model resolution; (c) hook auto-recovery via `SessionStartMixin.handle_session_start()` / `SessionLookupService._resolve_session_id()` — no spawn signal, default `is_local=0` and rely on legacy fallback at read time. NOTE: `sessions.model` semantics are unchanged (`ChatSession.model` returns the requested alias today — that's outside §1.5/§1.6 scope; only `is_local` needs to be authoritative).
+> - **§1.6 agent-definition cards get a separate config-side predicate** — Round 4 F4: `is_local_legacy_fallback("claude", "local")` returns False because the helper intentionally drops literal-string detection (which would conflict with row-level handling where "local" is never persisted). For agent definition cards (config-side, NOT row-side), add a separate `is_local_agent_definition(provider, model) -> bool` that returns True when `model == "local"` literally OR `provider in LOCAL_PROVIDERS` OR model contains `gpt-oss`. Used in `src/gobby/servers/routes/agents.py` for definition payloads. Test asserts a definition with `model: "local"` renders LOCAL.
 >
-> Round 2 changes (still in force from F1–F8 of Round 1): §1.5 split into §1.5 (Sessions tab) + §1.6 (#11199 agent cards); §2.1 root-cause replaced with attribution-failure hypothesis + failing-lifecycle-test gate; §2.1/§2.2 endpoint URLs corrected (`/api/admin/usage`, `/api/admin/tokens/timeseries`); §3.2 captures a committed Codex fixture and targets `splitProtocolContent` first; §4.1 retargeted to `ChatPage.tsx:169-172` with `useRef`-gated transition; §1.2 alias cleanup folded into §1.6 wrap-up.
+> Round 4 (still in force): §1.6 promoted from route-time helper to schema-level fix; §3.2 corrected to use `Extract<ProtocolContentSegment, { type: ... }>`; §3.1 names `ActivityPanel.tsx`; §4.1 phase-heading dep moved to `### 4.1`.
+>
+> Round 3 (still in force): §1.5 + §1.6 introduced the `is_local` concept; §3.2 corrected to use real API shape; §4.1 documents stateful mock pattern; §1.6 + §3.3 dropped invalid `(depends: refactor #12917)` notation.
+>
+> Round 2 (still in force): §1.5 split into §1.5 + §1.6; §2.1 replaced with attribution-failure hypothesis + failing-test gate; endpoint URLs corrected; §3.2 captures committed fixture; §4.1 retargeted to `ChatPage.tsx:169-172`; §1.2 alias cleanup folded into §1.6 wrap-up.
 
 ## Overview
 
@@ -131,24 +135,23 @@ Re-test row height: a base-sized row in `.tree-node` may need vertical padding a
 
 **Validation criteria**: Open Activity panel → switch between Sessions tab and Tasks tab. Row text is the same size (DevTools computed `font-size` matches). Row vertical rhythm matches; no overlap or excessive whitespace.
 
-### 1.5 LOCAL chip variant on Sessions tab rows [category: code] (depends: 1.2)
+### 1.5 LOCAL chip variant on Sessions tab rows [category: code] (depends: 1.2, 1.6)
 
-Target: `web/src/components/activity/SessionsTab.tsx`, `web/src/components/chat/styles/sessions-tab.css`. Backend dependency: §1.6 ships the canonical `is_local` predicate in Python; this task wires up the matching frontend predicate against the **session** payload (model + provider).
+Target: `web/src/components/activity/SessionsTab.tsx`, `web/src/components/chat/styles/sessions-tab.css`, plus the route that emits the watching-sessions payload (locate via `gcode search-content "watching_sessions"` / `WatchingSessionEntry` under `src/gobby/servers/routes/`).
 
-User ask (separate from #11199): Sessions tab rows running against a daemon local model get a `LOCAL` chip alongside TMUX/WEB/SB. The same predicate semantics from §1.6 apply: a session is local when its stored model equals the daemon's configured local model, OR when its provider is in the explicit local set, OR when its model name matches the `gpt-oss-*` heuristic.
+**Hard dependency on §1.6**: §1.6 lands the schema migration adding `is_local` to `sessions` AND the spawn/session-create-time write that populates it. This task surfaces that column on the watching-sessions API and renders the chip.
 
-**Required frontend wiring (read first):**
+User ask (separate from #11199): Sessions tab rows running against a daemon local model get a `LOCAL` chip alongside TMUX/WEB/SB.
 
-`WatchingSessionEntry` already exposes `provider: string` and `label: string` (the model name shown to the user). The daemon's local model name is NOT currently exposed on the session payload — the dashboard would need it to do model-equality comparison client-side. Two options, decide on first edit:
+**Why model-equality at the route was wrong (Round 3 F1):** comparing `session.model == daemon_config.local.model` produces:
+- False positive: `local_cfg.model='claude-opus-4-7'` matches a real Claude cloud run.
+- False negative: `local_cfg.model='auto'` resolves to a runtime-loaded id at spawn time; the literal `'auto'` is never persisted as `session.model`.
 
-1. **Preferred**: extend the sessions API payload to include a backend-computed `is_local: bool` per session row, using the same `is_local_model(provider, model, *, local_cfg)` helper introduced in §1.6 step 1. Map to `isLocal` on the frontend. The frontend chip then reads `entry.isLocal` directly — no client-side comparison or `LOCAL_PROVIDERS` set needed.
-2. **Fallback (only if extending the sessions payload is out of scope for this commit)**: expose `daemon_config.local.model` on a config endpoint the SessionsTab already consumes (or via `useDaemonConfig` if one exists), and replicate the predicate in TS. This is strictly inferior — it duplicates logic the backend already owns.
+The fix is the §1.6 schema column populated at session-creation time. This section just reads it.
 
-**This plan ships option 1.** §1.6 already defines `is_local_model` in Python; §1.5 reuses it on the sessions route.
+Backend change:
 
-Backend changes (single commit with §1.6 backend changes):
-
-1. Find the route that emits `WatchingSessionEntry` payload (grep `watching_sessions` / `WatchingSessionEntry` in `src/gobby/servers/routes/`). Add a computed `is_local` field per row using `is_local_model(session.provider, session.model, local_cfg=daemon_config.local)`.
+1. The watching-sessions route SELECT must include `sessions.is_local`. Map it to `is_local: bool` (default `false` when NULL — legacy rows; the §1.6 `is_local_model` helper provides best-effort fallback for legacy NULL via a SQL `COALESCE(is_local, ...)` expression or a Python-side fallback in the route serializer).
 
 Frontend changes:
 
@@ -184,49 +187,182 @@ Frontend changes:
    (Violet to differentiate from cyan TMUX and blue WEB.)
 
 **Validation criteria**:
-- Backend: `curl` the watching-sessions route while a daemon-local session is running (e.g., one started with `model: local` resolved to `daemon_config.local.model`). The row's `is_local` is `true`. A Claude/Codex/Gemini cloud session shows `is_local: false`.
-- Frontend: that same session shows a violet `LOCAL` chip alongside TMUX/WEB/SB in the Sessions tab. Cloud-model sessions do NOT show the chip.
-- Edge case: a session whose `model` matches `daemon_config.local.model` but whose `provider` is `claude` (because the SDK was reused with a custom endpoint) ALSO shows `LOCAL` — that's the whole point of the model-equality check.
+- New session started with `model: local` (any `local_cfg.model` including `auto`) writes `sessions.is_local=1`. `sqlite3 ~/.gobby/gobby-hub.db "SELECT id, model, is_local FROM sessions ORDER BY created_at DESC LIMIT 5"` confirms.
+- Watching-sessions route returns `is_local: true` for that session and `is_local: false` for a Claude/Codex/Gemini cloud session.
+- Frontend shows a violet `LOCAL` chip on local-session rows, NOT on cloud-session rows.
+- Legacy session with `is_local=NULL` falls back through the helper: `provider='lmstudio'` legacy row → still shows LOCAL; `provider='claude', model='qwen-coder-32b'` legacy row → does NOT show LOCAL (the helper drops the model-equality precedence).
 
 ### 1.6 LOCAL chip on Workflows agent cards [category: code] (depends: 1.2)
 
 Linked gobby-task: **#11199** ("Add Local chip to agent cards in web UI"). Claim and link this commit.
 
-Target backend: `src/gobby/llm/` (new `is_local_model` predicate), `src/gobby/agents/registry.py`, and the route(s) in `src/gobby/servers/routes/` that emit running-agent and agent-definition payloads (grep `agent_run` / `running_agents` / agent-definitions endpoints in `src/gobby/servers/routes/`).
+Target backend (verified file paths):
+- `src/gobby/storage/_migration_registry.py` (add new MIGRATIONS tuple at version 221).
+- `src/gobby/storage/baseline_schema.sql` (add `is_local INTEGER NOT NULL DEFAULT 0` to `CREATE TABLE agent_runs` line ~135 and `CREATE TABLE sessions` line ~175).
+- `src/gobby/storage/agents.py` (`AgentRun` dataclass: add `is_local: bool = False`; `LocalAgentRunManager.create()`: add `is_local` parameter, INSERT column, value).
+- `src/gobby/storage/session_models.py` (session dataclass: add `is_local: bool = False`).
+- `src/gobby/storage/sessions/_crud.py` (INSERT column for `is_local`).
+- `src/gobby/storage/sessions/_manager.py` (any high-level wrappers that pass through to `_crud`).
+- `src/gobby/agents/spawn_executor.py` (`SpawnRequest` dataclass: add `is_local: bool = False`; verify `model: str | None = None` already exists or add it; each `_spawn_*_terminal` passes both through).
+- `src/gobby/agents/spawn.py` (`prepare_terminal_spawn(...)`: add `model: str | None = None` and `is_local: bool = False`; pass `is_local` to `ChildSessionConfig`; pass `model, is_local` to `agent_run_mgr.create`).
+- `src/gobby/agents/session.py` (`ChildSessionConfig` dataclass: add `is_local: bool = False`; `ChildSessionManager.create_child_session()` reads `config.is_local` and writes to the session row).
+- `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` (compute `is_local_run = (effective_model == "local")` BEFORE `ensure_local_model`; populate `SpawnRequest.is_local`).
+- `src/gobby/servers/routes/sessions/core.py` AND `src/gobby/servers/routes/agent_spawn.py` (web-chat path: compute `is_local = (requested_model == "local")` BEFORE local-model resolution; pass through to `create_web_chat_session`).
+- `src/gobby/servers/routes/agents.py` (definitions route: emit `is_local` via `is_local_agent_definition` predicate; agent-runs route: SELECT `is_local` from `agent_runs`).
+- `src/gobby/llm/local_detection.py` (NEW — `is_local_legacy_fallback` for row-level NULL fallback AND `is_local_agent_definition` for config-level cards).
 
 Target frontend: `web/src/components/workflows/AgentsTab.tsx` (currently 1050 lines — see extraction caveat below) and any subcomponents that render an agent card.
 
-**LOCAL detection contract (load-bearing — read this carefully):**
+**Why this is a schema-level fix, not a route-time helper (Round 3 F1):**
 
-`model: local` is resolved into `daemon_config.local.model` at spawn time (see `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` and `src/gobby/servers/chat_session.py`). By the time an `AgentRun` record is persisted, `agent_run.model` holds the resolved name (e.g. `qwen-coder-32b` or whatever `local_cfg.model` is set to), NOT the literal `"local"`. A `LOCAL_PROVIDERS + gpt-oss-*` heuristic alone misses common shapes like `provider='claude', model=<local_cfg.model>` (Claude SDK pointed at a local OpenAI-compatible endpoint).
+`model: local` is resolved into `local_cfg.model` (or, when `local_cfg.model='auto'`, into the runtime-loaded model id from `ensure_local_model`) at spawn time (`spawn_agent/_implementation.py`) and at session creation (`chat_session.py`). The persisted `agent_run.model` / `session.model` is therefore the resolved name, not `"local"`. Two failure modes for any route-time helper that compares `model == local_cfg.model`:
 
-The canonical predicate must therefore be **model-equality first**:
+1. **False positive**: `local_cfg.model='claude-opus-4-7'` (any operator could choose this name) matches a real Claude cloud run with the same model name.
+2. **False negative**: `local_cfg.model='auto'` causes `ensure_local_model` to return `loaded_ids[0]` (whatever LMStudio happens to have loaded). The literal `'auto'` is never persisted as the model name; the predicate finds nothing to match against.
+
+The only authoritative signal is **the spawn caller knows whether `model: local` was requested**. We capture that bit at spawn/session-create time, before resolution, and persist it.
+
+**Migration (step 0 — uses the canonical migration registration pattern):**
+
+Migrations are registered as tuples in `MIGRATIONS: list[tuple[int, str, MigrationAction]]` in `src/gobby/storage/_migration_registry.py`. Existing precedent (the only entry post-baseline-flatten):
+
+```python
+MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
+    (
+        220,
+        "Add terminal_reason to agent_runs",
+        """
+        ALTER TABLE agent_runs ADD COLUMN terminal_reason TEXT
+        """,
+    )
+]
+```
+
+Add a new entry at the next version (currently 221 — verify by reading `_migration_registry.py` on first edit; bump if a newer entry has landed):
+
+```python
+(
+    221,
+    "Add is_local to agent_runs and sessions",
+    """
+    ALTER TABLE agent_runs ADD COLUMN is_local INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sessions   ADD COLUMN is_local INTEGER NOT NULL DEFAULT 0;
+    UPDATE agent_runs SET is_local = 1
+     WHERE is_local = 0
+       AND (
+         LOWER(COALESCE(provider, '')) IN ('lmstudio', 'ollama', 'llamacpp', 'local')
+         OR LOWER(COALESCE(model, '')) LIKE '%gpt-oss%'
+       );
+    UPDATE sessions SET is_local = 1
+     WHERE is_local = 0
+       AND (
+         LOWER(COALESCE(provider, '')) IN ('lmstudio', 'ollama', 'llamacpp', 'local')
+         OR LOWER(COALESCE(model, '')) LIKE '%gpt-oss%'
+       );
+    """,
+),
+```
+
+(SQLite supports multi-statement strings via `executescript`; verify the `MigrationAction` runner uses `executescript` for `str` actions or split into a callable that runs them sequentially. Read `src/gobby/storage/migrations.py` for the runner implementation.)
+
+PLUS update `src/gobby/storage/baseline_schema.sql` so fresh installs match:
+- Add `is_local INTEGER NOT NULL DEFAULT 0` inside `CREATE TABLE agent_runs` (line ~135, before `terminal_reason`).
+- Add `is_local INTEGER NOT NULL DEFAULT 0` inside `CREATE TABLE sessions` (line ~175).
+
+Backfill rationale: conservative — no model-equality (fragile false-positive path). Legacy `provider=lmstudio` rows + legacy `gpt-oss-*` model rows get `is_local=1`; legacy local-via-Claude-SDK rows do NOT (acceptable: new sessions are correct from migration time forward; mention in PR).
+
+**Spawn-time write (step 1) — threads through the real chain:**
+
+The actual write chain for terminal-spawned agents is `spawn_agent_impl` (in `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`) → builds `SpawnRequest` → `execute_spawn(request)` (in `src/gobby/agents/spawn_executor.py`) → provider-specific `_spawn_*_terminal(request)` → `prepare_terminal_spawn(...)` (in `src/gobby/agents/spawn.py`) → `ChildSessionManager.create_child_session(ChildSessionConfig)` AND `LocalAgentRunManager.create(...)` (in `src/gobby/storage/agents.py`).
+
+Threading required:
+
+1.1 `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` — compute `is_local_run = (effective_model == "local")` BEFORE calling `ensure_local_model`. Pass it on the `SpawnRequest` along with the resolved model:
+
+```python
+is_local_run = (effective_model == "local")
+if is_local_run:
+    effective_model = await ensure_local_model(local_cfg, registry=registry)
+request = SpawnRequest(
+    ...,
+    model=effective_model,
+    is_local=is_local_run,
+)
+```
+
+1.2 `src/gobby/agents/spawn_executor.py` — `SpawnRequest` dataclass: add `is_local: bool = False` (and confirm `model: str | None = None` already exists; if not, add it). Each `_spawn_*_terminal(request)` passes them through:
+
+```python
+prepared = prepare_terminal_spawn(
+    ...,
+    model=request.model,
+    is_local=request.is_local,
+    requested_reasoning_effort=request.requested_reasoning_effort,
+    ...,
+)
+```
+
+1.3 `src/gobby/agents/spawn.py` — `prepare_terminal_spawn` signature: add `model: str | None = None` and `is_local: bool = False` next to the existing reasoning-effort kwargs (lines ~100-105). In the `ChildSessionConfig(...)` construction (around line ~141), pass `is_local=is_local`. In the `agent_run_mgr.create(...)` call (around line ~178), pass `model=model, is_local=is_local`.
+
+1.4 `src/gobby/agents/session.py` — `ChildSessionConfig` dataclass: add `is_local: bool = False` next to existing `sandbox_enabled: bool = False`. `ChildSessionManager.create_child_session(config)` reads `config.is_local` and includes it in the INSERT SQL.
+
+1.5 `src/gobby/storage/agents.py` — `LocalAgentRunManager.create(...)`: add `is_local: bool = False` parameter, add `is_local` to the INSERT SQL columns and values list, add `is_local` to the `AgentRun` dataclass (`is_local: bool = False`) and to `from_row` and `to_dict` mappings. The existing `model: str | None = None` parameter already exists in the signature — `prepare_terminal_spawn` was simply not passing it; that's fixed at step 1.3.
+
+**Session creation paths (step 1.6 — three distinct entrypoints):**
+
+(a) **Terminal child sessions**: covered by step 1.4 above. `prepare_terminal_spawn` builds `ChildSessionConfig(is_local=is_local)`, which `create_child_session` writes.
+
+(b) **Web chat sessions**: real path is `routes/sessions/core.py` (and `routes/agent_spawn.py`) calling `session_manager.create_web_chat_session(...)` (locate exact method via `gcode search "create_web_chat_session"`). Compute `is_local = (requested_model == "local")` from the route input BEFORE handing the model to local-model resolution. Add `is_local: bool = False` to `create_web_chat_session`'s signature and to the underlying CRUD insert in `src/gobby/storage/sessions/_crud.py`.
+
+(c) **Hook auto-recovery sessions**: `SessionStartMixin.handle_session_start()` / `SessionLookupService._resolve_session_id()` create rows for sessions discovered after the fact (e.g., a Codex CLI session that wasn't spawned through the daemon). No spawn signal exists, so write `is_local=0` and rely on `is_local_legacy_fallback(provider, model)` at route serialization time. Document this explicitly in the route serializer: "auto-registered sessions default to `is_local=0`; falls back through `is_local_legacy_fallback` only if the column is `0`".
+
+**`SessionModel` / storage models (step 1.7):**
+
+The session storage is split across `src/gobby/storage/session_models.py` (dataclass), `src/gobby/storage/sessions/_crud.py` (INSERT/UPDATE), `src/gobby/storage/sessions/_manager.py` (high-level manager). Add `is_local: bool = False` to the dataclass, INSERT column, and any `from_row`/`to_dict` mappings. Read `_crud.py` for the existing INSERT shape on first edit.
+
+**Heuristic helpers (step 2 — two separate predicates for different surfaces):**
 
 ```python
 # src/gobby/llm/local_detection.py (new)
+from __future__ import annotations
 from typing import Optional
-from gobby.config.app import LocalConfig
 
 LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama", "llamacpp", "local"})
 
-def is_local_model(
-    provider: Optional[str],
-    model: Optional[str],
-    *,
-    local_cfg: Optional[LocalConfig],
-) -> bool:
-    """Return True iff (provider, model) identifies a daemon-local model.
+def is_local_legacy_fallback(provider: Optional[str], model: Optional[str]) -> bool:
+    """Row-level NULL fallback for `is_local` on agent_runs/sessions.
 
-    Precedence:
-      1. Model equals the daemon's configured local model name (the resolution target
-         of `model: "local"`). This is the strongest signal — a Claude SDK pointed
-         at a local OpenAI-compatible endpoint via env override still hits this path.
-      2. Provider is in the explicit local providers set.
-      3. Model name matches the `gpt-oss-*` heuristic (repo-specific fallback for
-         OpenAI-compatible local serves; covers older sessions where local_cfg.model
-         was a different name).
+    Used ONLY when the persisted `is_local` column is 0 AND we suspect the row
+    pre-dates the migration. New rows persist `is_local` authoritatively at
+    creation time (see spawn_agent/_implementation.py, prepare_terminal_spawn,
+    and create_web_chat_session). Do NOT compare against `local_cfg.model` here —
+    that path produces both false positives (cloud Claude run with
+    local_cfg.model='claude-opus-4-7') and false negatives (local_cfg.model='auto'
+    resolves to a runtime-loaded id at spawn time).
+
+    Does NOT detect literal `model == "local"` because the resolution always
+    happens before persistence — no row should have `model == "local"`.
     """
-    if local_cfg and model and local_cfg.model and model == local_cfg.model:
+    if provider and provider.lower() in LOCAL_PROVIDERS:
+        return True
+    if model and "gpt-oss" in model.lower():
+        return True
+    return False
+
+
+def is_local_agent_definition(provider: Optional[str], model: Optional[str]) -> bool:
+    """Config-level local detection for agent DEFINITIONS (not runs).
+
+    Used by the agent-definitions route (`src/gobby/servers/routes/agents.py`).
+    Definitions store the user's literal `model` value (often `"local"`), so
+    the literal-string detection IS the strongest signal here — unlike rows.
+
+    Returns True when:
+      1. `model == "local"` literally (the canonical config-side signal).
+      2. Provider is in `LOCAL_PROVIDERS`.
+      3. Model name matches the `gpt-oss-*` heuristic.
+    """
+    if model and model.strip().lower() == "local":
         return True
     if provider and provider.lower() in LOCAL_PROVIDERS:
         return True
@@ -237,22 +373,38 @@ def is_local_model(
 
 **Test coverage required (write before implementation):**
 
-`tests/llm/test_local_detection.py` (new) covers:
-- `is_local_model("claude", "qwen-coder-32b", local_cfg=LocalConfig(model="qwen-coder-32b", url="http://127.0.0.1:1234"))` → `True` (model equality wins despite `provider='claude'`).
-- `is_local_model("lmstudio", "anything", local_cfg=None)` → `True` (provider set fallback).
-- `is_local_model("openai", "gpt-oss-120b", local_cfg=None)` → `True` (heuristic fallback).
-- `is_local_model("claude", "claude-opus-4-7", local_cfg=LocalConfig(model="qwen-coder-32b", url="..."))` → `False`.
-- `is_local_model(None, None, local_cfg=None)` → `False`.
+`tests/llm/test_local_detection.py`:
+- `is_local_legacy_fallback("lmstudio", "anything")` → `True`.
+- `is_local_legacy_fallback("openai", "gpt-oss-120b")` → `True`.
+- `is_local_legacy_fallback("claude", "claude-opus-4-7")` → `False`.
+- `is_local_legacy_fallback("claude", "qwen-coder-32b")` → `False` (false-positive guard).
+- `is_local_legacy_fallback("claude", "local")` → `False` (resolution always happens before persistence; a row should never store the literal "local").
+- `is_local_legacy_fallback(None, None)` → `False`.
+- `is_local_agent_definition("claude", "local")` → `True` (literal-string IS the canonical config-side signal).
+- `is_local_agent_definition("lmstudio", "qwen-coder-32b")` → `True` (provider).
+- `is_local_agent_definition("openai", "gpt-oss-120b")` → `True` (heuristic).
+- `is_local_agent_definition("claude", "claude-opus-4-7")` → `False`.
+- `is_local_agent_definition(None, None)` → `False`.
 
-Backend changes:
+`tests/mcp_proxy/tools/test_spawn_agent_local_persistence.py` (new): end-to-end spawn through `spawn_agent_impl` with `model="local"` (mock `ensure_local_model` to return `"qwen-coder-32b"`). Assert: the inserted `agent_runs` row has `is_local=1` AND `model="qwen-coder-32b"`; the inserted `sessions` row (created by `prepare_terminal_spawn` → `ChildSessionManager.create_child_session`) has `is_local=1`. Repeat with `model="local"` and `local_cfg.model="auto"` (mock `ensure_local_model` to return `"gpt-oss-120b"`); assert `is_local=1` AND `model="gpt-oss-120b"`. Repeat with `model="claude-opus-4-7"`; assert `is_local=0`.
 
-1. Add `src/gobby/llm/local_detection.py` with `is_local_model` (above) and the test file. This module is consumed by both §1.5 (sessions route) and §1.6 (agents route).
-2. Add a computed `is_local: bool` field to the agent-run and agent-definition payloads emitted by `src/gobby/servers/routes/` (grep `agent_run` / `running_agents` / agent-definitions endpoints — confirm exact route file on first edit). For agent-runs: call `is_local_model(run.provider, run.model, local_cfg=daemon_config.local)`. For agent-definitions: call with the configured provider/model from the definition.
-3. The matching frontend type — the `AgentDefInfo` interface near the top of `AgentsTab.tsx` plus the running-agent shape — gets `isLocal: boolean` (camelCase on the wire, mapped from the JSON `is_local`).
+`tests/agents/test_prepare_terminal_spawn_is_local.py` (new): unit test for `prepare_terminal_spawn(..., is_local=True, model="qwen-coder-32b")` — assert `ChildSessionConfig.is_local=True` is passed to `create_child_session`, and `LocalAgentRunManager.create` is called with `is_local=True, model="qwen-coder-32b"`.
 
-Frontend changes:
+`tests/servers/routes/test_web_chat_session_is_local.py` (new): POST to the web-chat session creation route with `model="local"` — assert the inserted `sessions` row has `is_local=1`. Repeat with `model="claude-opus-4-7"` — `is_local=0`.
 
-4. In the `AgentsTab.tsx` agent-card JSX (the block that renders one card from `AgentDefInfo` or the running-agent shape), add the `LOCAL` chip when `def.isLocal === true`. Use the same `chip chip--local` className introduced in §1.5 — no parallel CSS.
+`tests/storage/test_migration_221_is_local.py` (new): apply migration 221 to a DB with pre-migration `agent_runs` containing rows of `(provider='lmstudio', model='x')`, `(provider='claude', model='gpt-oss-120b')`, and `(provider='claude', model='claude-opus-4-7')`. Assert backfill flips the first two to `is_local=1` and leaves the third as `0`. Repeat for `sessions`.
+
+Route changes (step 3):
+
+3.1 **Agent-run / running-agents routes** (locate via `gcode search-content "running_agents"` under `src/gobby/servers/routes/`): SELECT `is_local` from `agent_runs`. Serializer maps to `is_local: bool` on the wire. When the column is `0`, apply `is_local_legacy_fallback(row.provider, row.model)` at the serializer to catch unmigrated legacy data (this is a no-op for fresh-install rows since the spawn-time write authoritatively sets `is_local`).
+
+3.2 **Agent-definitions route** (`src/gobby/servers/routes/agents.py` — confirm exact path on first edit): definitions are NOT rows in `agent_runs`; they're config records loaded from `.gobby/agents/`. Their payload also gets `is_local: bool`, but computed via `is_local_agent_definition(def.provider, def.model)` — the predicate that DOES treat literal `model == "local"` as canonical (per the test cases above).
+
+3.3 **Watching-sessions route** (consumed by §1.5): SELECT `sessions.is_local`, fall back via `is_local_legacy_fallback(row.provider, row.model)` when the column is `0`.
+
+Frontend changes (step 4):
+
+The `AgentDefInfo` interface near the top of `AgentsTab.tsx` plus the running-agent shape gets `isLocal: boolean`. In the agent-card JSX, render the `LOCAL` chip when `def.isLocal === true`. Use the same `chip chip--local` className introduced in §1.5 — no parallel CSS.
 
 Extraction (in-scope for this commit — see Constraints):
 
@@ -263,9 +415,14 @@ Wrap-up step (in this same commit, after the chip ships):
 6. Delete the `.session-kind-badge*` aliases introduced in §1.2 from `web/src/components/chat/styles/sessions-tab.css`. Confirm `gcode search-content "session-kind-badge"` returns ZERO matches across the repo (TSX consumers were migrated in §1.2, §1.3, §1.5; this commit completes the cleanup).
 
 **Validation criteria**:
-- Unit tests in `tests/llm/test_local_detection.py` all pass.
-- Backend route returns `is_local: true` for an agent run whose `model` matches `daemon_config.local.model` (regardless of `provider`) and `is_local: false` for a Claude/cloud agent. Confirm with `curl`.
-- Workflows tab → Agents shows a `LOCAL` chip on local-model agent cards. Cloud agents do NOT show the chip.
+- Migration 221 runs cleanly on existing dev DBs. Both `ALTER TABLE` statements succeed; backfill `UPDATE`s touch only matching rows.
+- `baseline_schema.sql` for fresh installs includes `is_local INTEGER NOT NULL DEFAULT 0` on both `agent_runs` and `sessions`.
+- All four new test files pass: spawn persistence (covers `auto` resolution + same-name false-positive), `prepare_terminal_spawn` threading, web-chat session creation, migration backfill.
+- `tests/llm/test_local_detection.py` covers BOTH `is_local_legacy_fallback` and `is_local_agent_definition` (literal `model: "local"` returns True for definitions, False for the row-level fallback).
+- Agent-runs route returns `is_local: true` for fresh local agent runs and `is_local: false` for cloud. Confirm with `curl`.
+- Agent-definitions route returns `is_local: true` for any def with `model: "local"` literally. Confirm with `curl` against `/api/agents/definitions` (or whatever the actual path is).
+- Watching-sessions route returns `is_local: true` for sessions started via `model: local`.
+- Workflows tab → Agents shows a `LOCAL` chip on local-model agent cards (both running agents AND defs with `model: local`). Cloud agents do NOT show the chip.
 - `wc -l web/src/components/workflows/AgentsTab.tsx` returns < 1000.
 - `wc -l web/src/components/workflows/AgentCard.tsx` returns > 0 (extraction landed).
 - `gcode search-content "session-kind-badge"` returns 0 matches anywhere in the repo (CSS aliases deleted, no TSX consumers).
@@ -391,11 +548,11 @@ After this, `gcode search-content "GranularityToggle"` returns only the file its
 
 ### 3.1 Sessions filter dropdown collapsed-trigger blue [category: code]
 
-Target: the dropdown trigger in the activity-panel header that switches between "Sessions / Tasks / Plans / Changes / Files / A2UI / Canvas / Pipelines" — confirm location with `gcode search "ActivityPanel tab dropdown"` and grep `'Tasks ▼'` (its accessible label per the live page snapshot at uid `_313`).
+Target: `web/src/components/activity/ActivityPanel.tsx` (the dropdown trigger that switches between "Sessions / Tasks / Plans / Changes / Files / A2UI / Canvas / Pipelines" — its accessible label is `Tasks ▼` per the live page snapshot at uid `_313`). If the trigger styling lives in CSS rather than only Tailwind classes, also touch `web/src/components/chat/styles/activity-panel.css` (or whichever stylesheet `ActivityPanel.tsx` imports for the trigger).
 
-Match the project-selector active-state blue (`bg-accent text-accent-foreground` from `ProjectSelector.tsx:91`) on the COLLAPSED dropdown trigger button only. Expanded menu items keep their current styling.
+Match the project-selector active-state blue (`bg-accent text-accent-foreground` from `web/src/components/chat/ProjectSelector.tsx:91`) on the COLLAPSED dropdown trigger button only. Expanded menu items keep their current styling.
 
-Apply `bg-accent text-accent-foreground` to the trigger's className. Confirm by inspecting the project selector's "gobby" pill styling in DevTools, then matching the same hex/CSS-var on the dropdown trigger.
+Apply `bg-accent text-accent-foreground` to the trigger's className in `ActivityPanel.tsx`. Confirm by inspecting the project selector's "gobby" pill styling in DevTools, then matching the same hex/CSS-var on the dropdown trigger.
 
 **Validation criteria**: Collapsed Sessions filter dropdown trigger has the same blue background and text color as the `ProjectSelector.tsx` "gobby" active pill (DevTools computed `background-color` matches). Open the dropdown — menu items display in their previous (non-blue) style. Switch the filter to "Tasks" — the trigger remains blue.
 
@@ -416,24 +573,27 @@ User-visible symptom: Codex sessions in the Watching panel render `<system_instr
 
 **Diagnose and fix:**
 
-4. Write a failing Vitest in `web/src/components/chat/__tests__/protocolContent.test.ts`. The actual exported API is `splitProtocolContent(content: string, idPrefix: string): ProtocolContentSegment[]` where each segment is either `{ type: 'text', content: string }` or `{ type: 'tool_call', call: ToolCall }`, and protocol-derived tool calls have `call.tool_type === 'protocol'` (see `makeProtocolToolCall` in `protocolContent.ts:126-151`):
+4. Write a failing Vitest in `web/src/components/chat/__tests__/protocolContent.test.ts`. The actual exported API is `splitProtocolContent(content: string, idPrefix: string): ProtocolContentSegment[]` where each segment is either `{ type: 'text', content: string }` or `{ type: 'tool_call', call: ToolCall }`, and protocol-derived tool calls have `call.tool_type === 'protocol'` (see `makeProtocolToolCall` in `protocolContent.ts:126-151`). Use `Extract<...>` for clean type narrowing — an inline shape predicate like `s is { type: 'tool_call'; call: { tool_type: string } }` won't typecheck because `ToolCall` requires `id`, `tool_name`, `server_name`, and `status`:
 
    ```ts
    import { describe, it, expect } from 'vitest'
-   import { splitProtocolContent } from '../protocolContent'
+   import { splitProtocolContent, type ProtocolContentSegment } from '../protocolContent'
    import fixture from './fixtures/codex-protocol-leak.txt?raw'
+
+   type TextSegment = Extract<ProtocolContentSegment, { type: 'text' }>
+   type ToolCallSegment = Extract<ProtocolContentSegment, { type: 'tool_call' }>
 
    describe('splitProtocolContent — Codex leak regression', () => {
      it('collapses leaked Codex system_instructions into protocol tool calls', () => {
        const segments = splitProtocolContent(fixture, 'codex-protocol-leak')
 
        const visible = segments
-         .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
+         .filter((s): s is TextSegment => s.type === 'text')
          .map(s => s.content)
          .join('\n')
 
        const protocolCalls = segments.filter(
-         (s): s is { type: 'tool_call'; call: { tool_type: string } } =>
+         (s): s is ToolCallSegment =>
            s.type === 'tool_call' && s.call.tool_type === 'protocol',
        )
 
@@ -445,7 +605,7 @@ User-visible symptom: Codex sessions in the Watching panel render `<system_instr
    })
    ```
 
-   The `?raw` import requires Vitest's vite-style asset handling. The repo's existing `vite.config.ts` / `vitest.config.ts` already supports it (used elsewhere in the codebase) — if the import fails, add `assetsInclude: ['**/*.txt']` to the Vitest config rather than working around it.
+   The `?raw` import works without any config changes: `web/src/vite-env.d.ts` references `vite/client`, and Vitest runs through `web/vite.config.ts`. No `assetsInclude` needed.
 5. Run the test — it should fail. The error message tells you whether the leak originates in `splitProtocolContent` (most likely — the visible text contains the protocol body) or somewhere downstream. If `splitProtocolContent` is the culprit:
    - The non-greedy regex in the splitter terminates early when the body contains a triple-backtick code fence with `</tag>` text inside, OR when nested same-name tags appear.
    - Switch the offending regex to a balanced tokenizer: walk forward from each `<tag…>` opening, count `<tag>` / `</tag>` depth (ignoring text inside `` `…` `` inline code and triple-backtick fences), close on depth 0.
@@ -501,11 +661,11 @@ useEffect(() => {
 
 ---
 
-## Phase 4: Mobile activity panel auto-close (depends: Phase 3)
+## Phase 4: Mobile activity panel auto-close
 
-**Goal**: Fix the user-reported bug where clicking the activity-panel toggle on mobile opens the panel for ~6ms then auto-closes it.
+**Goal**: Fix the user-reported bug where clicking the activity-panel toggle on mobile opens the panel for ~6ms then auto-closes it. Phase 4 is sequenced after Phase 3 (the dependency lives on §4.1 below, where plan-draft compilation actually honors it).
 
-### 4.1 Scope `ChatPage.tsx` mobile auto-close to viewport transitions only [category: code]
+### 4.1 Scope `ChatPage.tsx` mobile auto-close to viewport transitions only [category: code] (depends: Phase 3)
 
 Target: `web/src/components/chat/ChatPage.tsx` (specifically lines 169–172 — the `useEffect` that auto-closes the panel on every isPinned change while isMobile is true).
 
@@ -660,8 +820,8 @@ Read the real `AgentStatusBar` component first (`gcode outline web/src/component
 | 1.2 | (refactor — no Drawbridge ref) | open |
 | 1.3 | drawbridge `df52…d997` (chips not highlighted text) | open |
 | 1.4 | drawbridge `8651…d6ac` (font size match Sessions) | open |
-| 1.5 | (user ask — Sessions tab LOCAL chip; no Drawbridge ref) | open |
-| 1.6 | gobby-task **#11199** (LOCAL chip on agent cards) — extracts `AgentCard.tsx` in same commit | open |
+| 1.5 | (user ask — Sessions tab LOCAL chip; no Drawbridge ref) — depends on §1.6 schema | open |
+| 1.6 | gobby-task **#11199** (LOCAL chip on agent cards) — schema migration + spawn-time `is_local` write + `AgentCard.tsx` extraction in same commit | open |
 | 2.1 | drawbridge `82e5…1604` (usage stats only Claude — attribution fix) | open |
 | 2.2 | drawbridge `dd0a…1b28` (chart hover green=0) | open |
 | 2.3 | drawbridge `e53b…f561` (granularity tied to time range) | open |
@@ -675,15 +835,19 @@ Read the real `AgentStatusBar` component first (`gcode outline web/src/component
 
 ```text
 Plan Verification:
-✓ Test specifications are explicit (Vitest in §3.2, ChatPage integration tests in §4.1, pytest in §1.6, lifecycle test in §2.1) — TDD wrappers will be auto-inserted around each
+✓ Test specifications are explicit (Vitest in §3.2, ChatPage integration tests in §4.1, pytest in §1.6 — including end-to-end spawn persistence tests, lifecycle test in §2.1) — TDD wrappers will be auto-inserted around each
 ✓ Dependency tree is valid:
-    - 1.3, 1.5, 1.6 depend on 1.2 (chip class)
-    - Phase 4 depends on Phase 3 (sequencing only — no shared files)
+    - 1.3 depends on 1.2 (chip class)
+    - 1.5 depends on 1.2 (chip class) AND 1.6 (sessions.is_local schema column + spawn-time write)
+    - 1.6 depends on 1.2 (chip class)
+    - 4.1 depends on Phase 3 (sequencing — declared on the task heading, not the phase heading, since plan-draft compilation only honors deps on `### N.N` headings)
     - No cycles
-✓ All `(depends:)` references are to in-plan task numbers or phases — no external task IDs in plan-draft notation
-✓ File-size compliance handled in-section: §1.6 extracts `AgentCard.tsx`, §3.3 extracts `JsonBlock.tsx`. Both bring their host file under 1000 lines in the same commit. Refactor task #12917 is referenced as prose context only.
+✓ All `(depends:)` references are to in-plan task numbers or phase sub-epics — no external task IDs in plan-draft notation, no phase-heading deps
+✓ File-size compliance handled in-section: §1.6 extracts `AgentCard.tsx`, §3.3 extracts `JsonBlock.tsx`. Both bring their host file under 1000 lines in the same commit. Refactor task #12917 referenced as prose context only.
+✓ Schema-level fix in §1.6: `is_local` column added to `agent_runs` and `sessions` via `_migration_registry.py` (version 221) AND `baseline_schema.sql` (for fresh installs). Computed at spawn/session-create time BEFORE local-model resolution, threaded through `spawn_agent_impl` → `SpawnRequest` → `execute_spawn` → `_spawn_*_terminal` → `prepare_terminal_spawn` → `ChildSessionConfig` + `LocalAgentRunManager.create`. Web-chat path threads through `routes/sessions/core.py` + `routes/agent_spawn.py` → `create_web_chat_session`. Hook auto-recovery sessions default to `is_local=0` + legacy fallback at read.
+✓ Two predicates in `local_detection.py`: `is_local_legacy_fallback(provider, model)` for row-level NULL fallback (does NOT match literal `"local"` since rows persist resolved names); `is_local_agent_definition(provider, model)` for config-side cards (DOES match literal `model: "local"` as the canonical signal).
 ✓ Categories assigned correctly (code/refactor only)
-✓ Phase headings use canonical `## Phase N: Name` form
+✓ Phase headings use canonical `## Phase N: Name` form (no inline dep notation)
 ✓ Task sections are self-contained: every section names exact files, line numbers, code snippets, and validation steps
 ```
 

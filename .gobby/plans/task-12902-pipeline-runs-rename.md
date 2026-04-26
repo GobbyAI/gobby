@@ -143,6 +143,7 @@ Target: `src/gobby/workflows/pipeline_state.py`, `src/gobby/storage/pipelines.py
   - `create_step_execution` → `create_step_run`
   - `update_step_execution` → `update_step_run`
   - `get_step_by_approval_token` — unchanged name; body queries `pipeline_step_runs`
+  - `get_execution_by_resume_token` → `get_run_by_resume_token`; `get_stalled_executions` → `get_stalled_runs`. Update all callers (storage tests in `tests/storage/test_pipeline_storage.py`, HTTP/MCP resume-token lookup, and `pipeline_heartbeat.py` per §2.4).
   - `interrupt_stale_running_executions` (line ~507) → `interrupt_stale_running_runs`
   - **`fail_stale_running_executions` (line ~578) — DELETE**. This method is currently a backwards-compatible alias that just calls `interrupt_stale_running_executions(exclude_ids=...)` (line 580 body). The no-alias rule applies; remove the wrapper entirely. All callers (`runner_lifecycle.py:592` and any docstring references in `mcp_proxy/tools/workflows/_pipeline_execution.py:541`) must call `interrupt_stale_running_runs` directly. Update §2.5's `runner_lifecycle.py` bullet to call `interrupt_stale_running_runs`, not `fail_stale_running_runs` — there is no `fail_*` canonical method in the renamed surface.
   - **`resolve_execution_reference` (line ~333) → `resolve_run_reference`**. Update all callers; this is a public method on the manager that resolves opaque references to canonical run IDs.
@@ -329,7 +330,7 @@ Target: `src/gobby/storage/cron_models.py`, `src/gobby/storage/cron.py`, `src/go
 
 Target: `src/gobby/workflows/pipeline_heartbeat.py`, `src/gobby/conductor/pipeline_review.py`, `src/gobby/conductor/manager.py`, `src/gobby/servers/routes/admin/_health.py`, telemetry emit sites
 
-- `pipeline_heartbeat.py` (`class PipelineHeartbeat`, lines 32–238): all internal `execution`/`execution_id` references rename per 2.1 pattern. Method `check_stalled_executions` → `check_stalled_runs` (line ~62).
+- `pipeline_heartbeat.py` (`class PipelineHeartbeat`, lines 32–238): all internal `execution`/`execution_id` references rename per 2.1 pattern. Method `check_stalled_executions` → `check_stalled_runs` (line ~62). Storage call `manager.get_stalled_executions(...)` → `manager.get_stalled_runs(...)` per §1.3.
 - `conductor/pipeline_review.py`: `gather_review_data(execution: PipelineExecution, steps: list[StepExecution])` → `gather_review_data(run: PipelineRun, steps: list[PipelineStepRun])` (line ~64). `class ExecutionReviewData` → `class PipelineRunReviewData` (or similar — check current name and rename consistently). `build_review_json` (line ~153) field rename in the produced JSON: `execution_id` → `run_id`.
 - **`conductor/manager.py`** — line 32 contains a hardcoded instruction string sent to the conductor agent: `"2. Check pipeline state: use \`get_pipeline_status\` to find stalled or waiting pipelines"`. Rewrite to `"...use \`get_pipeline_run\` to find stalled or waiting pipelines"`. Audit the rest of the file for any other `execution_id`, `get_pipeline_status`, `list_pipeline_executions`, or `search_pipeline_executions` literals in instruction text; rewrite each to the new tool/field name. This is user-facing text consumed by the conductor agent's prompt — leaving the old name yields a "tool not found" error on the first conductor tick after Phase 3.2 lands.
 - **`conductor/manager.py` `class ConductorManager`**: line 59 constructor param `execution_manager: LocalPipelineExecutionManager | None = None` → `run_manager: LocalPipelineRunManager | None = None`; line 69 attribute `self._execution_manager = execution_manager` → `self._run_manager = run_manager` (update every `self._execution_manager` reference); line 123 docstring (`"Reviewed 3 executions"` → `"Reviewed 3 runs"`); line 125 `if not self._execution_manager:` → `if not self._run_manager:`; line 129 `self._run_manager.get_unreviewed_completions(limit=5)` (method name unchanged per §1.3, attribute renames). Audit `get_steps_for_execution(...)` → `get_steps_for_run(...)` calls. Loop variable `execution` → `run` (iterates `PipelineRun` instances); update every dot-access, log message, and `f"Reviewed {n} execution(s)"` → `f"Reviewed {n} run(s)"`.
@@ -739,7 +740,7 @@ Files identified by the explore (11 direct refs):
 
 Target: skills under `src/gobby/install/shared/skills/` that reference pipeline execution tools
 
-Audit (ripgrep `pipeline_execution|get_pipeline_status|list_pipeline_executions|search_pipeline_executions|execution_id` across `src/gobby/install/shared/skills/`):
+Audit (ripgrep `pipeline_execution|get_pipeline_status|list_pipeline_executions|search_pipeline_executions|execution_id|gobby pipelines (history|status|list-runs|search)` across `src/gobby/install/shared/skills/`):
 
 - `plan/SKILL.md` — likely references the `expand-task` pipeline; if it documents pipeline execution outputs, update.
 - `expand/SKILL.md` (or whichever skill drives `/gobby expand`) — references the `expand-task` pipeline; rename any execution-noun mentions.
@@ -756,11 +757,11 @@ For each skill: bump the `version:` field in the SKILL.md frontmatter so `sync_b
 
 ### 6.3 Update active docs [category: docs]
 
-Targets (all four files have live execution-named refs, verified by `rg`): `docs/guides/pipelines.md` (290), `docs/guides/workflows-overview.md` (156), `docs/guides/mcp-tools.md` (841), `docs/guides/cli-commands.md` (1,423 — pre-existing monolith, **#12947 covers split**, scope here is rename-only edits).
+Targets (all files have live execution-named refs, verified by `rg`): `docs/guides/pipelines.md` (290), `docs/guides/workflows-overview.md` (156), `docs/guides/mcp-tools.md` (841), `docs/guides/cli-commands.md` (1,423 — pre-existing monolith, **#12947 covers split**, scope here is rename-only edits). **Active agent docs**: `CLAUDE.md` (root, line ~83 has `gobby pipelines status`), `AGENTS.md` (root sibling, audit), `GEMINI.md` (if present, audit), `src/gobby/workflows/CLAUDE.md` (lines 72-73 list old `pipeline_executions`/`step_executions` tables in the DB-tables section — rewrite to `pipeline_runs`/`pipeline_step_runs`). Audit nested `src/gobby/**/CLAUDE.md` for any other pipeline-execution refs via `rg -n 'pipeline_executions|step_executions|gobby pipelines (history|status|list-runs|search)|(?i)\bpipeline executions?\b' CLAUDE.md AGENTS.md GEMINI.md src/gobby/`.
 
 **Substitution rules** (apply across all four files): tool names per §1.1 table (`get_pipeline_status` → `get_pipeline_run`, etc.); URL examples (`/api/pipelines/executions` → `/api/pipelines/runs`); CLI examples (`gobby pipelines history`/`status <ID>`/`list-runs`/`search` → `gobby pipelines runs list --name <NAME>`/`runs show <ID>`/`runs list`/`runs search`); response-key `execution_id` → `run_id`; prose `(?i)\bpipeline executions?\b` → `pipeline run(s)`; pagination shape (`total_count`, `limit`, `offset`, `status_summary`) added to example responses in `pipelines.md` and `mcp-tools.md`. **In `cli-commands.md`**: delete the obsolete `gobby pipelines history` section entirely; rewrite the `search` section to `runs search QUERY`; do not restructure beyond rename edits. **Allowlist**: `PipelineExecutor.execute` implementation-verb mentions; archived plans under `docs/plans/completed/`.
 
-`validation_criteria`: `rg -n 'get_pipeline_status|list_pipeline_executions|search_pipeline_executions|/api/pipelines/executions|gobby pipelines (history|status|list-runs)\b|(?i)\bpipeline executions?\b' docs/guides/` returns zero matches outside `PipelineExecutor.execute` allowlist contexts. Example responses in `pipelines.md` and `mcp-tools.md` include the new pagination shape.
+`validation_criteria`: `rg -n 'get_pipeline_status|list_pipeline_executions|search_pipeline_executions|/api/pipelines/executions|gobby pipelines (history|status|list-runs|search)\b|\bexecution_id\b|(?i)\bpipeline executions?\b' docs/guides/` returns zero matches outside `PipelineExecutor.execute` allowlist contexts. Example responses in `pipelines.md` and `mcp-tools.md` include the new pagination shape.
 
 ---
 
@@ -901,19 +902,20 @@ FORBIDDEN_SURFACES = [
         [r'\bget_pipeline_status\b',
          r'\blist_pipeline_executions\b',
          r'\bsearch_pipeline_executions\b',
-         r'(?i)\bpipeline executions?\b'],
+         r'(?i)\bpipeline executions?\b',
+         r'\bgobby pipelines (history|status|list-runs|search)\b', r'\bexecution_id\b', r'/api/pipelines/executions'],
     ),
     (
         'active_docs',
-        ['docs/guides/'],
+        ['docs/guides/', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'src/gobby/workflows/CLAUDE.md'],
         [r'\bget_pipeline_status\b',
          r'\blist_pipeline_executions\b',
          r'\bsearch_pipeline_executions\b',
          r'/api/pipelines/executions',
          r'(?i)\bpipeline executions?\b',
-         r'\bgobby pipelines history\b',
-         r'\bgobby pipelines status\b',
-         r'\bgobby pipelines list-runs\b'],
+         r'\bgobby pipelines (history|status|list-runs|search)\b',
+         r'\bexecution_id\b',
+         r'\bpipeline_executions\b', r'\bstep_executions\b'],
     ),
 ]
 
