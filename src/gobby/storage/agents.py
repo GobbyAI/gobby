@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
 AgentRunTerminalReason = Literal["user_cancelled", "daemon_restart"]
 ACTIVE_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = ("pending", "running")
+ACTIVE_AGENT_RUN_STATUS_SQL = ", ".join(f"'{status}'" for status in ACTIVE_AGENT_RUN_STATUSES)
 TERMINAL_AGENT_RUN_STATUSES: tuple[AgentRunStatus, ...] = (
     "success",
     "error",
@@ -170,6 +171,8 @@ class AgentRun:
             "task_id": self.task_id,
             "status": self.status,
             "terminal_reason": self.terminal_reason,
+            "tool_calls_count": self.tool_calls_count,
+            "turns_used": self.turns_used,
         }
 
 
@@ -179,6 +182,113 @@ class LocalAgentRunManager:
     def __init__(self, db: DatabaseProtocol):
         """Initialize with database connection."""
         self.db = db
+
+    @staticmethod
+    def _select_runs_with_live_stats_sql(
+        where_clause: str = "",
+        order_by: str = "",
+        *,
+        limit: bool = False,
+    ) -> str:
+        """Build an agent-run SELECT that overlays live session stats for active runs."""
+        sql = f"""
+            SELECT
+                ar.id,
+                ar.parent_session_id,
+                ar.child_session_id,
+                ar.claimed_session_id,
+                ar.workflow_name,
+                ar.agent_name,
+                ar.provider,
+                ar.model,
+                ar.requested_reasoning_effort,
+                ar.effective_reasoning_effort,
+                ar.reasoning_required,
+                ar.reasoning_status,
+                ar.reasoning_message,
+                ar.status,
+                ar.prompt,
+                ar.result,
+                ar.error,
+                CASE
+                    WHEN ar.status IN ({ACTIVE_AGENT_RUN_STATUS_SQL}) THEN COALESCE(
+                        child_s.tool_call_count,
+                        CASE
+                            WHEN child_s.id IS NULL THEN parent_s.tool_call_count
+                        END,
+                        ar.tool_calls_count,
+                        0
+                    )
+                    ELSE COALESCE(ar.tool_calls_count, 0)
+                END AS tool_calls_count,
+                CASE
+                    WHEN ar.status IN ({ACTIVE_AGENT_RUN_STATUS_SQL}) THEN COALESCE(
+                        child_s.turn_count,
+                        CASE
+                            WHEN child_s.id IS NULL THEN parent_s.turn_count
+                        END,
+                        ar.turns_used,
+                        0
+                    )
+                    ELSE COALESCE(ar.turns_used, 0)
+                END AS turns_used,
+                ar.started_at,
+                ar.completed_at,
+                ar.created_at,
+                ar.updated_at,
+                ar.sdk_session_id,
+                ar.continuation_prompt,
+                ar.task_id,
+                ar.pid,
+                ar.tmux_session_name,
+                ar.worktree_id,
+                ar.clone_id,
+                ar.timeout_seconds,
+                ar.terminal_reason
+            FROM agent_runs ar
+            LEFT JOIN sessions child_s ON child_s.id = ar.child_session_id
+            LEFT JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
+            {where_clause}
+            {order_by}
+            """
+        if limit:
+            sql += "\n            LIMIT ?"
+        return sql
+
+    def _fetch_run_with_live_stats(
+        self,
+        where_clause: str,
+        params: Sequence[object],
+    ) -> AgentRun | None:
+        """Fetch one agent run through the live-stat selector."""
+        row = self.db.fetchone(
+            self._select_runs_with_live_stats_sql(where_clause),
+            tuple(params),
+        )
+        return AgentRun.from_row(row) if row else None
+
+    def _fetch_runs_with_live_stats(
+        self,
+        where_clause: str = "",
+        params: Sequence[object] = (),
+        *,
+        order_by: str = "",
+        limit: int | None = None,
+    ) -> list[AgentRun]:
+        """Fetch agent runs through the live-stat selector."""
+        query_params = tuple(params)
+        if limit is not None:
+            query_params = (*query_params, limit)
+
+        rows = self.db.fetchall(
+            self._select_runs_with_live_stats_sql(
+                where_clause,
+                order_by,
+                limit=limit is not None,
+            ),
+            query_params,
+        )
+        return [AgentRun.from_row(row) for row in rows]
 
     def create(
         self,
@@ -264,8 +374,7 @@ class LocalAgentRunManager:
 
     def get(self, run_id: str) -> AgentRun | None:
         """Get agent run by ID."""
-        row = self.db.fetchone("SELECT * FROM agent_runs WHERE id = ?", (run_id,))
-        return AgentRun.from_row(row) if row else None
+        return self._fetch_run_with_live_stats("WHERE ar.id = ?", (run_id,))
 
     def has_active_run_for_task(self, task_id: str) -> bool:
         """Check if there's already a pending/running agent run for a task."""
@@ -277,12 +386,13 @@ class LocalAgentRunManager:
 
     def get_active_run_for_task(self, task_id: str) -> AgentRun | None:
         """Get the active (pending/running) agent run for a task, if any."""
-        row = self.db.fetchone(
-            "SELECT * FROM agent_runs WHERE task_id = ? AND status IN ('pending', 'running')"
-            " ORDER BY created_at DESC LIMIT 1",
+        runs = self._fetch_runs_with_live_stats(
+            "WHERE ar.task_id = ? AND ar.status IN ('pending', 'running')",
             (task_id,),
+            order_by="ORDER BY ar.created_at DESC",
+            limit=1,
         )
-        return AgentRun.from_row(row) if row else None
+        return runs[0] if runs else None
 
     def start(self, run_id: str) -> AgentRun | None:
         """Mark agent run as started."""
@@ -569,16 +679,11 @@ class LocalAgentRunManager:
 
     def list_pending_with_pid(self, limit: int = 100) -> list[AgentRun]:
         """List pending agent runs that have a PID (spawned but not yet marked running)."""
-        rows = self.db.fetchall(
-            """
-            SELECT * FROM agent_runs
-            WHERE status = 'pending' AND pid IS NOT NULL
-            ORDER BY created_at ASC
-            LIMIT ?
-            """,
-            (limit,),
+        return self._fetch_runs_with_live_stats(
+            "WHERE ar.status = 'pending' AND ar.pid IS NOT NULL",
+            order_by="ORDER BY ar.created_at ASC",
+            limit=limit,
         )
-        return [AgentRun.from_row(row) for row in rows]
 
     def update_child_session(self, run_id: str, child_session_id: str) -> AgentRun | None:
         """Update the child session ID for an agent run."""
@@ -610,27 +715,18 @@ class LocalAgentRunManager:
         Returns:
             List of AgentRun objects.
         """
+        conditions = ["ar.parent_session_id = ?"]
+        params: list[object] = [parent_session_id]
         if status:
-            rows = self.db.fetchall(
-                """
-                SELECT * FROM agent_runs
-                WHERE parent_session_id = ? AND status = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (parent_session_id, status, limit),
-            )
-        else:
-            rows = self.db.fetchall(
-                """
-                SELECT * FROM agent_runs
-                WHERE parent_session_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (parent_session_id, limit),
-            )
-        return [AgentRun.from_row(row) for row in rows]
+            conditions.append("ar.status = ?")
+            params.append(status)
+
+        return self._fetch_runs_with_live_stats(
+            f"WHERE {' AND '.join(conditions)}",
+            params,
+            order_by="ORDER BY ar.created_at DESC",
+            limit=limit,
+        )
 
     def list_by_status(
         self,
@@ -656,79 +752,53 @@ class LocalAgentRunManager:
             conditions.append("ar.status = ?")
             params.append(status)
 
-        join_clause = ""
         if project_id:
-            join_clause = "JOIN sessions s ON s.id = ar.parent_session_id"
-            conditions.append("s.project_id = ?")
+            conditions.append("parent_s.project_id = ?")
             params.append(project_id)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.append(limit)
 
-        rows = self.db.fetchall(
-            f"""
-            SELECT ar.* FROM agent_runs ar
-            {join_clause}
-            {where_clause}
-            ORDER BY ar.created_at DESC
-            LIMIT ?
-            """,
-            tuple(params),
+        return self._fetch_runs_with_live_stats(
+            where_clause,
+            params,
+            order_by="ORDER BY ar.created_at DESC",
+            limit=limit,
         )
-        return [AgentRun.from_row(row) for row in rows]
 
     def list_running(self, limit: int = 100) -> list[AgentRun]:
         """List all currently running agent runs."""
-        rows = self.db.fetchall(
-            """
-            SELECT * FROM agent_runs
-            WHERE status = 'running'
-            ORDER BY started_at ASC
-            LIMIT ?
-            """,
-            (limit,),
+        return self._fetch_runs_with_live_stats(
+            "WHERE ar.status = 'running'",
+            order_by="ORDER BY ar.started_at ASC",
+            limit=limit,
         )
-        return [AgentRun.from_row(row) for row in rows]
 
     def list_active(self, limit: int = 100) -> list[AgentRun]:
         """List all active (running or pending) agent runs."""
-        rows = self.db.fetchall(
-            """
-            SELECT * FROM agent_runs
-            WHERE status IN ('running', 'pending')
-            ORDER BY started_at ASC
-            LIMIT ?
-            """,
-            (limit,),
+        return self._fetch_runs_with_live_stats(
+            "WHERE ar.status IN ('running', 'pending')",
+            order_by="ORDER BY ar.started_at ASC",
+            limit=limit,
         )
-        return [AgentRun.from_row(row) for row in rows]
 
     def get_by_session(self, session_id: str) -> AgentRun | None:
         """Get active agent run by child session ID."""
-        row = self.db.fetchone(
-            """
-            SELECT * FROM agent_runs
-            WHERE child_session_id = ?
-            AND status IN ('running', 'pending')
-            ORDER BY created_at DESC LIMIT 1
-            """,
+        runs = self._fetch_runs_with_live_stats(
+            "WHERE ar.child_session_id = ? AND ar.status IN ('running', 'pending')",
             (session_id,),
+            order_by="ORDER BY ar.created_at DESC",
+            limit=1,
         )
-        return AgentRun.from_row(row) if row else None
+        return runs[0] if runs else None
 
     def list_by_parent(self, parent_session_id: str, limit: int = 100) -> list[AgentRun]:
         """List active agent runs spawned by a parent session."""
-        rows = self.db.fetchall(
-            """
-            SELECT * FROM agent_runs
-            WHERE parent_session_id = ?
-            AND status IN ('running', 'pending')
-            ORDER BY started_at ASC
-            LIMIT ?
-            """,
-            (parent_session_id, limit),
+        return self._fetch_runs_with_live_stats(
+            "WHERE ar.parent_session_id = ? AND ar.status IN ('running', 'pending')",
+            (parent_session_id,),
+            order_by="ORDER BY ar.started_at ASC",
+            limit=limit,
         )
-        return [AgentRun.from_row(row) for row in rows]
 
     def count_by_session(self, parent_session_id: str) -> dict[str, int]:
         """
