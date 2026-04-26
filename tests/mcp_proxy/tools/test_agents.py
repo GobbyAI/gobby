@@ -914,3 +914,106 @@ class TestFireSyntheticStop:
         mock_hook_mgr._evaluate_workflow_rules.assert_called_once()
         event_arg = mock_hook_mgr._evaluate_workflow_rules.call_args[0][0]
         assert event_arg.metadata["_platform_session_id"] == "sess-456"
+
+
+class TestCompleteSelfTerminatedRunSignoffMessage:
+    """`_complete_self_terminated_run` reads the agent's adversary_verdict
+    session var and threads it via signoff_message in the notify_result dict
+    so the wake dispatcher's content-fallback chain surfaces the verdict to
+    the parent's P2P inbox.
+    """
+
+    @pytest.mark.asyncio
+    async def test_signoff_message_set_when_adversary_verdict_present(self):
+        from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
+
+        run = MagicMock()
+        run.id = "run-xyz"
+        run.child_session_id = "child-sess-1"
+        run.tmux_session_name = "tmux-1"
+        runner = MagicMock()
+        kill_db = MagicMock()
+        completion_registry = MagicMock()
+        completion_registry.get_result = MagicMock(return_value=None)
+        completion_registry.notify = AsyncMock()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents.complete_and_notify_agent_run",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_complete,
+            patch(
+                "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+                new_callable=AsyncMock,
+            ),
+            patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls,
+        ):
+            svm_cls.return_value.get_variables.return_value = {
+                "adversary_verdict": "REJECTED: round 5, 1 blocking (sample)"
+            }
+            await _complete_self_terminated_run(
+                runner=runner,
+                run=run,
+                kill_db=kill_db,
+                completion_registry=completion_registry,
+                session_manager=None,
+                hook_manager_resolver=None,
+            )
+
+        notify_result = mock_complete.call_args.kwargs["notify_result"]
+        assert (
+            notify_result["signoff_message"]
+            == "REJECTED: round 5, 1 blocking (sample)"
+        )
+        assert notify_result["status"] == "success"
+        assert notify_result["run_id"] == "run-xyz"
+
+    @pytest.mark.asyncio
+    async def test_signoff_message_omitted_when_var_unset(self):
+        """Non-adversary runs leave adversary_verdict unset; the result dict
+        must NOT carry a signoff_message so the existing fallback message wins.
+        """
+        from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
+
+        run = MagicMock()
+        run.id = "run-abc"
+        run.child_session_id = "child-sess-2"
+        run.tmux_session_name = "tmux-2"
+        runner = MagicMock()
+        kill_db = MagicMock()
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents.complete_and_notify_agent_run",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_complete,
+            patch(
+                "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+                new_callable=AsyncMock,
+            ),
+            patch("gobby.workflows.state_manager.SessionVariableManager") as svm_cls,
+        ):
+            svm_cls.return_value.get_variables.return_value = {}  # var unset
+            await _complete_self_terminated_run(
+                runner=runner,
+                run=run,
+                kill_db=kill_db,
+                completion_registry=None,
+                session_manager=None,
+                hook_manager_resolver=None,
+            )
+
+        notify_result = mock_complete.call_args.kwargs["notify_result"]
+        assert "signoff_message" not in notify_result

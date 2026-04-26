@@ -206,6 +206,72 @@ class TestMarkTaskReviewApproved:
         assert "error" in result
 
 
+class TestApproveSignoffSummary:
+    """signoff_summary writes the adversary_verdict session variable."""
+
+    @pytest.fixture(autouse=True)
+    def _set_session_context(self):
+        with session_context_for_test("session-abc"):
+            yield
+
+    @pytest.fixture
+    def registry_with_ctx(self, mock_task_manager, mock_sync_manager):
+        from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+        from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
+
+        ctx = RegistryContext(
+            task_manager=mock_task_manager,
+            sync_manager=mock_sync_manager,
+        )
+        ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
+        ctx.session_task_manager = MagicMock()
+        ctx.session_var_manager = MagicMock()
+        ctx.session_manager = MagicMock()
+        ctx.get_project_repo_path = MagicMock(return_value=None)
+        return create_lifecycle_registry(ctx), ctx
+
+    def test_explicit_signoff_summary_is_persisted(
+        self, registry_with_ctx, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        registry, ctx = registry_with_ctx
+        mock_task_manager.get_task.return_value = sample_task_needs_review
+        mock_task_manager.mark_task_review_approved.return_value = replace(
+            sample_task_needs_review, status="review_approved"
+        )
+
+        tool_func = registry._tools["mark_task_review_approved"].func
+        result = tool_func(
+            task_id="#42",
+            signoff_summary="APPROVED: round 13, no blocking findings",
+        )
+
+        assert "error" not in result
+        ctx.session_var_manager.set_variable.assert_called_once_with(
+            "resolved-session-abc",
+            "adversary_verdict",
+            "APPROVED: round 13, no blocking findings",
+        )
+
+    def test_omitted_signoff_summary_synthesizes_stock_template(
+        self, registry_with_ctx, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        registry, ctx = registry_with_ctx
+        mock_task_manager.get_task.return_value = sample_task_needs_review
+        mock_task_manager.mark_task_review_approved.return_value = replace(
+            sample_task_needs_review, status="review_approved"
+        )
+
+        tool_func = registry._tools["mark_task_review_approved"].func
+        result = tool_func(task_id="#42")
+
+        assert "error" not in result
+        ctx.session_var_manager.set_variable.assert_called_once_with(
+            "resolved-session-abc",
+            "adversary_verdict",
+            "Approved #42",
+        )
+
+
 class TestReviewApprovedStatusInModel:
     """Tests for 'review_approved' in Task status Literal."""
 

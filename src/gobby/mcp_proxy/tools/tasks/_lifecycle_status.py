@@ -209,6 +209,7 @@ def register_mark_task_review_approved(
     def mark_task_review_approved(
         task_id: str,
         approval_notes: str | None = None,
+        signoff_summary: str | None = None,
     ) -> dict[str, Any]:
         """Approve a task after review.
 
@@ -218,6 +219,10 @@ def register_mark_task_review_approved(
         Args:
             task_id: Task reference (#N, path, or UUID)
             approval_notes: Optional notes about the approval
+            signoff_summary: Optional one-line tldr surfaced to the parent
+                session as the agent run's completion P2P content. If omitted,
+                a stock template is synthesized. Lives in the session variable
+                ``adversary_verdict``; consumed by ``_complete_self_terminated_run``.
 
         Returns:
             Empty dict on success, or error dict with details.
@@ -301,6 +306,17 @@ def register_mark_task_review_approved(
         except Exception:
             pass  # nosec B110 # best-effort linking
 
+        # Stash verdict for end_agent_run → signoff_message → parent P2P content.
+        verdict = signoff_summary or (
+            f"Approved #{task.seq_num}" if task.seq_num else f"Approved {task_id}"
+        )
+        try:
+            ctx.session_var_manager.set_variable(
+                resolved_session_id, "adversary_verdict", verdict
+            )
+        except Exception:
+            pass  # nosec B110 # best-effort signoff
+
         return {}
 
     registry.register(
@@ -316,6 +332,15 @@ def register_mark_task_review_approved(
                 "approval_notes": {
                     "type": "string",
                     "description": "Optional notes about the approval.",
+                    "default": None,
+                },
+                "signoff_summary": {
+                    "type": "string",
+                    "description": (
+                        "Optional one-line tldr surfaced to the parent session as the agent run's "
+                        "completion P2P content (via the adversary_verdict session variable). "
+                        "If omitted, a stock template is synthesized."
+                    ),
                     "default": None,
                 },
             },
@@ -334,9 +359,16 @@ def register_mark_task_review_rejected(
         task_id: str,
         rejection_notes: str | None = None,
         round_number: int | None = None,
+        signoff_summary: str | None = None,
         **legacy_kwargs: Any,
     ) -> dict[str, Any]:
-        """Reject a task after review and return it to open status."""
+        """Reject a task after review and return it to open status.
+
+        ``signoff_summary`` is an optional one-line tldr surfaced to the parent
+        session as the agent run's completion P2P content. If omitted, a stock
+        template is synthesized. Lives in the session variable
+        ``adversary_verdict``; consumed by ``_complete_self_terminated_run``.
+        """
         from gobby.utils.session_context import get_current_session_id
 
         legacy_round = legacy_kwargs.pop("round", None)
@@ -404,6 +436,23 @@ def register_mark_task_review_rejected(
         except Exception:
             pass  # nosec B110 # best-effort linking
 
+        # Stash verdict for end_agent_run → signoff_message → parent P2P content.
+        if round_number is not None:
+            stock = (
+                f"Rejected #{task.seq_num} round {round_number}"
+                if task.seq_num
+                else f"Rejected {task_id} round {round_number}"
+            )
+        else:
+            stock = f"Rejected #{task.seq_num}" if task.seq_num else f"Rejected {task_id}"
+        verdict = signoff_summary or stock
+        try:
+            ctx.session_var_manager.set_variable(
+                resolved_session_id, "adversary_verdict", verdict
+            )
+        except Exception:
+            pass  # nosec B110 # best-effort signoff
+
         return {}
 
     registry.register(
@@ -427,6 +476,15 @@ def register_mark_task_review_rejected(
                 "round_number": {
                     "type": "integer",
                     "description": "Optional planning round number used to update the planning-round:N label.",
+                    "default": None,
+                },
+                "signoff_summary": {
+                    "type": "string",
+                    "description": (
+                        "Optional one-line tldr surfaced to the parent session as the agent run's "
+                        "completion P2P content (via the adversary_verdict session variable). "
+                        "If omitted, a stock template is synthesized."
+                    ),
                     "default": None,
                 },
             },

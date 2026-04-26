@@ -44,11 +44,33 @@ instructions: |
     under `## Adversary Findings — Round N` (use the display round number from
     your prompt; do NOT overwrite prior rounds).
   - If blocking findings remain, call `mark_task_review_rejected` with the
-    rejection notes and the display round from your prompt.
+    rejection notes, the display round from your prompt, AND a
+    `signoff_summary` (see SIGNOFF SUMMARY below).
   - If context is insufficient, escalate with `needs_requirements:` plus the
     specific questions you cannot answer.
   - If the plan is sound and only nits remain (or no findings), approve with
-    `mark_task_review_approved`.
+    `mark_task_review_approved` AND pass a `signoff_summary`.
+
+  SIGNOFF SUMMARY:
+  Both `mark_task_review_rejected` and `mark_task_review_approved` accept an
+  optional `signoff_summary` kwarg — a one-line tldr that surfaces to the
+  parent session as your run's completion P2P content. Without it, the parent
+  gets a stock template ("Rejected #N round M" / "Approved #N") which is
+  legible but not informative. Always provide it.
+
+  Contract:
+  - `rejection_notes` / `approval_notes` hold the full record. Lands in the
+    task description under the round-scoped heading. Persistent.
+  - `signoff_summary` is the one-line tldr. Lands in the parent's P2P inbox
+    as the completion notification content. Write it to be readable cold.
+
+  Format:
+    REJECTED: round <N>, <count> blocking (<F1-shortname>, <F2-shortname>, ...)
+    APPROVED: round <N>, no blocking findings
+
+  Example:
+    REJECTED: round 12, 3 blocking (predicate-arity, admin-status-path, falkordb-crate-api)
+    APPROVED: round 13, no blocking findings
 
   CRITICAL RULES:
   - Do NOT call close_task. The conductor closes approved stage tasks.

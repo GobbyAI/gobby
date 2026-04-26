@@ -268,7 +268,22 @@ def mark_task_review_rejected(
             else "## Review Rejection"
         )
         section = f"{heading}\n\n{rejection_notes}"
-        description = f"{task.description}\n\n{section}" if task.description else section
+        existing = task.description or ""
+        # Re-running the same round must replace the prior section, not stack.
+        # Mirrors the planning-round:N label dedup below — same idempotency policy.
+        # Only attempt the in-place replacement for round-scoped headings; the
+        # generic "## Review Rejection" heading is used for one-off rejections
+        # without a round number and is allowed to stack.
+        if normalized_round is not None and heading in existing:
+            import re
+
+            pattern = re.compile(
+                rf"^{re.escape(heading)}.*?(?=^## Adversary Findings — Round |\Z)",
+                re.DOTALL | re.MULTILINE,
+            )
+            description = pattern.sub(section.rstrip() + "\n\n", existing).rstrip() or section
+        else:
+            description = f"{existing}\n\n{section}" if existing else section
 
     labels = list(task.labels or [])
     if normalized_round is not None:

@@ -202,3 +202,74 @@ class TestMarkTaskReviewRejected:
         assert "error" in result
         assert "Cannot reject review" in result["error"]
         mock_task_manager.mark_task_review_rejected.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reject_writes_explicit_signoff_summary_to_session_var(
+        self, lifecycle_registry, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        registry, ctx = lifecycle_registry
+        mock_task_manager.get_task.side_effect = (
+            lambda task_id: sample_task_needs_review
+            if task_id == sample_task_needs_review.id
+            else None
+        )
+        mock_task_manager.mark_task_review_rejected.return_value = replace(
+            sample_task_needs_review,
+            status="open",
+            labels=["planning-round:7"],
+        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+                return_value=sample_task_needs_review.id,
+            ),
+            patch("gobby.mcp_proxy.tools.tasks._lifecycle_status.notify_parent_on_status_change"),
+        ):
+            result = await registry.call(
+                "mark_task_review_rejected",
+                {
+                    "task_id": "#42",
+                    "rejection_notes": "stuff",
+                    "round_number": 7,
+                    "signoff_summary": "REJECTED: round 7, 2 blocking (alpha, beta)",
+                },
+            )
+        assert "error" not in result
+        ctx.session_var_manager.set_variable.assert_called_once_with(
+            "resolved-session-abc",
+            "adversary_verdict",
+            "REJECTED: round 7, 2 blocking (alpha, beta)",
+        )
+
+    @pytest.mark.asyncio
+    async def test_reject_synthesizes_stock_signoff_when_omitted(
+        self, lifecycle_registry, mock_task_manager, sample_task_needs_review
+    ) -> None:
+        registry, ctx = lifecycle_registry
+        mock_task_manager.get_task.side_effect = (
+            lambda task_id: sample_task_needs_review
+            if task_id == sample_task_needs_review.id
+            else None
+        )
+        mock_task_manager.mark_task_review_rejected.return_value = replace(
+            sample_task_needs_review,
+            status="open",
+            labels=["planning-round:3"],
+        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_status.resolve_task_id_for_mcp",
+                return_value=sample_task_needs_review.id,
+            ),
+            patch("gobby.mcp_proxy.tools.tasks._lifecycle_status.notify_parent_on_status_change"),
+        ):
+            result = await registry.call(
+                "mark_task_review_rejected",
+                {"task_id": "#42", "rejection_notes": "stuff", "round_number": 3},
+            )
+        assert "error" not in result
+        ctx.session_var_manager.set_variable.assert_called_once_with(
+            "resolved-session-abc",
+            "adversary_verdict",
+            "Rejected #42 round 3",
+        )

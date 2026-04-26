@@ -933,6 +933,78 @@ class TestLocalTaskManager:
         assert "## Adversary Findings — Round 1" in (rejected.description or "")
         assert "planning-round:1" in (rejected.labels or [])
 
+    def test_mark_task_review_rejected_dedups_same_round_heading(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Re-running mark_task_review_rejected with the same round_number must
+        replace the existing `## Adversary Findings — Round N` section instead
+        of stacking. Mirrors the planning-round:N label dedup at the same call site.
+        """
+        session = session_manager.register(
+            external_id="rejected-dedup-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Dedup me")
+        task_manager.claim_task(task.id, session.id)
+        task_manager.mark_task_needs_review(task.id, review_notes="Ready")
+
+        # First rejection at round 7.
+        first = task_manager.mark_task_review_rejected(
+            task.id, rejection_notes="initial findings", round=7
+        )
+        assert (first.description or "").count("## Adversary Findings — Round 7") == 1
+        assert "initial findings" in (first.description or "")
+
+        # Re-claim and reject the same round again with different notes.
+        task_manager.claim_task(task.id, session.id)
+        task_manager.mark_task_needs_review(task.id, review_notes="Ready again")
+        second = task_manager.mark_task_review_rejected(
+            task.id, rejection_notes="updated findings", round=7
+        )
+
+        # Exactly one Round 7 section, with the NEW body, and the old body gone.
+        assert (second.description or "").count("## Adversary Findings — Round 7") == 1
+        assert "updated findings" in (second.description or "")
+        assert "initial findings" not in (second.description or "")
+
+    def test_mark_task_review_rejected_preserves_other_round_headings(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Dedup is per-round: re-running round 7 must not touch round 6's section."""
+        session = session_manager.register(
+            external_id="rejected-other-rounds-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Multi-round target")
+        task_manager.claim_task(task.id, session.id)
+        task_manager.mark_task_needs_review(task.id, review_notes="r6 ready")
+        task_manager.mark_task_review_rejected(
+            task.id, rejection_notes="round six body", round=6
+        )
+
+        task_manager.claim_task(task.id, session.id)
+        task_manager.mark_task_needs_review(task.id, review_notes="r7 ready")
+        task_manager.mark_task_review_rejected(
+            task.id, rejection_notes="round seven first", round=7
+        )
+
+        task_manager.claim_task(task.id, session.id)
+        task_manager.mark_task_needs_review(task.id, review_notes="r7 retry")
+        result = task_manager.mark_task_review_rejected(
+            task.id, rejection_notes="round seven second", round=7
+        )
+
+        desc = result.description or ""
+        assert "round six body" in desc
+        assert "round seven second" in desc
+        assert "round seven first" not in desc
+        assert desc.count("## Adversary Findings — Round 6") == 1
+        assert desc.count("## Adversary Findings — Round 7") == 1
+
     def test_escalate_task_clears_canonical_owner(
         self, task_manager, project_id, session_manager
     ) -> None:

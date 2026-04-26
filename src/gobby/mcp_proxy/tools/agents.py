@@ -125,11 +125,27 @@ async def _complete_self_terminated_run(
     if not result.get("success") and result.get("error") != "No target PID found":
         return result
 
+    # Read the agent's adversary_verdict session variable (written by
+    # mark_task_review_approved / mark_task_review_rejected). When present,
+    # forward it as signoff_message — the wake dispatcher prefers
+    # result.get("signoff_message") for the parent's completion P2P content.
+    notify_result: dict[str, Any] = {"status": "success", "run_id": run.id}
+    if agent_session_id:
+        try:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            session_vars = SessionVariableManager(kill_db).get_variables(agent_session_id)
+            verdict = session_vars.get("adversary_verdict")
+            if isinstance(verdict, str) and verdict:
+                notify_result["signoff_message"] = verdict
+        except Exception as e:
+            logger.debug("Failed to read adversary_verdict for %s: %s", agent_session_id, e)
+
     completed = await complete_and_notify_agent_run(
         runner,
         run.id,
         completion_registry=completion_registry,
-        notify_result={"status": "success", "run_id": run.id},
+        notify_result=notify_result,
         message=f"Agent {run.id} completed",
     )
     if not completed:
