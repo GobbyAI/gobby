@@ -142,7 +142,6 @@ class GobbyRunner:
     agent_runner: AgentRunner | None
     agent_lifecycle_monitor: AgentLifecycleMonitor | None
     lifecycle_manager: SessionLifecycleManager
-    conductor_manager: object | None
     cron_storage: CronJobStorage | None
     cron_scheduler: CronScheduler | None
     communications_manager: Any | None

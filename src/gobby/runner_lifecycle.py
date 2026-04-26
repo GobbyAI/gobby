@@ -894,17 +894,6 @@ async def run_daemon(runner: GobbyRunner) -> None:
             except TimeoutError:
                 logger.warning("Agent lifecycle monitor shutdown timed out")
 
-        if runner.conductor_manager:
-            try:
-                from gobby.conductor.manager import ConductorManager
-
-                if isinstance(runner.conductor_manager, ConductorManager):
-                    await asyncio.wait_for(runner.conductor_manager.shutdown(), timeout=5.0)
-            except TimeoutError:
-                logger.warning("Conductor shutdown timed out")
-            except Exception as e:
-                logger.debug(f"Conductor shutdown error: {e}")
-
         if runner.cron_scheduler:
             try:
                 await asyncio.wait_for(runner.cron_scheduler.stop(), timeout=2.0)
