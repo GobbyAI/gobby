@@ -7,6 +7,7 @@ Functions take a database protocol instance as their first parameter.
 import json
 import logging
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -15,6 +16,8 @@ from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
+    Isolation,
+    Lifecycle,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -37,6 +40,29 @@ _LEGACY_TASK_STATUSES = {
     "closed",
     "escalated",
 }
+
+
+def _normalize_skip_stage_labels(skip_stage_labels: Iterable[str]) -> list[str]:
+    """Return stable, de-duplicated stage labels to add during build cascade."""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw_label in skip_stage_labels:
+        label = raw_label.strip()
+        if not label or label in seen:
+            continue
+        labels.append(label)
+        seen.add(label)
+    return labels
+
+
+def _decode_labels(labels_json: str | None) -> list[str]:
+    """Decode task labels from storage, tolerating legacy nulls."""
+    if not labels_json:
+        return []
+    parsed: object = json.loads(labels_json)
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str)]
 
 
 def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
@@ -92,6 +118,8 @@ def create_task(
     labels: list[str] | None = None,
     category: str | None = None,
     validation_criteria: str | None = None,
+    assigned_agent: str | None = None,
+    additional_skills: list[str] | None = None,
     github_issue_number: int | None = None,
     github_pr_number: int | None = None,
     github_repo: str | None = None,
@@ -107,6 +135,9 @@ def create_task(
 
     # Serialize labels
     labels_json = json.dumps(labels) if labels else None
+    additional_skills_json = (
+        json.dumps(additional_skills) if additional_skills is not None else None
+    )
     task_id = ""
 
     # Default validation status
@@ -142,9 +173,10 @@ def create_task(
                         labels, status, created_at, updated_at,
                         validation_status, category,
                         validation_criteria, validation_fail_count,
+                        assigned_agent, additional_skills,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -165,6 +197,8 @@ def create_task(
                         validation_status,
                         category,
                         validation_criteria,
+                        assigned_agent,
+                        additional_skills_json,
                         github_issue_number,
                         github_pr_number,
                         github_repo,
@@ -290,6 +324,83 @@ def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
     return tasks
 
 
+def cascade_build_state_to_subtree(
+    db: DatabaseProtocol,
+    epic_id: str,
+    isolation: Isolation | str,
+    yolo: bool,
+    skip_stage_labels: Iterable[str],
+    allow_automation: bool,
+) -> int:
+    """Apply build dispatch state to an epic and every descendant task.
+
+    The cascade intentionally only touches dispatch controls and stage-skip
+    labels. Agent assignment, additional skills, and lifecycle fields remain
+    task-local decisions.
+
+    Returns the number of tasks updated, including the root epic.
+    """
+    normalized_isolation = Isolation(isolation).value
+    labels_to_add = _normalize_skip_stage_labels(skip_stage_labels)
+    now = datetime.now(UTC).isoformat()
+
+    with db.transaction_immediate() as conn:
+        rows = conn.execute(
+            """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT id
+                FROM tasks
+                WHERE id = ?
+                UNION ALL
+                SELECT child.id
+                FROM tasks child
+                JOIN subtree parent ON child.parent_task_id = parent.id
+            )
+            SELECT id, labels
+            FROM tasks
+            WHERE id IN (SELECT id FROM subtree)
+            """,
+            (epic_id,),
+        ).fetchall()
+
+        if not rows:
+            raise ValueError(f"Task {epic_id} not found")
+
+        update_params: list[tuple[str, int, int, str, str, str]] = []
+        for row in rows:
+            labels = _decode_labels(cast(str | None, row["labels"]))
+            known_labels = set(labels)
+            for label in labels_to_add:
+                if label not in known_labels:
+                    labels.append(label)
+                    known_labels.add(label)
+            update_params.append(
+                (
+                    json.dumps(labels),
+                    int(allow_automation),
+                    int(yolo),
+                    normalized_isolation,
+                    now,
+                    cast(str, row["id"]),
+                )
+            )
+
+        conn.executemany(
+            """
+            UPDATE tasks
+            SET labels = ?,
+                allow_automation = ?,
+                yolo = ?,
+                isolation = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            update_params,
+        )
+
+    return len(rows)
+
+
 def update_task(
     db: DatabaseProtocol,
     task_id: str,
@@ -321,6 +432,12 @@ def update_task(
     linear_issue_id: MaybeUnset[str | None] = UNSET,
     linear_team_id: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
+    lifecycle: MaybeUnset[str | None] = UNSET,
+    allow_automation: MaybeUnset[bool | None] = UNSET,
+    yolo: MaybeUnset[bool | None] = UNSET,
+    isolation: MaybeUnset[Isolation | str | None] = UNSET,
+    assigned_agent: MaybeUnset[str | None] = UNSET,
+    additional_skills: MaybeUnset[list[str] | None] = UNSET,
 ) -> bool:
     """Internal storage primitive for task field updates.
 
@@ -404,6 +521,28 @@ def update_task(
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = ?")
         params.append(validation_override_reason)
+    if lifecycle is not UNSET:
+        if lifecycle is None:
+            raise ValueError("lifecycle cannot be None")
+        updates.append("lifecycle = ?")
+        params.append(Lifecycle(cast(str, lifecycle)).value)
+    if allow_automation is not UNSET:
+        updates.append("allow_automation = ?")
+        params.append(int(bool(allow_automation)))
+    if yolo is not UNSET:
+        updates.append("yolo = ?")
+        params.append(int(bool(yolo)))
+    if isolation is not UNSET:
+        if isolation is None:
+            raise ValueError("isolation cannot be None")
+        updates.append("isolation = ?")
+        params.append(Isolation(cast(str, isolation)).value)
+    if assigned_agent is not UNSET:
+        updates.append("assigned_agent = ?")
+        params.append(assigned_agent)
+    if additional_skills is not UNSET:
+        updates.append("additional_skills = ?")
+        params.append(json.dumps(additional_skills) if additional_skills is not None else None)
     normalized_status = _normalize_legacy_status(status) if status is not UNSET else None
     next_lifecycle_stage = current_task.lifecycle_stage
     if lifecycle_stage is not UNSET:

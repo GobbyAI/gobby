@@ -35,7 +35,7 @@ instructions: |
   - After approval, close the task with close_task(reason="qa_approved", commit_sha=<developer commit sha>).
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — the merge agent handles pushing.
-  - Approval or escalation must happen before the workflow may end the turn and terminate.
+  - Approval plus close_task, or escalation, must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling kill_agent.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
@@ -50,6 +50,7 @@ workflows:
 
 step_variables:
   task_claimed: false
+  review_approved: false
   review_complete: false
 
 steps:
@@ -83,7 +84,7 @@ steps:
       1. Check diff: git diff, git log
       2. Run tests: uv run pytest <test_file> -v
       3. Fix minor issues if needed, commit fixes
-      4. APPROVE: call mark_task_review_approved, then close_task with reason="qa_approved" and commit_sha
+      4. APPROVE: call mark_task_review_approved
       5. ESCALATE (significant issues): call escalate_task with detailed reason
     allowed_tools: "all"
     blocked_mcp_tools:
@@ -98,12 +99,36 @@ steps:
         variable: review_approved
         value: true
       - server: gobby-tasks
-        tool: close_task
+        tool: escalate_task
         action: set_variable
         variable: review_complete
         value: true
       - server: gobby-tasks
-        tool: escalate_task
+        tool: close_task
+        when: "vars.review_approved and tool_input.reason == 'qa_approved' and tool_input.commit_sha"
+        action: set_variable
+        variable: review_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.review_approved and vars.review_complete"
+
+  - name: close
+    description: "Close approved task"
+    status_message: |
+      Review approved. Call close_task with reason="qa_approved" and
+      commit_sha=<developer commit sha> from the worktree task context.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:close_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: close_task
+        when: "vars.review_approved and tool_input.reason == 'qa_approved' and tool_input.commit_sha"
         action: set_variable
         variable: review_complete
         value: true

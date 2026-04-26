@@ -448,17 +448,19 @@ call_tool("gobby-tasks", "close_task", {
 
 ---
 
-## Orchestration Surface
+## Build And Dispatch Surface
 
-Current orchestration is pipeline-based. The main tools involved are:
+Current task automation is state-driven dispatch. Build tools opt tasks into
+automation; dispatch rules decide which explicit action runs next.
 
 | Server | Key tools |
 | :--- | :--- |
-| `gobby-workflows` | `run_pipeline`, `get_pipeline_status`, `wait_for_completion`, `pipeline_eval` |
-| `gobby-tasks` | `list_ready_tasks`, `suggest_next_task`, `list_tasks`, `claim_task`, review lifecycle tools |
+| `gobby-tasks-ops` | `build_task`, expansion-run helpers, artifact helpers, affected-file helpers |
+| `gobby-tasks` | `get_task`, `list_ready_tasks`, `claim_task`, review lifecycle tools, close/escalate tools |
 | `gobby-agents` | `spawn_agent`, `dispatch_batch`, `apply_persona`, messaging and command tools |
 | `gobby-worktrees` / `gobby-clones` | isolation lookup, creation, sync, cleanup |
 | `gobby-merge` | conflict-resolution flows |
+| `gobby-workflows` | Pipeline execution for deterministic sequences that are not the dispatch loop |
 
 See [orchestration.md](./orchestration.md) for the current model.
 
@@ -582,7 +584,7 @@ There is **no public `activate_workflow` MCP tool** in the current surface.
 
 ```python
 result = call_tool("gobby-workflows", "run_pipeline", {
-    "name": "orchestrator",
+    "name": "expand-task",
     "inputs": {"task_id": "#100"}
 })
 
@@ -791,19 +793,26 @@ call_tool("gobby-merge", "merge_apply", {})
 
 ---
 
-## Orchestration Note
+## Dispatch Note
 
-The current daemon does not expose a separate conductor CLI or orchestration
-server.
+Task automation starts with `gobby-tasks-ops:build_task`, which is the MCP
+surface for the same shared build service used by CLI `gobby build` and HTTP
+`POST /api/build`.
 
 Use:
 
-- `gobby-workflows:run_pipeline` for orchestration runs
-- `gobby-workflows:wait_for_completion` for blocking callers
-- `gobby-agents` runtime tools for worker dispatch
-- `gobby cron ...` or `gobby-cron` for scheduled ticks
+- `gobby-tasks-ops:build_task` to opt a plan, epic, or leaf into automation
+- `gobby-tasks-ops:get_artifacts` and artifact mutation helpers for sparse
+  dispatch state
+- `gobby-tasks` lifecycle tools for claim, review, close, escalate, and
+  de-escalate transitions
+- `gobby-agents` runtime tools when a caller intentionally spawns or manages a
+  worker directly
+- `gobby-workflows:run_pipeline` for deterministic pipeline runs outside the
+  dispatch loop
 
-See [orchestration.md](./orchestration.md) for the current design.
+Retired conductor and orchestration pipeline templates are tombstones only. See
+[orchestration.md](./orchestration.md) for the current design.
 
 ---
 

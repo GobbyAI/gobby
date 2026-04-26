@@ -31,33 +31,33 @@ def _index_names(db: LocalDatabase, table: str) -> set[str]:
 
 
 def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
-    """Fresh databases apply the flattened launch baseline directly."""
+    """Fresh databases apply the flattened baseline and current incremental migrations."""
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    assert BASELINE_VERSION == 219
-    assert MIGRATIONS == []
+    assert BASELINE_VERSION == 220
+    assert [version for version, _description, _action in MIGRATIONS] == [220, 221, 222]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 1
-    assert get_current_version(db) == 219
+    assert applied == 3
+    assert get_current_version(db) == 222
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [219]
+    assert versions == [220, 221, 222]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
-    """Running migrations again on a 219 database does not add schema versions."""
+    """Running migrations again at the current schema version does not add versions."""
     db_path = tmp_path / "idempotency.db"
     db = LocalDatabase(db_path)
 
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 219
+    assert get_current_version(db) == 222
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [219]
+    assert versions == [220, 221, 222]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -148,10 +148,10 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
         )
         """
     )
-    db.execute("INSERT INTO schema_version (version) VALUES (220)")
+    db.execute("INSERT INTO schema_version (version) VALUES (223)")
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 220
+    assert get_current_version(db) == 223
     assert not _table_exists(db, "projects")
 
 

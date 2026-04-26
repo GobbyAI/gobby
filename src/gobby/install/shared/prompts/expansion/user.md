@@ -30,6 +30,9 @@ variables:
   phase_number:
     type: int
     default: 0
+  skipped_stages:
+    type: list
+    default: []
 ---
 Compile this task into a deterministic expansion spec.
 
@@ -61,3 +64,10 @@ phases of the plan. All `tasks[]` entries must reference this phase's `id`.
 - Include explicit `test_intent` for every phase.
 - Use `affected_files` and `execution_group` only when the repo context supports them.
 - Keep the task graph complete but minimal.
+- Agent Selection runs after leaf generation and before returning the spec. Use the
+  `expansion-agent-selection` skill heuristics and available agent definitions to emit
+  `assigned_agent` for every automated `code`, `config`, `docs`, or `test` leaf.
+- Emit `additional_skills` as an array, usually empty, when a leaf needs skills beyond
+  the assigned agent's baseline.
+- Do not emit `planning` leaves; planning belongs to epics and stage tasks.
+- Resolved skipped stages: {{ skipped_stages }}

@@ -214,4 +214,10 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
         "closed_commit_sha": getattr(task, "closed_commit_sha", None),
         "escalated_at": getattr(task, "escalated_at", None),
         "escalation_reason": getattr(task, "escalation_reason", None),
+        "lifecycle": getattr(task, "lifecycle", "open"),
+        "allow_automation": bool(getattr(task, "allow_automation", False)),
+        "yolo": bool(getattr(task, "yolo", False)),
+        "isolation": getattr(task, "isolation", "worktree"),
+        "assigned_agent": getattr(task, "assigned_agent", None),
+        "additional_skills": getattr(task, "additional_skills", None),
     }

@@ -9,12 +9,43 @@ This package provides task management functionality including:
 All public symbols are re-exported for backward compatibility.
 """
 
+from gobby.storage.tasks._artifacts import (
+    ArtifactCheckConstraintError,
+    TaskArtifactConstraintError,
+    TaskArtifactManager,
+    TaskArtifacts,
+    clear_artifact,
+    clear_artifacts,
+    clear_isolation_pair,
+    get_artifacts,
+    increment_expansion_attempts,
+    set_artifact,
+    set_artifacts_atomic,
+)
+from gobby.storage.tasks._crud import cascade_build_state_to_subtree
+from gobby.storage.tasks._dispatch_mutex import (
+    DispatchMutex,
+    TaskDispatchMutexManager,
+    acquire_mutex,
+    clear_by_run_id,
+    get_mutex,
+    release_mutex,
+    sweep_expired,
+)
 from gobby.storage.tasks._id import generate_task_id
+from gobby.storage.tasks._lifecycle_events import (
+    TaskLifecycleEvent,
+    TaskLifecycleEventManager,
+    list_lifecycle_events,
+    record_lifecycle_event,
+)
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
+    Isolation,
+    Lifecycle,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -30,15 +61,40 @@ __all__ = [
     # Core classes
     "Task",
     "LocalTaskManager",
+    "Lifecycle",
+    "Isolation",
+    "DispatchMutex",
+    "TaskDispatchMutexManager",
+    "TaskArtifacts",
+    "TaskArtifactManager",
+    "TaskLifecycleEvent",
+    "TaskLifecycleEventManager",
     # Exceptions
     "SeqNumCollisionError",
     "TaskIDCollisionError",
     "TaskNotFoundError",
+    "TaskArtifactConstraintError",
+    "ArtifactCheckConstraintError",
     # Functions
     "generate_task_id",
     "validate_category",
     "normalize_priority",
     "order_tasks_hierarchically",
+    "cascade_build_state_to_subtree",
+    "get_mutex",
+    "acquire_mutex",
+    "release_mutex",
+    "clear_by_run_id",
+    "sweep_expired",
+    "get_artifacts",
+    "set_artifact",
+    "set_artifacts_atomic",
+    "clear_artifact",
+    "clear_artifacts",
+    "clear_isolation_pair",
+    "increment_expansion_attempts",
+    "record_lifecycle_event",
+    "list_lifecycle_events",
     # Constants
     "PRIORITY_MAP",
     "VALID_CATEGORIES",

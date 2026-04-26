@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,10 @@ from gobby.storage.tasks._aggregates import (
 )
 from gobby.storage.tasks._aggregates import (
     count_tasks as _count_tasks,
+)
+from gobby.storage.tasks._artifacts import TaskArtifactManager
+from gobby.storage.tasks._crud import (
+    cascade_build_state_to_subtree as _cascade_build_state_to_subtree,
 )
 from gobby.storage.tasks._crud import (
     create_task as _create_task,
@@ -56,10 +60,12 @@ from gobby.storage.tasks._lifecycle import (
 from gobby.storage.tasks._lifecycle import (
     unlink_commit as _unlink_commit,
 )
+from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
     UNSET,
     VALID_CATEGORIES,
+    Isolation,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -137,6 +143,14 @@ class LocalTaskManager:
         self._change_listeners: list[Callable[[], Any]] = []
         self._searcher: TaskFTS5Searcher | None = None
 
+    @property
+    def artifacts(self) -> TaskArtifactManager:
+        return TaskArtifactManager(self.db)
+
+    @property
+    def lifecycle_events(self) -> TaskLifecycleEventManager:
+        return TaskLifecycleEventManager(self.db)
+
     def add_change_listener(self, listener: Callable[[], Any]) -> None:
         """Add a listener to be called when tasks change."""
         self._change_listeners.append(listener)
@@ -158,42 +172,15 @@ class LocalTaskManager:
         self._run_change_listeners()
 
     def compute_path_cache(self, task_id: str) -> str | None:
-        """Compute the hierarchical path for a task.
-
-        Traverses up the parent chain to build a dotted path from seq_nums.
-        Format: 'ancestor_seq.parent_seq.task_seq' (e.g., '1.3.47')
-
-        Args:
-            task_id: The task ID to compute path for
-
-        Returns:
-            Dotted path string (e.g., '1.3.47'), or None if task not found
-            or any task in the chain is missing a seq_num.
-        """
+        """Compute the hierarchical dotted path for a task."""
         return compute_path_cache(self.db, task_id)
 
     def update_path_cache(self, task_id: str) -> str | None:
-        """Compute and store the path_cache for a task.
-
-        Args:
-            task_id: The task ID to update
-
-        Returns:
-            The computed path, or None if computation failed
-        """
+        """Compute and store the path_cache for a task."""
         return update_path_cache(self.db, task_id)
 
     def update_descendant_paths(self, task_id: str) -> int:
-        """Update path_cache for a task and all its descendants.
-
-        Use this after reparenting a task to cascade path updates.
-
-        Args:
-            task_id: The root task ID to start updating from
-
-        Returns:
-            Number of tasks updated
-        """
+        """Update path_cache for a task and all descendants."""
         return update_descendant_paths(self.db, task_id)
 
     def create_task(
@@ -211,6 +198,8 @@ class LocalTaskManager:
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
+        assigned_agent: str | None = None,
+        additional_skills: list[str] | None = None,
         github_issue_number: int | None = None,
         github_pr_number: int | None = None,
         github_repo: str | None = None,
@@ -234,6 +223,8 @@ class LocalTaskManager:
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
+            assigned_agent=assigned_agent,
+            additional_skills=additional_skills,
             github_issue_number=github_issue_number,
             github_pr_number=github_pr_number,
             github_repo=github_repo,
@@ -323,6 +314,12 @@ class LocalTaskManager:
         linear_issue_id: MaybeUnset[str | None] = UNSET,
         linear_team_id: MaybeUnset[str | None] = UNSET,
         validation_override_reason: MaybeUnset[str | None] = UNSET,
+        lifecycle: MaybeUnset[str | None] = UNSET,
+        allow_automation: MaybeUnset[bool | None] = UNSET,
+        yolo: MaybeUnset[bool | None] = UNSET,
+        isolation: MaybeUnset[Isolation | str | None] = UNSET,
+        assigned_agent: MaybeUnset[str | None] = UNSET,
+        additional_skills: MaybeUnset[list[str] | None] = UNSET,
         **kwargs: Any,
     ) -> Task:
         """Update metadata fields only.
@@ -387,6 +384,12 @@ class LocalTaskManager:
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
             validation_override_reason=validation_override_reason,
+            lifecycle=lifecycle,
+            allow_automation=allow_automation,
+            yolo=yolo,
+            isolation=isolation,
+            assigned_agent=assigned_agent,
+            additional_skills=additional_skills,
         )
 
         # If parent_task_id was changed, update path_cache for this task and all descendants
@@ -395,6 +398,26 @@ class LocalTaskManager:
 
         self._notify_listeners()
         return self.get_task(task_id)
+
+    def cascade_build_state_to_subtree(
+        self,
+        epic_id: str,
+        isolation: Isolation | str,
+        yolo: bool,
+        skip_stage_labels: Iterable[str],
+        allow_automation: bool,
+    ) -> int:
+        """Apply build dispatch state to an epic and every descendant task."""
+        updated_count = _cascade_build_state_to_subtree(
+            self.db,
+            epic_id=epic_id,
+            isolation=isolation,
+            yolo=yolo,
+            skip_stage_labels=skip_stage_labels,
+            allow_automation=allow_automation,
+        )
+        self._notify_listeners()
+        return updated_count
 
     def reconcile_task_state(
         self,
@@ -844,6 +867,8 @@ class LocalTaskManager:
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
+        assigned_agent: str | None = None,
+        additional_skills: list[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Create a task and return result dict."""
@@ -859,6 +884,8 @@ class LocalTaskManager:
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
+            assigned_agent=assigned_agent,
+            additional_skills=additional_skills,
         )
         return {"task": task.to_dict()}
 

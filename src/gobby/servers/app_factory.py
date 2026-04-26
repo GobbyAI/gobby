@@ -501,6 +501,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_admin_router,
         create_agent_spawn_router,
         create_agents_router,
+        create_build_router,
         create_chat_router,
         create_code_index_router,
         create_communications_router,
@@ -531,6 +532,7 @@ def _register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_admin_router(server))
     app.include_router(create_agent_spawn_router(server))
     app.include_router(create_agents_router(server))
+    app.include_router(create_build_router(server))
     app.include_router(create_chat_router(server))
     app.include_router(create_sessions_router(server))
     app.include_router(create_memory_router(server))

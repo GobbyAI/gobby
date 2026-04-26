@@ -270,18 +270,30 @@ execution to `waiting_approval`.
 `resume_pipeline` re-runs a failed execution from its failure point, or from an
 explicit `from_step`.
 
-## Current Orchestration Patterns
+## Dispatch Boundary
 
-Bundled orchestration pipelines use these patterns heavily:
+Pipelines are no longer the main autonomous task-dispatch loop. Current task
+automation starts with `gobby build` and continues through deterministic
+dispatch rules in `src/gobby/dispatch/rules.py`.
 
-- task scanning through `gobby-tasks`
-- fan-out dispatch through `gobby-agents:dispatch_batch`
-- reusable isolation lookup/creation through `gobby-worktrees` and `gobby-clones`
-- helper expressions through `pipeline_eval`
-- completion waiting through `wait` steps or `wait_for_completion`
+Use pipelines for:
 
-That is the current replacement for the old idea of a dedicated orchestration
-server.
+- deterministic multi-step sequences
+- approval gates
+- nested runs with explicit completion waiting
+- standalone maintenance jobs
+- reusable merge or expansion helpers
+
+Use dispatch for:
+
+- scanning opted-in tasks
+- lifecycle-stage advancement
+- enforcing `allow_automation`, `yolo`, isolation, and stage skips
+- bounded worker spawning under the global agent-slot cap
+
+Retired orchestration pipelines remain in place only as disabled tombstones so
+bundled-template sync preserves installed DB rows. See
+[Orchestration](./orchestration.md) for the current dispatch model.
 
 ## Related Guides
 

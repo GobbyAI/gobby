@@ -10,6 +10,7 @@ This module contains:
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal
 
 from gobby.tasks.state_semantics import (
@@ -36,6 +37,24 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
         "manual",  # Manual functional testing (observe output)
     }
 )
+
+
+class Lifecycle(StrEnum):
+    open = "open"
+    plan_review = "plan_review"
+    test_arch = "test_arch"
+    expanding = "expanding"
+    in_development = "in_development"
+    holistic_review = "holistic_review"
+    pr = "pr"
+    merging = "merging"
+    merged = "merged"
+
+
+class Isolation(StrEnum):
+    none = "none"
+    worktree = "worktree"
+    clone = "clone"
 
 
 class UnsetType:
@@ -166,6 +185,13 @@ class Task:
     # Scheduling fields (Gantt chart)
     start_date: str | None = None
     due_date: str | None = None
+    # Automation dispatch fields
+    lifecycle: Lifecycle = Lifecycle.open
+    allow_automation: bool = False
+    yolo: bool = False
+    isolation: Isolation = Isolation.worktree
+    assigned_agent: str | None = None
+    additional_skills: list[str] | None = None
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
     active_blocked_by: set[str] = field(default_factory=set)
@@ -174,6 +200,8 @@ class Task:
         """Fill canonical lifecycle stage for manually constructed legacy-style tasks."""
         if self.lifecycle_stage is None:
             self.lifecycle_stage = lifecycle_stage_from_status(self.status)
+        self.lifecycle = Lifecycle(self.lifecycle)
+        self.isolation = Isolation(self.isolation)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
@@ -258,6 +286,16 @@ class Task:
             path_cache=row["path_cache"] if "path_cache" in keys else None,
             start_date=row["start_date"] if "start_date" in keys else None,
             due_date=row["due_date"] if "due_date" in keys else None,
+            lifecycle=Lifecycle(row["lifecycle"]) if "lifecycle" in keys else Lifecycle.open,
+            allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
+            yolo=bool(row["yolo"]) if "yolo" in keys else False,
+            isolation=Isolation(row["isolation"]) if "isolation" in keys else Isolation.worktree,
+            assigned_agent=row["assigned_agent"] if "assigned_agent" in keys else None,
+            additional_skills=(
+                json.loads(row["additional_skills"])
+                if "additional_skills" in keys and row["additional_skills"]
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -308,6 +346,12 @@ class Task:
             "path_cache": self.path_cache,
             "start_date": self.start_date,
             "due_date": self.due_date,
+            "lifecycle": self.lifecycle,
+            "allow_automation": self.allow_automation,
+            "yolo": self.yolo,
+            "isolation": self.isolation,
+            "assigned_agent": self.assigned_agent,
+            "additional_skills": self.additional_skills,
             "id": self.id,  # UUID at end for backwards compat
         }
 
@@ -353,5 +397,11 @@ class Task:
             "github_issue_number": self.github_issue_number,
             "github_repo": self.github_repo,
             "github_pr_number": self.github_pr_number,
+            "lifecycle": self.lifecycle,
+            "allow_automation": self.allow_automation,
+            "yolo": self.yolo,
+            "isolation": self.isolation,
+            "assigned_agent": self.assigned_agent,
+            "additional_skills": self.additional_skills,
             "id": self.id,  # UUID at end for backwards compat
         }

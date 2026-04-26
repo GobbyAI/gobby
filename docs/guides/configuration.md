@@ -469,25 +469,54 @@ skills:
   injection_format: summary      # summary, full, none
 ```
 
-### Conductor
+### Build And Dispatch
+
+Build defaults can be defined globally in `~/.gobby/build.yaml` and overridden
+per project in `<project>/.gobby/build.yaml`. CLI, MCP, and HTTP build flags are
+applied on top of those files.
 
 ```yaml
-conductor:
-  enabled: false
-  provider: claude
-  model: haiku
-  tick_interval_seconds: 120
-  idle_timeout_seconds: 300
-  skip_if_busy: true
+default_skip_stages: []
+default_isolation: worktree        # none | worktree | clone
+default_yolo: false
+default_max_review_rounds: 3
+default_target_branch: null        # null resolves current git branch at build time
+clones_dir: ~/.gobby/clones
+cleanup_clones_on_merge: true
+max_active_agents: 10
+dispatch_interval_seconds: 60
+
+profiles:
+  quick:
+    skip_stages: [plan_review, test_arch, expanding, qa, holistic_review, pr]
+    isolation: none
+    yolo: false
+  review:
+    skip_stages: [plan_review, pr]
+    isolation: worktree
+    yolo: false
+  full:
+    skip_stages: []
+    isolation: worktree
+    yolo: false
+  full-yolo:
+    skip_stages: [pr]
+    isolation: worktree
+    yolo: true
 ```
 
-Migration note for `v0.3.x` -> `v0.4.0`:
+Profiles are build-time sugar. `gobby build` resolves them to `stage-:<name>`
+labels plus stored `isolation` and `yolo` values on the task. Changing a profile
+later does not rewrite already-built tasks.
 
-- Removed keys: `daily_budget_usd`, `warning_threshold`, `throttle_threshold`, `tracking_window_days`.
-- Breaking change: the conductor now only supports `provider: claude`. Any other conductor provider raises `RuntimeError` at startup, so update your config to `provider: claude` before restarting on `v0.4.0`.
-- Legacy behavior: the current config model ignores unknown conductor keys, so those old values are not auto-migrated and do not affect runtime behavior in `v0.4.0`.
-- Recommended migration: manually remove the old keys from your config before restarting on `v0.4.0`. There is no dedicated migration command or script for this change.
-- See the [Conductor](#conductor) section above for the current example; it now includes the required `provider: claude` key that matches this migration guidance.
+`max_active_agents` is the global dispatch slot cap. If all slots are full, the
+candidate waits until the next heartbeat; task state acts as the queue.
+
+### Retired Conductor Config
+
+The old LLM-driven conductor tick is retired. If an older config still has a
+`conductor:` block, leave it disabled or remove it during cleanup. It is
+historical compatibility context, not the active automation model.
 
 ### Hook Extensions
 

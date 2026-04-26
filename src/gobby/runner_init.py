@@ -683,9 +683,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
         memory_sync_manager=runner.memory_sync_manager,
     )
 
-    # Conductor manager (persistent tick-based orchestration agent)
-    runner.conductor_manager = None
-
     # Cron Scheduler (background jobs for recurring tasks)
     runner.cron_storage = None
     runner.cron_scheduler = None
@@ -735,35 +732,14 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception as e:
             logger.error(f"Failed to register pipeline heartbeat: {e}")
 
-        # Register conductor handler (if enabled)
-        if runner.config.conductor.enabled and runner.project_id:
-            try:
-                from gobby.conductor.manager import ConductorManager
-
-                runner.conductor_manager = ConductorManager(
-                    project_id=runner.project_id,
-                    project_path=str(Path.cwd()),
-                    session_manager=runner.session_manager,
-                    config=runner.config.conductor,
-                    execution_manager=runner.pipeline_execution_manager,
-                )
-                cron_executor.register_handler("conductor_tick", runner.conductor_manager)
-                existing = runner.cron_storage.get_job_by_name("gobby:conductor-tick")
-                if not existing:
-                    runner.cron_storage.create_job(
-                        project_id=runner.project_id,
-                        name="gobby:conductor-tick",
-                        description="Persistent conductor: checks tasks, dispatches agents",
-                        schedule_type="interval",
-                        interval_seconds=runner.config.conductor.tick_interval_seconds,
-                        action_type="handler",
-                        action_config={"handler": "conductor_tick"},
-                        enabled=True,
-                    )
-                    logger.info("Created system cron job: gobby:conductor-tick")
-                logger.info(f"Conductor enabled (model={runner.config.conductor.model})")
-            except Exception as e:
-                logger.error(f"Failed to initialize conductor: {e}")
+        # Retired with the old conductor package; disable pre-existing system jobs.
+        try:
+            conductor_job = runner.cron_storage.get_job_by_name("gobby:conductor-tick")
+            if conductor_job and conductor_job.enabled:
+                runner.cron_storage.update_job(conductor_job.id, enabled=0, next_run_at=None)
+                logger.info("Disabled retired system cron job: gobby:conductor-tick")
+        except Exception as e:
+            logger.warning(f"Failed to disable retired conductor cron job: {e}")
 
         # Register Linear sync handler (for projects with Linear integration)
         try:
