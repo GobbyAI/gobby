@@ -1,4 +1,4 @@
-name: orchestrator
+name: conductor
 type: pipeline
 version: "2.1"
 enabled: false
