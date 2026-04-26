@@ -9,6 +9,15 @@ This package provides task management functionality including:
 All public symbols are re-exported for backward compatibility.
 """
 
+from gobby.storage.tasks._dispatch_mutex import (
+    DispatchMutex,
+    TaskDispatchMutexManager,
+    acquire_mutex,
+    clear_by_run_id,
+    get_mutex,
+    release_mutex,
+    sweep_expired,
+)
 from gobby.storage.tasks._id import generate_task_id
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
@@ -34,6 +43,8 @@ __all__ = [
     "LocalTaskManager",
     "Lifecycle",
     "Isolation",
+    "DispatchMutex",
+    "TaskDispatchMutexManager",
     # Exceptions
     "SeqNumCollisionError",
     "TaskIDCollisionError",
@@ -43,6 +54,11 @@ __all__ = [
     "validate_category",
     "normalize_priority",
     "order_tasks_hierarchically",
+    "get_mutex",
+    "acquire_mutex",
+    "release_mutex",
+    "clear_by_run_id",
+    "sweep_expired",
     # Constants
     "PRIORITY_MAP",
     "VALID_CATEGORIES",
