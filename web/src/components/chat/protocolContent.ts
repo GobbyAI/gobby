@@ -48,8 +48,8 @@ function buildTagPattern(tags: readonly string[]): string {
 const protocolToolTagPattern = buildTagPattern(PROTOCOL_TOOL_TAGS)
 const inlineWrapperTagPattern = buildTagPattern(INLINE_WRAPPER_PROTOCOL_TAGS)
 
-const protocolToolRe = new RegExp(
-  `<(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>(?<body>(?:[^<]|<(?!\\/\\k<tag>\\s*>))*)<\\/\\k<tag>\\s*>`,
+const protocolTagRe = new RegExp(
+  `<(?<closing>\\/)?(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>`,
   'gi',
 )
 
@@ -61,6 +61,14 @@ const inlineWrapperProtocolTagRe = new RegExp(
 export type ProtocolContentSegment =
   | { type: 'text'; content: string }
   | { type: 'tool_call'; call: ToolCall }
+
+interface ProtocolToolMatch {
+  index: number
+  end: number
+  tag: string
+  attrs: string
+  body: string
+}
 
 function sanitizeVisibleProtocolText(content: string): string {
   if (!content.includes('<')) {
@@ -123,6 +131,70 @@ function parseProtocolPayload(content: string, depth = 0): unknown {
   return trimmed
 }
 
+function findMatchingProtocolClose(
+  content: string,
+  startIndex: number,
+  normalizedTag: string,
+): RegExpExecArray | null {
+  let depth = 1
+  protocolTagRe.lastIndex = startIndex
+
+  for (const match of content.matchAll(protocolTagRe)) {
+    if (!match.groups) {
+      continue
+    }
+    if (match.groups.tag.toLowerCase() !== normalizedTag) {
+      continue
+    }
+
+    if (match.groups.closing) {
+      depth -= 1
+      if (depth === 0) {
+        return match
+      }
+    } else {
+      depth += 1
+    }
+  }
+
+  return null
+}
+
+function findProtocolToolMatches(content: string): ProtocolToolMatch[] {
+  const matches: ProtocolToolMatch[] = []
+  protocolTagRe.lastIndex = 0
+
+  let match = protocolTagRe.exec(content)
+  while (match) {
+    if (!match.groups || match.groups.closing || match.index === undefined) {
+      match = protocolTagRe.exec(content)
+      continue
+    }
+
+    const openEnd = match.index + match[0].length
+    const normalizedTag = match.groups.tag.toLowerCase()
+    const closingMatch = findMatchingProtocolClose(content, openEnd, normalizedTag)
+    if (!closingMatch?.groups || closingMatch.index === undefined) {
+      protocolTagRe.lastIndex = openEnd
+      match = protocolTagRe.exec(content)
+      continue
+    }
+
+    const end = closingMatch.index + closingMatch[0].length
+    matches.push({
+      index: match.index,
+      end,
+      tag: match.groups.tag,
+      attrs: match.groups.attrs,
+      body: content.slice(openEnd, closingMatch.index),
+    })
+    protocolTagRe.lastIndex = end
+    match = protocolTagRe.exec(content)
+  }
+
+  return matches
+}
+
 function makeProtocolToolCall(
   tag: string,
   body: string,
@@ -162,11 +234,7 @@ export function splitProtocolContent(
   let lastIndex = 0
   let ordinal = 0
 
-  for (const match of content.matchAll(protocolToolRe)) {
-    if (!match.groups || match.index === undefined) {
-      continue
-    }
-
+  for (const match of findProtocolToolMatches(content)) {
     const visibleText = sanitizeVisibleProtocolText(content.slice(lastIndex, match.index)).trimEnd()
     if (visibleText.trim()) {
       segments.push({ type: 'text', content: visibleText })
@@ -176,14 +244,14 @@ export function splitProtocolContent(
     segments.push({
       type: 'tool_call',
       call: makeProtocolToolCall(
-        match.groups.tag,
-        match.groups.body,
-        match.groups.attrs,
+        match.tag,
+        match.body,
+        match.attrs,
         idPrefix,
         ordinal,
       ),
     })
-    lastIndex = match.index + match[0].length
+    lastIndex = match.end
   }
 
   const trailingText = sanitizeVisibleProtocolText(content.slice(lastIndex)).trimStart()
@@ -204,6 +272,5 @@ export function hasProtocolToolContent(content: string): boolean {
     return false
   }
 
-  protocolToolRe.lastIndex = 0
-  return protocolToolRe.test(content)
+  return findProtocolToolMatches(content).length > 0
 }
