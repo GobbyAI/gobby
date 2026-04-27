@@ -665,9 +665,7 @@ class PipelineDefinition(BaseModel):
         if self.enabled is False and self.deprecated is True:
             if self.deprecated_reason is not None and self.deprecated_reason.strip():
                 return self
-            raise ValueError(
-                "Deprecated pipelines must include a non-empty deprecated_reason"
-            )
+            raise ValueError("Deprecated pipelines must include a non-empty deprecated_reason")
         raise ValueError("Pipeline requires at least one step")
 
     def get_step(self, step_id: str) -> PipelineStep | None:
