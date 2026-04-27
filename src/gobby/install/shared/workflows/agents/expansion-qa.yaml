@@ -12,6 +12,28 @@ instructions: |
   Your job is to compare the applied task tree with the compiled expansion run,
   repair structural drift when safe, and save findings on the run.
 
+  PLAN-COVERAGE CONTRACT:
+  - The contract reference is docs/contracts/plan-coverage.md.
+  - New epic plans must ship a .coverage-ledger.yaml companion before expansion.
+  - Leaves must carry structured covers:<plan-id>:<section-id>:<item-id> labels.
+  - Free-form plan-ref: labels are not honored.
+  - First run `gobby-tasks-ops:run_expansion_qa_coverage` with
+    run_id, plan_path, plan_id, plan_hash, root_task, project_id, and task_tree="db".
+  - That tool invokes the A4 library equivalent of:
+    `gobby plan coverage --plan <plan_path> --plan-id <plan_id> --plan-hash <plan_hash> --root-task <root_task> --project-id <project_id> --task-tree db`.
+  - It writes the manifest to coverage_manifest_path, saves QA results on the
+    expansion run, and stores artifact pointers through task_artifacts
+    (plan_file_path, plan_file_hash, expansion_run_id; preserving base_commit_sha).
+  - If recomputed plan content differs from task_artifacts.plan_file_hash, the
+    run fails mechanically with reason plan_hash_drift.
+  - Any deliverable item with status missing or invalid rejects the run
+    mechanically. Rejection notes must cite section_id, item_id, status, detail,
+    and any leaves that claimed but failed coverage.
+  - If coverage returns no missing or invalid rows, call mark_task_review_approved
+    with approval_notes that include the manifest path.
+  - If coverage returns missing or invalid rows, call mark_task_review_rejected
+    with the rejection_notes returned by run_expansion_qa_coverage.
+
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
@@ -25,9 +47,58 @@ instructions: |
   - Always use progressive discovery for MCP tools.
 
 step_variables:
+  coverage_result_saved: false
+  coverage_result_failed: false
+  review_complete: false
   qa_result_saved: false
 
 steps:
+  - name: coverage_check
+    description: "Run deterministic plan coverage for the expansion task tree"
+    status_message: |
+      Call run_expansion_qa_coverage with --plan, --plan-id, --plan-hash,
+      --root-task, --project-id, and --task-tree db equivalents. Carry the
+      returned review action into the final QA verdict.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:create_task"
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:delete_task"
+      - "gobby-tasks:escalate_task"
+      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-tasks:reopen_task"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks-ops
+        tool: run_expansion_qa_coverage
+        action: set_variable
+        variable: coverage_result_saved
+        value: true
+      - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: mark_task_review_rejected
+        action: set_variable
+        variable: review_complete
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks-ops
+        tool: run_expansion_qa_coverage
+        action: set_variable
+        variable: coverage_result_failed
+        value: true
+    transitions:
+      - to: qa_check
+        when: "vars.coverage_result_saved"
+      - to: terminate
+        when: "vars.coverage_result_failed"
+
   - name: qa_check
     description: "Validate expansion output: structural deps + plan comparison"
     status_message: |
@@ -42,8 +113,6 @@ steps:
       - "gobby-tasks:delete_task"
       - "gobby-tasks:escalate_task"
       - "gobby-tasks:mark_task_needs_review"
-      - "gobby-tasks:mark_task_review_approved"
-      - "gobby-tasks:mark_task_review_rejected"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
@@ -53,6 +122,16 @@ steps:
         action: set_variable
         variable: qa_result_saved
         value: true
+      - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: mark_task_review_rejected
+        action: set_variable
+        variable: review_complete
+        value: true
     on_mcp_error:
       - server: gobby-tasks-ops
         tool: save_expansion_qa_result
@@ -60,6 +139,8 @@ steps:
         variable: qa_result_failed
         value: true
     transitions:
+      - to: terminate
+        when: "vars.review_complete"
       - to: terminate
         when: "vars.qa_result_saved"
       - to: terminate

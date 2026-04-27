@@ -6,7 +6,7 @@ used by pipelines and occasional manual operations, not daily-driver
 session work.
 
 Tools included:
-- Expansion (8): start/get/latest/resume/cancel/validate run, QA result, plan validation
+- Expansion: start/get/latest/resume/cancel/validate run, QA result, QA coverage, plan validation
 - Front half (1): front_half_tick
 - Affected files (4): set, get, find_overlaps, wire_from_run
 - Artifacts (5): set/get artifact pointers and append idempotent description sections

@@ -25,6 +25,7 @@ from .memory import memory
 from .merge import merge
 from .pack import pack, unpack
 from .pipelines import pipelines
+from .plan import plan
 from .projects import projects
 from .qdrant import qdrant
 from .rules import rules
@@ -98,3 +99,4 @@ cli.add_command(pack)
 cli.add_command(unpack)
 cli.add_command(comms)
 cli.add_command(build_command)
+cli.add_command(plan)

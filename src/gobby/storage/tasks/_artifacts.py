@@ -11,10 +11,12 @@ from gobby.storage.database import DatabaseProtocol
 _ARTIFACT_FIELDS = frozenset(
     {
         "plan_file_path",
+        "plan_file_hash",
         "worktree_path",
         "worktree_id",
         "clone_path",
         "clone_id",
+        "base_commit_sha",
         "target_branch",
         "expansion_run_id",
         "expansion_attempts",
@@ -35,14 +37,26 @@ class TaskArtifactConstraintError(ValueError):
 ArtifactCheckConstraintError = TaskArtifactConstraintError
 
 
+class MissingIsolationBaseError(TaskArtifactConstraintError):
+    """Raised when a new isolation artifact write omits base_commit_sha."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "missing_isolation_base",
+            "base_commit_sha is required when setting worktree_path or clone_path",
+        )
+
+
 @dataclass(frozen=True)
 class TaskArtifacts:
     task_id: str
     plan_file_path: str | None = None
+    plan_file_hash: str | None = None
     worktree_path: str | None = None
     worktree_id: str | None = None
     clone_path: str | None = None
     clone_id: str | None = None
+    base_commit_sha: str | None = None
     target_branch: str | None = None
     expansion_run_id: str | None = None
     expansion_attempts: int = 0
@@ -55,10 +69,12 @@ class TaskArtifacts:
         return cls(
             task_id=row["task_id"],
             plan_file_path=row["plan_file_path"],
+            plan_file_hash=row["plan_file_hash"],
             worktree_path=row["worktree_path"],
             worktree_id=row["worktree_id"],
             clone_path=row["clone_path"],
             clone_id=row["clone_id"],
+            base_commit_sha=row["base_commit_sha"],
             target_branch=row["target_branch"],
             expansion_run_id=row["expansion_run_id"],
             expansion_attempts=int(row["expansion_attempts"] or 0),
@@ -97,6 +113,38 @@ def _validate_constraints(values: dict[str, Any]) -> None:
             "isolation_family_xor",
             "worktree and clone artifact families are mutually exclusive",
         )
+    if values.get("base_commit_sha") is not None and not worktree_path_set and not clone_path_set:
+        raise TaskArtifactConstraintError(
+            "isolation_base_without_family",
+            "base_commit_sha requires an active worktree or clone artifact family",
+        )
+
+
+_ISOLATION_FIELDS = frozenset({"worktree_path", "worktree_id", "clone_path", "clone_id"})
+
+
+def _has_isolation_path(values: dict[str, Any]) -> bool:
+    return values.get("worktree_path") is not None or values.get("clone_path") is not None
+
+
+def _enforce_isolation_base(
+    current: dict[str, Any],
+    fields: dict[str, str | int | None],
+    next_values: dict[str, Any],
+) -> None:
+    if not _has_isolation_path(next_values) or next_values.get("base_commit_sha") is not None:
+        return
+
+    row_exists = current.get("updated_at") is not None
+    sets_new_isolation_path = any(
+        fields.get(field) is not None for field in ("worktree_path", "clone_path")
+    )
+    modifies_isolation = any(
+        field in fields and fields[field] != current.get(field) for field in _ISOLATION_FIELDS
+    )
+
+    if (not row_exists and sets_new_isolation_path) or (row_exists and modifies_isolation):
+        raise MissingIsolationBaseError()
 
 
 class TaskArtifactManager:
@@ -114,10 +162,12 @@ class TaskArtifactManager:
                 CREATE TABLE IF NOT EXISTS task_artifacts (
                     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
                     plan_file_path TEXT,
+                    plan_file_hash TEXT,
                     worktree_path TEXT,
                     worktree_id TEXT,
                     clone_path TEXT,
                     clone_id TEXT,
+                    base_commit_sha TEXT,
                     target_branch TEXT,
                     expansion_run_id TEXT,
                     expansion_attempts INTEGER NOT NULL DEFAULT 0,
@@ -128,6 +178,11 @@ class TaskArtifactManager:
                         (worktree_path IS NULL) = (worktree_id IS NULL)
                         AND (clone_path IS NULL) = (clone_id IS NULL)
                         AND (worktree_path IS NULL OR clone_path IS NULL)
+                        AND (
+                            base_commit_sha IS NULL
+                            OR worktree_path IS NOT NULL
+                            OR clone_path IS NOT NULL
+                        )
                     )
                 )
                 """
@@ -154,6 +209,7 @@ class TaskArtifactManager:
             next_values["expansion_attempts"] = 0
         next_values["expansion_attempts"] = int(next_values["expansion_attempts"])
         _validate_constraints(next_values)
+        _enforce_isolation_base(current, fields, next_values)
 
         columns = sorted(_ARTIFACT_FIELDS)
         placeholders = ", ".join("?" for _ in columns)
@@ -186,9 +242,19 @@ class TaskArtifactManager:
 
     def clear_isolation_pair(self, task_id: str, family: str) -> TaskArtifacts:
         if family == "worktree":
-            return self.set_artifacts_atomic(task_id, worktree_path=None, worktree_id=None)
+            return self.set_artifacts_atomic(
+                task_id,
+                worktree_path=None,
+                worktree_id=None,
+                base_commit_sha=None,
+            )
         if family == "clone":
-            return self.set_artifacts_atomic(task_id, clone_path=None, clone_id=None)
+            return self.set_artifacts_atomic(
+                task_id,
+                clone_path=None,
+                clone_id=None,
+                base_commit_sha=None,
+            )
         raise ValueError("family must be 'worktree' or 'clone'")
 
     def increment_expansion_attempts(self, task_id: str) -> int:

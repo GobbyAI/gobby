@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage as run_qa_coverage
 from gobby.tasks.expansion_service import (
     ExpansionService,
     _apply_tdd_sandwich,
@@ -493,6 +494,74 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "required": ["run_id", "qa_result"],
         },
         func=save_expansion_qa_result,
+    )
+
+    def run_expansion_qa_coverage(
+        run_id: str,
+        plan_path: str,
+        plan_id: str,
+        plan_hash: str,
+        root_task: str,
+        project_id: str,
+        task_tree: str = "db",
+        regenerate: bool = False,
+    ) -> dict[str, Any]:
+        run_manager = LocalExpansionRunManager(ctx.task_manager.db)
+        run = run_manager.get(run_id)
+        if run is None:
+            return {"ok": False, "error": f"Expansion run {run_id} not found"}
+        repo_path = ctx.get_project_repo_path(project_id or run.project_id)
+        return run_qa_coverage(
+            task_manager=ctx.task_manager,
+            run=run,
+            repo_path=repo_path,
+            plan_path=plan_path,
+            plan_id=plan_id,
+            plan_hash=plan_hash,
+            root_task_ref=root_task,
+            project_id=project_id,
+            task_tree=task_tree,
+            regenerate=regenerate,
+        )
+
+    registry.register(
+        name="run_expansion_qa_coverage",
+        description=(
+            "Run plan coverage for expansion QA with task-tree=db, persist the manifest, "
+            "store task artifact pointers, and return the mechanical review action."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "Expansion run ID"},
+                "plan_path": {"type": "string", "description": "Plan file path"},
+                "plan_id": {"type": "string", "description": "Stable plan identifier"},
+                "plan_hash": {"type": "string", "description": "Expected SHA-256 plan hash"},
+                "root_task": {"type": "string", "description": "Root task ref, e.g. #12725"},
+                "project_id": {"type": "string", "description": "Project UUID"},
+                "task_tree": {
+                    "type": "string",
+                    "description": "Coverage task tree source; only db is supported here",
+                    "enum": ["db"],
+                    "default": "db",
+                },
+                "regenerate": {
+                    "type": "boolean",
+                    "description": "Allow same-identity manifest regeneration",
+                    "default": False,
+                },
+            },
+            "required": [
+                "run_id",
+                "plan_path",
+                "plan_id",
+                "plan_hash",
+                "root_task",
+                "project_id",
+                "task_tree",
+            ],
+        },
+        func=run_expansion_qa_coverage,
     )
 
     async def check_expansion_qa_result(run_id: str) -> dict[str, Any]:

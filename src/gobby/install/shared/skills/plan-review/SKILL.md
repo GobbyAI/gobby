@@ -27,6 +27,56 @@ A plan that passes this review is ready for `/gobby expand`.
 
 ---
 
+## Plan-Coverage Contract Gate
+
+Before qualitative review, plan-adversary MUST load the A2 parser callable
+`gobby.plans.parser.parse_plan` and reject malformed typed plans mechanically.
+Use the parser result as the contract gate; only run the qualitative checklist
+after the typed grammar passes.
+
+Canonical heading regex:
+
+```regex
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+```
+
+The documented rejection message MUST name the failing cause. Reject on these
+eight cases:
+
+| Cause | Rejection message |
+| --- | --- |
+| missing ID | `Plan-Coverage Contract rejection: missing ID` |
+| missing kind | `Plan-Coverage Contract rejection: missing kind` |
+| missing acceptance | `Plan-Coverage Contract rejection: missing acceptance` |
+| ID collision | `Plan-Coverage Contract rejection: ID collision` |
+| malformed item ID | `Plan-Coverage Contract rejection: malformed item ID` |
+| malformed deferral | `Plan-Coverage Contract rejection: malformed deferral` |
+| zero artifact references | `Plan-Coverage Contract rejection: zero artifact references` |
+| table-row decomposition | `Plan-Coverage Contract rejection: table-row decomposition` |
+
+Mechanical parser-level rejection covers the first seven cases:
+
+- A heading at level `##` through `######` does not match the canonical regex
+  in strict implementation-parse mode.
+- A section has no `kind:` front-matter line.
+- A `deliverable` section has no `**Acceptance:**` block.
+- An acceptance item has zero artifact references. At least one of `file:`,
+  `symbol:`, `test:`, or `behavior:` is required.
+- An acceptance item ID does not dotted-prefix-match its section ID.
+- A duplicate section ID appears anywhere in the document.
+- A `deferred` section has a malformed deferral object. Required fields are
+  `task_ref`, `reason`, `owner`, and `original_acceptance_items`; the referenced
+  task must be open and carry `deferred-from:<plan-id>:<section-id>`.
+
+The eighth rejection is qualitative because table intent cannot be parsed
+reliably. Any `deliverable` section whose body uses a markdown table to
+enumerate work items MUST emit one acceptance item per table data row with
+stable IDs. Reject a deliverable whose acceptance-item count is lower than its
+table data-row count, cite the missing rows, and name "table-row decomposition"
+in the finding.
+
+---
+
 ## Role & Attitude
 
 You are a rigorous plan reviewer. Your job is to find what the drafter missed —

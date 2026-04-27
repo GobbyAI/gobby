@@ -36,6 +36,18 @@ instructions: |
   halt conditions. Do not manufacture findings. Do not approve without a
   re-check pass.
 
+  PLAN-COVERAGE CONTRACT GATE:
+  Before qualitative review, load and call the A2 parser callable
+  `gobby.plans.parser.parse_plan` for typed implementation plans. Treat
+  `gobby.plans.parser.PlanParseError` as a mechanical rejection and format the
+  finding using the rejection messages documented in plan-review. This parser
+  gate checks the canonical heading regex, kind enum, acceptance-item shape,
+  typed deferral object, covers-ready artifact references, duplicate IDs, and
+  malformed item IDs. The qualitative pass must also enforce the table-row
+  decomposition rule: any deliverable table enumerating work items needs one
+  acceptance item per data row with stable IDs.
+  Table-row decomposition requires one acceptance item per table data row.
+
   WORKFLOW:
   - Review the plan artifact referenced in your prompt against the parent task
     and any supporting context (the parent description is the canonical source;
@@ -50,6 +62,8 @@ instructions: |
     specific questions you cannot answer.
   - If the plan is sound and only nits remain (or no findings), approve with
     `mark_task_review_approved` AND pass a `signoff_summary`.
+  - The review step has `allowed_tools: all`; the allowed parser callable is
+    `gobby.plans.parser.parse_plan`. Do not replace that with ad hoc parsing.
 
   SIGNOFF SUMMARY:
   Both `mark_task_review_rejected` and `mark_task_review_approved` accept an

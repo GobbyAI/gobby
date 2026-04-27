@@ -1613,7 +1613,8 @@ two and the test fixture asserts the chosen path).
 
 **Acceptance:**
 
-- A5.1 —
+- A5.1 — expansion-qa workflow step calls the configured coverage
+  execution path.
   `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
   workflow step calls the A4 coverage library or `gobby plan
   coverage` CLI with: `--plan` from `task_artifacts.plan_file_path`,

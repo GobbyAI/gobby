@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
 from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
@@ -327,6 +328,9 @@ def close_task(
             raise ValueError(
                 f"Cannot close task {task_id}: has {len(open_children)} open child task(s): {child_list}"
             )
+
+    if bootstrap_ledger_path_for_task(db, task_id) is not None:
+        verify_bootstrap_ledger(db, task_id)
 
     now = datetime.now(UTC).isoformat()
     update_task(

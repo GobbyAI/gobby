@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from gobby.storage._migration_registry import MIGRATIONS
+from gobby.storage._migration_registry import MIGRATIONS as _REGISTRY_MIGRATIONS
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migration_helpers import (
     _setup_code_content_fts,
@@ -59,6 +59,105 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 BASELINE_VERSION = 220
 _MIN_MIGRATION_VERSION = 219
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
+
+
+def _table_columns(db: LocalDatabase, table_name: str) -> set[str]:
+    return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table_name})")}
+
+
+def _task_artifacts_create_sql(table_name: str) -> str:
+    return f"""
+        CREATE TABLE {table_name} (
+            task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+            plan_file_path TEXT,
+            plan_file_hash TEXT,
+            worktree_path TEXT,
+            worktree_id TEXT,
+            clone_path TEXT,
+            clone_id TEXT,
+            base_commit_sha TEXT,
+            target_branch TEXT,
+            expansion_run_id TEXT,
+            expansion_attempts INTEGER NOT NULL DEFAULT 0,
+            pr_url TEXT,
+            merge_commit_sha TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (
+                (worktree_path IS NULL) = (worktree_id IS NULL)
+                AND (clone_path IS NULL) = (clone_id IS NULL)
+                AND (worktree_path IS NULL OR clone_path IS NULL)
+                AND (
+                    base_commit_sha IS NULL
+                    OR worktree_path IS NOT NULL
+                    OR clone_path IS NOT NULL
+                )
+            )
+        )
+        """
+
+
+def _add_task_artifact_evidence_columns(db: LocalDatabase) -> None:
+    row = db.fetchone("SELECT sql FROM sqlite_master WHERE type='table' AND name='task_artifacts'")
+    if row is None:
+        db.execute(_task_artifacts_create_sql("task_artifacts"))
+        return
+
+    existing_columns = _table_columns(db, "task_artifacts")
+    table_sql = str(row["sql"] or "")
+    if {"base_commit_sha", "plan_file_hash"}.issubset(
+        existing_columns
+    ) and "base_commit_sha IS NULL" in table_sql:
+        return
+
+    columns = [
+        "task_id",
+        "plan_file_path",
+        "plan_file_hash",
+        "worktree_path",
+        "worktree_id",
+        "clone_path",
+        "clone_id",
+        "base_commit_sha",
+        "target_branch",
+        "expansion_run_id",
+        "expansion_attempts",
+        "pr_url",
+        "merge_commit_sha",
+        "updated_at",
+    ]
+    select_columns = [
+        column if column in existing_columns else _default_task_artifact_column(column)
+        for column in columns
+    ]
+
+    db.execute("ALTER TABLE task_artifacts RENAME TO task_artifacts_old")
+    db.execute(_task_artifacts_create_sql("task_artifacts"))
+    db.execute(
+        f"""
+        INSERT INTO task_artifacts ({", ".join(columns)})
+        SELECT {", ".join(select_columns)}
+        FROM task_artifacts_old
+        """,  # nosec B608 - columns are fixed allowlist values.
+    )
+    db.execute("DROP TABLE task_artifacts_old")
+
+
+def _default_task_artifact_column(column: str) -> str:
+    if column == "expansion_attempts":
+        return "0 AS expansion_attempts"
+    if column == "updated_at":
+        return "CURRENT_TIMESTAMP AS updated_at"
+    return f"NULL AS {column}"
+
+
+MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
+    *_REGISTRY_MIGRATIONS,
+    (
+        224,
+        "Add evidence metadata to task_artifacts",
+        _add_task_artifact_evidence_columns,
+    ),
+]
 
 
 def get_current_version(db: LocalDatabase) -> int:

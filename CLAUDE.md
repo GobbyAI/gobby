@@ -49,6 +49,50 @@ Gobby is a local-first daemon that unifies AI coding assistants (Claude Code, Ge
 - **Agent spawning** with P2P messaging, command coordination, and worktree isolation
 - **Memory system** for persistent facts across sessions
 
+## Plan-Coverage Contract
+
+The full reference is `docs/contracts/plan-coverage.md`. The authoring surface
+is `src/gobby/install/shared/skills/plan-draft/SKILL.md`; review and expansion
+surfaces link back to it.
+
+Canonical section-heading regex:
+
+```regex
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+```
+
+- Section kind enum: `deliverable | framing | verification | deferred`.
+  `deliverable` sections require an `**Acceptance:**` block; `framing` and
+  `verification` sections do not carry acceptance items; `deferred` sections
+  require the typed deferral object.
+- Acceptance-item shape: IDs use `A<section>.<n>` dotted suffixes and each item
+  names at least one artifact kind: `file`, `symbol`, `test`, or `behavior`.
+- Typed deferral object fields: `task_ref`, `reason`, `owner`,
+  `original_acceptance_items`; the task must be open and carry provenance label
+  `deferred-from:<plan-id>:<section-id>`. A closed task fails the gate.
+- Structured coverage record format:
+  `covers:<plan-id>:<section-id>:<item-id>`. Free-form `plan-ref:` labels are
+  not honored.
+- CLI synopsis:
+  `gobby plan coverage --plan <path> --plan-id <id> --plan-hash <sha256> --task-tree <db|jsonl|path> [--root-task <ref>] [--project-id <id>] [--matrix-file <path>] [--evidence <kind>] [--manifest <path>] [--regenerate]`.
+  Required flags: `--plan`, `--plan-id`, `--plan-hash`, `--task-tree`.
+  Optional flags: `--root-task`, `--project-id`, `--matrix-file`,
+  `--evidence`, `--manifest`, `--regenerate`. Exit codes: `0`, `2`, `3`, `4`,
+  `5`, `6`, `7`, `8`.
+- Evidence kinds: `commits | task-diff | worktree-diff | coverage-matrix | none`.
+- Bootstrap-ledger requirement: every new epic plan ships a
+  `.coverage-ledger.yaml` companion file, adversary-reviewed before expansion,
+  until the contract tooling is mature.
+- `.grandfathered` mechanism: reserved for already-merged epics; additions
+  require a co-located removal task with a paired
+  `# remove-by: <task-ref>` annotation, and that task must be open.
+  Epic 1 (#13175) is not grandfathered.
+- Table-row decomposition rule: any `deliverable` section whose body uses a
+  markdown table to enumerate work items MUST emit one acceptance item per data
+  row with stable IDs. Plan-adversary qualitatively rejects deliverables that
+  enumerate work in tables without per-row acceptance items.
+  Table-row decomposition requires one acceptance item per table data row.
+
 ## Development Commands
 
 # IMPORTANT: Use uv for all Python operations. This includes running tests, formatting, linting, and installing dependencies

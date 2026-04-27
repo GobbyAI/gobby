@@ -19,6 +19,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -321,13 +322,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             }
 
         # All checks passed - close the task with session and commit tracking
-        ctx.task_manager.close_task(
-            resolved_id,
-            reason=reason,
-            closed_in_session_id=resolved_session_id,
-            closed_commit_sha=current_commit_sha,
-            validation_override_reason=override_justification if store_override else None,
-        )
+        try:
+            ctx.task_manager.close_task(
+                resolved_id,
+                reason=reason,
+                closed_in_session_id=resolved_session_id,
+                closed_commit_sha=current_commit_sha,
+                validation_override_reason=override_justification if store_override else None,
+            )
+        except BootstrapLedgerMismatchError as exc:
+            return exc.to_response()
 
         notify_parent_on_status_change(
             ctx.task_manager.db,

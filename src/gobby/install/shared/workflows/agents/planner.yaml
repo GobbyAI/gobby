@@ -30,6 +30,21 @@ instructions: |
   dependency notation, and verification checklist. Do not invent alternative
   formats.
 
+  PLAN-COVERAGE CONTRACT TYPED GRAMMAR:
+  New epic plans MUST follow the typed grammar documented in plan-draft.
+  Include the canonical heading regex:
+  ^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
+  Every section MUST carry `kind: deliverable | framing | verification | deferred`.
+  Deliverable sections MUST have `**Acceptance:**` items with dotted-suffix IDs
+  and at least one artifact reference of kind file, symbol, test, or behavior.
+  Deferred sections MUST include task_ref, reason, owner, original_acceptance_items,
+  and deferred-from:<plan-id>:<section-id> provenance. Table-row decomposition
+  rule: any deliverable section
+  whose body uses a markdown table to enumerate work items MUST emit one
+  acceptance item per table data row with stable IDs; this is the table-row
+  decomposition rule.
+  Table-row decomposition requires one acceptance item per table data row.
+
   WORKFLOW:
   - Read the parent task first, then any referenced supporting docs, then
     draft or revise the plan artifact requested in your prompt. If this is a

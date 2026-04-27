@@ -73,6 +73,7 @@ def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> N
         fields={
             "worktree_path": "/tmp/gobby-wt",
             "worktree_id": "worktree-row-1",
+            "base_commit_sha": "abc123",
             "target_branch": "release/0.4",
         },
     )
@@ -88,6 +89,7 @@ def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> N
     assert clear_result["ok"] is True
     assert artifacts["worktree_path"] is None
     assert artifacts["worktree_id"] is None
+    assert artifacts["base_commit_sha"] is None
     assert artifacts["target_branch"] == "release/0.4"
 
 

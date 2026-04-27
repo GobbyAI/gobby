@@ -114,6 +114,7 @@ async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
         epic.id,
         worktree_path="/tmp/gobby-worktree",
         worktree_id="worktree-row-1",
+        base_commit_sha="abc123",
     )
 
     with pytest.raises(ValueError, match="already has worktree artifact.*/tmp/gobby-worktree"):

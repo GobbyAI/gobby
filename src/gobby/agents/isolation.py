@@ -21,7 +21,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.storage.tasks import TaskArtifactManager
+
 logger = logging.getLogger(__name__)
+
+
+def _capture_base_commit_sha(isolation_path: str) -> str:
+    result = subprocess.run(  # nosec B603, B607 - fixed git argv on local isolation path.
+        ["git", "-C", isolation_path, "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "git rev-parse HEAD failed"
+        raise RuntimeError(f"Failed to capture base_commit_sha for {isolation_path}: {detail}")
+    return result.stdout.strip()
 
 
 @dataclass
@@ -261,6 +276,15 @@ class WorktreeIsolationHandler(IsolationHandler):
         # Track storage record for cleanup
         self._created_worktree_id = worktree.id
 
+        if config.task_id is not None:
+            base_commit_sha = _capture_base_commit_sha(worktree_path)
+            TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic(
+                config.task_id,
+                worktree_path=worktree_path,
+                worktree_id=worktree.id,
+                base_commit_sha=base_commit_sha,
+            )
+
         # Copy CLI hooks to worktree so hooks fire correctly
         await _copy_cli_hooks(
             source_path=str(self._git_manager.repo_path),
@@ -474,6 +498,15 @@ class CloneIsolationHandler(IsolationHandler):
 
         # Track storage record for cleanup
         self._created_clone_id = clone.id
+
+        if config.task_id is not None:
+            base_commit_sha = _capture_base_commit_sha(clone_path)
+            TaskArtifactManager(self._clone_storage.db).set_artifacts_atomic(
+                config.task_id,
+                clone_path=clone_path,
+                clone_id=clone.id,
+                base_commit_sha=base_commit_sha,
+            )
 
         # Copy CLI hooks to clone so hooks fire correctly
         await _copy_cli_hooks(

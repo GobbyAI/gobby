@@ -13,6 +13,23 @@ metadata:
 
 Thin wrapper over the `expand-task` pipeline and the new expansion-run MCP tools.
 
+## Plan-Coverage Contract
+
+Expansion consumes typed plans authored under the Plan-Coverage Contract in
+`src/gobby/install/shared/skills/plan-draft/SKILL.md`; the single-page
+reference is `docs/contracts/plan-coverage.md`.
+
+Expansion-side obligations:
+
+- A `.coverage-ledger.yaml` companion file MUST exist before expansion
+  proceeds for new epic plans.
+- Created leaves MUST emit structured
+  `covers:<plan-id>:<section-id>:<item-id>` labels for the acceptance items
+  they implement.
+- `expansion-qa` is the mechanical gate that compares the expanded task tree
+  against the compiled contract and records any missing or invalid coverage.
+- Free-form `plan-ref:` labels are not honored.
+
 ## Supported Inputs
 
 - `#N` or another task ref
