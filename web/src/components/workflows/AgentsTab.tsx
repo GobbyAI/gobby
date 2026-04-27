@@ -28,6 +28,7 @@ interface AgentDefInfo {
     instructions: string | null
     provider: string
     model: string | null
+    is_local?: boolean | null
     reasoning_effort?: string | null
     reasoning_required?: boolean | null
     fallback_agent: string | null
@@ -880,6 +881,11 @@ export function AgentsTab({ searchText, sourceFilter, devMode, showCreateForm, o
                       >
                         {d.provider}
                       </span>
+                      {d.is_local && (
+                        <span className="agent-def-badge chip chip--local">
+                          LOCAL
+                        </span>
+                      )}
                       {d.isolation && (
                         <span
                           className="agent-def-badge agent-def-badge--filled"
