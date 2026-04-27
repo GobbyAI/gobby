@@ -164,12 +164,19 @@ export function ChatPage({
   const handleFocusSessionHandled = useCallback(() => {
     setFocusSessionId(null);
   }, []);
+  const prevIsMobileRef = useRef(isMobile);
+  const isPinnedRef = useRef(isPinned);
 
   useEffect(() => {
-    if (isMobile && isPinned) {
+    isPinnedRef.current = isPinned;
+  }, [isPinned]);
+
+  useEffect(() => {
+    if (!prevIsMobileRef.current && isMobile && isPinnedRef.current) {
       setIsPinned(false);
     }
-  }, [isMobile, isPinned, setIsPinned]);
+    prevIsMobileRef.current = isMobile;
+  }, [isMobile, setIsPinned]);
 
   const parkCurrentSession = useCallback(
     (nextSessionId?: string) => {
