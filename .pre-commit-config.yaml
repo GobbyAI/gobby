@@ -60,6 +60,17 @@ repos:
   # Uses `uv run` so mypy sees the full project environment and module graph.
   - repo: local
     hooks:
+      - id: gobby-plan-snapshots-refresh
+        name: gobby plan snapshots refresh check
+        entry: >-
+          bash -c 'gobby plan grandfathered-refresh --check;
+          grandfathered_status=$?;
+          gobby plan legacy-classification-refresh --check;
+          legacy_status=$?;
+          exit $(( grandfathered_status || legacy_status ))'
+        language: system
+        pass_filenames: false
+        files: ^\.gobby/plans/(\.grandfathered|index\.yaml|\.grandfathered-task-state\.yaml|\.legacy-classification\.yaml)$
       - id: mypy
         name: mypy
         entry: uv run mypy src/
