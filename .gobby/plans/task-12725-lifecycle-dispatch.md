@@ -455,7 +455,7 @@ Update `baseline_schema.sql` so fresh installs ship the columns and tables direc
 ### 1.3 Extend task CRUD for new fields and helpers [category: code] (depends: 1.2)
 `kind: deliverable`
 
-> **Status: completed** — shipped via commit `614c5bbe`. See `src/gobby/storage/tasks/_crud.py`.
+> **Status: partial** — CRUD fields shipped via commit `614c5bbe` (`src/gobby/storage/tasks/_crud.py`); helpers `list_automation_candidates` and `_is_yolo` named in the acceptance items are not present.
 
 Target: `src/gobby/storage/tasks/_crud.py` and related modules
 
@@ -1041,8 +1041,6 @@ Helpers `_current_verdict_rejected`, `_rounds_remaining`, `_expansion_active`, `
 ### 1.8 Lifecycle transitions in review tools [category: code] (depends: 1.1)
 `kind: deliverable`
 
-> **Status: completed** — shipped via commit `a2071a54`. See `src/gobby/storage/tasks/_transitions.py`.
-
 Target: `src/gobby/storage/tasks/_transitions.py` and the matching MCP wrappers
 
 **Core contract**: when `mark_task_review_approved` triggers a lifecycle advance, it also **resets `status` to `open`** so the next stage's rule can dispatch (rules gate on `status in ("open", "needs_review")`). The approval event is preserved in `task_lifecycle_events` (§1.1c) — audit trail is not lost.
@@ -1494,7 +1492,7 @@ In the planner's submit step (before `mark_task_needs_review`), explicitly remov
 ### 2.8 Expansion: Agent Selection + profile-appropriate subtasks [category: code]
 `kind: deliverable`
 
-> **Status: completed** — shipped via commit `36a48d3e`. See `src/gobby/tasks/expansion_service.py`.
+> **Status: partial** — agent-selection behavior shipped via commit `36a48d3e` at `src/gobby/tasks/expansion_service.py`; the section's named `src/gobby/tasks/expansion.py` path was not used (path drift).
 
 Target: `src/gobby/tasks/expansion_service.py` and `src/gobby/tasks/expansion.py`
 
@@ -1566,7 +1564,7 @@ Skill will be audited and tuned as prompts mature; folded into this epic rather 
 ### 2.8b Expose `start_expansion_run_impl` for in-process dispatcher use [category: code] (depends: 1.1b)
 `kind: deliverable`
 
-> **Status: completed** — shipped via commit `4ee54dc5`. See `src/gobby/mcp_proxy/tools/tasks/_expansion.py`.
+> **Status: partial** — nested MCP handler `start_expansion_run` shipped via commit `4ee54dc5` at `src/gobby/mcp_proxy/tools/tasks/_expansion.py`; the importable `start_expansion_run_impl` symbol required by §1.9 is not exported.
 
 Target: `src/gobby/mcp_proxy/tools/tasks_ops.py` (or wherever the MCP tool's handler lives)
 
@@ -1583,7 +1581,7 @@ The dispatcher captures `run.id` and writes it into `task_artifacts.expansion_ru
 ### 2.9 Expansion-QA transition contract [category: config] (depends: 1.8, 1.1b)
 `kind: deliverable`
 
-> **Status: completed** — shipped via commit `4ee54dc5`. See `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
+> **Status: partial** — plan-coverage and review wiring shipped via commit `4ee54dc5` at `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`; the `assigned_agent`, `category: planning`, and test-infrastructure-only `[category: test]` checks named in the acceptance items are pending.
 
 Target: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
 
@@ -1607,8 +1605,6 @@ Unblock `mark_task_review_approved` and `mark_task_review_rejected` in the agent
 
 ### 2.10 Merge agent — lifecycle integration [category: config] (depends: 1.8, 1.1b)
 `kind: deliverable`
-
-> **Status: completed** — shipped via commit `fb4889c0`. See `src/gobby/install/shared/workflows/agents/merge.yaml`.
 
 Target: `src/gobby/install/shared/workflows/agents/merge.yaml`
 
@@ -1732,7 +1728,7 @@ Daemon uses `max_active_agents` and `dispatch_interval_seconds` at cron-registra
 ### 3.2 Build service — CLI + MCP + HTTP shared core [category: code] (depends: 3.1)
 `kind: deliverable`
 
-> **Status: completed** — shipped via commit `614c5bbe`. See `src/gobby/build/service.py`.
+> **Status: partial** — CLI/MCP/HTTP shared core shipped via commit `614c5bbe` at `src/gobby/build/service.py`. `_kick_dispatcher_tick()` is an explicit placeholder returning 0 (intentional; gets wired in §1.9 once the dispatcher exists). `target_branch=None → current git HEAD` resolution before persisting artifacts is not yet implemented.
 
 Target: shared core at `src/gobby/build/service.py` (new package); three thin surfaces.
 
