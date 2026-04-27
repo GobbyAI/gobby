@@ -423,20 +423,28 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
 - **Fenced code blocks are masked from all structural scans.** Before
   any heading, `kind:` line, `**Acceptance:**` block, acceptance bullet,
   or deferral-YAML detection runs, the parser computes a code-fence
-  mask: any line whose left-trimmed prefix opens a fenced code block
-  (` ``` ` or ` ~~~ `, with optional info string) toggles a "fenced"
-  state, and the matching closing fence ends it. All lines while the
-  state is "fenced" are excluded from structural matching. Nested fences
-  use the standard CommonMark rule (the fence character and length must
-  match for the block to close). The single exception is the deferral
-  YAML block intentionally consumed by a `deferred` section: when the
-  parser is in deferral-capture mode for a section, the first fenced
-  YAML block inside that section is read as the deferral object
-  (matching the established `deferred` syntax above) and not masked.
-  This rule is load-bearing because plan files (including this one)
-  contain fenced examples with fake `**Acceptance:**` blocks and fake
-  acceptance bullets; without masking, `test_parses_self` would either
-  fail or its passing/failing would depend on implementation detail.
+  mask using **CommonMark fence-matching semantics**: a fenced code
+  block opens on a line whose left-trimmed prefix is three or more
+  consecutive ` ` ` (backticks) or three or more consecutive `~`
+  (tildes), with optional info string. The block closes on a
+  subsequent line whose left-trimmed prefix is **the same fence
+  character** with length **greater than or equal to** the opener's
+  fence length, and an empty (whitespace-only) info string after the
+  delimiter. A shorter same-character fence inside the block does
+  NOT close it; a different-character fence (e.g., `~~~` inside a
+  backtick-fenced block, or `` ``` `` inside a tilde-fenced block)
+  does NOT close it. Indentation up to 3 spaces is permitted on
+  either fence. All lines while the state is "fenced" are excluded
+  from structural matching. The single
+  exception is the deferral YAML block intentionally consumed by a
+  `deferred` section: when the parser is in deferral-capture mode
+  for a section, the first fenced YAML block inside that section is
+  read as the deferral object (matching the established `deferred`
+  syntax above) and not masked. This rule is load-bearing because
+  plan files (including this one) contain fenced examples with
+  fake `**Acceptance:**` blocks and fake acceptance bullets;
+  without masking, `test_parses_self` would either fail or its
+  passing/failing would depend on implementation detail.
 
 **Tests:**
 
@@ -570,6 +578,25 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
 - `tests/plans/test_parser.py::test_tilde_fence_also_masks`
   — fixture using ` ~~~ ` fence delimiters (instead of triple
   backticks) around fake headings; the parser masks them identically.
+- `tests/plans/test_parser.py::test_fence_closes_with_longer_delimiter`
+  — fixture opens with three backticks and closes with four
+  backticks (CommonMark legal: closer length >= opener length);
+  the block is masked correctly and any structural content after
+  the closing fence is parsed normally.
+- `tests/plans/test_parser.py::test_shorter_inner_fence_does_not_close`
+  — fixture opens with four backticks; a three-backtick line
+  inside the block does NOT close it (closer length < opener
+  length); content after the inner short fence remains masked
+  until a real four-or-more-backtick closer.
+- `tests/plans/test_parser.py::test_different_fence_char_does_not_close`
+  — fixture opens with ` ``` `; an inner `~~~` line does NOT
+  close it (closer character differs); the block continues until
+  a real backtick closer.
+- `tests/plans/test_parser.py::test_indented_fence_up_to_3_spaces`
+  — fixture opens with 3-space-indented ` ``` `; the parser
+  recognizes it as a valid fence (per CommonMark, up to 3 leading
+  spaces are allowed); 4-space-indented opener does NOT (it's a
+  code block by indentation, not a fence).
 
 **Acceptance:**
 
@@ -644,19 +671,30 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   `gobby.plans.parser.PlanKind`. test:
   `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`,
   `tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind`.
-- A2.16 — parser masks fenced code blocks (` ``` ` and ` ~~~ `,
-  with CommonMark fence-matching rules) from all structural scans
-  (heading, `kind:`, `**Acceptance:**`, acceptance bullets, and
-  deferral-YAML detection except a deferral block intentionally
-  consumed inside a `deferred` section). Fenced examples that look
-  like real headings or acceptance bullets do not contribute to
+- A2.16 — parser masks fenced code blocks from all structural
+  scans (heading, `kind:`, `**Acceptance:**`, acceptance bullets,
+  and deferral-YAML detection except a deferral block
+  intentionally consumed inside a `deferred` section), using
+  **full CommonMark fence-matching semantics**: open with ≥3
+  consecutive ` ` ` or `~`, close with the **same character** at
+  length **≥ opener's length**; a shorter same-character fence
+  inside the block does NOT close it; a different-character
+  fence inside does NOT close it; up to 3 leading spaces
+  permitted on either fence. Fenced examples that look like
+  real headings or acceptance bullets do not contribute to
   `PlanDocument.sections` or any `PlanSection.acceptance_items`.
   behavior: "fenced markdown blocks are excluded from structural
-  parsing" in `gobby.plans.parser.parse_plan`. test:
+  parsing per CommonMark fence-matching rules (closer length ≥
+  opener length, same character)" in
+  `gobby.plans.parser.parse_plan`. test:
   `tests/plans/test_parser.py::test_fenced_headings_are_masked`,
   `tests/plans/test_parser.py::test_fenced_acceptance_bullets_are_masked`,
   `tests/plans/test_parser.py::test_fenced_deferral_yaml_outside_deferred_is_ignored`,
-  `tests/plans/test_parser.py::test_tilde_fence_also_masks`.
+  `tests/plans/test_parser.py::test_tilde_fence_also_masks`,
+  `tests/plans/test_parser.py::test_fence_closes_with_longer_delimiter`,
+  `tests/plans/test_parser.py::test_shorter_inner_fence_does_not_close`,
+  `tests/plans/test_parser.py::test_different_fence_char_does_not_close`,
+  `tests/plans/test_parser.py::test_indented_fence_up_to_3_spaces`.
 - A2.17 — `test_parses_self` is load-bearing under A2.16: this very
   plan contains fenced examples (A1 acceptance-bullet examples, A3
   deferral-block examples, A4 manifest snippets) and parses cleanly

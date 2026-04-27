@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "a424d4c65f76b671c470b5713256eb5febe4aba344bcf6d3c9380804aae9f556"
+plan_hash: "a2f45d877a7192018f36bd863af938530d0bb1501faefcbba16feb9dae3278a5"
 root_task_ref: "13175"
 
 sections:
@@ -301,33 +301,44 @@ sections:
               tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind.
       A2.16:
         expected_leaves:
-          - title: "Parser masks fenced code blocks from all structural scans (CommonMark fence rules)"
+          - title: "Parser masks fenced code blocks from all structural scans using full CommonMark fence-matching semantics"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              gobby.plans.parser.parse_plan computes a code-fence mask
-              before structural scanning: lines opening a fenced code
-              block (``` or ~~~ with optional info string) toggle a
-              fenced state per CommonMark fence-matching rules
-              (delimiter character and length must match to close);
-              lines while fenced are excluded from heading, kind:,
+              gobby.plans.parser.parse_plan computes a code-fence
+              mask before structural scanning. Open: ≥3 consecutive
+              ` (backticks) or ~ (tildes), with optional info
+              string, up to 3 leading spaces. Close: same character
+              at length ≥ opener's length, with empty info string
+              after the delimiter. A shorter same-character fence
+              inside the block does NOT close it; a different-
+              character fence inside does NOT close it. While
+              masked, lines are excluded from heading, kind:,
               **Acceptance:**, acceptance-bullet, and deferral-YAML
-              detection. The single exception is a deferred section's
-              first fenced YAML block, which is intentionally consumed
-              as the deferral object. Fenced examples that look like
-              real headings or acceptance bullets MUST NOT contribute
-              to PlanDocument.sections or any PlanSection.acceptance_items.
-              tests:
+              detection. The single exception is a deferred
+              section's first fenced YAML block, which is
+              intentionally consumed as the deferral object. Fenced
+              examples that look like real headings or acceptance
+              bullets MUST NOT contribute to PlanDocument.sections
+              or any PlanSection.acceptance_items. tests:
               tests/plans/test_parser.py::test_fenced_headings_are_masked,
-              tests/plans/test_parser.py::test_fenced_acceptance_bullets_are_masked,
-              tests/plans/test_parser.py::test_fenced_deferral_yaml_outside_deferred_is_ignored,
-              tests/plans/test_parser.py::test_tilde_fence_also_masks.
+              ::test_fenced_acceptance_bullets_are_masked,
+              ::test_fenced_deferral_yaml_outside_deferred_is_ignored,
+              ::test_tilde_fence_also_masks,
+              ::test_fence_closes_with_longer_delimiter,
+              ::test_shorter_inner_fence_does_not_close,
+              ::test_different_fence_char_does_not_close,
+              ::test_indented_fence_up_to_3_spaces.
         notes: >-
           This is load-bearing for A2.5 (test_parses_self) — without
-          fence masking the plan's own A1/A3/A4 fenced examples would
-          either fail to parse (duplicate-ID, missing-kind) or pass
-          for implementation-dependent reasons. A2.16 ships with
-          A2.17 so test_parses_self can act as the canonical
-          regression test.
+          fence masking the plan's own A1/A3/A4 fenced examples
+          would either fail to parse (duplicate-ID, missing-kind)
+          or pass for implementation-dependent reasons.
+          Round 9 fix: prior text said "delimiter character and
+          length must match" which CommonMark allows ``` to close
+          ``` , and a strict-equal-length rule would silently
+          extend the fenced region past valid ```` closers. The
+          rule now matches CommonMark exactly (closer ≥ opener
+          length, same character).
       A2.17:
         expected_leaves:
           - title: "test_parses_self verifies fenced examples in this plan do not leak into sections"
