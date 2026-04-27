@@ -1,9 +1,9 @@
 header:
   plan_id: task-12725-lifecycle-dispatch
   plan_hash: 46580e812d895b71b25d3917dba4a25a4093a4be268f729bd9f4ff2999e062d6
-  root_task_ref: '#12725'
+  root_task_ref: '12725'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-04-27T16:38:07Z'
+  generated_at: '2026-04-27T16:42:27Z'
   task_tree_source: db
   task_tree_source_hash: 2aec3fa16aefbbe35f6904e6f457ea436242761308a6b68a5536d05d738b69bf
   evidence_summary:

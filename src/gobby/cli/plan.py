@@ -134,6 +134,7 @@ def _evaluate_for_cli(
         raise MissingScopeError(f"{task_tree} coverage requires --root-task")
     if project_id is None:
         raise MissingScopeError(f"{task_tree} coverage requires --project-id")
+    normalized_root_task = _normalize_cli_root_task(root_task)
 
     if task_tree == TaskTreeSource.db.value:
         return evaluate(
@@ -141,7 +142,7 @@ def _evaluate_for_cli(
             plan_id=plan_id,
             plan_hash=plan_hash,
             task_tree=TaskTreeSource.db,
-            root_task_ref=root_task,
+            root_task_ref=normalized_root_task,
             project_id=project_id,
             evidence=evidence,
         )
@@ -150,7 +151,7 @@ def _evaluate_for_cli(
         plan_id=plan_id,
         plan_hash=plan_hash,
         task_tree=TaskTreeSource.jsonl,
-        root_task_ref=root_task,
+        root_task_ref=normalized_root_task,
         project_id=project_id,
         evidence=evidence,
     )
@@ -168,6 +169,10 @@ def _resolve_evidence_bundle(spec: str, *, project_id: str | None) -> EvidenceBu
         spec,
         ctx=_CliEvidenceContext(repo_root=Path.cwd(), project_id=project_id),
     )
+
+
+def _normalize_cli_root_task(root_task: str) -> str:
+    return root_task[1:] if root_task.startswith("#") else root_task
 
 
 @dataclass

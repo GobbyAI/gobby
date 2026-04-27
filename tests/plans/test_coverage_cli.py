@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 from pathlib import Path
 
 import pytest
@@ -135,6 +136,63 @@ def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
             "artifacts_touched": [],
         }
     ]
+
+
+def test_cli_normalizes_root_task_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    manifest = tmp_path / "out.coverage.yaml"
+
+    def fake_evaluate(**kwargs: object) -> CoverageReport:
+        root_task_ref = kwargs["root_task_ref"]
+        assert isinstance(root_task_ref, str)
+        return CoverageReport(
+            header=CoverageHeader(
+                plan_id="plan",
+                plan_hash=plan_hash,
+                root_task_ref=root_task_ref,
+                project_id="project",
+                generated_at="2026-04-27T00:00:00Z",
+                task_tree_source=TaskTreeSource.db,
+                task_tree_source_hash="tree",
+                evidence_summary=(),
+            ),
+            rows=(
+                CoverageRow(
+                    section_id="A1",
+                    item_id="A1.1",
+                    status=CoverageStatus.covered,
+                ),
+            ),
+        )
+
+    plan_module = importlib.import_module("gobby.cli.plan")
+    monkeypatch.setattr(plan_module, "evaluate", fake_evaluate)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "plan",
+            "coverage",
+            "--plan",
+            str(plan_path),
+            "--plan-id",
+            "plan",
+            "--plan-hash",
+            plan_hash,
+            "--task-tree",
+            "db",
+            "--root-task",
+            "#12725",
+            "--project-id",
+            "project",
+            "--manifest",
+            str(manifest),
+        ],
+    )
+
+    assert result.exit_code == 0
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    assert raw["header"]["root_task_ref"] == "12725"
 
 
 def test_cli_exit_codes_for_errors(tmp_path: Path) -> None:
