@@ -421,15 +421,22 @@ sections:
               DeferralValidationResult, TaskStoreProtocol.
       A3.9:
         expected_leaves:
-          - title: "Test: validate_deferral six short-circuit failure cases"
+          - title: "Test: validate_deferral six short-circuit failure cases (full test names per plan acceptance)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_deferral.py asserts each of
-              test_validate_task_missing, _task_closed,
-              _missing_provenance_label, _criteria_does_not_duplicate,
-              _missing_reason_or_owner, and
-              _missing_dependency_or_cited_parent short-circuits in
-              the documented order.
+              All six tests in tests/plans/test_deferral.py exist and
+              assert short-circuit in documented order:
+              tests/plans/test_deferral.py::test_validate_task_missing,
+              tests/plans/test_deferral.py::test_validate_task_closed,
+              tests/plans/test_deferral.py::test_validate_missing_provenance_label,
+              tests/plans/test_deferral.py::test_validate_criteria_does_not_duplicate,
+              tests/plans/test_deferral.py::test_validate_missing_reason_or_owner,
+              tests/plans/test_deferral.py::test_validate_missing_dependency_or_cited_parent.
+        notes: >-
+          Ledger-adversary fix: prior summary abbreviated 5/6 test
+          names as suffixes which is too lenient — full names
+          required so an expansion leaf cannot satisfy the ledger
+          while creating only some of the six tests.
       A3.10:
         expected_leaves:
           - title: "Test: validate_deferral happy path returns valid"
@@ -474,13 +481,27 @@ sections:
               TaskTreeSource, MissingScopeError, StaleHashError.
       A4.2:
         expected_leaves:
-          - title: "evaluate signature: db|jsonl require scope at type and runtime"
+          - title: "evaluate signature: db|jsonl require scope at type and runtime — all four named tests pass"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              gobby.plans.coverage.evaluate uses @overload chain such
-              that db|jsonl require plan_id, root_task_ref, project_id;
-              tests/plans/test_coverage_signature.py covers all four
-              cases including mypy --strict on a fixture file.
+              gobby.plans.coverage.evaluate uses @overload chain so
+              task_tree=TaskTreeSource.db or .jsonl requires
+              plan_id, root_task_ref, project_id; missing any of
+              those raises MissingScopeError at runtime AND fails
+              mypy --strict at type-check time. All four named
+              tests in tests/plans/test_coverage_signature.py exist
+              and pass:
+              tests/plans/test_coverage_signature.py::test_db_without_root_task_raises,
+              tests/plans/test_coverage_signature.py::test_db_without_project_raises,
+              tests/plans/test_coverage_signature.py::test_jsonl_without_scope_raises,
+              tests/plans/test_coverage_signature.py::test_mypy_overload_rejects_db_without_scope
+              (the last invokes mypy --strict on a fixture file
+              and asserts the type error is reported).
+        notes: >-
+          Ledger-adversary fix: prior summary said "covers all four
+          cases" without naming them; full test names required so
+          an expansion leaf cannot satisfy the ledger by writing
+          only one or two of the four assertions.
       A4.3:
         expected_leaves:
           - title: "evaluate signature: matrix_file accepts only matrix_file (rejects root/project)"
@@ -933,50 +954,75 @@ sections:
     acceptance_items:
       A8.1:
         expected_leaves:
-          - title: "Author bootstrap ledger YAML file"
-            owner_agent: unspecified
+          - title: "Author .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml as the bootstrap-ledger artifact for Epic 1"
+            owner_agent: backend-developer
             validation_criteria_summary: >-
               .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
-              exists and parses as YAML.
+              exists, parses as YAML, and is the canonical
+              bootstrap-ledger artifact referenced by A8.7's
+              close-time gate (gobby.plans.bootstrap_ledger.verify_bootstrap_ledger).
         notes: >-
           This ledger file is itself the deliverable for A8.1; it is
           authored as part of plan authoring (the present task,
           #13175) and not by Epic 1 expansion.
       A8.2:
         expected_leaves:
-          - title: "Bootstrap ledger header carries plan identity"
-            owner_agent: unspecified
+          - title: "Populate bootstrap ledger header at .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml with plan identity"
+            owner_agent: backend-developer
             validation_criteria_summary: >-
-              ledger header has project_id, plan_id, plan_hash,
-              root_task_ref matching the plan file identity.
+              .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+              header has project_id (d45545c5-ded5-4335-b115-0245752edacf),
+              plan_id (task-13175-plan-coverage-contract), plan_hash
+              (sha256 hex matching the on-disk plan), and
+              root_task_ref ("13175"). The plan_hash field is the
+              identity anchor A8.7's verify_bootstrap_ledger uses
+              to detect drift between ledger and post-A4 manifest.
         notes: >-
-          Authored alongside A8.1 in the present task.
+          Authored alongside A8.1 in the present task. The plan_hash
+          field MUST be re-pinned after every plan edit so the close
+          gate compares against the latest plan state.
       A8.3:
         expected_leaves:
           - title: "Bootstrap ledger covers every deliverable section A1–A10"
-            owner_agent: unspecified
+            owner_agent: backend-developer
             validation_criteria_summary: >-
-              ledger.sections has keys A1, A2, A3, A4, A5, A6, A7,
-              A8, A9, A10.
+              .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+              has sections keyed exactly A1, A2, A3, A4, A5, A6, A7,
+              A8, A9, A10 (no extras, no omissions); A0 (framing),
+              A11 (framing), A12 (verification) are intentionally
+              absent because they have no acceptance items.
         notes: >-
           Authored alongside A8.1 in the present task.
       A8.4:
         expected_leaves:
-          - title: "Bootstrap ledger lists every acceptance item ID"
-            owner_agent: unspecified
+          - title: "Bootstrap ledger lists every acceptance item ID from the plan"
+            owner_agent: backend-developer
             validation_criteria_summary: >-
-              every plan acceptance item ID appears as a key under
-              sections.<X>.acceptance_items.
+              for every deliverable acceptance item ID in
+              .gobby/plans/task-13175-plan-coverage-contract.md (the
+              full set as parsed by gobby.plans.parser.parse_plan
+              with code-fence masking from A2.16), there is a
+              matching key in
+              .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+              under sections.<section_id>.acceptance_items; no
+              orphan ledger rows for items not in the plan.
         notes: >-
-          Authored alongside A8.1 in the present task.
+          Authored alongside A8.1 in the present task. Lockstep
+          assertion: parse plan items + ledger items, set-equality
+          check; verified during plan authoring before commit.
       A8.5:
         expected_leaves:
           - title: "Bootstrap ledger expected_leaves shape per item"
-            owner_agent: unspecified
+            owner_agent: backend-developer
             validation_criteria_summary: >-
-              every ledger acceptance_item has expected_leaves with
-              non-empty list of {title, owner_agent,
-              validation_criteria_summary}.
+              every acceptance_item entry under sections.<X>.acceptance_items
+              in .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+              has expected_leaves: a non-empty list whose entries
+              each carry {title (string), owner_agent (string —
+              concrete agent name like "backend-developer", or
+              "unspecified" only when the artifact kind genuinely
+              has no canonical owner), validation_criteria_summary
+              (non-empty string)}; optional notes: scalar.
         notes: >-
           Authored alongside A8.1 in the present task.
       A8.6:
@@ -993,17 +1039,29 @@ sections:
           expansion proceeds.
       A8.7:
         expected_leaves:
-          - title: "Wire Epic 1 close-time ledger-vs-manifest revalidation gate"
+          - title: "Wire Epic 1 close-time ledger-vs-manifest revalidation gate around exact post-A4 gobby plan coverage invocation"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              src/gobby/plans/bootstrap_ledger.py exists and exports
-              gobby.plans.bootstrap_ledger.verify_bootstrap_ledger;
-              src/gobby/storage/tasks/_transitions.py:close_task
-              calls verify_bootstrap_ledger as a pre-close hook
-              when the task is the root of a plan whose
-              <plan_id>.coverage-ledger.yaml companion exists, and
-              raises BootstrapLedgerMismatchError on mismatch; the
-              MCP wrapper at
+              After A4 lands, running `gobby plan coverage --plan
+              .gobby/plans/task-13175-plan-coverage-contract.md
+              --plan-id task-13175-plan-coverage-contract
+              --plan-hash <recomputed sha256> --root-task '#13175'
+              --project-id d45545c5-ded5-4335-b115-0245752edacf
+              --task-tree db --evidence none --manifest
+              .gobby/plans/coverage/d45545c5-ded5-4335-b115-0245752edacf/13175/task-13175-plan-coverage-contract.coverage.yaml`
+              produces a manifest at the canonical path whose rows
+              match the bootstrap ledger's expected_leaves
+              (deliverable mismatch — a section with zero matching
+              leaves in either direction — blocks closing
+              #13175). The gate is implemented as helper
+              `verify_bootstrap_ledger(db, task_id)` in
+              src/gobby/plans/bootstrap_ledger.py (new file) and
+              called from the close-task transition path at
+              src/gobby/storage/tasks/_transitions.py:close_task as
+              a pre-close hook when the task is the root of a plan
+              whose <plan_id>.coverage-ledger.yaml companion exists.
+              On mismatch the close raises
+              BootstrapLedgerMismatchError; the MCP wrapper at
               src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py:close_task
               surfaces the structured error to the caller. Tests:
               tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch,
@@ -1258,6 +1316,14 @@ sections:
           no acceptance item. Without explicit subcommand
           implementation the snapshot fields in A9.7/A9.13 cannot
           be regenerated authoritatively.
+          **depends_on: A9.7 (committed grandfathered-task-state
+          schema), A9.13 (committed legacy-classification schema
+          including target-task *_exists/*_open/*_title fields).**
+          A9.14 reads the live DB and writes those committed
+          snapshot files, so the schema must be locked-in before
+          the refresh CLIs are implemented; the CLIs cannot land
+          before A9.7's and A9.13's committed schema fields are
+          part of the index/snapshot contract.
       A9.15:
         expected_leaves:
           - title: "Wire .pre-commit-config.yaml gobby-plan-snapshots-refresh hook to reject stale snapshots"
@@ -1276,6 +1342,12 @@ sections:
               all pass. file: .pre-commit-config.yaml.
         notes: >-
           Round 7 addition: paired with A9.14 to close F2's hook gap.
+          **depends_on: A9.14 (gobby plan grandfathered-refresh and
+          gobby plan legacy-classification-refresh subcommands).**
+          The hook invokes both refresh CLIs in --check mode, so
+          the CLIs MUST exist before the hook entry can land.
+          Expansion ordering: A9.13 schema → A9.14 refresh CLIs →
+          A9.15 pre-commit hook.
       A9.16:
         expected_leaves:
           - title: "CI runs both refresh subcommands in --check mode against live DB when available"
@@ -1293,6 +1365,13 @@ sections:
           Round 7 addition: closes the loop on F2 — if a developer
           edits live tasks but forgets the pre-commit hook, A9.16
           catches drift in CI when live DB runs.
+          **depends_on: A9.14 (refresh CLIs implemented).** A9.16
+          invokes the same two refresh subcommands as A9.15 in
+          --check mode. Full expansion ordering: A9.13 schema →
+          A9.14 refresh CLIs → A9.15 pre-commit hook → A9.16 CI
+          drift check (the last three can land in any order
+          relative to each other once A9.14 lands, but all three
+          require A9.14's substrate).
 
   A10:
     acceptance_items:
