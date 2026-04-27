@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "ea1047cfba67bece5d29c926cc81d0160386a4b633ef13722be893d6952776bf"
+plan_hash: "f85ec94c3ab16a52ec55f9a0113004665028e6cafafdc0a7e92aac8d79cced11"
 root_task_ref: "13175"
 
 sections:
@@ -214,14 +214,26 @@ sections:
               and ::test_deferred_without_object_raises.
       A2.14:
         expected_leaves:
-          - title: "Parser raises on zero or multiple artifact references per acceptance item"
+          - title: "Parser requires at least one artifact reference per acceptance item; multi-artifact items use first match"
             owner_agent: backend-developer
             validation_criteria_summary: >-
+              gobby.plans.parser raises PlanParseError when an
+              acceptance item has zero file:|symbol:|test:|behavior:
+              references. Items with multiple artifact references
+              parse cleanly and the produced AcceptanceItem's
+              artifact_kind/artifact_ref come from the FIRST match in
+              document order; additional references are accepted as
+              informational prose. This matches strategy A1's "at
+              least one" cardinality. tests:
               tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises
-              and ::test_acceptance_item_with_multiple_artifacts_raises
-              both pass; gobby.plans.parser raises PlanParseError
-              when an item has zero or more than one of file:|symbol:
-              |test:|behavior:.
+              (zero raises),
+              tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_uses_first
+              (multi parses cleanly, first wins).
+        notes: >-
+          Round 6 fix: prior contract said "exactly one" which the
+          plan's own items violated (~30 of 115). Strategy A1 says
+          "at least one"; aligning the detail plan's parser rule
+          eliminates the contradiction.
       A2.15:
         expected_leaves:
           - title: "Parser plan_kind enum: implementation strict, strategy permissive on both narrative and canonical-no-kind headings"
@@ -1049,14 +1061,25 @@ sections:
           paths to close the F2 contradiction with A9.7.
       A9.10:
         expected_leaves:
-          - title: "CI dispatches parse_plan plan_kind from index entries (impl strict, strategy/legacy permissive)"
+          - title: "CI maps index plan_kind (impl/strategy/legacy) to parser PlanKind enum (impl strict, strategy/legacy -> PlanKind.strategy permissive) before parse_plan call"
             owner_agent: backend-developer
             validation_criteria_summary: >-
+              CI helper (tests/plans/test_plan_coverage_ci.py
+              ::_resolve_parser_kind or equivalent module-level
+              function) maps each index entry's plan_kind to the
+              parser's PlanKind enum: index "implementation" ->
+              PlanKind.implementation; index "strategy" ->
+              PlanKind.strategy; index "legacy" -> PlanKind.strategy
+              (the PlanKind enum has only two values; "legacy" is a
+              routing classifier, not a parser mode). test:
               tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind
-              asserts strategy and legacy entries are parsed
-              permissively and implementation entries are parsed
-              strictly via the plan_kind from
-              .gobby/plans/index.yaml.
+              asserts all three index values dispatch to the correct
+              PlanKind constant and that an unknown index value
+              raises a clear schema error.
+        notes: >-
+          Round 6 fix: prior ledger entry implied legacy could be
+          passed to parse_plan as-is, but PlanKind enum has no
+          "legacy" value. Explicit mapping closes the contradiction.
       A9.11:
         expected_leaves:
           - title: "CI rejects unindexed .gobby/plans/task-*.md files"
@@ -1087,22 +1110,29 @@ sections:
           files (which the prior 19-entry / 16-legacy block had).
       A9.13:
         expected_leaves:
-          - title: "CI verifies every legacy index entry against committed legacy-classification snapshot with retrofit/non-retrofit disposition for open roots"
+          - title: "CI verifies every legacy index entry against committed legacy-classification snapshot with full target-task snapshot triplet for open roots"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               .gobby/plans/.legacy-classification.yaml exists with
               one row per plan_kind: legacy entry in
               .gobby/plans/index.yaml. Each row carries plan_id,
               root_task_ref, root_open (snapshot), non-empty
-              legacy_reason, and — when root_open: true — exactly
-              one of retrofit_target or non_retrofit_acknowledgment
-              referencing an open task. CI tests:
+              legacy_reason and root_title, and — when root_open:
+              true — exactly one of retrofit_target or
+              non_retrofit_acknowledgment plus its paired *_exists:
+              true, *_open: true, and *_title snapshot fields. CI
+              verifies open-task status from snapshot fields under
+              GOBBY_LIVE_DB=0 (A9.9) without needing the live DB.
+              CI tests:
               tests/plans/test_plan_coverage_ci.py::test_every_legacy_entry_has_classification_row,
-              ::test_open_root_legacy_requires_retrofit_or_acknowledgment,
+              ::test_open_root_legacy_requires_retrofit_or_acknowledgment_with_open_snapshot,
               ::test_legacy_classification_snapshot_matches_live_db_when_available
-              all pass; CI fails on missing row, missing
-              legacy_reason, open root without retrofit/non-retrofit
-              field, both fields present, or live-DB drift. file:
+              all pass. CI fails on missing row, missing
+              legacy_reason or root_title, open root without
+              retrofit/non-retrofit field, both fields present,
+              *_exists: false, *_open: false, or live-DB drift on
+              any snapshot field (root_open, root_title, *_exists,
+              *_open, *_title). file:
               .gobby/plans/.legacy-classification.yaml.
         notes: >-
           Round 5 addition: closes F1. Prior 10-plan inventory let
@@ -1112,6 +1142,11 @@ sections:
           legacy disposition self-describing AND traceable to root
           task state, with explicit retrofit/non-retrofit
           accountability for open-rooted entries.
+          Round 6 fix: extended snapshot schema with target-task
+          *_exists, *_open, *_title fields so the open-task
+          requirement on retrofit_target / non_retrofit_acknowledgment
+          is verifiable under GOBBY_LIVE_DB=0 (A9.9) without the
+          live DB.
 
   A10:
     acceptance_items:

@@ -98,7 +98,10 @@ deliverable section, one bullet per item:
 
 Item IDs are dotted-suffix on the section ID (section `A1` → items
 `A1.1`, `A1.2`, …; section `A1.7` → items `A1.7.1`, `A1.7.2`, …).
-Each item names exactly one concrete artifact:
+Each item names **at least one** concrete artifact (matching strategy
+A1) — over-specifying is allowed; the parser counts the first
+matching artifact reference for coverage, additional references in
+the same item's prose are accepted but informational:
 
 - `file: <path>` — a file the leaf must create or modify.
 - `symbol: <module>.<symbol>` — a function, class, type, or constant.
@@ -116,9 +119,10 @@ qualitative checklist when the plan exhibits any of:
   parse mode only; strategy plans are surveyed under permissive mode).
 - A section without a `kind:` front-matter line.
 - A `deliverable` section without an `**Acceptance:**` block.
-- An `**Acceptance:**` item with zero artifact references OR with two
-  or more artifact references (the rule: exactly one of
-  `file:`, `symbol:`, `test:`, `behavior:` per item).
+- An `**Acceptance:**` item with zero artifact references (the rule:
+  at least one of `file:`, `symbol:`, `test:`, `behavior:` per item;
+  the parser uses the first matching reference as the canonical
+  artifact for coverage matching).
 - An item ID that does not dotted-prefix-match its section ID.
 - A duplicate section ID anywhere in the document.
 - A `deferred` section whose deferral object fails A3 validation
@@ -198,8 +202,8 @@ qualitative checklist when the plan exhibits any of:
   asserts the plan-adversary skill's documented rejection message
   fires for each of the seven cases (missing ID, missing kind,
   missing acceptance, ID collision, malformed item ID, malformed
-  deferral, missing-or-multiple artifact references on an
-  acceptance item). test:
+  deferral, zero artifact references on an acceptance item).
+  test:
   `tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case`.
 - A1.10 — test:
   `tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar`
@@ -346,12 +350,17 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
 - `deliverable` without `**Acceptance:**` block is a `PlanParseError`.
 - Acceptance item with item ID that does not dotted-prefix-match its
   section ID is a `PlanParseError`.
-- Acceptance item with **zero or more than one** artifact reference
+- Acceptance item with **zero** artifact references
   (`file: ...`, `symbol: ...`, `test: ...`, or `behavior: "..."` —
-  exactly one per item) is a `PlanParseError`. This is the
-  load-bearing rule that backs A1's "every item names exactly one
-  concrete artifact" claim and the plan-adversary's mechanical
-  rejection (A1.9).
+  at least one per item; the FIRST match in document order is the
+  canonical artifact for coverage matching, additional references
+  in the same item's prose are accepted but informational) is a
+  `PlanParseError`. This is the load-bearing rule that backs A1's
+  "every item names at least one concrete artifact" claim and the
+  plan-adversary's mechanical rejection (A1.9). The "at least one"
+  cardinality matches strategy A1; over-specifying with multiple
+  artifacts is permitted because acceptance items often verify
+  more than one observable surface.
 - `deferred` section without a parseable deferral object is a
   `PlanParseError`. Deferral object syntax: a fenced YAML block of the
   form
@@ -453,10 +462,12 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   — fixture deliverable section with an acceptance bullet whose
   prose contains no `file:`, `symbol:`, `test:`, or `behavior:`
   reference; asserts `PlanParseError`.
-- `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_raises`
+- `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_uses_first`
   — fixture deliverable section with an acceptance bullet whose
-  prose contains two `file:` refs (or any combination of two
-  artifact-kind keys); asserts `PlanParseError`.
+  prose contains two `test:` refs (or any combination of artifact
+  kinds); parses cleanly and produces an `AcceptanceItem` whose
+  `artifact_kind` and `artifact_ref` come from the FIRST match in
+  document order. Asserts no raise and exact field values.
 - `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`
   — fixture file with `## Context\n` and no `kind:` line; parses
   cleanly with `plan_kind=PlanKind.strategy`; the heading appears
@@ -546,7 +557,7 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   test: `tests/plans/test_parser.py::test_bare_and_titled_headings`.
 - A2.7 — parser records framing headings without canonical IDs in
   `PlanDocument.framing_headings` and raises if `kind: framing` is
-  absent. tests:
+  absent. test:
   `tests/plans/test_parser.py::test_framing_without_id_is_recorded`,
   `tests/plans/test_parser.py::test_framing_without_id_no_kind_raises`.
 - A2.8 — parser raises `PlanParseError` on duplicate section IDs.
@@ -572,10 +583,17 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   the positive-case fixture in
   `tests/plans/test_parser.py::test_deferred_object_parsed`.
 - A2.14 — parser raises `PlanParseError` on an acceptance item with
-  zero or multiple artifact references (exactly one of
-  `file:`, `symbol:`, `test:`, `behavior:` per item). tests:
-  `tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises`,
-  `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_raises`.
+  zero artifact references (at least one of
+  `file:`, `symbol:`, `test:`, `behavior:` per item; the FIRST
+  match in document order is the canonical artifact for coverage
+  matching, additional references are accepted as informational
+  prose). test:
+  `tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises`
+  asserts the zero-artifact raise;
+  `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_uses_first`
+  asserts multi-artifact items parse cleanly and the
+  `AcceptanceItem.artifact_kind` / `artifact_ref` come from the
+  first match in document order.
 - A2.15 — `parse_plan(path, plan_kind=PlanKind.strategy)` is
   permissive on both kinds of missing-`kind:` headings:
   non-canonical narrative headings record into
@@ -583,7 +601,7 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   `kind:` lines yield `PlanSection(kind=Kind.framing,
   acceptance_items=())`. `plan_kind=PlanKind.implementation` (the
   default) raises `PlanParseError` on either case. symbol:
-  `gobby.plans.parser.PlanKind`. tests:
+  `gobby.plans.parser.PlanKind`. test:
   `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`,
   `tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind`.
 - A2.16 — parser masks fenced code blocks (` ``` ` and ` ~~~ `,
@@ -594,7 +612,7 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   like real headings or acceptance bullets do not contribute to
   `PlanDocument.sections` or any `PlanSection.acceptance_items`.
   behavior: "fenced markdown blocks are excluded from structural
-  parsing" in `gobby.plans.parser.parse_plan`. tests:
+  parsing" in `gobby.plans.parser.parse_plan`. test:
   `tests/plans/test_parser.py::test_fenced_headings_are_masked`,
   `tests/plans/test_parser.py::test_fenced_acceptance_bullets_are_masked`,
   `tests/plans/test_parser.py::test_fenced_deferral_yaml_outside_deferred_is_ignored`,
@@ -836,7 +854,7 @@ def validate_deferral(
   `DeferralValidationResult`, `TaskStoreProtocol`. file:
   `src/gobby/plans/deferral.py`.
 - A3.9 — `validate_deferral` short-circuits on each of the six
-  failure cases in the order documented. tests:
+  failure cases in the order documented. test:
   `tests/plans/test_deferral.py::test_validate_task_missing`,
   `test_validate_task_closed`,
   `test_validate_missing_provenance_label`,
@@ -856,7 +874,7 @@ def validate_deferral(
   the target's `cited-parent:<ref>` label resolves to an open
   task that simultaneously carries
   `out-of-scope-for:<recovery_epic_ref>` AND is NOT reachable
-  from `recovery_epic_ref` dependencies. tests:
+  from `recovery_epic_ref` dependencies. test:
   `tests/plans/test_deferral.py::test_validate_dependency_path`,
   `tests/plans/test_deferral.py::test_validate_cited_parent_path`,
   `tests/plans/test_deferral.py::test_validate_cited_parent_without_out_of_scope_label_rejected`,
@@ -1238,7 +1256,7 @@ rows:
 - A4.2 — `evaluate(task_tree=TaskTreeSource.db|jsonl, ...)` requires
   `plan_id`, `root_task_ref`, `project_id` at type-check time
   (mypy `@overload`) and at runtime (`MissingScopeError`). symbol:
-  `gobby.plans.coverage.evaluate`. tests:
+  `gobby.plans.coverage.evaluate`. test:
   `tests/plans/test_coverage_signature.py::test_db_without_root_task_raises`,
   `test_db_without_project_raises`,
   `test_jsonl_without_scope_raises`,
@@ -1246,7 +1264,7 @@ rows:
 - A4.3 — `evaluate(task_tree=TaskTreeSource.matrix_file, ...)`
   accepts only `matrix_file`; passing `root_task_ref` or
   `project_id` is rejected at type-check time (mypy `@overload`)
-  and at runtime (`MissingScopeError` / `TypeError`). tests:
+  and at runtime (`MissingScopeError` / `TypeError`). test:
   `tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises`,
   `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_root_task_ref`,
   `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_project_id`.
@@ -1263,7 +1281,7 @@ rows:
   sani(root) / f"{sani(plan_id)}.coverage.yaml"`. symbol:
   `gobby.plans.coverage_manifest.coverage_manifest_path`.
 - A4.7 — `_sanitize` allowlist is exactly `[A-Za-z0-9._-]`; rejects
-  empty post-sanitize with `EmptyComponentError`. tests:
+  empty post-sanitize with `EmptyComponentError`. test:
   `tests/plans/test_coverage_manifest_path.py::test_replaces_disallowed_chars`,
   `test_rejects_empty_post_sanitize`.
 - A4.8 — `_sanitize(..., kind="root_task_ref")` drops a single
@@ -1273,7 +1291,7 @@ rows:
   `tests/plans/test_coverage_manifest_path.py::test_strips_punct`.
 - A4.10 — `_sanitize` truncates to `COMPONENT_MAX_LEN` with
   `-<sha256[:7]>` suffix on overflow; hash uses the pre-replacement
-  input. tests:
+  input. test:
   `tests/plans/test_coverage_manifest_path.py::test_truncate_with_hash`,
   `test_truncate_hash_uses_pre_replacement_input`,
   `test_truncate_hash_disambiguates_collisions`.
@@ -1288,7 +1306,7 @@ rows:
 - A4.13 — `write_manifest` raises `IdentityCollisionError` when
   identity matches and hash differs without `regenerate=True`;
   with `regenerate=True` it overwrites and appends one audit line
-  to `.gobby/plans/coverage/.regenerate.log`. tests:
+  to `.gobby/plans/coverage/.regenerate.log`. test:
   `tests/plans/test_coverage_identity.py::test_identity_collision_blocks_overwrite`,
   `test_regenerate_overwrites_and_audits`.
 - A4.14 — `CoverageReport.header` includes `plan_id`, `plan_hash`,
@@ -1300,7 +1318,7 @@ rows:
   per matched leaf. symbol: `gobby.plans.coverage.CoverageRow`.
 - A4.16 — multi-plan-multi-root path scheme: same plan reused under
   two roots produces two distinct manifest paths; two plans under
-  the same root produce two distinct manifest paths. tests:
+  the same root produce two distinct manifest paths. test:
   `tests/plans/test_coverage_identity.py::test_same_plan_two_root_tasks_distinct_manifests`,
   `test_two_plans_one_root_distinct_manifests`.
 - A4.17 — `evaluate` excludes leaves outside `--root-task` subtree
@@ -1310,7 +1328,7 @@ rows:
   writes nothing when a sibling manifest's casefolded path matches
   the target path but the manifest identity differs; CLI exit code
   `8` surfaces the failure. symbol:
-  `gobby.plans.coverage_manifest.CasefoldCollisionError`. tests:
+  `gobby.plans.coverage_manifest.CasefoldCollisionError`. test:
   `tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write`,
   `tests/plans/test_coverage_identity.py::test_casefold_collision_emits_exit_8`,
   `tests/plans/test_coverage_identity.py::test_casefold_protection_works_on_case_sensitive_fs`.
@@ -1460,7 +1478,7 @@ two and the test fixture asserts the chosen path).
 - A5.4 — manifest is persisted to
   `coverage_manifest_path(project_id, root_task_ref, plan_id)`;
   the path is written to `task_artifacts.coverage_matrix_path`
-  via `gobby-tasks-ops:set_artifact`. tests:
+  via `gobby-tasks-ops:set_artifact`. test:
   `tests/workflows/test_expansion_qa_persists_manifest.py::test_manifest_written_at_canonical_path`,
   `test_artifact_pointer_written`.
 - A5.5 — A4 library is invoked with all four scope inputs
@@ -1686,7 +1704,7 @@ App-level enforcement is in `set_artifacts_atomic` and
   `tests/plans/test_evidence.py::test_resolve_none_emits_audit_row`.
 - A6.7 — every failure path on `worktree-diff` returns
   `EvidenceRow(status=invalid, detail=...)` with the documented
-  repair instructions; never silently no-evidence. tests:
+  repair instructions; never silently no-evidence. test:
   `tests/plans/test_evidence_worktree_diff.py::test_invalid_when_artifacts_missing`,
   `test_invalid_when_no_isolation_path`,
   `test_invalid_when_base_sha_null`,
@@ -1708,7 +1726,7 @@ App-level enforcement is in `set_artifacts_atomic` and
   `tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_new_isolation_write_without_base_raises`.
 - A6.12 — `src/gobby/agents/isolation.py` captures
   `base_commit_sha` via `git -C <path> rev-parse HEAD` immediately
-  after worktree/clone creation, before any agent runs. tests:
+  after worktree/clone creation, before any agent runs. test:
   `tests/agents/test_isolation_base_capture.py::test_worktree_handler_captures_base`,
   `test_clone_handler_captures_base`,
   `test_base_captured_before_first_agent_run`.
@@ -1961,7 +1979,7 @@ items.
   wrapper at
   `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py:close_task`
   surfaces the structured error to the caller). symbol:
-  `gobby.plans.bootstrap_ledger.verify_bootstrap_ledger`. tests:
+  `gobby.plans.bootstrap_ledger.verify_bootstrap_ledger`. test:
   `tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch`,
   `tests/plans/test_bootstrap_ledger_revalidation.py::test_close_succeeds_on_ledger_match`,
   `tests/storage/tasks/test_transitions_ledger_gate.py::test_close_task_invokes_verify_when_companion_exists`,
@@ -2014,23 +2032,36 @@ manifests or un-paired `.grandfathered` entries.
     - plan_id: task-12068-skillsmp-install-rewrite
       root_task_ref: "12068"
       root_open: true                # snapshot of live DB at edit time
+      root_title: "<root task title at snapshot time>"
       legacy_reason: "<prose: why this plan is classified legacy>"
       retrofit_target: "#NNNN"       # required iff root_open: true
-      # OR
-      non_retrofit_acknowledgment: "#NNNN"
+      retrofit_target_exists: true   # snapshot of live DB at edit time
+      retrofit_target_open: true     # snapshot of live DB at edit time
+      retrofit_target_title: "<task title at snapshot time>"
+      # OR (mutually exclusive with retrofit_target):
+      # non_retrofit_acknowledgment: "#NNNN"
+      # non_retrofit_acknowledgment_exists: true
+      # non_retrofit_acknowledgment_open: true
+      # non_retrofit_acknowledgment_title: "<task title>"
     - plan_id: task-12725-lifecycle-dispatch
       root_task_ref: "12725"
       root_open: false               # closed root: no retrofit_target needed
+      root_title: "Lifecycle-state-driven agent dispatch"
       legacy_reason: "Epic 0 — merged before contract; A7 retrofit handles its conformance separately."
   ```
 
   Schema requirements: every `plan_kind: legacy` entry in
   `.gobby/plans/index.yaml` MUST have a matching row here.
   When `root_open: true`, the row MUST carry exactly one of
-  `retrofit_target` or `non_retrofit_acknowledgment` pointing at
-  an open task. When `root_open: false`, neither field is
-  required (a closed root is auto-exempt). `legacy_reason` is
-  always required and must be non-empty prose.
+  `retrofit_target` or `non_retrofit_acknowledgment`, and that
+  field's `*_exists` and `*_open` snapshot fields MUST both be
+  `true` (so A9.13 can verify open-task status under
+  `GOBBY_LIVE_DB=0` without the live DB; A9.9). The `*_title`
+  snapshot is informational but required for drift detection
+  when the live DB is available. When `root_open: false`,
+  neither retrofit field nor its snapshot triplet is required
+  (a closed root is auto-exempt). `legacy_reason` and
+  `root_title` are always required and must be non-empty prose.
 
 - `.gobby/plans/.grandfathered-task-state.yaml` (create if absent) —
   committed self-describing snapshot of every `# remove-by:` task
@@ -2246,7 +2277,7 @@ the assertions that file makes):**
 - `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`.
 - `tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest`.
 - `tests/plans/test_plan_coverage_ci.py::test_every_legacy_entry_has_classification_row`.
-- `tests/plans/test_plan_coverage_ci.py::test_open_root_legacy_requires_retrofit_or_acknowledgment`.
+- `tests/plans/test_plan_coverage_ci.py::test_open_root_legacy_requires_retrofit_or_acknowledgment_with_open_snapshot`.
 - `tests/plans/test_plan_coverage_ci.py::test_legacy_classification_snapshot_matches_live_db_when_available`.
 
 **Acceptance:**
@@ -2287,7 +2318,7 @@ the assertions that file makes):**
 - A9.6 — every manifest under `.gobby/plans/coverage/` resolves
   to a live `plan_index.yaml` entry whose `plan_kind ==
   implementation`; orphan manifests AND manifests pointing at
-  strategy or legacy entries all fail. tests:
+  strategy or legacy entries all fail. test:
   `tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests`,
   `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`,
   `tests/plans/test_plan_coverage_ci.py::test_legacy_plans_have_no_manifests`.
@@ -2298,7 +2329,7 @@ the assertions that file makes):**
   snapshot is the self-describing source of truth so this check
   works under `GOBBY_LIVE_DB=0` (A9.9). When the live DB is
   available, A9 also asserts the snapshot matches live state.
-  file: `.gobby/plans/.grandfathered-task-state.yaml`. tests:
+  file: `.gobby/plans/.grandfathered-task-state.yaml`. test:
   `tests/plans/test_plan_coverage_ci.py::test_grandfathered_entries_require_remove_by_annotation`,
   `tests/plans/test_plan_coverage_ci.py::test_grandfathered_target_task_exists_and_open_via_snapshot`,
   `tests/plans/test_plan_coverage_ci.py::test_grandfathered_snapshot_matches_live_db_when_available`.
@@ -2314,42 +2345,61 @@ the assertions that file makes):**
   conditionally-relaxed checks under that flag" in
   `tests/plans/test_plan_coverage_ci.py`. test:
   `tests/plans/test_plan_coverage_ci.py::test_ci_runs_under_no_live_db_with_no_skipped_checks`.
-- A9.10 — CI passes `plan_kind` from each index entry to
-  `parse_plan(path, plan_kind=...)`. Strategy and legacy entries
-  parse permissively; implementation entries parse strictly.
-  test:
-  `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`.
-- A9.11 — `tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry`
-  asserts every `.gobby/plans/task-*.md` file has a matching
+- A9.10 — CI maps each index entry's `plan_kind` to the parser's
+  `PlanKind` enum before calling
+  `parse_plan(path, plan_kind=...)`: index `implementation` →
+  `PlanKind.implementation` (strict), index `strategy` →
+  `PlanKind.strategy` (permissive), index `legacy` →
+  `PlanKind.strategy` (permissive — same parse mode as strategy
+  since both share the "permissive on missing-`kind:` headings"
+  contract; the `PlanKind` enum has only two values, the third
+  index value `legacy` is a routing classifier, not a parser
+  mode). The mapping lives in CI helper
+  `tests/plans/test_plan_coverage_ci.py::_resolve_parser_kind` (or
+  equivalent module-level helper). test:
+  `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`
+  asserts all three index values dispatch to the correct
+  `PlanKind` constant and that an index value outside
+  `{implementation, strategy, legacy}` raises a clear schema
+  error.
+- A9.11 — every `.gobby/plans/task-*.md` file has a matching
   `entries[*].plan_id` in `.gobby/plans/index.yaml`; an
-  unindexed plan file fails the test citing the missing entry.
-  This closes the silent-skip hole where legacy or newly added
-  plans could escape A9 by not appearing in the index.
-- A9.12 — `tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file`
-  asserts every `entries[*].plan_id` in `.gobby/plans/index.yaml`
+  unindexed plan file fails CI citing the missing entry. This
+  closes the silent-skip hole where legacy or newly added plans
+  could escape A9 by not appearing in the index. test:
+  `tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry`.
+- A9.12 — every `entries[*].plan_id` in `.gobby/plans/index.yaml`
   has a corresponding `.gobby/plans/<plan_id>.md` file on disk;
   a stale index row pointing at a missing or deleted plan file
-  fails the test citing the row's `plan_id` and the expected
-  path. This is the reciprocal of A9.11 — together they enforce
-  a strict bijection between the on-disk plan-file set and the
-  indexed entry set, with no silent additions on either side.
+  fails CI citing the row's `plan_id` and the expected path. This
+  is the reciprocal of A9.11 — together they enforce a strict
+  bijection between the on-disk plan-file set and the indexed
+  entry set, with no silent additions on either side. test:
+  `tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file`.
 - A9.13 — every `plan_kind: legacy` entry in
   `.gobby/plans/index.yaml` has a matching row in
   `.gobby/plans/.legacy-classification.yaml`; the row carries
-  `root_open` (snapshot), non-empty `legacy_reason`, and — when
-  `root_open: true` — exactly one of `retrofit_target` or
-  `non_retrofit_acknowledgment` referencing an open task. CI
-  fails on: missing row, missing `legacy_reason`, open root
-  without retrofit/non-retrofit field, or both fields present.
-  When the live DB is available, A9 also asserts the snapshot's
-  `root_open` matches live state and fails on drift. file:
-  `.gobby/plans/.legacy-classification.yaml`. tests:
+  `root_open` (snapshot), non-empty `legacy_reason` and
+  `root_title`, and — when `root_open: true` — exactly one of
+  `retrofit_target` or `non_retrofit_acknowledgment` plus its
+  paired `*_exists: true`, `*_open: true`, and `*_title`
+  snapshot fields. CI verifies open-task status from those
+  snapshot fields under `GOBBY_LIVE_DB=0` (A9.9) without needing
+  the live DB. CI fails on: missing row, missing
+  `legacy_reason` or `root_title`, open root without retrofit/
+  non-retrofit field, both fields present, `*_exists: false`,
+  `*_open: false`, or live-DB drift on any snapshot field. When
+  the live DB is available, A9 asserts every snapshot field
+  (`root_open`, `root_title`, `*_exists`, `*_open`, `*_title`)
+  matches live state. file:
+  `.gobby/plans/.legacy-classification.yaml`. test:
   `tests/plans/test_plan_coverage_ci.py::test_every_legacy_entry_has_classification_row`,
-  `tests/plans/test_plan_coverage_ci.py::test_open_root_legacy_requires_retrofit_or_acknowledgment`,
+  `tests/plans/test_plan_coverage_ci.py::test_open_root_legacy_requires_retrofit_or_acknowledgment_with_open_snapshot`,
   `tests/plans/test_plan_coverage_ci.py::test_legacy_classification_snapshot_matches_live_db_when_available`.
   This closes the Round 5 hole where active plan files could be
   silently exempted from the manifest gate by classification
-  alone.
+  alone, and the Round 6 hole where retrofit-target open status
+  was unverifiable under `GOBBY_LIVE_DB=0`.
 
 ## A10 Contract documentation
 
@@ -2428,12 +2478,12 @@ or by reference:
   `plan-draft/SKILL.md`, `plan-review/SKILL.md`,
   `expand/SKILL.md`, and the `expansion-qa` agent YAML each
   contain or link to the contract surface relevant to their
-  authoring/review/expansion role. files:
-  `src/gobby/install/shared/skills/plan/SKILL.md`,
-  `src/gobby/install/shared/skills/plan-draft/SKILL.md`,
-  `src/gobby/install/shared/skills/plan-review/SKILL.md`,
-  `src/gobby/install/shared/skills/expand/SKILL.md`,
-  `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
+  authoring/review/expansion role. file:
+  `src/gobby/install/shared/skills/plan-draft/SKILL.md` (canonical
+  authoring surface; the other four files link to it). The
+  remaining four contract surfaces are covered by A1.5 (plan-review),
+  A1.6 (planner), A1.7 (plan-adversary), A5.1 (expansion-qa), and
+  A10.9 (expand).
 - A10.3 — `docs/contracts/plan-coverage.md` exists as a
   contract-reference page linking back to the four skill files
   (plan, plan-draft, plan-review, expand), the expansion-qa
