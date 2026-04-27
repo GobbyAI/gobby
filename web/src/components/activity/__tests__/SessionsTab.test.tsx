@@ -12,7 +12,7 @@ type SessionDetailMock = {
   transcriptStatus: { content_state: string } | null;
 };
 
-const mockUseSessionDetail = vi.fn<() => SessionDetailMock>(() => ({
+const mockUseSessionDetail = vi.fn<(sessionId?: string | null) => SessionDetailMock>(() => ({
   session: null,
   messages: [],
   isLoading: false,
@@ -30,7 +30,7 @@ vi.mock("../../shared/SourceIcon", () => ({
 }));
 
 vi.mock("../../../hooks/useSessionDetail", () => ({
-  useSessionDetail: () => mockUseSessionDetail(),
+  useSessionDetail: (sessionId?: string | null) => mockUseSessionDetail(sessionId),
 }));
 
 vi.mock("../../chat/MessageItem", () => ({
@@ -267,6 +267,19 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
   });
 
+  it("styles the collapsed status filter trigger with the accent treatment", async () => {
+    render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#201: Live Terminal")).toBeInTheDocument();
+    });
+
+    const statusFilter = screen.getByLabelText("Session status filter");
+    expect(statusFilter).toHaveClass("bg-accent");
+    expect(statusFilter).toHaveClass("text-accent-foreground");
+    expect(statusFilter).not.toHaveClass("bg-background");
+  });
+
   it("shows active/paused agent sessions in Live but excludes terminal agent statuses", async () => {
     render(
       <SessionsTab
@@ -373,6 +386,46 @@ describe("SessionsTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Transcript" }));
     expect(screen.getByText("Transcript output")).toBeInTheDocument();
+  });
+
+  it("scrolls the watching transcript to bottom when selecting another session", async () => {
+    localStorage.removeItem("gobby-watching-session-id");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    mockUseSessionDetail.mockImplementation((sessionId) => ({
+      session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+      messages: [
+        {
+          id: `msg-${sessionId ?? "none"}`,
+          role: "assistant",
+          content: `Transcript output for ${sessionId ?? "none"}`,
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    }));
+
+    render(
+      <SessionsTab
+        sessions={[LIVE_SESSION, PAUSED_SESSION]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output for paused-1")).toBeInTheDocument();
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByText("#201: Live Terminal"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+    });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
   });
 
   it("keeps session token accounting out of the sessions list UI", async () => {

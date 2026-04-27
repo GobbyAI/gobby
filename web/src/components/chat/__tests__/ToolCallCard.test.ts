@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { createElement } from 'react'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
+import { ToolCallCards } from '../ToolCallCard'
 import {
   extractBase64Image,
   groupToolCalls,
@@ -267,5 +270,28 @@ describe('extractBase64Image', () => {
     expect(extractBase64Image({ type: 'image', source: null })).toBeNull()
     expect(extractBase64Image({ type: 'image', source: { type: 'url' } })).toBeNull()
     expect(extractBase64Image({ type: 'image', source: { type: 'base64', data: 123 } })).toBeNull()
+  })
+})
+
+describe('ToolCallCards rendering', () => {
+  it('wraps generic JSON arguments without horizontal overflow', () => {
+    const call = makeCall({
+      id: 'json-wrap',
+      tool_name: 'CustomTool',
+      arguments: {
+        url:
+          'https://example.test/a/very/long/path/that/should/wrap/instead/of/forcing/a/horizontal/scrollbar?with=query-values-and-more-values',
+      },
+    })
+
+    render(createElement(ToolCallCards, { toolCalls: [call] }))
+
+    const argumentsLabel = screen.getByText('Arguments')
+    const jsonBlock = argumentsLabel.nextElementSibling
+
+    expect(jsonBlock).not.toBeNull()
+    expect(jsonBlock as HTMLElement).toHaveClass('whitespace-pre-wrap')
+    expect(jsonBlock as HTMLElement).toHaveClass('break-words')
+    expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-x-auto')
   })
 })
