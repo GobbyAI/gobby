@@ -239,6 +239,7 @@ class TestUpdateTaskTool:
                 "validation_criteria": "Must pass",
                 "parent_task_id": "550e8400-e29b-41d4-a716-446655440010",
                 "category": "automated",
+                "task_type": "epic",
                 "workflow_name": "dev-flow",
                 "verification": "Run tests",
                 "sequence_order": 5,
@@ -254,10 +255,29 @@ class TestUpdateTaskTool:
             validation_criteria="Must pass",
             parent_task_id="550e8400-e29b-41d4-a716-446655440010",
             category="automated",
+            task_type="epic",
             workflow_name="dev-flow",
             verification="Run tests",
             sequence_order=5,
         )
+
+    @pytest.mark.asyncio
+    async def test_update_task_task_type(self, mock_task_manager, mock_sync_manager):
+        """update_task forwards task_type to the storage layer."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        updated_task = MagicMock()
+        mock_task_manager.update_task.return_value = updated_task
+
+        result = await registry.call(
+            "update_task",
+            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "task_type": "epic"},
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000", task_type="epic"
+        )
+        assert result == {}
 
     @pytest.mark.asyncio
     async def test_update_task_blocks_open_status(self, mock_task_manager, mock_sync_manager):

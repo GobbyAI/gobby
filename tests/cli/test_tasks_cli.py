@@ -875,6 +875,28 @@ class TestUpdateTaskCommand:
         call_kwargs = mock_manager.update_task.call_args.kwargs
         assert call_kwargs["parent_task_id"] == "gt-parent"
 
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_update_task_with_task_type(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        """--task-type forwards the new value to LocalTaskManager.update_task."""
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.update_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--task-type", "epic"])
+
+        assert result.exit_code == 0
+        mock_manager.update_task.assert_called_once()
+        call_kwargs = mock_manager.update_task.call_args.kwargs
+        assert call_kwargs["task_type"] == "epic"
+
 
 class TestCloseTaskCommand:
     """Tests for gobby tasks close command."""

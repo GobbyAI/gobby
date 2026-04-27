@@ -397,6 +397,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         validation_criteria: str | None = None,
         parent_task_id: str | None = None,
         category: str | None = None,
+        task_type: str | None = None,
         workflow_name: str | None = None,
         verification: str | None = None,
         sequence_order: int | None = None,
@@ -482,6 +483,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 kwargs["parent_task_id"] = None
         if category is not None:
             kwargs["category"] = category
+        if task_type is not None:
+            kwargs["task_type"] = task_type
         if workflow_name is not None:
             kwargs["workflow_name"] = workflow_name
         if verification is not None:
@@ -541,6 +544,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "string",
                     "description": "Task domain: 'code' (implementation — requires validation_criteria), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification).",
                     "enum": list(TASK_CATEGORY_ENUM),
+                    "default": None,
+                },
+                "task_type": {
+                    "type": "string",
+                    "description": "Task type (task, bug, feature, epic, chore, refactor)",
                     "default": None,
                 },
                 "workflow_name": {

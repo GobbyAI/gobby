@@ -580,11 +580,17 @@ def show_task(task_id: str) -> None:
 @click.option("--title", "-T", help="New title")
 @click.option("--priority", type=int, help="New priority")
 @click.option("--parent", "parent_task_id", help="Parent task (#N, path, or UUID)")
+@click.option(
+    "--task-type",
+    "task_type",
+    help="New task type (task, bug, feature, epic, chore, refactor)",
+)
 def update_task(
     task_id: str,
     title: str | None,
     priority: int | None,
     parent_task_id: str | None,
+    task_type: str | None,
 ) -> None:
     """Update a task.
 
@@ -612,6 +618,8 @@ def update_task(
         kwargs["priority"] = priority
     if resolved_parent_id is not None:
         kwargs["parent_task_id"] = resolved_parent_id
+    if task_type is not None:
+        kwargs["task_type"] = task_type
 
     task = manager.update_task(resolved.id, **kwargs)
 

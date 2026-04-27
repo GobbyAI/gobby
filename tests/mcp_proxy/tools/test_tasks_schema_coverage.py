@@ -88,6 +88,7 @@ class TestToolSchemas:
             "validation_criteria",
             "parent_task_id",
             "category",
+            "task_type",
             "workflow_name",
             "verification",
             "sequence_order",
