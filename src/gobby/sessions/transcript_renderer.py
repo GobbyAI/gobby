@@ -51,6 +51,15 @@ class _ProtocolContentSegment:
     tool_call: RenderedToolCall | None = None
 
 
+@dataclass(frozen=True)
+class _ProtocolToolMatch:
+    start: int
+    end: int
+    tag: str
+    attrs: str
+    body: str
+
+
 TOOL_TYPE_MAP = {
     "Bash": "bash",
     "Read": "read",
@@ -330,11 +339,9 @@ def _tag_pattern(tags: tuple[str, ...]) -> str:
 _PROTOCOL_TOOL_TAG_PATTERN = _tag_pattern(_PROTOCOL_TOOL_TAGS)
 _INLINE_WRAPPER_PROTOCOL_TAG_PATTERN = _tag_pattern(_INLINE_WRAPPER_PROTOCOL_TAGS)
 
-# Protocol/context tags that should surface as collapsed protocol tool calls.
-_PROTOCOL_TOOL_RE = re.compile(
-    rf"<(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>"
-    rf"(?P<body>.*?)(?:</(?P=tag)\s*>|\Z)",
-    re.DOTALL | re.IGNORECASE,
+_PROTOCOL_TAG_RE = re.compile(
+    rf"<(?P<closing>/)?(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>",
+    re.IGNORECASE,
 )
 
 _INLINE_WRAPPER_PROTOCOL_TAG_RE = re.compile(
@@ -470,6 +477,48 @@ def _parse_protocol_payload(content: str, depth: int = 0) -> Any:
     return content
 
 
+def _find_matching_protocol_close(
+    content: str, start_index: int, normalized_tag: str
+) -> re.Match[str] | None:
+    depth = 1
+    for match in _PROTOCOL_TAG_RE.finditer(content, start_index):
+        if match.group("tag").lower() != normalized_tag:
+            continue
+
+        if match.group("closing"):
+            depth -= 1
+            if depth == 0:
+                return match
+        else:
+            depth += 1
+
+    return None
+
+
+def _iter_protocol_tool_matches(content: str) -> Iterable[_ProtocolToolMatch]:
+    index = 0
+    while match := _PROTOCOL_TAG_RE.search(content, index):
+        if match.group("closing"):
+            index = match.end()
+            continue
+
+        close_match = _find_matching_protocol_close(
+            content, match.end(), match.group("tag").lower()
+        )
+        if close_match is None:
+            index = match.end()
+            continue
+
+        yield _ProtocolToolMatch(
+            start=match.start(),
+            end=close_match.end(),
+            tag=match.group("tag"),
+            attrs=match.group("attrs"),
+            body=content[match.end() : close_match.start()],
+        )
+        index = close_match.end()
+
+
 def _make_protocol_tool_call(
     tag: str,
     body: str,
@@ -519,8 +568,8 @@ def _extract_protocol_content_segments(
     last_end = 0
     ordinal = 0
 
-    for match in _PROTOCOL_TOOL_RE.finditer(content):
-        visible_text = _sanitize_visible_protocol_text(content[last_end : match.start()]).rstrip()
+    for match in _iter_protocol_tool_matches(content):
+        visible_text = _sanitize_visible_protocol_text(content[last_end : match.start]).rstrip()
         if visible_text.strip():
             segments.append(_ProtocolContentSegment(kind="text", text=visible_text))
 
@@ -529,15 +578,15 @@ def _extract_protocol_content_segments(
             _ProtocolContentSegment(
                 kind="protocol_tool",
                 tool_call=_make_protocol_tool_call(
-                    match.group("tag"),
-                    match.group("body"),
-                    match.group("attrs"),
+                    match.tag,
+                    match.body,
+                    match.attrs,
                     source_index,
                     ordinal,
                 ),
             )
         )
-        last_end = match.end()
+        last_end = match.end
 
     trailing_text = _sanitize_visible_protocol_text(content[last_end:]).lstrip()
     if trailing_text.strip():

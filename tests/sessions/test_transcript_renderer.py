@@ -288,6 +288,39 @@ def test_render_transcript_renders_instruction_wrappers_as_protocol_tools_case_i
     ]
 
 
+def test_render_transcript_collapses_nested_protocol_tags_without_visible_leak():
+    content = "\n".join(
+        [
+            "<system_instructions>",
+            "Outer instruction before fenced content.",
+            "```xml",
+            "<system_instructions>",
+            "Nested instruction that must stay inside the protocol tool call.",
+            "</system_instructions>",
+            "```",
+            "Outer instruction after fenced content.",
+            "</system_instructions>",
+        ]
+    )
+    msgs = [make_msg(0, "system", content)]
+
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].content == ""
+    assert len(rendered[0].content_blocks) == 1
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert len(block.tool_calls) == 1
+    call = block.tool_calls[0]
+    assert call.arguments == {"tag": "system_instructions"}
+    assert call.result is not None
+    assert "Nested instruction that must stay inside the protocol tool call." in str(
+        call.result.content
+    )
+
+
 def test_render_incremental_returns_completed_turns():
     state = RenderState()
 
