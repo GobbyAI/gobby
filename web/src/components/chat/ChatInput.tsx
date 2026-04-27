@@ -550,7 +550,7 @@ export function ChatInput({
       : 'Message input — unavailable')
 
   const primaryButtonClassName = cn(
-    'inline-flex h-[52px] w-[52px] self-start items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
+    'inline-flex h-[36px] w-[36px] self-end items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50',
     primaryButtonKind === 'stop'
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',
@@ -791,7 +791,7 @@ export function ChatInput({
           <div className="flex items-start gap-2">
             <textarea
               ref={textareaRef}
-              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[52px]"
+              className="flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -821,7 +821,7 @@ export function ChatInput({
               data-1p-ignore
             />
 
-            <div className="shrink-0 self-start">
+            <div className="shrink-0 self-end">
               <button
                 ref={primaryButtonRef}
                 type="button"
