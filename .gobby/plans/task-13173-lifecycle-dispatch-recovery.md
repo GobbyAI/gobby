@@ -1,9 +1,10 @@
 # Recovery Plan: Close lifecycle-dispatch plan-compliance gaps after #12725
 
-> Round 3 — revised after plan-adversary Round 2 surfaced four further
-> blocking findings (F8–F11) on top of Round 1's F1–F7. All eleven were
-> accepted in full and integrated below. F1–F7 closures stand from Round 2;
-> F8–F11 closures land in this revision.
+> Round 5 — revised after plan-adversary Round 4 surfaced two further
+> blocking findings (F16–F17) on the F14/F15 closure tails. All seventeen
+> findings (F1–F17) were accepted in full and integrated. F1–F15 closures
+> stand from earlier rounds; F16 (manifest-path consistency) and F17
+> (`base_commit_sha` migration) close in this revision.
 
 ## Context
 
@@ -267,16 +268,42 @@ Outputs:
   `validation_criteria` snippet that satisfied the artifact match.
 - A coverage manifest keyed on the full identity tuple
   `(project_id, plan_id, root_task_ref, plan_hash)`. **Canonical path
-  scheme:**
+  scheme**, computed by a single shared helper:
 
-  ```text
-  .gobby/plans/coverage/<project_id>/<root_task_ref>/<plan_id>.coverage.yaml
+  ```python
+  def coverage_manifest_path(project_id: str, root_task_ref: str, plan_id: str) -> Path:
+      """Resolve the canonical coverage-manifest path. Single source of
+      truth for every call site (A5 expansion-qa, A7 retrofit, A9 CI,
+      task_artifacts.coverage_matrix_path, all docs).
+      """
+      return Path(
+          ".gobby/plans/coverage"
+          f"/{_sanitize(project_id)}"
+          f"/{_sanitize(root_task_ref)}"
+          f"/{_sanitize(plan_id)}.coverage.yaml"
+      )
   ```
 
-  `<root_task_ref>` is sanitized (e.g., `#12725` → `12725`) so it is a
-  legal path component. `plan_hash` lives inside the file, not the path,
-  so a re-generation overwrites in place; pre-existing manifests with
-  stale hashes are surfaced as CI failures (A9).
+  **`_sanitize` rules** (portable across macOS, Linux, Windows):
+
+  - Replace any character outside `[A-Za-z0-9._-]` with `-`.
+  - Strip leading/trailing `-`, `.`, and `_`.
+  - For `root_task_ref`: drop the leading `#` (`#12725` → `12725`).
+  - Reject empty strings after sanitization (raise; never produce an
+    empty path component).
+  - Cap each component at 64 chars (truncate-with-hash if longer).
+
+  `plan_hash` lives **inside** the file, not the path, so a regeneration
+  overwrites in place. Pre-existing manifests with mismatched
+  `plan_hash` are surfaced as CI failures (A9).
+
+  **Duplicate-identity rejection.** A4's library refuses to generate
+  two manifests with the same `(project_id, root_task_ref, plan_id)`
+  identity unless the second is an explicit regeneration of the first
+  (same `plan_hash` or an explicit `--regenerate` flag with audit log
+  entry). Two different plans cannot share `plan_id` under the same
+  root.
+
 - Exit 0 on all-covered-or-deferred; non-zero otherwise. Specific exit
   codes per failure category so CI can attribute them.
 
@@ -286,7 +313,8 @@ project produces two manifests at distinct paths (one per
 `<root_task_ref>` directory). Two different plans under the same root
 produce two manifests at distinct paths (one per `<plan_id>` filename).
 Task artifacts (`task_artifacts.coverage_matrix_path`) point at the
-exact manifest for that root, never a shared one.
+exact manifest for that root via `coverage_manifest_path(...)` —
+**never** a shared or guessed path.
 
 Expansion-QA, holistic-review, and CI all call this library — never their
 own ad-hoc parser or matcher.
@@ -339,10 +367,15 @@ kinds, treated identically by the matcher:**
   `target_branch` (which is mutable: stale, advanced, or deleted
   locally). Required for yolo flows whose commits are local to the
   isolation and not yet linked to the task. If `base_commit_sha` is
-  missing, the SHA does not resolve in the artifact's repo, or both
+  missing (e.g., a legacy row created before D0's migration; F17), or
+  the SHA does not resolve in the artifact's repo, or both
   `worktree_path` and `clone_path` are empty, the resolver yields an
   `invalid` evidence row citing the artifact and requests repair —
-  it does **not** silently degrade to no-evidence (F15).
+  it does **not** silently degrade to no-evidence (F15). Repair for
+  legacy rows: rerun `gobby build` against the same task to recreate
+  the isolation with a captured base, or use a manual
+  `set_artifact(base_commit_sha=...)` if the historical base can be
+  recovered out-of-band.
 - `coverage-matrix:<path>` — for dry runs (e.g., A8 ledger validation).
 
 `none` is reserved for explicit operator override and emits an audit
@@ -385,8 +418,8 @@ After A1–A6 ship, retro-apply them to #12725:
     --manifest <see A4 scoped path scheme>
   ```
 
-- The resulting manifest at the scoped path
-  (`.gobby/plans/coverage/<project_id>/<root_task_ref>/task-12725-lifecycle-dispatch.coverage.yaml`)
+- The resulting manifest at the path returned by
+  `coverage_manifest_path(<project_id>, "12725", "task-12725-lifecycle-dispatch")`
   is the authoritative gap inventory and the acceptance checklist for
   Epic 2.
 
@@ -427,19 +460,25 @@ Deliverables:
 
 - Walks every plan file under `.gobby/plans/` whose epic is not yet
   `merged`.
-- For each, asserts a coverage manifest exists at the canonical path
-  (`<plan-stem>.coverage.yaml`).
-- Re-computes `plan_hash` from the plan file and asserts it matches the
-  manifest's `plan_hash`. A modified plan without a regenerated manifest
-  fails CI.
-- Calls `gobby plan coverage --task-tree matrix-file --manifest <path>`
-  and asserts zero `missing | invalid` rows.
-- Asserts no new entries in `.gobby/plans/.grandfathered` since the last
-  signed-off commit; new entries require a parallel `# remove-by:
-  <task-ref>` line and that task must exist and be open.
+- For each plan, resolves `plan_id` and the linked `root_task_ref`(s)
+  from `task_artifacts` (or from a committed plan-index file when the
+  task DB is not available in CI). For each `(project_id, plan_id,
+  root_task_ref)` identity, asserts a coverage manifest exists at
+  `coverage_manifest_path(project_id, root_task_ref, plan_id)`.
+- Re-computes `plan_hash` from the plan file and asserts it matches
+  the manifest's `plan_hash`. A modified plan without a regenerated
+  manifest fails CI.
+- Calls `gobby plan coverage --plan <path> --plan-id <id> --plan-hash
+  <h> --task-tree matrix-file --manifest <path>` and asserts zero
+  `missing | invalid` rows.
+- Asserts no orphan manifests: every manifest under
+  `.gobby/plans/coverage/` resolves to a live plan + root pairing.
+- Asserts no new entries in `.gobby/plans/.grandfathered` since the
+  last signed-off commit; new entries require a parallel
+  `# remove-by: <task-ref>` line and that task must exist and be open.
 
-CI does not need the live task DB for this; the manifest is committed and
-self-describing. The library re-validation against `db` runs at
+CI does not need the live task DB for this; the manifest is committed
+and self-describing. The library re-validation against `db` runs at
 expansion-qa time, not in CI.
 
 ### A10. Documentation
@@ -643,19 +682,42 @@ Tests in `tests/storage/tasks/test_artifacts_plan_path.py`:
 
 Tests in `tests/storage/tasks/test_artifacts_isolation_base.py` (F15):
 
-- `base_commit_sha` is a new column on `task_artifacts`, captured at
-  worktree/clone creation. D0 adds it via migration.
-- `(worktree_path, worktree_id, base_commit_sha)` and `(clone_path,
-  clone_id, base_commit_sha)` are typed-unit triples: setting any of the
-  isolation-family columns without setting `base_commit_sha` raises;
-  clearing the family clears `base_commit_sha`.
-- The CHECK constraint enforces: `base_commit_sha IS NULL` iff both
-  isolation families are NULL.
+- `base_commit_sha` is a new **nullable** column on `task_artifacts`,
+  captured at worktree/clone creation for new isolations. D0 adds it
+  via additive migration; existing rows from the post-#12725 baseline
+  (which may already have `(worktree_path, worktree_id)` or
+  `(clone_path, clone_id)` without `base_commit_sha`) are preserved
+  intact (F17).
+- **No CHECK constraint** requires `base_commit_sha` non-null on legacy
+  rows. The schema-level invariant is weaker than the app-level one:
+
+    - Schema CHECK: `base_commit_sha IS NULL` if both isolation families
+      are NULL. (Forward-compatibility: a non-null `base_commit_sha`
+      with no isolation family is rejected as nonsense.)
+    - App-level enforcement (in `set_artifacts_atomic` and
+      `_validate_constraints`): a **new write** that sets either
+      isolation family without `base_commit_sha` raises
+      `MissingIsolationBaseError`. Reads of existing rows with
+      `base_commit_sha IS NULL` are tolerated; the A6 resolver yields
+      an `invalid` evidence row citing the artifact and asks for
+      repair.
+- `clear_isolation_pair(family)` clears the family columns and
+  `base_commit_sha` atomically.
 - B-phase isolation handlers populate `base_commit_sha` via
   `git -C <path> rev-parse HEAD` immediately after creating the
-  worktree/clone, before any agent runs against it.
-- A6 resolver tests verify diff against the recorded base SHA, not
-  against `target_branch` ref.
+  worktree/clone, before any agent runs against it. New isolations
+  created after the migration always have a non-null base.
+- Upgrade test: starting from a fixture DB at the post-#12725 baseline
+  with one worktree row and one clone row (both lacking
+  `base_commit_sha`), the migration leaves them in place; new isolation
+  creates capture a base; A6 resolver returns `invalid` evidence rows
+  for the legacy two and `covered` for a freshly created one.
+- MCP artifact payloads (`get_artifacts`, `set_artifact`,
+  `set_artifacts_atomic`, `clear_isolation_pair`) include
+  `base_commit_sha` in their schemas with explicit nullability.
+- `baseline_schema.sql` adds the column for fresh installs **with the
+  same nullable semantics** so fresh and upgraded databases diverge
+  only in row history, not in schema.
 
 ### D0.7 Migration upgrade behavior
 
@@ -919,7 +981,8 @@ Update `CLAUDE.md`, `GUIDING_PRINCIPLES.md`, and `docs/` to:
 - `src/gobby/dispatch/{mutex,actions,rules,dispatcher,cron_registration}.py`
 - `src/gobby/install/shared/skills/{holistic-review,expansion-agent-selection}/SKILL.md`
 - `src/gobby/install/shared/workflows/agents/{holistic-reviewer,frontend-developer,backend-developer}.yaml`
-- `.gobby/plans/task-12725.coverage.yaml` (A7 manifest).
+- `.gobby/plans/coverage/<project_id>/12725/task-12725-lifecycle-dispatch.coverage.yaml`
+  (A7 manifest, computed via `coverage_manifest_path`).
 - `.gobby/plans/task-NEW-plan-coverage-contract.coverage-ledger.yaml` (A8).
 - `tests/plans/test_parser.py`, `test_coverage.py`,
   `test_plan_coverage_ci.py`.
@@ -961,9 +1024,10 @@ End-to-end acceptance, run after Phase G:
 1. **Plan-coverage contract** (`tests/plans/test_plan_coverage_ci.py`)
    passes: every active plan under `.gobby/plans/` has a manifest with
    matching plan-hash and zero `missing | invalid` rows.
-2. **#12725 compliance manifest**
-   (`.gobby/plans/task-12725.coverage.yaml`) has zero non-`covered |
-   deferred` rows; all named symbols and tests verified.
+2. **#12725 compliance manifest** at the path returned by
+   `coverage_manifest_path(<project_id>, "12725",
+   "task-12725-lifecycle-dispatch")` has zero non-`covered | deferred`
+   rows; all named symbols and tests verified.
 3. **Bootstrap ledger validated**
    (`.gobby/plans/task-NEW-plan-coverage-contract.coverage-ledger.yaml`)
    matches the post-implementation manifest produced by the new tooling.
@@ -988,27 +1052,34 @@ End-to-end acceptance, run after Phase G:
    reservation primitive (F11)`, etc. — plus the negative case for a
    framing heading without a section ID. End-of-line bare headings parse
    correctly (the regex's `|$` lookahead is exercised).
-9. **Coverage scope (F9/F13/F14)**: `gobby plan coverage --root-task
-   <ref> --plan-id <id> --project-id <id> --task-tree db` ignores leaves
-   outside the named subtree; the library rejects `db`/`jsonl` calls
-   that omit any of the three scope inputs at type/test time. Multi-root
-   reuse: the same plan under two distinct root tasks produces two
-   distinct manifests at
-   `.gobby/plans/coverage/<project_id>/<root_a>/<plan_id>.coverage.yaml`
-   and `<root_b>/<plan_id>.coverage.yaml` without collision; a stale
-   manifest with a non-matching `plan_hash` is rejected by A9 CI.
+9. **Coverage scope (F9/F13/F14/F16)**: `gobby plan coverage
+   --root-task <ref> --plan-id <id> --project-id <id> --task-tree db`
+   ignores leaves outside the named subtree; the library rejects
+   `db`/`jsonl` calls that omit any of the three scope inputs at
+   type/test time. Multi-root reuse: the same plan under two distinct
+   root tasks produces two manifests at the paths returned by
+   `coverage_manifest_path(...)` for each `(project_id, root_task_ref,
+   plan_id)`. A9 CI rejects orphan manifests, stale `plan_hash`, and
+   un-paired `.grandfathered` additions. The `coverage_manifest_path`
+   helper sanitizes every component portably; duplicate-identity
+   manifests are rejected unless explicitly regenerated.
 10. **Lifecycle rejection paths**: holistic rejection with
     `cited_subtasks=[A, B]` reopens A and B and rewinds to `in_development`;
     expansion rejection clears `expansion_run_id` and increments attempts;
     merging rejection (yolo) increments `merge-attempts:N` and re-dispatches.
-11. **Yolo evidence path (F10/F15)**: a yolo run with worktree-local
-    commits not yet linked to the task passes A6 via
+11. **Yolo evidence path (F10/F15/F17)**: a yolo run with
+    worktree-local commits not yet linked to the task passes A6 via
     `worktree-diff:<artifact-ref>`, diffing against the immutable
     `base_commit_sha` captured at worktree creation. A run whose
-    artifact has a missing or unresolvable `base_commit_sha` produces
-    an `invalid` evidence row citing the artifact (not silent
-    no-evidence). A yolo run missing evidence on any deliverable
-    acceptance item yields `request_changes` (never `escalate`).
+    artifact has a missing or unresolvable `base_commit_sha` (including
+    legacy rows from before D0's migration) produces an `invalid`
+    evidence row citing the artifact and naming a repair path (not
+    silent no-evidence). A yolo run missing evidence on any
+    deliverable acceptance item yields `request_changes` (never
+    `escalate`). Upgrade test from a fixture DB with legacy isolation
+    rows (lacking `base_commit_sha`): migration preserves the rows;
+    new isolations capture a base; A6 returns `invalid` for legacy
+    and `covered` for fresh.
 12. **Yolo fallbacks**: on `merge-attempts` cap, append_description_section
     is written under `## Yolo Fallbacks` and lifecycle advances to `merged`
     with isolation pair preserved.
