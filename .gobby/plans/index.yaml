@@ -1,0 +1,51 @@
+entries:
+  - plan_id: task-12725-lifecycle-dispatch
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12725"
+    plan_kind: implementation
+    status: merged
+  - plan_id: task-13175-plan-coverage-contract
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "13175"
+    plan_kind: implementation
+    status: active
+  - plan_id: task-13173-lifecycle-dispatch-recovery
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "13173"
+    plan_kind: strategy
+    status: active
+  - plan_id: task-12068-skillsmp-install-rewrite
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12068"
+    plan_kind: legacy
+    status: archived
+  - plan_id: task-12746-neo4j-falkordb-swap
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12746"
+    plan_kind: legacy
+    status: archived
+  - plan_id: task-12761-postgres-hub-migration
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12761"
+    plan_kind: legacy
+    status: archived
+  - plan_id: task-12898-memory-recall-helper
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12898"
+    plan_kind: legacy
+    status: archived
+  - plan_id: task-12902-pipeline-runs-rename
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12902"
+    plan_kind: legacy
+    status: archived
+  - plan_id: task-12910-drawbridge-ui-batch
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12910"
+    plan_kind: legacy
+    status: archived
+  - plan_id: task-12948-codex-retry-verbatim-removal
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12948"
+    plan_kind: legacy
+    status: archived

@@ -1,0 +1,58 @@
+generated_at: "2026-04-27T14:55:00Z"
+generator: "gobby plan legacy-classification-refresh"
+entries:
+  - plan_id: task-12068-skillsmp-install-rewrite
+    root_task_ref: "12068"
+    root_open: true
+    root_title: "SkillsMP: implement install-from-hub (get_skill_details + download_skill rewrite)"
+    legacy_reason: "Pre-contract plan retained as historical planning context; root work owns any future implementation coverage."
+    non_retrofit_acknowledgment: "#12068"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "SkillsMP: implement install-from-hub (get_skill_details + download_skill rewrite)"
+  - plan_id: task-12746-neo4j-falkordb-swap
+    root_task_ref: "12746"
+    root_open: true
+    root_title: "Migrate knowledge graph backend from Neo4j to FalkorDB"
+    legacy_reason: "Pre-contract strategy plan; root epic remains accountable for any later coverage retrofit decision."
+    non_retrofit_acknowledgment: "#12746"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "Migrate knowledge graph backend from Neo4j to FalkorDB"
+  - plan_id: task-12761-postgres-hub-migration
+    root_task_ref: "12761"
+    root_open: true
+    root_title: "PostgreSQL hub migration"
+    legacy_reason: "Pre-contract planning artifact; root epic remains the open tracking object for retrofit disposition."
+    non_retrofit_acknowledgment: "#12761"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "PostgreSQL hub migration"
+  - plan_id: task-12898-memory-recall-helper
+    root_task_ref: "12898"
+    root_open: true
+    root_title: "Smarter memory recall via backgrounded Haiku helper agent"
+    legacy_reason: "Recovered pre-contract plan; root epic remains open and records the non-retrofit disposition."
+    non_retrofit_acknowledgment: "#12898"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "Smarter memory recall via backgrounded Haiku helper agent"
+  - plan_id: task-12902-pipeline-runs-rename
+    root_task_ref: "12902"
+    root_open: true
+    root_title: "Canonical pipeline runs rename with pagination"
+    legacy_reason: "Pre-contract plan kept for historical traceability; root epic owns any later retrofit decision."
+    non_retrofit_acknowledgment: "#12902"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "Canonical pipeline runs rename with pagination"
+  - plan_id: task-12910-drawbridge-ui-batch
+    root_task_ref: "12910"
+    root_open: false
+    root_title: "Drawbridge UI batch — 11 pending tasks"
+    legacy_reason: "Closed pre-contract batch plan retained as archived context; no retrofit target is required for a closed root."
+  - plan_id: task-12948-codex-retry-verbatim-removal
+    root_task_ref: "12948"
+    root_open: false
+    root_title: "Kill Codex retry-verbatim PreToolUse UX"
+    legacy_reason: "Closed pre-contract implementation plan retained as archived context; no retrofit target is required for a closed root."
