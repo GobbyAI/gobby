@@ -1,4 +1,4 @@
-generated_at: "2026-04-27T18:00:32Z"
+generated_at: "2026-04-27T19:19:23Z"
 generator: "gobby plan legacy-classification-refresh"
 entries:
   - plan_id: task-12068-skillsmp-install-rewrite
@@ -10,6 +10,11 @@ entries:
     non_retrofit_acknowledgment_exists: true
     non_retrofit_acknowledgment_open: true
     non_retrofit_acknowledgment_title: "SkillsMP: implement install-from-hub (get_skill_details + download_skill rewrite)"
+  - plan_id: task-12725-lifecycle-dispatch-rev1
+    root_task_ref: "12725"
+    root_open: false
+    root_title: "Lifecycle-state-driven agent dispatch"
+    legacy_reason: "Frozen pre-trim snapshot of task-12725-lifecycle-dispatch retained as historical reference; the live task-12725-lifecycle-dispatch.md owns any subsequent retrofit/gap-recovery work."
   - plan_id: task-12746-neo4j-falkordb-swap
     root_task_ref: "12746"
     root_open: true
@@ -37,13 +42,3 @@ entries:
     non_retrofit_acknowledgment_exists: true
     non_retrofit_acknowledgment_open: true
     non_retrofit_acknowledgment_title: "Smarter memory recall via backgrounded Haiku helper agent"
-  - plan_id: task-12910-drawbridge-ui-batch
-    root_task_ref: "12910"
-    root_open: false
-    root_title: "Drawbridge UI batch — 11 pending tasks"
-    legacy_reason: "Closed pre-contract batch plan retained as archived context; no retrofit target is required for a closed root."
-  - plan_id: task-12948-codex-retry-verbatim-removal
-    root_task_ref: "12948"
-    root_open: false
-    root_title: "Kill Codex retry-verbatim PreToolUse UX"
-    legacy_reason: "Closed pre-contract implementation plan retained as archived context; no retrofit target is required for a closed root."
