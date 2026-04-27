@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "f85ec94c3ab16a52ec55f9a0113004665028e6cafafdc0a7e92aac8d79cced11"
+plan_hash: "3e645f283fcaf48cb80b4bbf3a9ca6f9d6d6e3b8a52c1a1beb9fe207b0214070"
 root_task_ref: "13175"
 
 sections:
@@ -100,6 +100,31 @@ sections:
               tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar
               asserts the planner agent's compiled prompt includes the
               typed-grammar requirement marker.
+      A1.11:
+        expected_leaves:
+          - title: "Document table-row decomposition rule across plan-draft, plan-review, planner, and plan-adversary surfaces"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/skills/plan-draft/SKILL.md,
+              src/gobby/install/shared/skills/plan-review/SKILL.md,
+              src/gobby/install/shared/workflows/agents/planner.yaml,
+              and src/gobby/install/shared/workflows/agents/plan-adversary.yaml
+              all document the table-row decomposition rule
+              (strategy A1): any deliverable section whose body uses
+              a markdown table to enumerate work items MUST emit one
+              acceptance item per data row with stable IDs.
+              Plan-adversary qualitatively rejects deliverables with
+              fewer acceptance items than table data rows. test:
+              tests/skills/test_plan_skill_grammar.py::test_table_row_decomposition_rule_documented
+              asserts the rule appears in plan-draft SKILL.md,
+              plan-review SKILL.md, and the compiled
+              planner/plan-adversary YAML prompts.
+        notes: >-
+          Round 7 addition: closes F3. Strategy A1 made per-row
+          decomposition load-bearing (it's the failure mode that
+          dropped #12725's sections). Prior plan only applied the
+          rule to A7.4 (#12725 retrofit); R7 extends it to all
+          future plans via the four authoring/review surfaces.
 
   A2:
     acceptance_items:
@@ -552,17 +577,33 @@ sections:
               coverage even with a matching covers label.
       A4.18:
         expected_leaves:
-          - title: "Casefold-aware write_manifest with dedicated exit code 8"
+          - title: "write_manifest performs full-path identity verification with PathIdentityMismatchError covering all four collision modes"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              gobby.plans.coverage_manifest.CasefoldCollisionError
-              raised when a sibling manifest's casefolded path
-              matches the target but identities differ; CLI exit
-              code 8 surfaces the failure; protection works on both
+              gobby.plans.coverage_manifest.PathIdentityMismatchError
+              raised on any path-component collision (exact-path
+              identity mismatch, casefold-equal leaf filename,
+              casefold-equal ancestor directory, sanitization-collapse)
+              that would produce a manifest at the target with a
+              different (project_id, root_task_ref, plan_id) identity.
+              regenerate=True is scoped to same-identity hash refresh
+              only and CANNOT bypass this error. CLI exit code 8
+              surfaces the failure. Protection works on both
               case-sensitive and case-insensitive filesystems. tests:
-              tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write,
-              ::test_casefold_collision_emits_exit_8,
-              ::test_casefold_protection_works_on_case_sensitive_fs.
+              tests/plans/test_coverage_identity.py::test_casefold_leaf_collision_raises_path_identity_mismatch,
+              ::test_path_identity_mismatch_emits_exit_8,
+              ::test_casefold_protection_works_on_case_sensitive_fs,
+              ::test_exact_path_different_identity_raises,
+              ::test_casefold_ancestor_dir_collision_raises,
+              ::test_root_task_ref_hash_strip_collision_raises,
+              ::test_sanitize_collapse_collision_raises,
+              ::test_regenerate_does_not_bypass_path_identity_mismatch.
+        notes: >-
+          Round 7 fix: prior CasefoldCollisionError only checked the
+          leaf filename; F1 found that exact-path collisions,
+          casefold-ancestor collisions, and sanitization-collapse
+          collisions all bypassed detection. PathIdentityMismatchError
+          is the unified surface for all four collision modes.
 
   A5:
     acceptance_items:
@@ -1147,6 +1188,67 @@ sections:
           requirement on retrofit_target / non_retrofit_acknowledgment
           is verifiable under GOBBY_LIVE_DB=0 (A9.9) without the
           live DB.
+      A9.14:
+        expected_leaves:
+          - title: "Implement gobby plan grandfathered-refresh and legacy-classification-refresh CLI subcommands"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/cli/plan_snapshots.py exists and implements
+              two Click subcommands: gobby plan grandfathered-refresh
+              regenerates .gobby/plans/.grandfathered-task-state.yaml,
+              gobby plan legacy-classification-refresh regenerates
+              .gobby/plans/.legacy-classification.yaml. Both read
+              live task DB, preserve all required fields per A9.7
+              and A9.13 schemas, write ISO-8601 UTC generated_at,
+              and produce deterministic output for fixed DB state
+              (sorted entries, stable formatting). Subcommands wire
+              into the main gobby plan CLI group. tests:
+              tests/plans/test_plan_snapshots_cli.py::test_grandfathered_refresh_generates_snapshot,
+              ::test_legacy_classification_refresh_generates_snapshot,
+              ::test_refresh_is_deterministic_for_fixed_db_state,
+              ::test_refresh_subcommands_registered_in_plan_cli
+              all pass. file: src/gobby/cli/plan_snapshots.py.
+        notes: >-
+          Round 7 addition: closes F2. Prior plan claimed snapshot
+          generators existed but had no deliverable, no test, and
+          no acceptance item. Without explicit subcommand
+          implementation the snapshot fields in A9.7/A9.13 cannot
+          be regenerated authoritatively.
+      A9.15:
+        expected_leaves:
+          - title: "Wire .pre-commit-config.yaml gobby-plan-snapshots-refresh hook to reject stale snapshots"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              .pre-commit-config.yaml contains a
+              gobby-plan-snapshots-refresh hook that runs both A9.14
+              refresh subcommands in --check mode when
+              .gobby/plans/.grandfathered, .gobby/plans/index.yaml,
+              or either snapshot YAML is modified. The hook fails
+              the commit on diff (cited fields, exact subcommand to
+              run). tests:
+              tests/plans/test_plan_snapshots_hook.py::test_hook_rejects_stale_grandfathered_snapshot,
+              ::test_hook_rejects_stale_legacy_classification_snapshot,
+              ::test_hook_passes_when_snapshots_fresh
+              all pass. file: .pre-commit-config.yaml.
+        notes: >-
+          Round 7 addition: paired with A9.14 to close F2's hook gap.
+      A9.16:
+        expected_leaves:
+          - title: "CI runs both refresh subcommands in --check mode against live DB when available"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_snapshots_match_live_db_when_available
+              runs gobby plan grandfathered-refresh --check and
+              gobby plan legacy-classification-refresh --check;
+              fails CI on any diff vs committed snapshots. Skipped
+              under GOBBY_LIVE_DB=0 since the snapshots ARE the
+              source of truth without live DB (per A9.9). Active
+              when live DB is available. test:
+              tests/plans/test_plan_coverage_ci.py::test_snapshots_match_live_db_when_available.
+        notes: >-
+          Round 7 addition: closes the loop on F2 — if a developer
+          edits live tasks but forgets the pre-commit hook, A9.16
+          catches drift in CI when live DB runs.
 
   A10:
     acceptance_items:
@@ -1246,3 +1348,25 @@ sections:
           names the expansion skill README as a contract surface;
           prior plan/ledger had only plan/plan-draft/plan-review
           and the expansion-qa YAML.
+      A10.10:
+        expected_leaves:
+          - title: "Document table-row decomposition rule in CLAUDE.md and docs/contracts/plan-coverage.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              CLAUDE.md and docs/contracts/plan-coverage.md both
+              document the table-row decomposition rule: any
+              deliverable section whose body uses a markdown table
+              to enumerate work items MUST emit one acceptance item
+              per data row with stable IDs; plan-adversary
+              qualitatively rejects deliverables that enumerate
+              work in tables without per-row acceptance items.
+              This is the rule that closes the #12725
+              missing-section failure mode for all future plans.
+              test:
+              tests/docs/test_claude_md_contract_section.py::test_table_row_decomposition_rule_documented
+              asserts the rule appears in CLAUDE.md and
+              docs/contracts/plan-coverage.md.
+        notes: >-
+          Round 7 addition: closes F3 on the documentation surface,
+          paired with A1.11 which adds the rule to the four
+          authoring/review skill/agent surfaces.

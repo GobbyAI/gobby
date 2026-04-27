@@ -123,6 +123,16 @@ qualitative checklist when the plan exhibits any of:
   at least one of `file:`, `symbol:`, `test:`, `behavior:` per item;
   the parser uses the first matching reference as the canonical
   artifact for coverage matching).
+- A `deliverable` section whose body uses a markdown table to
+  enumerate work items but whose `**Acceptance:**` block has fewer
+  acceptance items than the table has data rows. Tables that
+  enumerate deliverables MUST be decomposed into one acceptance
+  item per row with stable IDs (this is the failure mode that
+  caused #12725's missing sections; strategy A1 makes per-row
+  decomposition load-bearing). Plan-adversary detects this case
+  qualitatively because parser-level table-vs-prose intent
+  detection is intractable; the rule applies to every plan
+  authored under the contract.
 - An item ID that does not dotted-prefix-match its section ID.
 - A duplicate section ID anywhere in the document.
 - A `deferred` section whose deferral object fails A3 validation
@@ -137,10 +147,16 @@ qualitative checklist when the plan exhibits any of:
 - `src/gobby/install/shared/skills/plan-draft/SKILL.md` — pin the
   canonical regex verbatim in a code block; document the kind enum;
   document the acceptance-item shape; document the deferral object;
-  document the structured `covers` record format.
+  document the structured `covers` record format; document the
+  table-row decomposition rule (one acceptance item per data row
+  in any deliverable-enumeration table).
 - `src/gobby/install/shared/skills/plan-review/SKILL.md` — instruct
   plan-adversary to load `gobby.plans.parser` and reject mechanically
-  before qualitative review; enumerate the rejection cases above.
+  before qualitative review; enumerate the rejection cases above;
+  add a qualitative-checklist item: reject any deliverable section
+  whose body contains a markdown table enumerating work items but
+  whose acceptance-item count is less than the table's data-row
+  count (table-row decomposition rule).
 - `src/gobby/install/shared/workflows/agents/planner.yaml` — prompt
   appendix that requires the typed grammar.
 - `src/gobby/install/shared/workflows/agents/plan-adversary.yaml` —
@@ -210,6 +226,19 @@ qualitative checklist when the plan exhibits any of:
   asserts the planner agent's compiled prompt includes the
   typed-grammar requirement marker. test:
   `tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar`.
+- A1.11 — plan-draft, plan-review, planner.yaml, and
+  plan-adversary.yaml all document the **table-row decomposition
+  rule** (strategy A1): a `deliverable` section whose body uses a
+  markdown table to enumerate work items MUST emit one
+  acceptance item per data row with stable IDs (e.g., `A7.4.1`,
+  `A7.4.2`, … per row). Plan-adversary qualitatively rejects any
+  deliverable with fewer acceptance items than table data rows.
+  This closes the failure mode that produced #12725's missing
+  sections. test:
+  `tests/skills/test_plan_skill_grammar.py::test_table_row_decomposition_rule_documented`
+  asserts the rule appears in plan-draft SKILL.md, plan-review
+  SKILL.md, and the compiled planner/plan-adversary YAML
+  prompts.
 
 ## A2 Plan parser library
 
@@ -1059,22 +1088,52 @@ the identity matches but the hash differs, it raises
 audit line to `.gobby/plans/coverage/.regenerate.log` containing
 `<UTC ISO> <project_id> <root_task_ref> <plan_id> <old_hash> -> <new_hash>`.
 
-**Casefold-aware write protection (F5).** Before writing,
-`write_manifest` enumerates the parent directory and compares its
-target filename to every existing sibling with `str.casefold()`
-equality. If a sibling exists whose casefold-equal path holds a
-manifest with a **different** `(project_id, root_task_ref, plan_id)`
-identity, `write_manifest` raises `CasefoldCollisionError(existing_path,
-existing_identity, new_identity)` and writes nothing — even on a
-case-insensitive filesystem (macOS HFS+/APFS default, Windows NTFS),
-the writer side blocks the overwrite before the OS can conflate the
-two paths. Reader-side warning is unchanged but is now a defense in
-depth rather than the primary protection. The path-collision check is
-performed on the rendered final filename including the
-`.coverage.yaml` suffix so two `<plan_id>` differing only in case
-collide deterministically. New exit code: `8` for
-`CasefoldCollisionError` (CI surfaces this distinctly from identity
-collision exit `5`).
+**Path-collision write protection (F5 + R7/F1).** Before writing,
+`write_manifest` performs **full-path identity verification at every
+component**, not just the leaf filename. The check covers four
+distinct collision modes:
+
+1. **Exact-path identity mismatch.** If a manifest exists at the
+   exact target `path` and its
+   `(project_id, root_task_ref, plan_id)` identity differs from the
+   new identity, `write_manifest` raises
+   `PathIdentityMismatchError(existing_path, existing_identity,
+   new_identity)` regardless of `regenerate=`. (`regenerate=True`
+   is scoped to same-identity hash collisions only — it cannot be
+   used to overwrite a different-identity manifest.)
+
+2. **Casefold-equal final filename.** If a sibling in the immediate
+   parent directory has a casefold-equal name to the target leaf
+   filename and holds a manifest with a different identity, raise
+   `PathIdentityMismatchError`. This covers macOS HFS+/APFS
+   default and Windows NTFS case-insensitive semantics on the leaf.
+
+3. **Casefold-equal ancestor directory.** Walk every ancestor
+   directory under `.gobby/plans/coverage/` from root toward
+   target. At each level, enumerate siblings of the next component
+   and casefold-compare. If a casefold-equal sibling exists whose
+   resolved subtree contains a manifest with a different identity,
+   raise `PathIdentityMismatchError`. This catches collisions where
+   the project-id or root-task-ref components differ only by case
+   or normalization, and a case-insensitive filesystem on a
+   different machine would otherwise conflate them.
+
+4. **Sanitization-collapse path collision.** Two distinct raw
+   inputs that `_sanitize` reduces to the same canonical component
+   are detected by the parent-dir enumeration in (2)/(3) — the
+   writer reads the manifest header at the existing path and
+   compares its identity to the new write. Same-path different-
+   identity always raises `PathIdentityMismatchError`. Examples
+   covered: `project_id="foo/bar"` vs `"foo-bar"`, `root_task_ref="#abc"`
+   vs `"abc"`, and casefold-collapsing project/root components
+   such as `"ABC"` vs `"abc"`.
+
+Reader-side warning (deprecated to defense-in-depth) is preserved
+for legacy manifests that predate this writer rule. `regenerate=True`
+applies ONLY to same-identity hash refresh; it cannot bypass any
+`PathIdentityMismatchError`. Exit code `8` is the canonical surface
+for `PathIdentityMismatchError`; CI distinguishes this from
+identity-hash collisions (exit `5`).
 
 **`gobby plan coverage` CLI** (Click command in `src/gobby/cli/plan.py`):
 
@@ -1103,8 +1162,11 @@ Exit codes:
 - `6` — `MissingScopeError` (db/jsonl without scope inputs), surfaced
   by the CLI Click validation layer with exit code 6.
 - `7` — `EmptyComponentError` (sanitization rejected an input).
-- `8` — `CasefoldCollisionError` (sibling manifest's casefolded
-  path matches the new path but identities differ).
+- `8` — `PathIdentityMismatchError` (any path-component collision
+  — exact-path, casefold-equal leaf filename, casefold-equal
+  ancestor directory, or sanitization-collapse — produces a
+  manifest at the target with a different
+  `(project_id, root_task_ref, plan_id)` identity).
 
 **Manifest YAML schema** (the file `<plan_id>.coverage.yaml`):
 
@@ -1232,19 +1294,50 @@ rows:
   distinct files.
 - `tests/plans/test_coverage_identity.py::test_two_plans_one_root_distinct_manifests`
   — same root, different plan_ids.
-- `tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write`
+- `tests/plans/test_coverage_identity.py::test_casefold_leaf_collision_raises_path_identity_mismatch`
   — under the same `(project_id, root_task_ref)`, two plan_ids
   `task-13175-Plan-Coverage-Contract` and
   `task-13175-plan-coverage-contract` produce paths that casefold-
   equal each other; `write_manifest` raises
-  `CasefoldCollisionError` and writes nothing on the second call.
-- `tests/plans/test_coverage_identity.py::test_casefold_collision_emits_exit_8`
-  — CLI invocation triggering `CasefoldCollisionError` exits with
-  code 8.
+  `PathIdentityMismatchError` and writes nothing on the second
+  call.
+- `tests/plans/test_coverage_identity.py::test_path_identity_mismatch_emits_exit_8`
+  — CLI invocation triggering `PathIdentityMismatchError` exits
+  with code 8.
 - `tests/plans/test_coverage_identity.py::test_casefold_protection_works_on_case_sensitive_fs`
   — fixture forces case-sensitive directory enumeration; the
   writer-side `casefold()` comparison still fires on the second
   write attempt regardless of FS case sensitivity.
+- `tests/plans/test_coverage_identity.py::test_exact_path_different_identity_raises`
+  — write manifest A at canonical path; call `write_manifest`
+  with a manifest carrying different
+  `(project_id, root_task_ref, plan_id)` but the same rendered
+  target path (constructed by feeding distinct raw inputs that
+  collapse via sanitization to the same canonical components);
+  raises `PathIdentityMismatchError` even with `regenerate=True`.
+- `tests/plans/test_coverage_identity.py::test_casefold_ancestor_dir_collision_raises`
+  — write manifest under
+  `coverage/<project_id_caseA>/<root_task_ref>/<plan_id>.coverage.yaml`;
+  on second write, use a casefold-equal `<project_id_caseB>` (e.g.,
+  `"ABC"` vs `"abc"`); writer walks ancestors and detects the
+  casefold-equal sibling directory whose subtree contains a
+  manifest with different identity; raises
+  `PathIdentityMismatchError`.
+- `tests/plans/test_coverage_identity.py::test_root_task_ref_hash_strip_collision_raises`
+  — first write uses `root_task_ref="#abc"`, second write uses
+  `root_task_ref="abc"`; both sanitize to the same canonical
+  component; the writer detects existing manifest at the target
+  path with different identity and raises
+  `PathIdentityMismatchError`.
+- `tests/plans/test_coverage_identity.py::test_sanitize_collapse_collision_raises`
+  — first write uses `project_id="foo/bar"`, second write uses
+  `project_id="foo-bar"`; both sanitize to `foo-bar`; existing
+  manifest detected, raises `PathIdentityMismatchError`.
+- `tests/plans/test_coverage_identity.py::test_regenerate_does_not_bypass_path_identity_mismatch`
+  — even with `regenerate=True`, `PathIdentityMismatchError` is
+  raised when the existing manifest at target has a different
+  identity. `regenerate=True` is scoped to same-identity hash
+  refresh only.
 
 **Acceptance:**
 
@@ -1324,14 +1417,23 @@ rows:
 - A4.17 — `evaluate` excludes leaves outside `--root-task` subtree
   even if they carry matching `covers:` labels. test:
   `tests/plans/test_coverage.py::test_evaluate_root_scope_excludes_other_subtree`.
-- A4.18 — `write_manifest` raises `CasefoldCollisionError` and
-  writes nothing when a sibling manifest's casefolded path matches
-  the target path but the manifest identity differs; CLI exit code
-  `8` surfaces the failure. symbol:
-  `gobby.plans.coverage_manifest.CasefoldCollisionError`. test:
-  `tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write`,
-  `tests/plans/test_coverage_identity.py::test_casefold_collision_emits_exit_8`,
-  `tests/plans/test_coverage_identity.py::test_casefold_protection_works_on_case_sensitive_fs`.
+- A4.18 — `write_manifest` raises `PathIdentityMismatchError` and
+  writes nothing on any path-component collision (exact-path
+  identity mismatch, casefold-equal leaf filename, casefold-equal
+  ancestor directory, or sanitization-collapse) that produces a
+  manifest at the target path with a different
+  `(project_id, root_task_ref, plan_id)` identity. `regenerate=True`
+  is scoped to same-identity hash refresh only and CANNOT bypass
+  this error. CLI exit code `8` surfaces the failure. symbol:
+  `gobby.plans.coverage_manifest.PathIdentityMismatchError`. test:
+  `tests/plans/test_coverage_identity.py::test_casefold_leaf_collision_raises_path_identity_mismatch`,
+  `tests/plans/test_coverage_identity.py::test_path_identity_mismatch_emits_exit_8`,
+  `tests/plans/test_coverage_identity.py::test_casefold_protection_works_on_case_sensitive_fs`,
+  `tests/plans/test_coverage_identity.py::test_exact_path_different_identity_raises`,
+  `tests/plans/test_coverage_identity.py::test_casefold_ancestor_dir_collision_raises`,
+  `tests/plans/test_coverage_identity.py::test_root_task_ref_hash_strip_collision_raises`,
+  `tests/plans/test_coverage_identity.py::test_sanitize_collapse_collision_raises`,
+  `tests/plans/test_coverage_identity.py::test_regenerate_does_not_bypass_path_identity_mismatch`.
 
 ## A5 Expansion-QA integration
 
@@ -2007,6 +2109,19 @@ manifests or un-paired `.grandfathered` entries.
 - `tests/plans/test_plan_coverage_ci.py` — the CI test.
 - `tests/plans/conftest.py` (modify if exists; create if not) —
   fixtures for plan discovery and `.grandfathered` index parsing.
+- `src/gobby/cli/plan_snapshots.py` — implements the
+  `gobby plan grandfathered-refresh` and `gobby plan
+  legacy-classification-refresh` Click subcommands that
+  regenerate `.gobby/plans/.grandfathered-task-state.yaml` and
+  `.gobby/plans/.legacy-classification.yaml` from the live task
+  DB. Wired into the main `gobby plan` CLI group registered by
+  A4.
+- `tests/plans/test_plan_snapshots_cli.py` — tests for the two
+  refresh subcommands (determinism, schema preservation, CLI
+  registration).
+- `tests/plans/test_plan_snapshots_hook.py` — tests for the
+  pre-commit hook (stale-snapshot rejection, fresh-snapshot
+  pass).
 
 **Files to modify:**
 
@@ -2087,6 +2202,12 @@ manifests or un-paired `.grandfathered` entries.
   any plan.
 - `pyproject.toml` (modify — ensure the test discovery pattern
   picks up `tests/plans/`).
+- `.pre-commit-config.yaml` (modify if exists; create if not) —
+  add a `gobby-plan-snapshots-refresh` hook that runs both
+  refresh subcommands in `--check` mode when
+  `.gobby/plans/.grandfathered`, `.gobby/plans/index.yaml`, or
+  either snapshot YAML is modified. Hook fails on diff and
+  cites the exact subcommand to run.
 
 **Behavior contract:**
 
@@ -2400,6 +2521,43 @@ the assertions that file makes):**
   silently exempted from the manifest gate by classification
   alone, and the Round 6 hole where retrofit-target open status
   was unverifiable under `GOBBY_LIVE_DB=0`.
+- A9.14 — `src/gobby/cli/plan_snapshots.py` implements the
+  `gobby plan grandfathered-refresh` and `gobby plan
+  legacy-classification-refresh` Click subcommands. Each reads
+  the live task DB, regenerates the corresponding snapshot file
+  (`.gobby/plans/.grandfathered-task-state.yaml` or
+  `.gobby/plans/.legacy-classification.yaml`) from authoritative
+  state, preserves all required fields per the schemas in A9.7
+  and A9.13, and writes ISO-8601 UTC `generated_at`. Both
+  subcommands must be deterministic given the same DB state
+  (sorted entries, stable formatting). Subcommands also wire
+  into the main `gobby plan` CLI group registered by A4 so
+  `gobby plan --help` lists them. file:
+  `src/gobby/cli/plan_snapshots.py`. test:
+  `tests/plans/test_plan_snapshots_cli.py::test_grandfathered_refresh_generates_snapshot`,
+  `tests/plans/test_plan_snapshots_cli.py::test_legacy_classification_refresh_generates_snapshot`,
+  `tests/plans/test_plan_snapshots_cli.py::test_refresh_is_deterministic_for_fixed_db_state`,
+  `tests/plans/test_plan_snapshots_cli.py::test_refresh_subcommands_registered_in_plan_cli`.
+- A9.15 — pre-commit hook entry in `.pre-commit-config.yaml`
+  named `gobby-plan-snapshots-refresh` runs both refresh
+  subcommands when `.gobby/plans/.grandfathered`,
+  `.gobby/plans/index.yaml`, or either snapshot file is
+  modified. The hook fails the commit if regeneration produces
+  diffs not already staged (i.e., the user edited the input
+  files but did not regenerate the snapshots), citing the stale
+  fields and the exact subcommand to run. file:
+  `.pre-commit-config.yaml`. test:
+  `tests/plans/test_plan_snapshots_hook.py::test_hook_rejects_stale_grandfathered_snapshot`,
+  `tests/plans/test_plan_snapshots_hook.py::test_hook_rejects_stale_legacy_classification_snapshot`,
+  `tests/plans/test_plan_snapshots_hook.py::test_hook_passes_when_snapshots_fresh`.
+- A9.16 — A9 CI also runs both refresh subcommands in `--check`
+  mode (no-write, exit non-zero on diff) as part of
+  `tests/plans/test_plan_coverage_ci.py::test_snapshots_match_live_db_when_available`.
+  Under `GOBBY_LIVE_DB=0` the check is skipped (the snapshot
+  fields are themselves the source of truth per A9.9; the
+  drift check requires live DB by definition). When live DB is
+  available, drift fails CI. test:
+  `tests/plans/test_plan_coverage_ci.py::test_snapshots_match_live_db_when_available`.
 
 ## A10 Contract documentation
 
@@ -2468,12 +2626,20 @@ or by reference:
 - The `.grandfathered` mechanism: reserved for already-merged
   epics; additions require a paired `# remove-by: <task-ref>`
   annotation and an open task.
+- The **table-row decomposition rule**: any `deliverable` section
+  whose body uses a markdown table to enumerate work items MUST
+  emit one acceptance item per data row with stable IDs.
+  Plan-adversary qualitatively rejects deliverables that
+  enumerate work in tables without per-row acceptance items.
 
 **Acceptance:**
 
 - A10.1 — `CLAUDE.md` includes a "Plan-Coverage Contract" section
-  containing all eight bullets above (verbatim or by reference
-  to plan-draft / docs/contracts). file: `CLAUDE.md`.
+  containing all nine bullets above (canonical regex, kind enum,
+  acceptance-item shape, deferral object, covers record, CLI,
+  evidence kinds, bootstrap ledger, .grandfathered, and the
+  table-row decomposition rule — verbatim or by reference to
+  plan-draft / docs/contracts). file: `CLAUDE.md`.
 - A10.2 — `src/gobby/install/shared/skills/plan/SKILL.md`,
   `plan-draft/SKILL.md`, `plan-review/SKILL.md`,
   `expand/SKILL.md`, and the `expansion-qa` agent YAML each
@@ -2524,11 +2690,22 @@ or by reference:
   leaves MUST emit structured
   `covers:<plan-id>:<section-id>:<item-id>` labels;
   expansion-qa is the mechanical gate (A5); free-form
-  `plan-ref:` labels are not honored. Test:
+  `plan-ref:` labels are not honored. test:
   `tests/docs/test_expand_skill_contract_section.py::test_expand_skill_documents_coverage_contract`
   asserts the four bullets above are present (verbatim or by
   link to `docs/contracts/plan-coverage.md`). file:
   `src/gobby/install/shared/skills/expand/SKILL.md`.
+- A10.10 — `CLAUDE.md` and `docs/contracts/plan-coverage.md`
+  document the table-row decomposition rule: any `deliverable`
+  section whose body uses a markdown table to enumerate work
+  items MUST emit one acceptance item per data row with stable
+  IDs. Plan-adversary qualitatively rejects deliverables that
+  enumerate work in tables without per-row acceptance items.
+  This is the rule that closes the #12725 missing-section
+  failure mode for all future plans. test:
+  `tests/docs/test_claude_md_contract_section.py::test_table_row_decomposition_rule_documented`
+  asserts the rule appears in `CLAUDE.md` and
+  `docs/contracts/plan-coverage.md`.
 
 ## A11 Out of scope
 
