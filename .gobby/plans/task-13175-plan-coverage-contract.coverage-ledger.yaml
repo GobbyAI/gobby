@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "63b0505f5add7fcf3af627c7224feca8adad3888db266356ecb36bb53d50193c"
+plan_hash: "e7366a8bfac47e8aa141f5b80877ec571bbb73485fbaf6b0f42e94a995a32ca5"
 root_task_ref: "13175"
 
 sections:
@@ -239,6 +239,52 @@ sections:
               raises PlanParseError on either input. tests:
               tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings,
               tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind.
+      A2.16:
+        expected_leaves:
+          - title: "Parser masks fenced code blocks from all structural scans (CommonMark fence rules)"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.parser.parse_plan computes a code-fence mask
+              before structural scanning: lines opening a fenced code
+              block (``` or ~~~ with optional info string) toggle a
+              fenced state per CommonMark fence-matching rules
+              (delimiter character and length must match to close);
+              lines while fenced are excluded from heading, kind:,
+              **Acceptance:**, acceptance-bullet, and deferral-YAML
+              detection. The single exception is a deferred section's
+              first fenced YAML block, which is intentionally consumed
+              as the deferral object. Fenced examples that look like
+              real headings or acceptance bullets MUST NOT contribute
+              to PlanDocument.sections or any PlanSection.acceptance_items.
+              tests:
+              tests/plans/test_parser.py::test_fenced_headings_are_masked,
+              tests/plans/test_parser.py::test_fenced_acceptance_bullets_are_masked,
+              tests/plans/test_parser.py::test_fenced_deferral_yaml_outside_deferred_is_ignored,
+              tests/plans/test_parser.py::test_tilde_fence_also_masks.
+        notes: >-
+          This is load-bearing for A2.5 (test_parses_self) — without
+          fence masking the plan's own A1/A3/A4 fenced examples would
+          either fail to parse (duplicate-ID, missing-kind) or pass
+          for implementation-dependent reasons. A2.16 ships with
+          A2.17 so test_parses_self can act as the canonical
+          regression test.
+      A2.17:
+        expected_leaves:
+          - title: "test_parses_self verifies fenced examples in this plan do not leak into sections"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_parses_self parses
+              .gobby/plans/task-13175-plan-coverage-contract.md and
+              asserts: (1) PlanDocument.sections contains exactly
+              A0..A12 with no fenced fake A?.? IDs leaking in;
+              (2) every deliverable section has acceptance_items
+              count matching the on-disk **Acceptance:** block real
+              bullets only (fenced fake bullets excluded);
+              (3) PlanDocument.source_hash equals
+              hashlib.sha256(plan.read_bytes()).hexdigest().
+        notes: >-
+          Direct regression test of A2.16 against the very plan that
+          motivated the rule. Depends on A2.16 landing first.
 
   A3:
     acceptance_items:
@@ -896,16 +942,34 @@ sections:
               hole).
       A9.2:
         expected_leaves:
-          - title: "Author .gobby/plans/index.yaml with all 19 plan entries and plan_kind/status fields"
+          - title: "Author .gobby/plans/index.yaml with all 10 plan entries (2 impl, 1 strategy, 7 legacy) and plan_kind/status fields"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               .gobby/plans/index.yaml lists every existing
-              .gobby/plans/task-*.md file (2 implementation, 1
-              strategy, 16 legacy) with plan_kind ∈
-              {implementation, strategy, legacy} and status ∈
-              {active, merged, archived};
-              tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed
-              passes.
+              .gobby/plans/task-*.md file at Epic 1 ship time
+              (exactly 10: 2 implementation —
+              task-12725-lifecycle-dispatch and
+              task-13175-plan-coverage-contract; 1 strategy —
+              task-13173-lifecycle-dispatch-recovery; 7 legacy —
+              task-12068-skillsmp-install-rewrite,
+              task-12746-neo4j-falkordb-swap,
+              task-12761-postgres-hub-migration,
+              task-12898-memory-recall-helper,
+              task-12902-pipeline-runs-rename,
+              task-12910-drawbridge-ui-batch,
+              task-12948-codex-retry-verbatim-removal) with
+              plan_kind ∈ {implementation, strategy, legacy} and
+              status ∈ {active, merged, archived}. No stale rows for
+              nonexistent plan files. tests:
+              tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed,
+              tests/plans/test_plan_coverage_ci.py::test_index_inventory_matches_repo
+              both pass; the inventory test asserts the entry-set
+              equals the on-disk plan-file set exactly.
+        notes: >-
+          Round 4 fix: prior ledger entry referenced 19 plans / 16
+          legacy from a stale assumption. Actual repo at Epic 1 ship
+          time is 10 plan files / 7 legacy; the index ships exactly
+          those rows.
       A9.3:
         expected_leaves:
           - title: "CI assertion: every active implementation plan has a manifest at canonical path"
@@ -940,12 +1004,24 @@ sections:
               under .gobby/plans/coverage/.
       A9.7:
         expected_leaves:
-          - title: "CI assertion: .grandfathered entries require remove-by + open task"
+          - title: "CI assertion: .grandfathered entries require remove-by + open task verified via committed snapshot"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_plan_coverage_ci.py::test_grandfathered_entries_require_remove_by_annotation
-              and ::test_grandfathered_target_task_exists_and_open
-              both pass.
+              tests/plans/test_plan_coverage_ci.py::test_grandfathered_entries_require_remove_by_annotation,
+              ::test_grandfathered_target_task_exists_and_open_via_snapshot,
+              and ::test_grandfathered_snapshot_matches_live_db_when_available
+              all pass. Existence/open status is sourced from the
+              committed .gobby/plans/.grandfathered-task-state.yaml
+              snapshot (refs[].exists and refs[].open) so the check
+              works under GOBBY_LIVE_DB=0; when the live DB is
+              available, A9 also asserts the snapshot matches live
+              state and fails on drift. file:
+              .gobby/plans/.grandfathered-task-state.yaml.
+        notes: >-
+          Round 4 fix: prior ledger entry allowed the existence/open
+          check to be skipped under GOBBY_LIVE_DB=0, contradicting
+          A9.9's self-describing CI requirement. The new committed
+          snapshot artifact closes the contradiction.
       A9.8:
         expected_leaves:
           - title: "CI assertion: no unauthorized .grandfathered additions"
@@ -956,12 +1032,21 @@ sections:
               require the remove-by annotation.
       A9.9:
         expected_leaves:
-          - title: "CI runs without live task DB"
+          - title: "CI runs without live task DB and without skipped or relaxed checks"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_plan_coverage_ci.py runs with
-              GOBBY_LIVE_DB=0; index.yaml and committed manifests are
-              self-describing.
+              tests/plans/test_plan_coverage_ci.py runs successfully
+              with GOBBY_LIVE_DB=0; .gobby/plans/index.yaml,
+              committed manifests under .gobby/plans/coverage/, and
+              .gobby/plans/.grandfathered-task-state.yaml are the
+              self-describing sources of truth. No assertion in
+              A9.1–A9.8 or A9.10–A9.12 is conditionally skipped or
+              relaxed under that flag. test:
+              tests/plans/test_plan_coverage_ci.py::test_ci_runs_under_no_live_db_with_no_skipped_checks.
+        notes: >-
+          Round 4 fix: prior ledger entry was silent on whether
+          checks could be skipped; A9.9 now explicitly forbids skip
+          paths to close the F2 contradiction with A9.7.
       A9.10:
         expected_leaves:
           - title: "CI dispatches parse_plan plan_kind from index entries (impl strict, strategy/legacy permissive)"
@@ -982,6 +1067,24 @@ sections:
               has a matching plan_id entry in
               .gobby/plans/index.yaml; an unindexed file fails the
               test.
+      A9.12:
+        expected_leaves:
+          - title: "CI rejects index entries pointing at missing plan files"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file
+              asserts every entries[*].plan_id in
+              .gobby/plans/index.yaml has a corresponding
+              .gobby/plans/<plan_id>.md file on disk; a stale row
+              pointing at a missing or deleted plan file fails the
+              test citing the row's plan_id and the expected path.
+              Together with A9.11 this enforces a strict bijection
+              between the on-disk plan-file set and the indexed
+              entry set.
+        notes: >-
+          Round 4 addition: closes F3 by adding the reciprocal of
+          A9.11. Prevents stale index rows for nonexistent plan
+          files (which the prior 19-entry / 16-legacy block had).
 
   A10:
     acceptance_items:

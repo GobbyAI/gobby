@@ -371,6 +371,23 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   library-level validation (A3) is separate.
 - The parser does **not** call out to the task store; A3 does. This
   keeps A2 a pure function.
+- **Fenced code blocks are masked from all structural scans.** Before
+  any heading, `kind:` line, `**Acceptance:**` block, acceptance bullet,
+  or deferral-YAML detection runs, the parser computes a code-fence
+  mask: any line whose left-trimmed prefix opens a fenced code block
+  (` ``` ` or ` ~~~ `, with optional info string) toggles a "fenced"
+  state, and the matching closing fence ends it. All lines while the
+  state is "fenced" are excluded from structural matching. Nested fences
+  use the standard CommonMark rule (the fence character and length must
+  match for the block to close). The single exception is the deferral
+  YAML block intentionally consumed by a `deferred` section: when the
+  parser is in deferral-capture mode for a section, the first fenced
+  YAML block inside that section is read as the deferral object
+  (matching the established `deferred` syntax above) and not masked.
+  This rule is load-bearing because plan files (including this one)
+  contain fenced examples with fake `**Acceptance:**` blocks and fake
+  acceptance bullets; without masking, `test_parses_self` would either
+  fail or its passing/failing would depend on implementation detail.
 
 **Tests:**
 
@@ -480,6 +497,28 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   canonical regex.
 - `tests/plans/test_parser_grammar.py::test_h1_not_subject_to_regex`
   — `# Title` is not matched (regex starts at `##`).
+- `tests/plans/test_parser.py::test_fenced_headings_are_masked`
+  — fixture file with a real `## A1\n` followed by `kind:
+  deliverable\n**Acceptance:**\n- A1.1 — real item. file: a.py.\n`
+  AND a fenced ``` ```markdown\n## A2\nkind: deliverable\n``` ```
+  block. Parses without error; `PlanDocument.sections` contains
+  `A1` only (the fenced `A2` is masked), no duplicate-ID raise,
+  no missing-kind raise.
+- `tests/plans/test_parser.py::test_fenced_acceptance_bullets_are_masked`
+  — fixture with one real deliverable section whose `**Acceptance:**`
+  block has a single real `- A1.1 — real item. file: a.py.` bullet,
+  followed by a fenced ``` ```\n**Acceptance:**\n- A1.2 — fake. file:
+  b.py.\n``` ``` block in the same section's body. Parser produces
+  `len(sections[0].acceptance_items) == 1` (the fenced bullet does
+  not contribute) and the `A1.2` ID does not appear anywhere.
+- `tests/plans/test_parser.py::test_fenced_deferral_yaml_outside_deferred_is_ignored`
+  — fixture `deliverable` section whose body contains a stray fenced
+  YAML block whose contents look like a deferral object; the parser
+  does not treat it as a deferral (the section is not `kind:
+  deferred`) and the YAML is masked from all structural scans.
+- `tests/plans/test_parser.py::test_tilde_fence_also_masks`
+  — fixture using ` ~~~ ` fence delimiters (instead of triple
+  backticks) around fake headings; the parser masks them identically.
 
 **Acceptance:**
 
@@ -547,6 +586,26 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   `gobby.plans.parser.PlanKind`. tests:
   `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`,
   `tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind`.
+- A2.16 — parser masks fenced code blocks (` ``` ` and ` ~~~ `,
+  with CommonMark fence-matching rules) from all structural scans
+  (heading, `kind:`, `**Acceptance:**`, acceptance bullets, and
+  deferral-YAML detection except a deferral block intentionally
+  consumed inside a `deferred` section). Fenced examples that look
+  like real headings or acceptance bullets do not contribute to
+  `PlanDocument.sections` or any `PlanSection.acceptance_items`.
+  behavior: "fenced markdown blocks are excluded from structural
+  parsing" in `gobby.plans.parser.parse_plan`. tests:
+  `tests/plans/test_parser.py::test_fenced_headings_are_masked`,
+  `tests/plans/test_parser.py::test_fenced_acceptance_bullets_are_masked`,
+  `tests/plans/test_parser.py::test_fenced_deferral_yaml_outside_deferred_is_ignored`,
+  `tests/plans/test_parser.py::test_tilde_fence_also_masks`.
+- A2.17 — `test_parses_self` is load-bearing under A2.16: this very
+  plan contains fenced examples (A1 acceptance-bullet examples, A3
+  deferral-block examples, A4 manifest snippets) and parses cleanly
+  with `PlanDocument.sections` containing exactly the real A0–A12
+  IDs. test: `tests/plans/test_parser.py::test_parses_self` —
+  asserts that no fenced fake `Aₙ.ₙ` ID leaks into
+  `PlanDocument.sections` or any section's `acceptance_items`.
 
 ## A3 Typed deferral and structured covers contract
 
@@ -1936,6 +1995,28 @@ manifests or un-paired `.grandfathered` entries.
 - `.gobby/plans/.grandfathered` (create if absent) — initially
   empty (Epic 1 does not grandfather any plan; A7 retrofit makes
   #12725 conformant).
+- `.gobby/plans/.grandfathered-task-state.yaml` (create if absent) —
+  committed self-describing snapshot of every `# remove-by:` task
+  ref's open/closed state, refreshed when `.grandfathered` is
+  edited. Format:
+
+  ```yaml
+  # Self-describing snapshot for A9.7 verification under
+  # GOBBY_LIVE_DB=0 (A9.9). One row per remove-by task ref appearing
+  # in .gobby/plans/.grandfathered. The pre-commit hook in A9.7
+  # regenerates this file from the live task DB so committed entries
+  # always reflect the snapshot author's verified state.
+  generated_at: "<ISO-8601 UTC at last edit>"
+  generator: "gobby plan grandfathered-refresh"  # CLI in A4
+  refs:
+    - task_ref: "#NNNN"
+      exists: true
+      open: true
+      title: "<task title at snapshot time>"
+  ```
+
+  Initially empty (`refs: []`) since Epic 1 does not grandfather
+  any plan.
 - `pyproject.toml` (modify — ensure the test discovery pattern
   picks up `tests/plans/`).
 
@@ -1988,11 +2069,16 @@ The test:
    (only implementation plans have manifests).
 7. Reads `.gobby/plans/.grandfathered`; for each entry asserts
    the line includes a `# remove-by: <task-ref>` annotation;
-   asserts the named task exists and is open (queried via
-   committed task index file or skipped in CI if no live DB).
+   asserts the named task is recorded as `exists: true` and
+   `open: true` in the committed `.gobby/plans/.grandfathered-task-state.yaml`
+   snapshot. CI never skips this check; the snapshot is the
+   self-describing source of truth under `GOBBY_LIVE_DB=0`.
+   When the live DB is available, A9 also asserts the snapshot
+   matches live state (drift fails CI citing the divergent ref).
    New entries since the last signed-off commit (detected via
    `git diff HEAD` or against the signed-off baseline file)
-   require the same annotation.
+   require both the `# remove-by:` annotation AND a corresponding
+   `refs[]` entry in the snapshot file.
 
 **Files to create alongside:**
 
@@ -2022,57 +2108,12 @@ The test:
       status: active
     # Legacy plans (pre-Plan-Coverage-Contract; parser-permissive,
     # exempt from manifest CI; tracked here so A9 cannot silently
-    # skip them. root_task_ref left empty when the originating
-    # task ref is unknown or the originating epic was deleted —
-    # status: archived alongside.)
-    - plan_id: task-12027-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12027"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12042-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12042"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12044-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12044"
-      plan_kind: legacy
-      status: archived
+    # skip them. Every entry below corresponds to a real
+    # .gobby/plans/<plan_id>.md file at Epic 1 ship time — the
+    # reciprocal-existence assertion in A9.12 forbids stale rows.)
     - plan_id: task-12068-skillsmp-install-rewrite
       project_id: d45545c5-ded5-4335-b115-0245752edacf
       root_task_ref: "12068"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12079-plan-rev1
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12079"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12079-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12079"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12081-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12081"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12092-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12092"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12130-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12130"
-      plan_kind: legacy
-      status: archived
-    - plan_id: task-12285-plan
-      project_id: d45545c5-ded5-4335-b115-0245752edacf
-      root_task_ref: "12285"
       plan_kind: legacy
       status: archived
     - plan_id: task-12746-neo4j-falkordb-swap
@@ -2124,14 +2165,27 @@ The test:
     nature.
 
   Epic 1 ships index entries for every `.gobby/plans/task-*.md`
-  file currently in the repo — the 16 legacy plans get
-  `plan_kind: legacy, status: archived` (or `merged` if their
-  epic shipped); the strategy plan gets `plan_kind: strategy,
-  status: active`; the implementation plans (#12725 and this one,
-  #13175) get `plan_kind: implementation` with their actual
-  status. Future plans MUST be added to `index.yaml` at authoring
-  time; A9 CI rejects any unindexed `.gobby/plans/task-*.md`
-  file.
+  file currently in the repo. **The exhaustive inventory at Epic
+  1 ship time is 10 plan files: 2 implementation
+  (`task-12725-lifecycle-dispatch`,
+  `task-13175-plan-coverage-contract`), 1 strategy
+  (`task-13173-lifecycle-dispatch-recovery`), and 7 legacy
+  (`task-12068-skillsmp-install-rewrite`,
+  `task-12746-neo4j-falkordb-swap`,
+  `task-12761-postgres-hub-migration`,
+  `task-12898-memory-recall-helper`,
+  `task-12902-pipeline-runs-rename`,
+  `task-12910-drawbridge-ui-batch`,
+  `task-12948-codex-retry-verbatim-removal`).** Every legacy
+  entry above is `plan_kind: legacy, status: archived`; the
+  strategy plan is `plan_kind: strategy, status: active`; the
+  implementation plans are `plan_kind: implementation` with
+  their actual status (`merged` for #12725 post-A7 retrofit,
+  `active` for #13175). Future plans MUST be added to
+  `index.yaml` at authoring time; A9 CI rejects any unindexed
+  `.gobby/plans/task-*.md` file (A9.11) and equally rejects any
+  index entry whose `plan_id` does not have a matching plan file
+  in `.gobby/plans/` (A9.12).
 
 **Tests (this section's own test file is the deliverable; below are
 the assertions that file makes):**
@@ -2144,6 +2198,16 @@ the assertions that file makes):**
 - `tests/plans/test_plan_coverage_ci.py::test_grandfathered_target_task_exists_and_open`.
 - `tests/plans/test_plan_coverage_ci.py::test_no_unauthorized_grandfathered_additions`.
 - `tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed`.
+- `tests/plans/test_plan_coverage_ci.py::test_index_inventory_matches_repo`.
+- `tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry`.
+- `tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file`.
+- `tests/plans/test_plan_coverage_ci.py::test_grandfathered_target_task_exists_and_open_via_snapshot`.
+- `tests/plans/test_plan_coverage_ci.py::test_grandfathered_snapshot_matches_live_db_when_available`.
+- `tests/plans/test_plan_coverage_ci.py::test_ci_runs_under_no_live_db_with_no_skipped_checks`.
+- `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`.
+- `tests/plans/test_plan_coverage_ci.py::test_legacy_plans_have_no_manifests`.
+- `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`.
+- `tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest`.
 
 **Acceptance:**
 
@@ -2157,11 +2221,15 @@ the assertions that file makes):**
   `plan_kind` resolve from `.gobby/plans/index.yaml`; the index
   schema requires `plan_kind ∈ {implementation, strategy,
   legacy}` and `status ∈ {active, merged, archived}` per entry.
-  Epic 1 ships index entries for all 19 current plan files (2
-  implementation, 1 strategy, 16 legacy). file:
+  Epic 1 ships index entries for all 10 current plan files (2
+  implementation, 1 strategy, 7 legacy) — the inventory matches
+  `.gobby/plans/task-*.md` exactly at ship time. file:
   `.gobby/plans/index.yaml`. test:
   `tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed`
-  asserts the field is present and validated.
+  asserts the field is present and validated, AND
+  `tests/plans/test_plan_coverage_ci.py::test_index_inventory_matches_repo`
+  asserts the index entry-set equals the on-disk plan-file set
+  (no stale rows, no unindexed files).
 - A9.3 — for each `(project_id, plan_id, root_task_ref)` whose
   `plan_kind == implementation`, the test asserts a manifest
   exists at the path returned by `coverage_manifest_path`.
@@ -2184,17 +2252,28 @@ the assertions that file makes):**
   `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`,
   `tests/plans/test_plan_coverage_ci.py::test_legacy_plans_have_no_manifests`.
 - A9.7 — every `.gobby/plans/.grandfathered` entry has a paired
-  `# remove-by: <task-ref>` annotation; the named task exists and
-  is open. tests:
+  `# remove-by: <task-ref>` annotation; the named task is
+  recorded as `exists: true, open: true` in the committed
+  `.gobby/plans/.grandfathered-task-state.yaml` snapshot. The
+  snapshot is the self-describing source of truth so this check
+  works under `GOBBY_LIVE_DB=0` (A9.9). When the live DB is
+  available, A9 also asserts the snapshot matches live state.
+  file: `.gobby/plans/.grandfathered-task-state.yaml`. tests:
   `tests/plans/test_plan_coverage_ci.py::test_grandfathered_entries_require_remove_by_annotation`,
-  `test_grandfathered_target_task_exists_and_open`.
+  `tests/plans/test_plan_coverage_ci.py::test_grandfathered_target_task_exists_and_open_via_snapshot`,
+  `tests/plans/test_plan_coverage_ci.py::test_grandfathered_snapshot_matches_live_db_when_available`.
 - A9.8 — new `.grandfathered` entries since the last signed-off
   commit fail without the paired annotation. test:
   `tests/plans/test_plan_coverage_ci.py::test_no_unauthorized_grandfathered_additions`.
 - A9.9 — CI does not require a live task DB; the
-  `plan_index.yaml` and committed manifests are self-describing.
-  behavior: "test runs successfully with `GOBBY_LIVE_DB=0`" in
-  `tests/plans/test_plan_coverage_ci.py`.
+  `.gobby/plans/index.yaml`, committed manifests, and
+  `.gobby/plans/.grandfathered-task-state.yaml` snapshot are
+  self-describing. Every assertion in A9.1–A9.8 and A9.10–A9.12
+  resolves from committed data alone. behavior: "test runs
+  successfully with `GOBBY_LIVE_DB=0`; no skipped or
+  conditionally-relaxed checks under that flag" in
+  `tests/plans/test_plan_coverage_ci.py`. test:
+  `tests/plans/test_plan_coverage_ci.py::test_ci_runs_under_no_live_db_with_no_skipped_checks`.
 - A9.10 — CI passes `plan_kind` from each index entry to
   `parse_plan(path, plan_kind=...)`. Strategy and legacy entries
   parse permissively; implementation entries parse strictly.
@@ -2206,6 +2285,14 @@ the assertions that file makes):**
   unindexed plan file fails the test citing the missing entry.
   This closes the silent-skip hole where legacy or newly added
   plans could escape A9 by not appearing in the index.
+- A9.12 — `tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file`
+  asserts every `entries[*].plan_id` in `.gobby/plans/index.yaml`
+  has a corresponding `.gobby/plans/<plan_id>.md` file on disk;
+  a stale index row pointing at a missing or deleted plan file
+  fails the test citing the row's `plan_id` and the expected
+  path. This is the reciprocal of A9.11 — together they enforce
+  a strict bijection between the on-disk plan-file set and the
+  indexed entry set, with no silent additions on either side.
 
 ## A10 Contract documentation
 
