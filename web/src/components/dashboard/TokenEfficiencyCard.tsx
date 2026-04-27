@@ -149,7 +149,6 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 type="monotone"
                 dataKey="tokens_spent"
                 name="tokens_spent"
-                stackId="tokens"
                 stroke="#3b82f6"
                 fill="rgba(59,130,246,0.2)"
               />
@@ -157,7 +156,6 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 type="monotone"
                 dataKey="tokens_saved"
                 name="tokens_saved"
-                stackId="tokens"
                 stroke="#22c55e"
                 fill="rgba(34,197,94,0.2)"
               />

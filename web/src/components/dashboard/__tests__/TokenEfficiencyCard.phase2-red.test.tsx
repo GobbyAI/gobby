@@ -34,7 +34,6 @@ vi.mock('recharts', () => ({
   AreaChart: ({ children }: { children: ReactNode }) => (
     <div data-testid="area-chart">{children}</div>
   ),
-  Area: () => null,
   XAxis: () => null,
   YAxis: () => null,
   CartesianGrid: () => null,
@@ -48,7 +47,7 @@ vi.mock('recharts', () => ({
       item: { payload: { tokens_spent: number; tokens_saved: number } },
     ) => [string, string]
   }) => {
-    const [savedValue, savedLabel] = formatter(0, 'tokens_saved', {
+    const [savedValue, savedLabel] = formatter(800, 'tokens_saved', {
       payload: { tokens_spent: 1200, tokens_saved: 800 },
     })
     return (
@@ -57,6 +56,18 @@ vi.mock('recharts', () => ({
       </div>
     )
   },
+  Area: ({
+    dataKey,
+    stackId,
+  }: {
+    dataKey: string
+    stackId?: string
+  }) => (
+    <div
+      data-testid={`area-${dataKey}`}
+      {...(stackId ? { 'data-stack-id': stackId } : {})}
+    />
+  ),
 }))
 
 function primeHooks() {
@@ -99,12 +110,14 @@ describe('TokenEfficiencyCard phase 2 red coverage', () => {
     vi.clearAllMocks()
   })
 
-  it('formats the Saved tooltip from the bucket tokens_saved value', () => {
+  it('renders independent chart areas so Saved tooltip values are not stacked', () => {
     primeHooks()
 
     render(<TokenEfficiencyCard hours={6} />)
 
     expect(screen.getByTestId('tooltip-saved')).toHaveTextContent('Saved: 800')
+    expect(screen.getByTestId('area-tokens_spent')).not.toHaveAttribute('data-stack-id')
+    expect(screen.getByTestId('area-tokens_saved')).not.toHaveAttribute('data-stack-id')
   })
 
   it.each([
