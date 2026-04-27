@@ -17,6 +17,7 @@ class FakeSession:
     terminal_context: object | None = None
     parent_session_id: str | None = None
     status: str = "active"
+    turn_count: int = 0
 
 
 @pytest.fixture
@@ -310,3 +311,124 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed"})
 
         ism_manager.create_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pane_wake_coalesces_during_idle_window(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Bursty completions during one idle turn → one pane nudge, every ISM stored."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+            turn_count=5,
+        )
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"})
+
+        tmux_pane_sender.assert_awaited_once_with("%12", CONTINUE_WAKE_SIGNAL, None)
+        assert ism_manager.create_message.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_pane_wake_resumes_after_turn_advances(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Once the user takes a new turn, the next completion fires a pane wake again."""
+        first_session = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+            turn_count=5,
+        )
+        second_session = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+            turn_count=6,
+        )
+        session_manager.get.side_effect = [first_session, second_session]
+
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
+
+        assert tmux_pane_sender.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_pane_wake_resumes_after_debounce_ceiling(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stuck idle longer than the 30s ceiling → next completion fires again."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+            turn_count=5,
+        )
+        tmux_pane_sender = AsyncMock()
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        clock = [1000.0]
+
+        def fake_monotonic() -> float:
+            return clock[0]
+
+        monkeypatch.setattr("gobby.events.wake.time.monotonic", fake_monotonic)
+
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
+        clock[0] += 5.0
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
+        clock[0] += 31.0
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"})
+
+        assert tmux_pane_sender.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_pane_wake_failure_does_not_record_timestamp(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """If send-keys raises, the next completion should still try to wake the pane."""
+        session_manager.get.return_value = FakeSession(
+            id="sess-1",
+            agent_depth=0,
+            terminal_context='{"tmux_pane": "%12"}',
+            turn_count=5,
+        )
+        tmux_pane_sender = AsyncMock(side_effect=[RuntimeError("boom"), None])
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=tmux_pane_sender,
+        )
+
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
+        await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
+
+        assert tmux_pane_sender.await_count == 2
