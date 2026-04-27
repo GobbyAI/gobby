@@ -1917,7 +1917,7 @@ Target: `CLAUDE.md` (project root), `GUIDING_PRINCIPLES.md`, any `docs/` page re
 - 4.5.1 — Update docs is implemented according to this section. file: `CLAUDE.md`.
 
 ## T1 Task Mapping
-`kind: framing`
+`kind: deliverable`
 
 <!-- Populated by /gobby expand -->
 | Plan Item | Task Ref | Status |
@@ -1925,7 +1925,11 @@ Target: `CLAUDE.md` (project root), `GUIDING_PRINCIPLES.md`, any `docs/` page re
 
 **Acceptance:**
 
-- T1.1 — Each populated Task Mapping row is represented by a stable acceptance item in the owning deliverable section instead of relying on a parser-visible table row. file: `.gobby/plans/task-12725-lifecycle-dispatch.md`.
+- T1.1 — Task Mapping row for §4.1 Remove conductor package is represented as a stable acceptance item. file: `src/gobby/conductor/`.
+- T1.2 — Task Mapping row for §4.2 Tombstone obsolete pipelines is represented as a stable acceptance item. file: `src/gobby/install/shared/workflows/pipelines/`.
+- T1.3 — Task Mapping row for §4.3 Tombstone obsolete agents is represented as a stable acceptance item. file: `src/gobby/install/shared/workflows/agents/`.
+- T1.4 — Task Mapping row for §4.4 DB migration to disable retired workflow_definitions rows is represented as a stable acceptance item. file: `src/gobby/storage/migrations.py`.
+- T1.5 — Task Mapping row for §4.5 Update docs is represented as a stable acceptance item. file: `CLAUDE.md`.
 
 ## V1 Verification
 `kind: verification`
