@@ -103,6 +103,7 @@ vi.mock("../../activity/ActivityPanel", () => ({
     chatSessionId,
     onApprovePlan,
     onRequestPlanChanges,
+    onAddFileToChat,
   }: {
     sessions?: Array<{ id: string }>
     onSwapSession?: (target: { sessionId: string; sessionType: "terminal" | "web_chat" | null; agentRunId: string | null }) => void
@@ -110,6 +111,7 @@ vi.mock("../../activity/ActivityPanel", () => ({
     chatSessionId?: string | null
     onApprovePlan?: () => void
     onRequestPlanChanges?: (feedback: string) => void
+    onAddFileToChat?: (filePath: string) => void
   }) => (
     <div data-testid="activity-panel">
       <span data-testid="activity-panel-session-count">{sessions?.length ?? 0}</span>
@@ -162,6 +164,13 @@ vi.mock("../../activity/ActivityPanel", () => ({
         onClick={() => onRequestPlanChanges?.("Needs changes")}
       >
         Request Changes
+      </button>
+      <button
+        type="button"
+        data-testid="attach-file-to-chat"
+        onClick={() => onAddFileToChat?.("/tmp/context.md")}
+      >
+        Attach File
       </button>
     </div>
   ),
@@ -846,7 +855,7 @@ describe("ChatPage", () => {
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the activity panel open after repeated mobile user toggles", async () => {
+  it("does not flicker or disappear after repeated mobile user toggles", async () => {
     isMobileState.value = true;
     isPinnedState.value = false;
     const chat = createChat();
@@ -868,6 +877,7 @@ describe("ChatPage", () => {
     setIsPinnedSpy.mockClear();
     fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
     isPinnedState.value = true;
     await act(async () => {
@@ -879,9 +889,11 @@ describe("ChatPage", () => {
         />,
       );
     });
+    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
     isPinnedState.value = true;
     await act(async () => {
@@ -893,6 +905,7 @@ describe("ChatPage", () => {
         />,
       );
     });
+    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
     expect(setIsPinnedSpy).not.toHaveBeenCalledWith(false);
   });
@@ -1032,6 +1045,31 @@ describe("ChatPage", () => {
 
     expect(onApprovePlan).toHaveBeenCalledTimes(1);
     expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the mobile attach-file callback routed while the panel is pinned", async () => {
+    isMobileState.value = true;
+    isPinnedState.value = true;
+    const onSend = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({ onSend })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("attach-file-to-chat")).toBeInTheDocument();
+    });
+    setIsPinnedSpy.mockClear();
+
+    fireEvent.click(screen.getByTestId("attach-file-to-chat"));
+
+    expect(onSend).toHaveBeenCalledWith("Read and reference this file: /tmp/context.md");
+    expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
+    expect(setIsPinnedSpy).not.toHaveBeenCalled();
   });
 
   it("does not unpin on mobile when the activity panel is already unpinned", async () => {
