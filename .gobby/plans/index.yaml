@@ -3,7 +3,7 @@ entries:
     project_id: d45545c5-ded5-4335-b115-0245752edacf
     root_task_ref: "12725"
     plan_kind: implementation
-    status: merged
+    status: active
   - plan_id: task-12725-lifecycle-dispatch-rev1
     project_id: d45545c5-ded5-4335-b115-0245752edacf
     root_task_ref: "12725"
