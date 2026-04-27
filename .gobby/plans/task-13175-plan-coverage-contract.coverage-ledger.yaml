@@ -253,13 +253,24 @@ sections:
               asserts gobby.plans.parser has no gobby.storage import.
       A2.13:
         expected_leaves:
-          - title: "Parser populates Deferral from YAML block"
+          - title: "Parser populates Deferral(task_ref, reason, owner, original_acceptance_items) from YAML block (full test names)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              parser parses a deferred section's YAML deferral block
-              into Deferral(task_ref, reason, owner,
-              original_acceptance_items); proven by ::test_deferred_object_parsed
-              and ::test_deferred_without_object_raises.
+              parser parses a deferred section's fenced YAML
+              deferral block into Deferral(task_ref, reason, owner,
+              original_acceptance_items). Both named tests in
+              tests/plans/test_parser.py exist and pass:
+              tests/plans/test_parser.py::test_deferred_object_parsed
+              (positive case — fields populated correctly) and
+              tests/plans/test_parser.py::test_deferred_without_object_raises
+              (negative case — raises PlanParseError when the
+              deferred section lacks a parseable YAML block).
+        notes: >-
+          Ledger-adversary R3 fix: prior summary used bare suffixes
+          (::test_deferred_object_parsed / ::test_deferred_without_object_raises)
+          which is too lenient since expansion leaves are self-
+          contained — full tests/...py::test_name references
+          required.
       A2.14:
         expected_leaves:
           - title: "Parser requires at least one artifact reference per acceptance item; multi-artifact items use first match"
@@ -537,12 +548,23 @@ sections:
           eliminates the discrepancy.
       A4.5:
         expected_leaves:
-          - title: "CLI exit codes per status table"
+          - title: "CLI exit codes per full documented table including code 8 PathIdentityMismatchError"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_coverage_cli.py::test_cli_exit_codes_per_status
-              proves exit codes 0, 2, 3, 4, 5, 6, 7 for documented
-              outcomes.
+              is table-driven and asserts the full documented exit
+              code surface 0, 2, 3, 4, 5, 6, 7, 8: 0 (all-covered),
+              2 (missing), 3 (invalid), 4 (StaleHashError), 5
+              (IdentityCollisionError), 6 (MissingScopeError), 7
+              (EmptyComponentError), 8 (PathIdentityMismatchError —
+              all four collision modes per A4.18). A4.18 covers the
+              PathIdentityMismatchError-specific behavior; A4.5
+              covers the exit-code-table contract end-to-end.
+        notes: >-
+          Ledger-adversary R3 fix: prior summary listed only codes
+          0-7 and omitted 8, which would let a leaf write a
+          status-table test that misses the path-collision exit
+          code. Full table required.
       A4.6:
         expected_leaves:
           - title: "coverage_manifest_path canonical Path scheme"
