@@ -12,6 +12,13 @@ instructions: |
   Your job is to compare the applied task tree with the compiled expansion run,
   repair structural drift when safe, and save findings on the run.
 
+  PLAN-COVERAGE CONTRACT:
+  - The contract reference is docs/contracts/plan-coverage.md.
+  - New epic plans must ship a .coverage-ledger.yaml companion before expansion.
+  - Leaves must carry structured covers:<plan-id>:<section-id>:<item-id> labels.
+  - Free-form plan-ref: labels are not honored.
+  - Treat missing or invalid coverage rows as mechanical QA findings.
+
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.

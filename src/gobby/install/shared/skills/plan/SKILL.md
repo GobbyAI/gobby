@@ -18,6 +18,18 @@ The **drafting methodology** (phase structure, task format, TDD rules, categorie
 
 The **review methodology** for the adversarial loop lives in the `plan-review` skill — the spawned `plan-adversary` agent loads it; you do not need to load it in this skill.
 
+## Plan-Coverage Contract Grammar
+
+The Plan-Coverage Contract is the authoring contract for new epic plans. The
+canonical grammar, kind enum, acceptance-item shape, typed deferral object,
+structured `covers:<plan-id>:<section-id>:<item-id>` record, and table-row
+decomposition rule live in `plan-draft/SKILL.md`. The full reference page is
+`docs/contracts/plan-coverage.md`.
+
+When drafting or revising a plan, load `plan-draft` and follow its typed
+grammar before presenting the artifact. Free-form `plan-ref:` labels are not
+honored; expansion coverage comes only from structured `covers:` records.
+
 ## Workflow Overview
 
 | # | Name | Notes |
