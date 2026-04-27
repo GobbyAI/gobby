@@ -282,8 +282,7 @@
 }
 
 /* --- Session kind badges --- */
-.chip,
-.session-kind-badge {
+.chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -298,26 +297,22 @@
   letter-spacing: 0;
 }
 
-.chip--tmux,
-.session-kind-badge--tmux {
+.chip--tmux {
   background: color-mix(in srgb, #14b8a6 15%, transparent);
   color: #14b8a6;
 }
 
-.chip--web,
-.session-kind-badge--web {
+.chip--web {
   background: color-mix(in srgb, #0284c7 15%, transparent);
   color: #0284c7;
 }
 
-.chip--auto,
-.session-kind-badge--auto {
+.chip--auto {
   background: color-mix(in srgb, #f97316 15%, transparent);
   color: #fb923c;
 }
 
-.chip--sandbox,
-.session-kind-badge--sandbox {
+.chip--sandbox {
   background: color-mix(in srgb, #d97706 18%, transparent);
   color: #fbbf24;
 }

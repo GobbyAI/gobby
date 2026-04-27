@@ -12,11 +12,7 @@ vi.mock('../../../hooks/useSessionDetail', () => ({
   }),
 }))
 
-type LocalSession = GobbySession & {
-  is_local?: boolean | null
-}
-
-function makeSession(overrides: Partial<LocalSession> = {}): LocalSession {
+function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
   return {
     id: 'session-1',
     ref: '#201',
