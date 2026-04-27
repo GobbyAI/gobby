@@ -6,7 +6,6 @@ import {
   getTaskBucket,
   getTaskStateSummary,
   getTaskStateTokens,
-  TASK_BUCKET_BG,
   TASK_BUCKET_COLORS,
   TASK_BUCKET_LABELS,
   TASK_BUCKET_ORDER,
@@ -24,15 +23,6 @@ const STATUS_COLORS: Record<string, string> = {
   review_approved: "#2dd4bf",
   closed: "#9ca3af",
   escalated: "#f87171",
-};
-
-const STATUS_BG: Record<string, string> = {
-  open: TASK_BUCKET_BG.ready,
-  in_progress: "rgba(251, 146, 60, 0.15)",
-  needs_review: "rgba(192, 132, 252, 0.15)",
-  review_approved: "rgba(45, 212, 191, 0.15)",
-  closed: "rgba(156, 163, 175, 0.15)",
-  escalated: "rgba(248, 113, 113, 0.15)",
 };
 
 const PRIORITY_STYLES: Record<
@@ -54,19 +44,17 @@ const TYPE_STYLES: Record<string, { bg: string; color: string }> = {
   chore: { bg: "rgba(115, 115, 115, 0.15)", color: "#a3a3a3" },
 };
 
+function chipToken(value: string | number): string {
+  return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+}
+
 // =============================================================================
 // StatusBadge
 // =============================================================================
 
 export function StatusBadge({ status }: { status: string }) {
-  const color = STATUS_COLORS[status] || "#737373";
-  const bg = STATUS_BG[status] || "rgba(115, 115, 115, 0.12)";
   return (
-    <span
-      className="task-badge task-badge--status"
-      style={{ background: bg, color }}
-    >
-      <span className="task-badge-dot" style={{ backgroundColor: color }} />
+    <span className={`task-badge chip chip--state-${chipToken(status)}`}>
       {status.replace(/_/g, " ")}
     </span>
   );
@@ -110,10 +98,8 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
       {tokens.map(token => (
         <span
           key={token.key}
-          className="task-badge task-badge--status"
-          style={{ background: token.background, color: token.color }}
+          className={`task-badge chip chip--state-${chipToken(token.key)}`}
         >
-          <span className="task-badge-dot" style={{ backgroundColor: token.color }} />
           {token.label}
         </span>
       ))}
@@ -128,10 +114,7 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 export function PriorityBadge({ priority }: { priority: number }) {
   const style = PRIORITY_STYLES[priority] || PRIORITY_STYLES[2];
   return (
-    <span
-      className="task-badge task-badge--priority"
-      style={{ background: style.bg, color: style.color }}
-    >
+    <span className={`task-badge chip chip--priority-${chipToken(priority)}`}>
       {style.label}
     </span>
   );
@@ -142,12 +125,8 @@ export function PriorityBadge({ priority }: { priority: number }) {
 // =============================================================================
 
 export function TypeBadge({ type }: { type: string }) {
-  const style = TYPE_STYLES[type] || TYPE_STYLES.task;
   return (
-    <span
-      className="task-badge task-badge--type"
-      style={{ background: style.bg, color: style.color }}
-    >
+    <span className={`task-badge chip chip--type-${chipToken(type)}`}>
       {type}
     </span>
   );
