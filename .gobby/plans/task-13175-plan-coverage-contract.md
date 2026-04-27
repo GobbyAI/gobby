@@ -1090,6 +1090,13 @@ rows:
 - `tests/plans/test_coverage_signature.py::test_db_without_project_raises`.
 - `tests/plans/test_coverage_signature.py::test_jsonl_without_scope_raises`.
 - `tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises`.
+- `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_root_task_ref`
+  — calling `evaluate(task_tree=TaskTreeSource.matrix_file,
+  matrix_file=<path>, root_task_ref="#13175", ...)` raises
+  `MissingScopeError`/`TypeError` (matrix-file mode rejects
+  scope inputs).
+- `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_project_id`
+  — same with `project_id`.
 - `tests/plans/test_coverage_signature.py::test_mypy_overload_rejects_db_without_scope`
   — runs `mypy --strict` on a fixture file that calls
   `evaluate(task_tree=TaskTreeSource.db, ...)` without scope inputs;
@@ -1177,10 +1184,13 @@ rows:
   `test_db_without_project_raises`,
   `test_jsonl_without_scope_raises`,
   `test_mypy_overload_rejects_db_without_scope`.
-- A4.3 — `evaluate(task_tree=TaskTreeSource.matrix_file, ...)` accepts
-  only `matrix_file`; does not accept `root_task_ref` or
-  `project_id`. test:
-  `tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises`.
+- A4.3 — `evaluate(task_tree=TaskTreeSource.matrix_file, ...)`
+  accepts only `matrix_file`; passing `root_task_ref` or
+  `project_id` is rejected at type-check time (mypy `@overload`)
+  and at runtime (`MissingScopeError` / `TypeError`). tests:
+  `tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises`,
+  `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_root_task_ref`,
+  `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_project_id`.
 - A4.4 — `src/gobby/cli/plan.py` defines the `gobby plan coverage`
   Click command with all eight flags (`--plan`, `--plan-id`,
   `--plan-hash`, `--task-tree`, `--root-task`, `--project-id`,

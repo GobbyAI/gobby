@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "892be32e31f7a86d6af3b8b6dad4c4011294dfabdfc4a40d500104af9551a333"
+plan_hash: "63b0505f5add7fcf3af627c7224feca8adad3888db266356ecb36bb53d50193c"
 root_task_ref: "13175"
 
 sections:
@@ -136,12 +136,22 @@ sections:
               post-A7-retrofit #12725 plan parses; depends_on A7.1-A7.4.
       A2.5:
         expected_leaves:
-          - title: "Parser fixture test against task-13173-recovery.md"
+          - title: "Parser strategy-mode fixture against .gobby/plans/task-13173-lifecycle-dispatch-recovery.md"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_parser.py::test_parses_task_13173_recovery
-              asserts A1–A10, D0.1–D0.9, B1–B5, C1–C6, D1–D8, F1–F4
-              section IDs parse from the strategy doc.
+              parses .gobby/plans/task-13173-lifecycle-dispatch-recovery.md
+              with plan_kind=PlanKind.strategy and asserts presence
+              of section_id for A1–A10, D0.1–D0.9, B1–B5, C1–C6,
+              D1–D8, F1–F4. Canonical headings without kind: lines
+              yield PlanSection(kind=Kind.framing,
+              acceptance_items=()); narrative headings (## Context,
+              ## Phase A — ..., ## Adversary Review Log, ##
+              Verification, ## Out of Scope, ### Round N — REJECTED)
+              are recorded in PlanDocument.framing_headings.
+              Implementation mode would raise on the same input;
+              the test asserts only ID presence, not deliverable
+              shape.
       A2.6:
         expected_leaves:
           - title: "Parser handles bare and titled heading forms"
@@ -356,12 +366,18 @@ sections:
               cases including mypy --strict on a fixture file.
       A4.3:
         expected_leaves:
-          - title: "evaluate signature: matrix_file accepts only matrix_file"
+          - title: "evaluate signature: matrix_file accepts only matrix_file (rejects root/project)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises
-              asserts MissingScopeError when matrix_file kind is used
-              without --matrix-file path.
+              gobby.plans.coverage.evaluate(task_tree=TaskTreeSource.matrix_file,
+              ...) accepts only matrix_file; passing
+              root_task_ref or project_id raises (rejected at
+              type-check time via @overload and at runtime via
+              MissingScopeError / TypeError). Tests cover both the
+              missing-path case and the wrong-scope-input case:
+              tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises,
+              ::test_matrix_file_rejects_root_task_ref,
+              ::test_matrix_file_rejects_project_id.
       A4.4:
         expected_leaves:
           - title: "Click CLI: gobby plan coverage with eight flags"
@@ -451,12 +467,16 @@ sections:
               task_tree_source, task_tree_source_hash, evidence_summary.
       A4.15:
         expected_leaves:
-          - title: "CoverageRow shape with leaves and evidence"
+          - title: "CoverageRow shape with constrained status, CoverageRowLeaf fields, and evidence"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              gobby.plans.coverage.CoverageRow includes section_id,
-              item_id, status, leaves (CoverageRowLeaf list),
-              deferral_target, evidence rows.
+              gobby.plans.coverage.CoverageRow.status is constrained
+              to CoverageStatus (∈ {covered, deferred, missing,
+              invalid}); CoverageRow includes section_id, item_id,
+              status, leaves (tuple[CoverageRowLeaf, ...]),
+              deferral_target, evidence rows; each CoverageRowLeaf
+              carries leaf_task_ref, validation_criteria_snippet,
+              and matched_artifact_ref per matched leaf.
       A4.16:
         expected_leaves:
           - title: "Multi-plan-multi-root distinct manifests"
