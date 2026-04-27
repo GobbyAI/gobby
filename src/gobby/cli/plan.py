@@ -35,10 +35,16 @@ from gobby.storage.migrations import run_migrations
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.commits import get_task_diff
 
+from .plan_snapshots import grandfathered_refresh_command, legacy_classification_refresh_command
+
 
 @click.group()
 def plan() -> None:
     """Plan commands."""
+
+
+plan.add_command(grandfathered_refresh_command)
+plan.add_command(legacy_classification_refresh_command)
 
 
 @plan.command("coverage")
