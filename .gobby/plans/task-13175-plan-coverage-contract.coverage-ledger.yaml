@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "dde5f2ec62c6b906eacfdbf6382859dbd369e895ac8f923e4336d930b1be9246"
+plan_hash: "0d2a8c3d9b014af18594783fc67cbabed11215df3883fe0f765dd3957620a7c6"
 root_task_ref: "13175"
 
 sections:
@@ -289,13 +289,15 @@ sections:
               DeferralValidationResult, TaskStoreProtocol.
       A3.9:
         expected_leaves:
-          - title: "Test: validate_deferral five short-circuit failure cases"
+          - title: "Test: validate_deferral six short-circuit failure cases"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_deferral.py asserts each of
               test_validate_task_missing, _task_closed,
               _missing_provenance_label, _criteria_does_not_duplicate,
-              _missing_reason_or_owner short-circuits in order.
+              _missing_reason_or_owner, and
+              _missing_dependency_or_cited_parent short-circuits in
+              the documented order.
       A3.10:
         expected_leaves:
           - title: "Test: validate_deferral happy path returns valid"
@@ -315,13 +317,17 @@ sections:
               missing_dependency_or_cited_parent.
       A3.12:
         expected_leaves:
-          - title: "Tests: validate_deferral dependency-path and cited-parent-path"
+          - title: "Tests: validate_deferral dependency / cited-parent / out-of-scope proof"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_deferral.py::test_validate_dependency_path,
-              ::test_validate_cited_parent_path, and
-              ::test_validate_missing_dependency_or_cited_parent
-              all pass.
+              ::test_validate_cited_parent_path,
+              ::test_validate_cited_parent_without_out_of_scope_label_rejected,
+              ::test_validate_cited_parent_inside_dependency_closure_rejected,
+              and ::test_validate_missing_dependency_or_cited_parent
+              all pass; cited-parent path requires
+              out-of-scope-for:<recovery_epic_ref> label AND
+              non-reachable parent.
 
   A4:
     acceptance_items:
@@ -492,12 +498,15 @@ sections:
           depends_on edges during Epic 1 expansion.
       A5.2:
         expected_leaves:
-          - title: "Document mechanical rejection contract in expansion-qa SKILL.md"
+          - title: "Document mechanical rejection contract in expansion-qa.yaml instructions"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              src/gobby/install/shared/skills/expansion-qa/SKILL.md
+              the instructions block in
+              src/gobby/install/shared/workflows/agents/expansion-qa.yaml
               documents that any deliverable item with status missing
-              or invalid rejects the run mechanically.
+              or invalid rejects the run mechanically. No expansion-qa
+              SKILL.md exists; the agent's inline instructions are the
+              contract surface.
       A5.3:
         expected_leaves:
           - title: "Test: rejection_notes cite section/item/status/detail"
@@ -665,15 +674,18 @@ sections:
               asserts base_commit_sha is cleared with the family pair.
       A6.14:
         expected_leaves:
-          - title: "MCP artifact tool schemas surface base_commit_sha and plan_file_hash"
+          - title: "Extend existing artifact MCP tool schemas with base_commit_sha and plan_file_hash"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              src/gobby/mcp_proxy/tools/tasks_ops.py JSON schemas for
-              get_artifacts, set_artifact, set_artifacts_atomic,
-              clear_isolation_pair list base_commit_sha and
-              plan_file_hash with explicit nullability;
+              src/gobby/mcp_proxy/tools/tasks/_artifacts.py JSON
+              schemas for get_artifacts, set_artifact,
+              set_artifacts_atomic, clear_isolation_pair list
+              base_commit_sha and plan_file_hash with explicit
+              nullability;
               tests/storage/tasks/test_artifacts_plan_file_hash.py::test_mcp_get_artifacts_includes_plan_file_hash
-              asserts.
+              asserts. The artifact MCP tools already exist (added
+              under #12725 §1.1d) — Epic 1 extends their schemas,
+              not introduces a new tasks_ops.py file.
       A6.15:
         expected_leaves:
           - title: "Test: plan_file_hash round-trips via set_artifact/get_artifacts"
@@ -831,21 +843,26 @@ sections:
               skips merged-and-grandfathered plans.
       A9.2:
         expected_leaves:
-          - title: "Author .gobby/plans/index.yaml with three entries"
+          - title: "Author .gobby/plans/index.yaml with three entries and plan_kind field"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               .gobby/plans/index.yaml lists task-12725-lifecycle-dispatch
-              (merged), task-13175-plan-coverage-contract (active),
-              task-13173-lifecycle-dispatch-recovery (active);
+              (plan_kind=implementation, status=merged),
+              task-13175-plan-coverage-contract
+              (plan_kind=implementation, status=active), and
+              task-13173-lifecycle-dispatch-recovery
+              (plan_kind=strategy, status=active); the index schema
+              validates plan_kind ∈ {implementation, strategy};
               tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed
               passes.
       A9.3:
         expected_leaves:
-          - title: "CI assertion: every active plan has a manifest at canonical path"
+          - title: "CI assertion: every active implementation plan has a manifest at canonical path"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_plan_coverage_ci.py::test_every_active_plan_has_manifest
-              passes.
+              tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest
+              passes; strategy entries are exempt from the
+              manifest-existence check.
       A9.4:
         expected_leaves:
           - title: "CI assertion: manifest plan_hash matches on-disk plan"
@@ -862,11 +879,13 @@ sections:
               passes for every active plan's committed manifest.
       A9.6:
         expected_leaves:
-          - title: "CI assertion: orphan manifests fail"
+          - title: "CI assertion: orphan manifests AND strategy-plan manifests fail"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests
-              passes.
+              and ::test_strategy_plans_have_no_manifests both pass;
+              manifests pointing at index entries with
+              plan_kind=strategy are treated as orphan.
       A9.7:
         expected_leaves:
           - title: "CI assertion: .grandfathered entries require remove-by + open task"
@@ -891,6 +910,15 @@ sections:
               tests/plans/test_plan_coverage_ci.py runs with
               GOBBY_LIVE_DB=0; index.yaml and committed manifests are
               self-describing.
+      A9.10:
+        expected_leaves:
+          - title: "CI dispatches parse_plan plan_kind from index entries"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind
+              asserts strategy entries are parsed permissively and
+              implementation entries are parsed strictly via the
+              plan_kind from .gobby/plans/index.yaml.
 
   A10:
     acceptance_items:
@@ -906,13 +934,15 @@ sections:
               rules).
       A10.2:
         expected_leaves:
-          - title: "Update plan/plan-draft/plan-review/expansion-qa SKILL.md files"
+          - title: "Update plan/plan-draft/plan-review SKILL.md files plus expansion-qa.yaml instructions"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              all four SKILL.md files at
-              src/gobby/install/shared/skills/{plan,plan-draft,plan-review,expansion-qa}/SKILL.md
+              the three SKILL.md files at
+              src/gobby/install/shared/skills/{plan,plan-draft,plan-review}/SKILL.md
+              and the instructions block in
+              src/gobby/install/shared/workflows/agents/expansion-qa.yaml
               contain or link to the contract surface relevant to
-              their role.
+              their role. (No expansion-qa SKILL.md exists.)
       A10.3:
         expected_leaves:
           - title: "Author docs/contracts/plan-coverage.md reference page"

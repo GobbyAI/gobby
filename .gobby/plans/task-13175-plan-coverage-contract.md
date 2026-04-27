@@ -315,17 +315,31 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   fails to match AND whose kind is anything else (or absent) is a
   `PlanParseError`. This is the parse mode used by A5 expansion-qa,
   A7 retrofit assertions, and A9 CI for implementation plans.
-- For `plan_kind=strategy` (permissive): a non-canonical heading
-  without an explicit `kind:` line is recorded in `framing_headings`
-  with no error; sections that DO match the regex still require
-  `kind:` front-matter. This mode exists so the strategy doc
-  `task-13173-lifecycle-dispatch-recovery.md` (which carries narrative
-  headings such as `## Context`, `## Phase A — ...`,
-  `## Adversary Review Log`, `## Verification`,
-  `## Out of Scope (filed as follow-ups)`) can be parsed without a
-  retrofit pass. Strategy plans are excluded from A9 manifest/hash/
-  zero-row CI by their `plan_kind` entry in `.gobby/plans/index.yaml`
-  (see A9).
+- For `plan_kind=strategy` (permissive): both non-canonical and
+  canonical headings missing `kind:` front-matter are tolerated.
+  Specifically:
+  - A non-canonical heading without `kind:` is recorded in
+    `framing_headings`.
+  - A canonical heading (matches the regex) without `kind:` is
+    parsed into a `PlanSection` whose `kind` defaults to
+    `Kind.framing` and whose `acceptance_items` is empty. The
+    `section_id` is captured normally so fixture tests can assert
+    presence (e.g., A1, A10, D0.1, B5, etc.). No `**Acceptance:**`
+    block is required.
+  - A canonical heading WITH an explicit `kind:` line still
+    follows the strict rules (deliverable requires acceptance,
+    item IDs must dotted-prefix-match, etc.).
+  This mode exists so the strategy doc
+  `task-13173-lifecycle-dispatch-recovery.md` (which carries
+  canonical IDs `### A1.`, `### D0.1`, `### B5`, etc. without
+  `kind:` lines, plus narrative headings such as `## Context`,
+  `## Phase A — ...`, `## Adversary Review Log`,
+  `## Verification`, `## Out of Scope (filed as follow-ups)`) can
+  be parsed without a retrofit pass. Strategy plans are excluded
+  from A9 manifest/hash/zero-row CI by their `plan_kind` entry in
+  `.gobby/plans/index.yaml` (see A9). The strategy fixture in A2
+  asserts only `section_id` presence, not deliverable/acceptance
+  shape, since strategy plans are not implementation contracts.
 - A heading that matches but is missing `kind:` front-matter is a
   `PlanParseError`.
 - Duplicate `section_id` anywhere is a `PlanParseError`.
@@ -371,16 +385,22 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   is gated on A7.1–A7.4 — see A7 dependency note.)
 - `tests/plans/test_parser.py::test_parses_task_13173_recovery`
   — parses `.gobby/plans/task-13173-lifecycle-dispatch-recovery.md`
-  with `plan_kind=strategy` (permissive); asserts presence of `A1`–
-  `A10`, `D0.1`–`D0.9`, `B1`–`B5`, `C1`–`C6`, `D1`–`D8`, `F1`–`F4`
-  (the parser handles the trailing-period delimiter via the
-  `[).:-]` lookahead). The strategy doc's narrative headings
-  (`## Context`, `## Phase A — ...`, `## Adversary Review Log`,
+  with `plan_kind=strategy` (permissive); asserts presence of
+  `section_id` for `A1`–`A10`, `D0.1`–`D0.9`, `B1`–`B5`, `C1`–`C6`,
+  `D1`–`D8`, `F1`–`F4` (the parser handles the trailing-period
+  delimiter via the `[).:-]` lookahead). Each canonical heading
+  parses into a `PlanSection` whose `kind` defaults to
+  `Kind.framing` and whose `acceptance_items` is empty (the
+  strategy doc carries no `kind:` lines and no `**Acceptance:**`
+  blocks; the test asserts only ID presence, not deliverable
+  shape). The strategy doc's narrative headings (`## Context`,
+  `## Phase A — ...`, `## Adversary Review Log`,
   `## Verification`, `## Out of Scope (filed as follow-ups)`,
   `### Round N — REJECTED`, etc.) are recorded in
   `framing_headings` rather than raising. The strategy doc is
   excluded from A9 manifest/hash CI by its
-  `plan_kind: strategy` entry in `.gobby/plans/index.yaml`.
+  `plan_kind: strategy` entry in `.gobby/plans/index.yaml` (see
+  A9 for the schema and discovery flow).
 - `tests/plans/test_parser.py::test_parses_self`
   — parses this very plan
   (`.gobby/plans/task-13175-plan-coverage-contract.md`); asserts
@@ -425,6 +445,14 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   cleanly with `plan_kind=PlanKind.strategy`; the heading appears
   in `framing_headings`. Same fixture with
   `plan_kind=PlanKind.implementation` raises `PlanParseError`.
+- `tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind`
+  — fixture file with `### A1. Plan format spec (typed grammar)\n`
+  followed by prose (no `kind:` line, no `**Acceptance:**`);
+  parses cleanly with `plan_kind=PlanKind.strategy` and yields a
+  `PlanSection(section_id="A1", kind=Kind.framing,
+  acceptance_items=())`. Same fixture with
+  `plan_kind=PlanKind.implementation` raises `PlanParseError`
+  citing missing `kind:` front-matter.
 - `tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes`
   — assert `parse_plan(p).source_hash == hashlib.sha256(p.read_bytes()).hexdigest()`.
 - `tests/plans/test_parser.py::test_source_span_is_inclusive_1_indexed`
@@ -467,8 +495,13 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
 - A2.4 — parser handles every section ID shape in
   `task-12725-lifecycle-dispatch.md` after retrofit (post-A7.1–A7.4).
   test: `tests/plans/test_parser.py::test_parses_task_12725_lifecycle_dispatch`.
-- A2.5 — parser handles every section ID shape in
-  `task-13173-lifecycle-dispatch-recovery.md`. test:
+- A2.5 — parser parses every canonical section ID in
+  `task-13173-lifecycle-dispatch-recovery.md` under
+  `plan_kind=PlanKind.strategy`; canonical headings without
+  `kind:` lines yield `PlanSection(kind=Kind.framing,
+  acceptance_items=())`; narrative headings appear in
+  `framing_headings`. The test asserts ID presence only, not
+  deliverable/acceptance shape. test:
   `tests/plans/test_parser.py::test_parses_task_13173_recovery`.
 - A2.6 — parser handles bare and titled forms of the same heading.
   test: `tests/plans/test_parser.py::test_bare_and_titled_headings`.
@@ -504,12 +537,16 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
   `file:`, `symbol:`, `test:`, `behavior:` per item). tests:
   `tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises`,
   `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_raises`.
-- A2.15 — `parse_plan(path, plan_kind=PlanKind.strategy)` records
-  non-canonical narrative headings in `PlanDocument.framing_headings`
-  without raising; `plan_kind=PlanKind.implementation` (the default)
-  raises on the same input. symbol:
-  `gobby.plans.parser.PlanKind`. test:
-  `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`.
+- A2.15 — `parse_plan(path, plan_kind=PlanKind.strategy)` is
+  permissive on both kinds of missing-`kind:` headings:
+  non-canonical narrative headings record into
+  `PlanDocument.framing_headings`, AND canonical headings without
+  `kind:` lines yield `PlanSection(kind=Kind.framing,
+  acceptance_items=())`. `plan_kind=PlanKind.implementation` (the
+  default) raises `PlanParseError` on either case. symbol:
+  `gobby.plans.parser.PlanKind`. tests:
+  `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`,
+  `tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind`.
 
 ## A3 Typed deferral and structured covers contract
 
@@ -639,12 +676,20 @@ def validate_deferral(
   5. `deferral.reason` and `deferral.owner` are both non-empty.
   6. Task is **either** a transitive dependency of the
      `recovery_epic_ref` (reachable via `get_task_dependencies`)
-     **or** carries a `cited-parent:<task_ref>` label whose target
-     resolves to a non-closed task explicitly out-of-scope of the
-     recovery epic. Failure status:
-     `missing_dependency_or_cited_parent`. This closes the F2 hole
-     where a deferred section could point at an unrelated open task
-     with the right label and still pass.
+     **or** carries a `cited-parent:<parent_ref>` label whose
+     target task **simultaneously**:
+     - resolves to a non-closed task,
+     - carries an `out-of-scope-for:<recovery_epic_ref>` label, AND
+     - is NOT a transitive dependency of `recovery_epic_ref`
+       (i.e., is genuinely outside the recovery epic's
+       dependency closure).
+     Failure status: `missing_dependency_or_cited_parent`. This
+     closes the F2 hole where a deferred section could point at an
+     unrelated open task with the right label and still pass.
+     The `out-of-scope-for:` label is the explicit-proof
+     requirement: a deferral whose cited-parent lacks it (or whose
+     parent has it but is also reachable from the recovery epic)
+     fails the gate.
 - A4's coverage evaluator calls `validate_deferral` for every
   `deferred` section and `validate_covers` for every `covers` label
   on every leaf in scope.
@@ -685,8 +730,20 @@ def validate_deferral(
   — task is reachable via `get_task_dependencies` from
   `recovery_epic_ref`; asserts status `valid`.
 - `tests/plans/test_deferral.py::test_validate_cited_parent_path`
-  — task carries `cited-parent:<ref>` label whose target is open
-  and out-of-scope of recovery_epic; asserts status `valid`.
+  — task carries `cited-parent:<ref>` label whose target is open,
+  carries `out-of-scope-for:<recovery_epic>`, and is not
+  reachable from recovery_epic dependencies; asserts status
+  `valid`.
+- `tests/plans/test_deferral.py::test_validate_cited_parent_without_out_of_scope_label_rejected`
+  — cited-parent target is open but lacks
+  `out-of-scope-for:<recovery_epic>`; asserts status
+  `missing_dependency_or_cited_parent` (closes F3: open parent
+  alone is not enough).
+- `tests/plans/test_deferral.py::test_validate_cited_parent_inside_dependency_closure_rejected`
+  — cited-parent target carries the label but is also a
+  transitive dependency of recovery_epic; asserts status
+  `missing_dependency_or_cited_parent` (the parent must be
+  genuinely out-of-scope, not reachable).
 - `tests/plans/test_deferral.py::test_validate_happy_path`.
 
 **Acceptance:**
@@ -737,10 +794,14 @@ def validate_deferral(
   `gobby.plans.deferral.validate_deferral`.
 - A3.12 — `validate_deferral` accepts the deferral when the target
   task is a transitive dependency of `recovery_epic_ref`, OR when
-  the target carries a `cited-parent:<ref>` label resolving to an
-  open task. tests:
+  the target's `cited-parent:<ref>` label resolves to an open
+  task that simultaneously carries
+  `out-of-scope-for:<recovery_epic_ref>` AND is NOT reachable
+  from `recovery_epic_ref` dependencies. tests:
   `tests/plans/test_deferral.py::test_validate_dependency_path`,
-  `tests/plans/test_deferral.py::test_validate_cited_parent_path`.
+  `tests/plans/test_deferral.py::test_validate_cited_parent_path`,
+  `tests/plans/test_deferral.py::test_validate_cited_parent_without_out_of_scope_label_rejected`,
+  `tests/plans/test_deferral.py::test_validate_cited_parent_inside_dependency_closure_rejected`.
 
 ## A4 Coverage library and `gobby plan coverage` CLI
 
@@ -1874,36 +1935,46 @@ The test:
 
 1. Walks `.gobby/plans/*.md`, excluding `.coverage-ledger.yaml`
    and any non-plan markdown.
-2. For each plan file:
-   - Parses with `gobby.plans.parser.parse_plan`.
-   - Resolves the root task ref(s) — primary source: a
-     committed `plan_index.yaml` under `.gobby/plans/index.yaml`
-     mapping plan_id → list[(project_id, root_task_ref,
-     status="active|merged")]. Fallback: `task_artifacts.plan_file_path`
-     query if the live DB is available. CI prefers the committed
-     index.
+2. Reads `.gobby/plans/index.yaml`; for each entry it knows
+   `plan_kind: implementation | strategy`, `status: active |
+   merged`, and the `(project_id, root_task_ref)` identity.
+3. For each plan file:
+   - Parses with
+     `gobby.plans.parser.parse_plan(path, plan_kind=<from index>)`.
+     Strategy entries parse permissively (canonical headings
+     without `kind:` yield `Kind.framing`, narrative headings go
+     to `framing_headings`); implementation entries parse strict.
    - Skips plans whose epic status is `merged` AND whose plan_id
      appears in `.gobby/plans/.grandfathered`.
-   - For each `(project_id, plan_id, root_task_ref)` identity,
-     asserts the manifest exists at
+   - For each `(project_id, plan_id, root_task_ref)` identity
+     **whose `plan_kind == implementation`**, asserts the
+     manifest exists at
      `coverage_manifest_path(project_id, root_task_ref, plan_id)`.
-3. Re-computes `plan_hash` from the on-disk plan file and asserts
-   string equality with the manifest's `plan_hash`. On mismatch
-   the test fails citing both hashes.
-4. Invokes `gobby plan coverage --task-tree matrix-file
-   --matrix-file <manifest>` and asserts zero `missing|invalid`
-   rows. The library re-validation against `db` runs at
-   expansion-qa time, not in CI; CI uses the committed manifest.
-5. Walks every manifest under `.gobby/plans/coverage/` and asserts
-   each resolves to an entry in the plan_index file. Orphan
-   manifests fail the test citing the path.
-6. Reads `.gobby/plans/.grandfathered`; for each entry asserts
+     Strategy entries are exempt from manifest/hash/zero-row
+     checks but must still parse without raising under
+     `plan_kind=PlanKind.strategy`.
+4. For implementation entries: re-computes `plan_hash` from the
+   on-disk plan file and asserts string equality with the
+   manifest's `plan_hash`. On mismatch the test fails citing both
+   hashes.
+5. For implementation entries: invokes `gobby plan coverage
+   --task-tree matrix-file --matrix-file <manifest>` and asserts
+   zero `missing|invalid` rows. The library re-validation against
+   `db` runs at expansion-qa time, not in CI; CI uses the
+   committed manifest.
+6. Walks every manifest under `.gobby/plans/coverage/` and
+   asserts each resolves to a `plan_kind: implementation` entry
+   in `.gobby/plans/index.yaml`. Orphan manifests fail the test
+   citing the path. A manifest that points at a `plan_kind:
+   strategy` entry is also treated as orphan (strategy plans
+   should not have manifests).
+7. Reads `.gobby/plans/.grandfathered`; for each entry asserts
    the line includes a `# remove-by: <task-ref>` annotation;
    asserts the named task exists and is open (queried via
-   committed task index file or skipped in CI if no live DB). New
-   entries since the last signed-off commit (detected via
-   `git diff HEAD` or against the signed-off baseline file) require
-   the same annotation.
+   committed task index file or skipped in CI if no live DB).
+   New entries since the last signed-off commit (detected via
+   `git diff HEAD` or against the signed-off baseline file)
+   require the same annotation.
 
 **Files to create alongside:**
 
@@ -1917,16 +1988,24 @@ The test:
     - plan_id: task-12725-lifecycle-dispatch
       project_id: d45545c5-ded5-4335-b115-0245752edacf
       root_task_ref: "12725"
+      plan_kind: implementation
       status: merged
     - plan_id: task-13175-plan-coverage-contract
       project_id: d45545c5-ded5-4335-b115-0245752edacf
       root_task_ref: "13175"
+      plan_kind: implementation
       status: active
     - plan_id: task-13173-lifecycle-dispatch-recovery
       project_id: d45545c5-ded5-4335-b115-0245752edacf
       root_task_ref: "13173"
+      plan_kind: strategy
       status: active
   ```
+
+  Schema requirements: `plan_kind ∈ {implementation, strategy}`,
+  `status ∈ {active, merged}`, and an entry whose
+  `plan_kind == strategy` must NOT have a corresponding manifest
+  (the CI orphan-manifest check rejects strategy-plan manifests).
 
 **Tests (this section's own test file is the deliverable; below are
 the assertions that file makes):**
@@ -1946,24 +2025,32 @@ the assertions that file makes):**
   file under `.gobby/plans/*.md` whose `plan_index.yaml` entry
   status is not `merged`-and-grandfathered. file:
   `tests/plans/test_plan_coverage_ci.py`.
-- A9.2 — for each plan, `plan_id` and `root_task_ref` resolve from
-  `.gobby/plans/index.yaml` (preferred) or from the live DB
-  (fallback when available). file: `.gobby/plans/index.yaml`.
-- A9.3 — for each `(project_id, plan_id, root_task_ref)`, the test
-  asserts a manifest exists at the path returned by
-  `coverage_manifest_path`. test:
-  `tests/plans/test_plan_coverage_ci.py::test_every_active_plan_has_manifest`.
-- A9.4 — the test re-computes `plan_hash` from the plan file and
-  asserts equality with the manifest's `plan_hash`; mismatch
-  fails. test:
+- A9.2 — for each plan, `plan_id`, `root_task_ref`, and
+  `plan_kind` resolve from `.gobby/plans/index.yaml`; the index
+  schema requires `plan_kind ∈ {implementation, strategy}` per
+  entry. file: `.gobby/plans/index.yaml`. test:
+  `tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed`
+  asserts the field is present and validated.
+- A9.3 — for each `(project_id, plan_id, root_task_ref)` whose
+  `plan_kind == implementation`, the test asserts a manifest
+  exists at the path returned by `coverage_manifest_path`.
+  Strategy entries are exempt. test:
+  `tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest`.
+- A9.4 — for implementation entries the test re-computes
+  `plan_hash` from the plan file and asserts equality with the
+  manifest's `plan_hash`; mismatch fails. Strategy entries are
+  not hash-checked. test:
   `tests/plans/test_plan_coverage_ci.py::test_manifest_plan_hash_matches_on_disk`.
-- A9.5 — the test invokes `gobby plan coverage --task-tree
-  matrix-file --matrix-file <manifest>` and asserts zero
-  `missing|invalid` rows. test:
+- A9.5 — for implementation entries the test invokes `gobby plan
+  coverage --task-tree matrix-file --matrix-file <manifest>` and
+  asserts zero `missing|invalid` rows. test:
   `tests/plans/test_plan_coverage_ci.py::test_zero_missing_invalid_rows`.
-- A9.6 — every manifest under `.gobby/plans/coverage/` resolves to
-  a live `plan_index.yaml` entry; orphan manifests fail. test:
-  `tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests`.
+- A9.6 — every manifest under `.gobby/plans/coverage/` resolves
+  to a live `plan_index.yaml` entry whose `plan_kind ==
+  implementation`; orphan manifests AND manifests pointing at
+  strategy entries both fail. test:
+  `tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests`,
+  `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`.
 - A9.7 — every `.gobby/plans/.grandfathered` entry has a paired
   `# remove-by: <task-ref>` annotation; the named task exists and
   is open. tests:
@@ -1976,6 +2063,10 @@ the assertions that file makes):**
   `plan_index.yaml` and committed manifests are self-describing.
   behavior: "test runs successfully with `GOBBY_LIVE_DB=0`" in
   `tests/plans/test_plan_coverage_ci.py`.
+- A9.10 — CI passes `plan_kind` from each index entry to
+  `parse_plan(path, plan_kind=...)` so strategy entries parse
+  permissively and implementation entries parse strictly. test:
+  `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`.
 
 ## A10 Contract documentation
 
