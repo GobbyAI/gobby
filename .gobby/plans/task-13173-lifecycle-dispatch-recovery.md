@@ -1,7 +1,9 @@
 # Recovery Plan: Close lifecycle-dispatch plan-compliance gaps after #12725
 
-> Round 2 — revised after plan-adversary Round 1 surfaced seven blocking
-> findings (F1–F7). All seven were accepted in full and integrated below.
+> Round 3 — revised after plan-adversary Round 2 surfaced four further
+> blocking findings (F8–F11) on top of Round 1's F1–F7. All eleven were
+> accepted in full and integrated below. F1–F7 closures stand from Round 2;
+> F8–F11 closures land in this revision.
 
 ## Context
 
@@ -108,11 +110,27 @@ the parser can consume.
 
 The grammar must cover, at minimum:
 
-- Heading levels `##` and `###` (and deeper if used today).
-- Section ID styles `## §1.7`, `### 1.7`, `### 1.1a`, `### 2.8b` (letter
-  suffixes), and any compound IDs that exist in
-  `task-12725-lifecycle-dispatch.md` today. The grammar is a single,
-  documented regex with named captures, not an informal example.
+- Heading levels `##` through `######`.
+- Numeric section IDs (`## §1.7`, `### 1.7`, `### 1.1a`, `### 2.8b`).
+- Alpha-prefixed section IDs (`## A1`, `## A10`, `### D0.1`, `### B5`),
+  required because this very strategy uses them and any plan-driven epic
+  may. **A numeric-only regex would silently skip Phase-A-style sections
+  and recreate the original failure mode (F8).**
+- Section IDs of any depth (`§1`, `§1.1`, `§1.1.1`, …) and with optional
+  letter suffix on the last segment.
+
+**Canonical regex** (frozen at strategy level; pinned in A2 fixture):
+
+```regex
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-])
+```
+
+Required parser fixtures (A2 must verify each): `1.1a`, `1.1d`, `2.8a`,
+`2.8b`, `A1`, `A10`, `D0.1`, `B5`, plus a negative case for an
+unparseable heading.
+
+Other required structure:
+
 - Front-matter per section: `kind: deliverable | framing | verification |
   deferred`. (Verification is its own kind so verification subsections do
   not need fake `Acceptance:` lines.)
@@ -147,10 +165,17 @@ A new library `gobby.plans.parser` exposes:
   (carried over verbatim from the deferred section).
 
 Parser fixture tests live in `tests/plans/test_parser.py` and pin behavior
-against `.gobby/plans/task-12725-lifecycle-dispatch.md` with the **exact**
-expected section IDs and acceptance-item IDs, including `1.1a–1.1d` and
-`2.8a–2.8b`. Adding a new heading style without updating the parser breaks
-the fixture, not silently.
+against:
+
+- `.gobby/plans/task-12725-lifecycle-dispatch.md` — numeric IDs incl.
+  `1.1a–1.1d` and `2.8a–2.8b`.
+- `.gobby/plans/task-13173-lifecycle-dispatch-recovery.md` — alpha IDs
+  incl. `A1`, `A10`, `D0.1`, `B5`. (The recovery strategy reviews itself.)
+
+The canonical regex from A1 is the parser's source of truth; the test
+imports it as a constant and asserts each fixture string matches with the
+expected `section_id` capture. Adding a new heading style without updating
+the parser AND the regex breaks the fixture, not silently.
 
 `source_hash` is the load-bearing invariant: every downstream artifact
 (coverage manifest, expansion output, holistic-review evidence) records the
@@ -198,29 +223,46 @@ the named artifact.
 ### A4. Coverage library and `gobby plan coverage` CLI
 
 A new module `src/gobby/plans/coverage.py` and a CLI `gobby plan coverage`
-provide the deterministic gate everything else consumes (F5).
+provide the deterministic gate everything else consumes (F5/F9).
 
 Inputs are explicit, never implicit:
 
 - `--plan <path>` — the plan file.
 - `--plan-hash <sha256>` — required; must match the file. Mismatch raises.
+- `--plan-id <id>` — canonical plan ID (e.g. `task-12725-lifecycle-dispatch`).
+  Disambiguates multi-plan epics that share a task subtree.
+- `--root-task <task-ref>` — required for `--task-tree db | jsonl`. The
+  root of the subtree that should satisfy this plan. Coverage only counts
+  leaves whose path-cache descends from this root. Without it the library
+  cannot validate A3's "dependency of recovery epic" deferral rule, and
+  could count leaves from unrelated plans (F9).
+- `--project-id <uuid|slug>` — required when the task store may hold more
+  than one project; namespaces `--root-task` and `--evidence`.
 - `--task-tree <source>` — `db | jsonl | matrix-file`. `db` queries the
   task store via Gobby; `jsonl` reads `.gobby/tasks.jsonl`; `matrix-file`
   reads a pre-generated manifest (used by CI when no DB is available).
 - `--evidence <kind>` — `commits:<range> | task-diff:<task-ref> |
-  coverage-matrix:<path> | none`. Drives A6.
+  worktree-diff:<artifact-ref> | coverage-matrix:<path> | none`. Drives A6.
 - `--manifest <path>` — output coverage manifest (see below).
 
 Outputs:
 
-- A typed `CoverageReport` with rows: `(section_id, acceptance_item_id,
-  status, leaves, evidence)` where `status ∈ {covered, deferred, missing,
-  invalid}`.
+- A typed `CoverageReport` with header `{plan_id, plan_hash,
+  root_task_ref, project_id, generated_at, task_tree_source_hash,
+  evidence_summary}` and rows: `(section_id, acceptance_item_id, status,
+  leaves, evidence)` where `status ∈ {covered, deferred, missing,
+  invalid}`. Each `leaf` row carries the leaf's task ref and its
+  `validation_criteria` snippet that satisfied the artifact match.
 - A coverage manifest at `.gobby/plans/<plan-stem>.coverage.yaml` that
-  records `plan_hash`, `generated_at`, `task_tree_source_hash`,
-  `evidence_summary`, and the rows. The manifest is checked in.
+  records all header fields above plus the rows. The manifest is
+  checked in.
 - Exit 0 on all-covered-or-deferred; non-zero otherwise. Specific exit
   codes per failure category so CI can attribute them.
+
+**Multi-plan epics.** When a single epic carries multiple plans (e.g., a
+super-epic with sub-plans), each plan must run its own coverage check
+keyed on `(plan_id, root_task_ref)`. The manifest filename includes
+`plan_id` so manifests do not collide.
 
 Expansion-QA, holistic-review, and CI all call this library — never their
 own ad-hoc parser or matcher.
@@ -252,14 +294,31 @@ not** depend on Phase E's holistic-review skill being present. Phase A
 ships the gate library; Phase E's holistic-review skill/agent (when they
 land in Epic 2) wire the qualitative review on top of it.
 
-The gate consumes a generic change-evidence artifact:
+The gate consumes a generic change-evidence artifact. **Four evidence
+kinds, treated identically by the matcher:**
 
-- For PR-creating runs: `commits:<range>` derived from the merge target.
-- For yolo runs without PR creation: `task-diff:<epic-ref>` aggregating
-  linked commits via existing `gobby-tasks:get_task_diff`.
-- For dry runs (e.g., A8 ledger validation): `coverage-matrix:<path>`.
-- `none` is reserved for explicit operator override and emits an audit
-  marker.
+- `commits:<range>` — for PR-creating runs, derived from the merge
+  target.
+- `task-diff:<task-ref>` — aggregates commits **linked** to the task via
+  existing `gobby-tasks:get_task_diff`.
+- `worktree-diff:<artifact-ref>` — **resolves directly from the task's
+  worktree or clone artifact** (F10). The artifact provides
+  `worktree_path` (or `clone_path`) and `target_branch`; the library
+  computes `git -C <path> diff <target_branch>...HEAD`. Required for yolo
+  flows whose commits are local to the isolation and not yet linked to
+  the task.
+- `coverage-matrix:<path>` — for dry runs (e.g., A8 ledger validation).
+
+`none` is reserved for explicit operator override and emits an audit
+marker.
+
+**Lifecycle linkage point.** Worktree-local commits become
+linked-task evidence at two well-defined points: (a) when the dev agent
+calls `link_commit` or `mark_task_needs_review` (existing tools auto-link
+recent commits in the agent's session), and (b) when the merge agent
+finalizes and runs `link_commit` on the merge SHA. **Until either
+happens, `worktree-diff` is the only valid evidence source for a
+yolo/isolation run** — the gate must not require linkage to pass.
 
 The gate verifies that every deliverable acceptance item has at least one
 piece of evidence (commit touching the named file/symbol, test of the
@@ -267,7 +326,7 @@ named name, or documented behavior reachable in the diff). Yolo never
 escalates: when evidence is missing the gate emits a structured rejection
 that the rule layer (Phase E) interprets as `request_changes`, not as an
 escalation. There is no path that escalates solely because a PR does not
-exist.
+exist or because commits are not yet linked.
 
 ### A7. #12725 retrofit and compliance matrix
 
@@ -542,7 +601,59 @@ Tests in `tests/storage/test_migration_upgrade.py`:
   install (column-by-column).
 - Upgrades preserve existing rows; do not drop user data.
 
-### D0.8 Audit summary task
+### D0.8 Dispatcher slot reservation primitive (F11)
+
+The dispatcher cannot rely on "count active agents and check against
+`max_active`" because two ticks running concurrently (cron + build-kicked
++ manual) can each observe free capacity on disjoint candidates and both
+spawn, exceeding the cap. Per-task mutex does not help — the tasks are
+different. We need an atomic slot reservation primitive.
+
+**Schema** (additive migration):
+
+```sql
+CREATE TABLE dispatcher_active_slots (
+    project_id        TEXT NOT NULL,
+    agent_run_id      TEXT NOT NULL,
+    task_id           TEXT NOT NULL,
+    claimed_at        TIMESTAMP NOT NULL,
+    ttl_until         TIMESTAMP NOT NULL,
+    PRIMARY KEY (project_id, agent_run_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_dispatcher_slots_project ON dispatcher_active_slots(project_id, ttl_until);
+```
+
+**Primitive** in `src/gobby/storage/tasks/_dispatch_slots.py`:
+
+- `try_reserve_slot(db, project_id, max_active, agent_run_id, task_id, ttl) -> bool`
+  — atomic; uses a single `INSERT ... WHERE (SELECT COUNT(*) FROM
+  dispatcher_active_slots WHERE project_id = ? AND ttl_until > now) <
+  max_active` pattern (or equivalent SQLite-safe atomic CAS). Returns
+  False without inserting if the cap is full.
+- `release_slot(db, project_id, agent_run_id)` — DELETE.
+- `sweep_expired_slots(db, project_id, now)` — DELETE rows whose
+  `ttl_until` has passed.
+- `sweep_dead_slots_against_running_agents(db, project_id)` — DELETE rows
+  whose `agent_run_id` is not in `running_agents`. Called on startup and
+  periodically.
+
+Tests in `tests/storage/tasks/test_dispatch_slots.py`:
+
+- Two concurrent `try_reserve_slot` calls under cap=N where currently N-1
+  are held: exactly one succeeds.
+- N concurrent calls under cap=N: exactly N succeed.
+- Expired rows are reaped by `sweep_expired_slots`.
+- Dead-agent rows are reaped by
+  `sweep_dead_slots_against_running_agents`.
+- FK cascade on task delete clears the slot row.
+- The primitive is project-scoped: project A holding N slots does not
+  block project B from also holding N.
+
+This primitive is consumed by D4 (`run_tick`); D8 covers the
+end-to-end concurrent-tick race.
+
+### D0.9 Audit summary task
 
 A single audit summary task (this Phase D0) produces a written report of
 which invariants held, which were fixed, and which (if any) required
@@ -591,12 +702,23 @@ dispatcher.
 
 ### D4. `src/gobby/dispatch/dispatcher.py` (plan §1.9)
 
-`TickReport` dataclass + `run_tick(db, holder, max_active) -> TickReport`
-async. Sweep mutex on first tick; query `list_automation_candidates(db)`;
-enforce agent-slot cap; per-task acquire mutex and **re-evaluate under lock**
-(closes TOCTOU). Dispatch each action via `_dispatch(db, task, action,
-agent_run_id, report)`. Persist tick reports to
-`~/.gobby/logs/dispatcher.jsonl`.
+`TickReport` dataclass + `run_tick(db, project_id, holder, max_active) ->
+TickReport` async. On first tick: sweep mutex AND sweep dispatcher slots
+(both expired-by-TTL and dead-by-running_agents). Query
+`list_automation_candidates(db, project_id)`; for each candidate, acquire
+per-task mutex and **re-evaluate under lock** (closes per-task TOCTOU).
+
+**Slot reservation (F11).** The cap check is no longer
+"count then spawn"; it is `try_reserve_slot(db, project_id, max_active,
+agent_run_id, task_id, ttl)` — atomic. If the call returns False the
+slot is full this tick; the rule action becomes `Skip(reason="cap")` and
+the tick records it. Slot release is wired to claim/end_agent_run
+handlers (same pattern as per-task mutex), so concurrent ticks observing
+the same free capacity cannot both spawn beyond cap, even on disjoint
+candidates.
+
+Dispatch each action via `_dispatch(db, task, action, agent_run_id,
+report)`. Persist tick reports to `~/.gobby/logs/dispatcher.jsonl`.
 
 Reuse existing infrastructure: `execute_spawn`,
 `start_expansion_run_impl` (see D6), `WorktreeIsolationHandler`,
@@ -630,8 +752,15 @@ count. The Phase B5 honesty boundary becomes redundant once this is wired.
 - `tests/dispatch/test_rules.py` — table-driven per-rule tests covering all
   branches and the yolo-never-escalates contract.
 - `tests/dispatch/test_dispatcher.py` — end-to-end tick with mocked
-  `execute_spawn`, TOCTOU re-evaluation under lock, agent-slot cap, JSONL
+  `execute_spawn`, TOCTOU re-evaluation under lock, JSONL
   persistence.
+- `tests/dispatch/test_dispatcher_concurrent.py` — **F11 closure**:
+  two concurrent `run_tick(project_id, holder, max_active=N)` calls on
+  disjoint candidate sets, with N-1 slots already held, must spawn
+  exactly one further task between them (not two). N concurrent ticks
+  with cap=N and 0 held: exactly N spawn, the rest record `Skip("cap")`.
+  Stale slot recovery: a dead `agent_run_id` is reaped before its slot
+  blocks new spawns.
 - `tests/dispatch/test_cron_registration.py` — handler registered, cron row
   idempotent.
 
@@ -720,6 +849,8 @@ Update `CLAUDE.md`, `GUIDING_PRINCIPLES.md`, and `docs/` to:
 
 - `src/gobby/plans/parser.py`, `coverage.py` — A2/A4 library.
 - `src/gobby/cli/plan.py` — `gobby plan coverage` CLI.
+- `src/gobby/storage/tasks/_dispatch_slots.py` — F11 slot reservation
+  primitive.
 - `src/gobby/dispatch/{mutex,actions,rules,dispatcher,cron_registration}.py`
 - `src/gobby/install/shared/skills/{holistic-review,expansion-agent-selection}/SKILL.md`
 - `src/gobby/install/shared/workflows/agents/{holistic-reviewer,frontend-developer,backend-developer}.yaml`
@@ -729,13 +860,13 @@ Update `CLAUDE.md`, `GUIDING_PRINCIPLES.md`, and `docs/` to:
   `test_plan_coverage_ci.py`.
 - `tests/build_pipeline/test_entry_point_parity.py`.
 - `tests/storage/tasks/test_dispatch_mutex_runid.py`,
-  `test_dispatch_mutex_sweep.py`, `test_artifacts_cascade.py`,
-  `test_lifecycle_events_cascade.py`, `test_candidates.py`,
-  `test_artifacts_plan_path.py`.
+  `test_dispatch_mutex_sweep.py`, `test_dispatch_slots.py`,
+  `test_artifacts_cascade.py`, `test_lifecycle_events_cascade.py`,
+  `test_candidates.py`, `test_artifacts_plan_path.py`.
 - `tests/storage/test_migration_upgrade.py`.
 - `tests/hooks/test_task_dispatch_mutex_handlers.py`,
   `test_task_events.py`.
-- `tests/dispatch/test_{mutex,rules,dispatcher,cron_registration}.py`.
+- `tests/dispatch/test_{mutex,rules,dispatcher,dispatcher_concurrent,cron_registration}.py`.
 
 **To modify:**
 
@@ -773,33 +904,48 @@ End-to-end acceptance, run after Phase G:
 4. **Cross-surface parity** (`tests/build_pipeline/test_entry_point_parity.py`):
    driving a `gobby build <plan_file>` flow through CLI, MCP, and HTTP yields
    identical `BuildResult` and identical DB state.
-5. **Storage-foundation audit** (Phase D0 test files) all green.
+5. **Storage-foundation audit** (Phase D0 test files) all green, including
+   `tests/storage/tasks/test_dispatch_slots.py` for F11.
 6. **Dispatcher tick** (`tests/dispatch/test_dispatcher.py`): a primed epic
    advances through `plan_review → test_arch → expanding → in_development →
    holistic_review → pr → merging → merged` across simulated ticks with
    mocked agent spawns.
-7. **Lifecycle rejection paths**: holistic rejection with `cited_subtasks=[A,
-   B]` reopens A and B and rewinds to `in_development`; expansion rejection
-   clears `expansion_run_id` and increments attempts; merging rejection (yolo)
-   increments `merge-attempts:N` and re-dispatches.
-8. **Yolo evidence path**: a yolo run with no PR creation passes A6 by
-   `task-diff` evidence; a yolo run missing evidence yields
-   `request_changes` (never `escalate`).
-9. **Yolo fallbacks**: on `merge-attempts` cap, append_description_section is
-   written under `## Yolo Fallbacks` and lifecycle advances to `merged` with
-   isolation pair preserved.
-10. **Manual smoke**: in a sandbox project,
+7. **Concurrent dispatcher ticks (F11)**:
+   `tests/dispatch/test_dispatcher_concurrent.py` proves two concurrent
+   `run_tick` calls under cap=N with N-1 slots held spawn exactly one
+   further task across both ticks combined; N concurrent ticks with cap=N
+   spawn exactly N; stale slot recovery reaps dead `agent_run_id` before
+   their slots block.
+8. **Section-ID grammar (F8)**: `tests/plans/test_parser.py` matches all
+   required fixtures: `1.1a`, `1.1d`, `2.8a`, `2.8b`, `A1`, `A10`, `D0.1`,
+   `B5`, plus a negative case for an unparseable heading.
+9. **Coverage scope (F9)**: `gobby plan coverage --root-task <ref>
+   --task-tree db` ignores leaves outside the named subtree; multi-plan
+   epics produce one manifest per `(plan_id, root_task_ref)` pair without
+   collisions.
+10. **Lifecycle rejection paths**: holistic rejection with
+    `cited_subtasks=[A, B]` reopens A and B and rewinds to `in_development`;
+    expansion rejection clears `expansion_run_id` and increments attempts;
+    merging rejection (yolo) increments `merge-attempts:N` and re-dispatches.
+11. **Yolo evidence path (F10)**: a yolo run with worktree-local commits
+    not yet linked to the task passes A6 via `worktree-diff:<artifact-ref>`;
+    a yolo run missing evidence on any deliverable acceptance item yields
+    `request_changes` (never `escalate`).
+12. **Yolo fallbacks**: on `merge-attempts` cap, append_description_section
+    is written under `## Yolo Fallbacks` and lifecycle advances to `merged`
+    with isolation pair preserved.
+13. **Manual smoke**: in a sandbox project,
     `uv run gobby build <plan>.md --profile full-yolo` produces a primed
-    epic whose first tick dispatches the first non-skipped agent, visible in
-    `~/.gobby/logs/dispatcher.jsonl`.
-11. **Conductor removed**: `grep -r 'gobby.conductor' src/ tests/` returns
+    epic whose first tick dispatches the first non-skipped agent, visible
+    in `~/.gobby/logs/dispatcher.jsonl`.
+14. **Conductor removed**: `grep -r 'gobby.conductor' src/ tests/` returns
     no matches.
-12. **Tombstones**: `gobby pipelines list` shows orchestrator family with
+15. **Tombstones**: `gobby pipelines list` shows orchestrator family with
     `[DEPRECATED]` prefix and `enabled=false`.
-13. **Coverage**: `uv run pytest tests/plans/ tests/dispatch/
-    tests/build_pipeline/ tests/storage/tasks/test_transitions.py
-    --cov=gobby --cov-report=term-missing` meets the project's 80%
-    threshold for new modules.
+16. **Coverage**: `uv run pytest tests/plans/ tests/dispatch/
+    tests/build_pipeline/ tests/storage/tasks/ --cov=gobby
+    --cov-report=term-missing` meets the project's 80% threshold for new
+    modules.
 
 ---
 
@@ -834,6 +980,8 @@ Phase A is the structural fix:
   discoverable, not folklore.
 
 Phase A ships as its own precursor epic. B–G run under the new contract.
-Phase D0 audits the storage foundation that B–G build on, so we don't
-inherit silent gaps from #12725. Without A and D0, the next plan-driven
-epic fails the same way #12725 did.
+Phase D0 audits the storage foundation that B–G build on **and** ships
+the F11 slot-reservation primitive that the dispatcher consumes, so
+concurrent ticks cannot exceed `max_active`. Without A and D0, the next
+plan-driven epic fails the same way #12725 did and the dispatcher inherits
+both schema-level uncertainty and a concurrency bug.
