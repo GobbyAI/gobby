@@ -85,6 +85,8 @@ class TestListExecutions:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             em = MockEM.return_value
             em.list_executions.return_value = []
+            em.count_executions.return_value = 0
+            em.status_summary_for_executions.return_value = {}
             em.get_steps_for_executions.return_value = {}
 
             mock_server.services.database.fetchall.return_value = []
@@ -92,13 +94,31 @@ class TestListExecutions:
             response = client.get("/api/pipelines/executions")
             assert response.status_code == 200
             data = response.json()
-            assert data["count"] == 0
+            assert data["total"] == 0
+            assert data["limit"] == 50
+            assert data["offset"] == 0
+            assert data["status_summary"] == {}
+            assert data["executions"] == []
 
     def test_list_executions_invalid_status(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
         response = client.get("/api/pipelines/executions?status=invalid_status")
         assert response.status_code == 400
+
+    @pytest.mark.parametrize(
+        "query_string",
+        [
+            "limit=0",
+            "limit=201",
+            "offset=-1",
+        ],
+    )
+    def test_list_executions_invalid_pagination_returns_422(
+        self, client: TestClient, mock_server: MagicMock, query_string: str
+    ) -> None:
+        response = client.get(f"/api/pipelines/executions?{query_string}")
+        assert response.status_code == 422
 
     def test_list_executions_with_results(self, client: TestClient, mock_server: MagicMock) -> None:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
@@ -117,15 +137,40 @@ class TestListExecutions:
 
             em = MockEM.return_value
             em.list_executions.return_value = [mock_exec]
+            em.count_executions.return_value = 7
+            em.status_summary_for_executions.return_value = {"completed": 7}
             em.get_steps_for_executions.return_value = {}
 
             mock_server.services.database.fetchall.return_value = []
 
-            response = client.get("/api/pipelines/executions")
+            response = client.get("/api/pipelines/executions?limit=10&offset=0")
             assert response.status_code == 200
             data = response.json()
-            assert data["count"] == 1
+            assert data["total"] == 7
+            assert data["limit"] == 10
+            assert data["offset"] == 0
+            assert data["status_summary"] == {"completed": 7}
             assert data["executions"][0]["pipeline_name"] == "test-pipe"
+
+    def test_list_executions_total_reflects_filter_scope(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
+            em = MockEM.return_value
+            em.list_executions.return_value = []
+            em.count_executions.return_value = 3
+            em.status_summary_for_executions.return_value = {"running": 3}
+            em.get_steps_for_executions.return_value = {}
+
+            mock_server.services.database.fetchall.return_value = []
+
+            response = client.get("/api/pipelines/executions?status=running")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["total"] == 3
+            # count_executions called with the status filter applied
+            count_call = em.count_executions.call_args
+            assert count_call.kwargs["status"] == ExecutionStatus.RUNNING
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -157,12 +202,29 @@ class TestSearchExecutions:
 
             em = MockEM.return_value
             em.search_executions.return_value = [mock_exec]
+            em.count_search_executions.return_value = 4
 
-            response = client.get("/api/pipelines/executions/search?q=test")
+            response = client.get("/api/pipelines/executions/search?q=test&limit=5&offset=0")
             assert response.status_code == 200
             data = response.json()
-            assert data["count"] == 1
+            assert data["total"] == 4
+            assert data["limit"] == 5
+            assert data["offset"] == 0
             assert data["query"] == "test"
+
+    @pytest.mark.parametrize(
+        "query_string",
+        [
+            "q=test&limit=0",
+            "q=test&limit=201",
+            "q=test&offset=-1",
+        ],
+    )
+    def test_search_executions_invalid_pagination_returns_422(
+        self, client: TestClient, mock_server: MagicMock, query_string: str
+    ) -> None:
+        response = client.get(f"/api/pipelines/executions/search?{query_string}")
+        assert response.status_code == 422
 
 
 # ═══════════════════════════════════════════════════════════════════════

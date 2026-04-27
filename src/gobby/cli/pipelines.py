@@ -522,9 +522,12 @@ def reject_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
 @pipelines.command("history")
 @click.argument("name")
 @click.option("--limit", default=20, help="Maximum number of executions to show")
+@click.option("--offset", default=0, help="Number of leading rows to skip")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 @click.pass_context
-def history_pipeline(ctx: click.Context, name: str, limit: int, json_format: bool) -> None:
+def history_pipeline(
+    ctx: click.Context, name: str, limit: int, offset: int, json_format: bool
+) -> None:
     """Show execution history for a pipeline.
 
     Examples:
@@ -533,12 +536,20 @@ def history_pipeline(ctx: click.Context, name: str, limit: int, json_format: boo
 
         gobby pipelines history deploy --limit 10
 
+        gobby pipelines history deploy --limit 10 --offset 10
+
         gobby pipelines history deploy --json
     """
     execution_manager = get_execution_manager()
 
-    # List executions filtered by pipeline name
-    executions = execution_manager.list_executions(pipeline_name=name, limit=limit)
+    try:
+        executions = execution_manager.list_executions(
+            pipeline_name=name, limit=limit, offset=offset
+        )
+    except ValueError as e:
+        click.echo(f"Invalid pagination: {e}", err=True)
+        raise SystemExit(1) from None
+    total = execution_manager.count_executions(pipeline_name=name)
 
     if json_format:
         result = {
@@ -552,13 +563,18 @@ def history_pipeline(ctx: click.Context, name: str, limit: int, json_format: boo
                 }
                 for ex in executions
             ],
-            "count": len(executions),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
         }
         click.echo(json.dumps(result, indent=2))
         return
 
     if not executions:
-        click.echo(f"No executions found for pipeline '{name}'.")
+        if offset > 0 and total > 0:
+            click.echo(f"No executions on this page (offset={offset}, total={total}) for '{name}'.")
+        else:
+            click.echo(f"No executions found for pipeline '{name}'.")
         return
 
     click.echo(f"Execution history for '{name}' ({len(executions)} executions):\n")
@@ -573,6 +589,7 @@ def history_pipeline(ctx: click.Context, name: str, limit: int, json_format: boo
             else "○"
         )
         click.echo(f"  {status_icon} {ex.id} ({ex.status.value}) - {ex.created_at}")
+    click.echo(f"\nShowing {offset + 1}–{offset + len(executions)} of {total}.")
 
 
 @pipeline_runs.command("list")
@@ -580,11 +597,17 @@ def history_pipeline(ctx: click.Context, name: str, limit: int, json_format: boo
     "--status", default=None, help="Filter by status (pending, running, completed, failed, etc.)"
 )
 @click.option("--name", "pipeline_name", default=None, help="Filter by pipeline definition name")
-@click.option("--limit", default=20, help="Maximum number of executions to show")
+@click.option("--limit", default=20, help="Maximum number of executions per page")
+@click.option("--offset", default=0, help="Number of leading rows to skip")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 @click.pass_context
 def list_pipeline_runs(
-    ctx: click.Context, status: str | None, pipeline_name: str | None, limit: int, json_format: bool
+    ctx: click.Context,
+    status: str | None,
+    pipeline_name: str | None,
+    limit: int,
+    offset: int,
+    json_format: bool,
 ) -> None:
     """List executions across all pipelines.
 
@@ -595,6 +618,8 @@ def list_pipeline_runs(
         gobby pipelines runs list --status running
 
         gobby pipelines runs list --name deploy --limit 10
+
+        gobby pipelines runs list --limit 50 --offset 100
 
         gobby pipelines runs list --json
     """
@@ -612,9 +637,18 @@ def list_pipeline_runs(
             click.echo(f"Invalid status '{status}'. Valid: {', '.join(valid)}", err=True)
             raise SystemExit(1) from None
 
-    executions = execution_manager.list_executions(
-        status=status_filter, pipeline_name=pipeline_name, limit=limit
-    )
+    try:
+        executions = execution_manager.list_executions(
+            status=status_filter,
+            pipeline_name=pipeline_name,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as e:
+        click.echo(f"Invalid pagination: {e}", err=True)
+        raise SystemExit(1) from None
+    total = execution_manager.count_executions(status=status_filter, pipeline_name=pipeline_name)
+    status_summary = execution_manager.status_summary_for_executions(pipeline_name=pipeline_name)
 
     if json_format:
         result: dict[str, Any] = {
@@ -628,23 +662,25 @@ def list_pipeline_runs(
                 }
                 for ex in executions
             ],
-            "count": len(executions),
-            "status_summary": execution_manager.count_by_status(),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "status_summary": status_summary,
         }
         click.echo(json.dumps(result, indent=2))
         return
 
     if not executions:
-        click.echo("No executions found.")
+        if offset > 0 and total > 0:
+            click.echo(f"No executions on this page (offset={offset}, total={total}).")
+        else:
+            click.echo("No executions found.")
         return
 
-    # Show status summary header
-    status_counts = execution_manager.count_by_status()
-    summary_parts = [f"{s}: {c}" for s, c in sorted(status_counts.items())]
+    summary_parts = [f"{s}: {c}" for s, c in sorted(status_summary.items())]
     if summary_parts:
         click.echo(f"Status: {', '.join(summary_parts)}\n")
 
-    click.echo(f"Showing {len(executions)} execution(s):\n")
     for ex in executions:
         status_icon = (
             "✓"
@@ -660,13 +696,15 @@ def list_pipeline_runs(
         click.echo(
             f"  {status_icon} {ex.id} {ex.pipeline_name} ({ex.status.value}) - {ex.created_at}"
         )
+    click.echo(f"\nShowing {offset + 1}–{offset + len(executions)} of {total}.")
 
 
 @pipelines.command("search")
 @click.argument("query")
 @click.option("--status", default=None, help="Filter by status")
 @click.option("--no-errors", is_flag=True, help="Skip searching step error text")
-@click.option("--limit", default=20, help="Maximum number of results")
+@click.option("--limit", default=20, help="Maximum number of results per page")
+@click.option("--offset", default=0, help="Number of leading rows to skip")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 @click.pass_context
 def search_executions(
@@ -675,6 +713,7 @@ def search_executions(
     status: str | None,
     no_errors: bool,
     limit: int,
+    offset: int,
     json_format: bool,
 ) -> None:
     """Search pipeline executions by text.
@@ -688,6 +727,8 @@ def search_executions(
         gobby pipelines search "timeout error"
 
         gobby pipelines search deploy --status failed
+
+        gobby pipelines search deploy --limit 10 --offset 10
 
         gobby pipelines search deploy --no-errors --json
     """
@@ -705,11 +746,21 @@ def search_executions(
             click.echo(f"Invalid status '{status}'. Valid: {', '.join(valid)}", err=True)
             raise SystemExit(1) from None
 
-    executions = execution_manager.search_executions(
+    try:
+        executions = execution_manager.search_executions(
+            query=query,
+            search_errors=not no_errors,
+            status=status_filter,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as e:
+        click.echo(f"Invalid pagination: {e}", err=True)
+        raise SystemExit(1) from None
+    total = execution_manager.count_search_executions(
         query=query,
         search_errors=not no_errors,
         status=status_filter,
-        limit=limit,
     )
 
     if json_format:
@@ -724,17 +775,22 @@ def search_executions(
                 }
                 for ex in executions
             ],
-            "count": len(executions),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
             "query": query,
         }
         click.echo(json.dumps(result, indent=2))
         return
 
     if not executions:
-        click.echo(f"No executions found matching '{query}'.")
+        if offset > 0 and total > 0:
+            click.echo(f"No matches on this page (offset={offset}, total={total}) for '{query}'.")
+        else:
+            click.echo(f"No executions found matching '{query}'.")
         return
 
-    click.echo(f"Found {len(executions)} execution(s) matching '{query}':\n")
+    click.echo(f"Matches for '{query}':\n")
     for ex in executions:
         status_icon = (
             "✓"
@@ -750,6 +806,7 @@ def search_executions(
         click.echo(
             f"  {status_icon} {ex.id} {ex.pipeline_name} ({ex.status.value}) - {ex.created_at}"
         )
+    click.echo(f"\nShowing {offset + 1}–{offset + len(executions)} of {total}.")
 
 
 @pipelines.command("import")
