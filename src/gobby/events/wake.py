@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_SIGNAL = "<continue />\n"
+CONTINUE_WAKE_SIGNAL = "Job's Done\n"
 
 # tmux_sender signature: (tmux_session_name: str, message: str) -> None
 TmuxSender = Callable[[str, str], Coroutine[Any, Any, None]]
