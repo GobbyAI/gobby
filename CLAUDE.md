@@ -83,6 +83,15 @@ Canonical section-heading regex:
 - Bootstrap-ledger requirement: every new epic plan ships a
   `.coverage-ledger.yaml` companion file, adversary-reviewed before expansion,
   until the contract tooling is mature.
+- Plan index (`.gobby/plans/index.yaml`): every `task-*.md` plan file MUST
+  have an entry. Each entry carries `plan_id`, `project_id`, `root_task_ref`,
+  `plan_kind`, and `status`. `plan_kind` is one of:
+  - `implementation` — parsed strict; requires a generated manifest with
+    matching `plan_hash` and every row `status: covered`.
+  - `strategy` — parsed permissive; no manifest permitted.
+  - `legacy` — parsed permissive; no manifest permitted; requires a row in
+    `.gobby/plans/.legacy-classification.yaml` with `legacy_reason` and
+    target-task snapshot fields.
 - `.grandfathered` mechanism: reserved for already-merged epics; additions
   require a co-located removal task with a paired
   `# remove-by: <task-ref>` annotation, and that task must be open.
