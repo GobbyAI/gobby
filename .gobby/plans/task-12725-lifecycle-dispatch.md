@@ -197,6 +197,8 @@ Three parallel Explore agents ran to verify APIs before this rewrite. Confirmed:
 ### 1.1 Add Lifecycle enum and automation fields to Task model [category: code]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `bb8bdf16`. See `src/gobby/storage/tasks/_models.py`.
+
 Target: `src/gobby/storage/tasks/_models.py`
 
 Add a new enum and exactly six new columns on `tasks`. High-churn / sparse / append-only state goes into 1:1 adjacent tables (§1.1a, §1.1b, §1.1c) rather than being inlined here, to keep the hot-path row narrow.
@@ -246,6 +248,8 @@ Update `serialize_task_state`, `to_dict`, `to_brief` to surface the six new colu
 ### 1.1a `task_dispatch_mutex` table (new) [category: code]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `848dea67`. See `src/gobby/storage/tasks/_dispatch_mutex.py`.
+
 Target: `src/gobby/storage/tasks/_models.py` + `src/gobby/storage/tasks/_dispatch_mutex.py` (new)
 
 High-churn mutex state for the dispatcher. Inlining these on `tasks` creates WAL pressure on every tick (every dispatch attempt rewrites the row, invalidating caches for unrelated readers). Separate 1:1 table with absent row = "no lease":
@@ -271,6 +275,8 @@ Dataclass `DispatchMutex` mirrors the row. CRUD helpers: `get_mutex(task_id)`, `
 
 ### 1.1b `task_artifacts` table (new) [category: code]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `89f68a1b`. See `src/gobby/storage/tasks/_artifacts.py`.
 
 Target: `src/gobby/storage/tasks/_models.py` + `src/gobby/storage/tasks/_artifacts.py` (new)
 
@@ -317,6 +323,8 @@ CRUD (Python helpers in `src/gobby/storage/tasks/_artifacts.py`): `get_artifacts
 ### 1.1c `task_lifecycle_events` table (new) [category: code]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `614c5bbe`. See `src/gobby/storage/tasks/_lifecycle_events.py`.
+
 Target: `src/gobby/storage/tasks/_models.py` + `src/gobby/storage/tasks/_lifecycle_events.py` (new)
 
 Append-only audit trail of lifecycle transitions. PG-ready from day one; the move to PostgreSQL (post-this-epic) leaves this schema unchanged.
@@ -344,6 +352,8 @@ CRUD: `record_lifecycle_event(task_id, from_state, to_state, reason, by)`, `list
 ### 1.1d MCP tool extensions on gobby-tasks-ops [category: code] (depends: 1.1b)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `89f68a1b`. See `src/gobby/mcp_proxy/tools/tasks/_artifacts.py`.
+
 Target: `src/gobby/mcp_proxy/tools/tasks_ops.py` (or wherever `gobby-tasks-ops` tool registry lives)
 
 R7.F3 fix. The merge agent (§2.10), expansion-qa (§2.9), and other workflow steps need MCP-callable surfaces for the artifact-mutation and audit-marker helpers introduced in §1.1b. `gobby-tasks-ops` does not currently expose any of them — confirmed via `list_tools(server_name="gobby-tasks-ops")`: existing tools are expansion-run, affected-files, GitHub-sync, and front-half-tick; no artifact CRUD, no description-section append.
@@ -366,6 +376,8 @@ Allowlist these tools in `merge.yaml` (§2.10), `expansion-qa.yaml` (§2.9 — f
 
 ### 1.2 DB migration for lifecycle + automation + adjacent tables [category: config] (depends: 1.1)
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `a847e379`. See `src/gobby/storage/_migration_registry.py`.
 
 Target: `src/gobby/storage/migrations.py` and `src/gobby/storage/baseline_schema.sql`
 
@@ -442,6 +454,8 @@ Update `baseline_schema.sql` so fresh installs ship the columns and tables direc
 
 ### 1.3 Extend task CRUD for new fields and helpers [category: code] (depends: 1.2)
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `614c5bbe`. See `src/gobby/storage/tasks/_crud.py`.
 
 Target: `src/gobby/storage/tasks/_crud.py` and related modules
 
@@ -1027,6 +1041,8 @@ Helpers `_current_verdict_rejected`, `_rounds_remaining`, `_expansion_active`, `
 ### 1.8 Lifecycle transitions in review tools [category: code] (depends: 1.1)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `a2071a54`. See `src/gobby/storage/tasks/_transitions.py`.
+
 Target: `src/gobby/storage/tasks/_transitions.py` and the matching MCP wrappers
 
 **Core contract**: when `mark_task_review_approved` triggers a lifecycle advance, it also **resets `status` to `open`** so the next stage's rule can dispatch (rules gate on `status in ("open", "needs_review")`). The approval event is preserved in `task_lifecycle_events` (§1.1c) — audit trail is not lost.
@@ -1314,6 +1330,8 @@ The cron_jobs row:
 ### 2.1 Holistic-review skill [category: docs]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `2a8dcdf8`. See `src/gobby/install/shared/skills/holistic-review/SKILL.md`.
+
 Target: `src/gobby/install/shared/skills/holistic-review/SKILL.md` (new)
 
 Four-point intent-vs-diff methodology. Inputs: epic task, plan artifact at `epic.plan_file_path`, aggregate worktree diff, linked subtask validation_criteria. Checks: Scope (did PR do exactly what plan said), Reality (end-to-end behavior matches plan outcome), Testing (coverage adequate for changes), YAGNI (any drift / creep / scope bloat).
@@ -1350,6 +1368,8 @@ The holistic-review SKILL.md prose explicitly walks through finding-to-leaf attr
 ### 2.2 Holistic-reviewer agent template [category: config] (depends: 2.1)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `2a8dcdf8`. See `src/gobby/install/shared/workflows/agents/holistic-reviewer.yaml`.
+
 Target: `src/gobby/install/shared/workflows/agents/holistic-reviewer.yaml` (new)
 
 Mirrors `plan-adversary.yaml`'s shape: claim → load skill → review → terminate. Loads `holistic-review` skill via `get_skill` as first post-claim action. Allows filesystem reads (git diff, source files) in the `review` step; blocks `close_task`, `reopen_task`, `mark_task_needs_review`, spawning, killing. Terminates via `end_agent_run`.
@@ -1362,6 +1382,8 @@ Model/provider choice: `codex` / `gpt-5.5` / `reasoning_effort: high` as the bas
 
 ### 2.3 Test-architect skill minimal wiring [category: config]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `9ba5a74e`. See `src/gobby/install/shared/workflows/agents/test-architect.yaml`.
 
 Target: `src/gobby/install/shared/workflows/agents/test-architect.yaml`
 
@@ -1408,6 +1430,8 @@ The category boundary stays intact: `[category: code]` leaves carry their own te
 ### 2.4 Add close_task permission to qa-reviewer [category: config]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `361addd8`. See `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml`.
+
 Target: `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml`
 
 After `mark_task_review_approved` on a leaf, QA proceeds to `close_task` with `reason="qa_approved"` and `commit_sha` from the dev's commit on the worktree. Remove `close_task` from the `blocked_mcp_tools` list (if present) for the QA review step. The existing task-transitions skill's gates still apply.
@@ -1418,6 +1442,8 @@ After `mark_task_review_approved` on a leaf, QA proceeds to `close_task` with `r
 
 ### 2.5 Frontend-developer agent template [category: config]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `2a8dcdf8`. See `src/gobby/install/shared/workflows/agents/frontend-developer.yaml`.
 
 Target: `src/gobby/install/shared/workflows/agents/frontend-developer.yaml` (new)
 
@@ -1436,6 +1462,8 @@ Unblock `close_task` so the agent can self-close when its subtree has no QA stag
 ### 2.6 Backend-developer agent template [category: config]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `ed675aea`. See `src/gobby/install/shared/workflows/agents/backend-developer.yaml`.
+
 Target: `src/gobby/install/shared/workflows/agents/backend-developer.yaml` (new)
 
 New dev agent for BE-stack leaves. Tool allowlist tuned for the BE toolchain: pytest, mypy, ruff, database client (`psql`, `sqlite3`), migration runners, `uv` / `pip` / `poetry`, container tools.
@@ -1453,6 +1481,8 @@ Same `close_task` unblock and skip-stage branching as §2.5.
 ### 2.7 Planner clears rejection marker on resubmit [category: config] (depends: 1.8)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `5d33b101`. See `src/gobby/install/shared/workflows/agents/planner.yaml`.
+
 Target: `src/gobby/install/shared/workflows/agents/planner.yaml`
 
 In the planner's submit step (before `mark_task_needs_review`), explicitly remove the `planning-current-verdict:rejected` label if present. Addresses R2.F1 (rejection marker must be durable state, cleared by the planner on resubmit — not inferred from historical text).
@@ -1463,6 +1493,8 @@ In the planner's submit step (before `mark_task_needs_review`), explicitly remov
 
 ### 2.8 Expansion: Agent Selection + profile-appropriate subtasks [category: code]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `36a48d3e`. See `src/gobby/tasks/expansion_service.py`.
 
 Target: `src/gobby/tasks/expansion_service.py` and `src/gobby/tasks/expansion.py`
 
@@ -1500,6 +1532,8 @@ Expansion has two responsibilities: shaping the subtask tree based on which stag
 ### 2.8a Expansion-agent-selection skill [category: docs]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `2a8dcdf8`. See `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md`.
+
 Target: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md` (new)
 
 Documents the decision heuristics the expander uses for Agent Selection. Loaded as the first action of §2.8's Agent Selection step.
@@ -1532,6 +1566,8 @@ Skill will be audited and tuned as prompts mature; folded into this epic rather 
 ### 2.8b Expose `start_expansion_run_impl` for in-process dispatcher use [category: code] (depends: 1.1b)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `4ee54dc5`. See `src/gobby/mcp_proxy/tools/tasks/_expansion.py`.
+
 Target: `src/gobby/mcp_proxy/tools/tasks_ops.py` (or wherever the MCP tool's handler lives)
 
 R6.F5 + R7.F2 fix. The existing `gobby-tasks-ops:start_expansion_run` MCP tool already wraps the canonical "create expansion-run row + kick compile + return run record" flow against the real `ExpansionService(*, task_manager, llm_service, config=None, run_manager=None)` constructor and `LocalExpansionRunManager.create(*, parent_task_id, project_id, triggering_session_id, input_source, plan_file=None, provider=None, model=None, options=None, run_id=None) -> ExpansionRun`. The dispatcher (§1.9 `StartExpansionRun` case) calls the same handler directly, in-process, under its mutex hold. No new `ExpansionService.start_run` wrapper needed — the impl already exists.
@@ -1546,6 +1582,8 @@ The dispatcher captures `run.id` and writes it into `task_artifacts.expansion_ru
 
 ### 2.9 Expansion-QA transition contract [category: config] (depends: 1.8, 1.1b)
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `4ee54dc5`. See `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
 
 Target: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
 
@@ -1569,6 +1607,8 @@ Unblock `mark_task_review_approved` and `mark_task_review_rejected` in the agent
 
 ### 2.10 Merge agent — lifecycle integration [category: config] (depends: 1.8, 1.1b)
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `fb4889c0`. See `src/gobby/install/shared/workflows/agents/merge.yaml`.
 
 Target: `src/gobby/install/shared/workflows/agents/merge.yaml`
 
@@ -1620,6 +1660,8 @@ Real PR-creation, merge-SHA capture, and AI-driven conflict resolution for clone
 
 ### 3.1 Build config loader [category: code]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `9cdd0a31`. See `src/gobby/config/build.py`.
 
 Target: `src/gobby/config/build.py` (new)
 
@@ -1689,6 +1731,8 @@ Daemon uses `max_active_agents` and `dispatch_interval_seconds` at cron-registra
 
 ### 3.2 Build service — CLI + MCP + HTTP shared core [category: code] (depends: 3.1)
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `614c5bbe`. See `src/gobby/build/service.py`.
 
 Target: shared core at `src/gobby/build/service.py` (new package); three thin surfaces.
 
@@ -1777,6 +1821,8 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 ### 3.3 `/gobby build` interactive skill [category: docs] (depends: 3.2)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `53f593d9`. See `src/gobby/install/shared/skills/build/SKILL.md`.
+
 Target: `src/gobby/install/shared/skills/build/SKILL.md` (new)
 
 Wizard-driven. Branches:
@@ -1797,6 +1843,8 @@ No separate yolo prompt inside a profile branch — `full-yolo` already carries 
 
 ### 3.4 Cascade resolved state to subtree at build time [category: code]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `614c5bbe`. See `src/gobby/build/service.py`.
 
 Target: `src/gobby/build/service.py` (implementation) + `src/gobby/storage/tasks/_crud.py` (helpers)
 
@@ -1829,6 +1877,8 @@ Rules (§1.7) always read the task's own resolved state; they never walk the par
 ### 4.1 Remove conductor package [category: refactor]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `70d2d473`. The `src/gobby/conductor/` package was removed.
+
 Target: `src/gobby/conductor/`
 
 Delete the entire package. Grep-verify no external imports (`from gobby.conductor`, `import gobby.conductor`). The cron registration previously performed by `conductor/manager.py` is replaced by the registration in §1.10.
@@ -1839,6 +1889,8 @@ Delete the entire package. Grep-verify no external imports (`from gobby.conducto
 
 ### 4.2 Tombstone obsolete pipelines [category: config]
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `ef0a203c`. See tombstoned pipelines under `src/gobby/install/shared/workflows/pipelines/`.
 
 Target: `src/gobby/install/shared/workflows/pipelines/`
 
@@ -1877,6 +1929,8 @@ If `deprecated` isn't a recognized field in `PipelineDefinition` today, add it a
 ### 4.3 Tombstone obsolete agents [category: config]
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `fb171009`. See tombstoned agents under `src/gobby/install/shared/workflows/agents/`.
+
 Target: `src/gobby/install/shared/workflows/agents/`
 
 Same treatment for:
@@ -1894,6 +1948,8 @@ Keep role agents (`planner`, `plan-adversary`, `frontend-developer`, `backend-de
 ### 4.4 DB migration to disable retired workflow_definitions rows [category: config] (depends: 4.1, 4.2, 4.3)
 `kind: deliverable`
 
+> **Status: completed** — shipped via commit `a847e379`. See `src/gobby/storage/_migration_registry.py`.
+
 Target: `src/gobby/storage/migrations.py`
 
 Flip `enabled = false` on installed rows for the tombstoned pipelines and agents. Do not delete rows — drift detection relies on hash/content comparison, and a later cleanup migration can drop them after stability is confirmed.
@@ -1904,6 +1960,8 @@ Flip `enabled = false` on installed rows for the tombstoned pipelines and agents
 
 ### 4.5 Update docs [category: docs] (depends: 4.1)
 `kind: deliverable`
+
+> **Status: completed** — shipped via commit `4b068f41`. See `CLAUDE.md`.
 
 Target: `CLAUDE.md` (project root), `GUIDING_PRINCIPLES.md`, any `docs/` page referencing the old model
 
