@@ -344,6 +344,9 @@ class SessionMessageProcessor:
         if self._hook_manager is None:
             return
 
+        # Only Codex rollout parsers emit ParsedToolEvent records today. Other
+        # sources, including Droid, rely on native CLI hooks rather than
+        # synthesized transcript tool hooks, so they intentionally fall through.
         source = self._sources.get(session_id)
         if source != "codex":
             return
