@@ -14,11 +14,6 @@ entries:
     root_task_ref: "13173"
     plan_kind: strategy
     status: active
-  - plan_id: task-13305-compat-dict-removal
-    project_id: d45545c5-ded5-4335-b115-0245752edacf
-    root_task_ref: "13305"
-    plan_kind: strategy
-    status: active
   - plan_id: task-12068-skillsmp-install-rewrite
     project_id: d45545c5-ded5-4335-b115-0245752edacf
     root_task_ref: "12068"
