@@ -26,6 +26,10 @@ def test_replaces_disallowed_chars() -> None:
     assert _sanitize("abc/def ghi") == "abc-def-ghi"
 
 
+def test_replaces_slash_path_traversal() -> None:
+    assert _sanitize("../abc/def") == "abc-def"
+
+
 def test_rejects_empty_post_sanitize() -> None:
     with pytest.raises(EmptyComponentError):
         _sanitize("///...")
@@ -55,6 +59,22 @@ def test_truncate_hash_disambiguates_collisions() -> None:
     left = "x" * 65
     right = "x" * 64 + "y"
     assert _sanitize(left) != _sanitize(right)
+
+
+def test_distinct_raws_can_collapse_before_identity_check() -> None:
+    assert _sanitize("a/b") == _sanitize("a b")
+
+
+def test_case_collision_paths_remain_distinct_but_casefold_equal(tmp_path: Path) -> None:
+    upper = coverage_manifest_path(
+        tmp_path, project_id="Project", root_task_ref="#1", plan_id="Plan"
+    )
+    lower = coverage_manifest_path(
+        tmp_path, project_id="project", root_task_ref="#1", plan_id="plan"
+    )
+
+    assert upper != lower
+    assert str(upper).casefold() == str(lower).casefold()
 
 
 def test_windows_reserved_disambiguated() -> None:
