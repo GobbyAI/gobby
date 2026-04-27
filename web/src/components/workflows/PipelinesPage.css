@@ -1112,3 +1112,28 @@
   background: rgba(147, 51, 234, 0.12);
   color: #7c3aed;
 }
+
+.pipeline-pagination-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0.75rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.pipeline-pagination-ribbon {
+  font-variant-numeric: tabular-nums;
+}
+
+.pipeline-pagination-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+[data-theme="light"] .pipeline-pagination-footer {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  color: rgba(0, 0, 0, 0.65);
+}

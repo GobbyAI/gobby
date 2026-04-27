@@ -19,6 +19,57 @@ interface PipelineExecutionsViewProps {
   onApprove: (token: string) => Promise<unknown>
   onReject: (token: string) => Promise<unknown>
   onNavigateToTrace?: (traceId: string) => void
+  // Pagination (optional — when omitted the footer is hidden, preserving
+  // the legacy single-page behavior for callers that don't track offset).
+  total?: number
+  limit?: number
+  offset?: number
+  onOffsetChange?: (offset: number) => void
+}
+
+interface PaginationFooterProps {
+  total: number
+  limit: number
+  offset: number
+  onOffsetChange: (offset: number) => void
+}
+
+function PaginationFooter({
+  total,
+  limit,
+  offset,
+  onOffsetChange,
+}: PaginationFooterProps) {
+  if (total <= 0) return null
+  const start = total === 0 ? 0 : offset + 1
+  const end = Math.min(offset + limit, total)
+  const hasPrev = offset > 0
+  const hasNext = end < total
+  return (
+    <div className="pipeline-pagination-footer">
+      <span className="pipeline-pagination-ribbon">
+        {start}–{end} of {total}
+      </span>
+      <div className="pipeline-pagination-buttons">
+        <button
+          type="button"
+          className="pipeline-btn"
+          disabled={!hasPrev}
+          onClick={() => onOffsetChange(Math.max(0, offset - limit))}
+        >
+          Prev
+        </button>
+        <button
+          type="button"
+          className="pipeline-btn"
+          disabled={!hasNext}
+          onClick={() => onOffsetChange(offset + limit)}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  )
 }
 
 const STATUS_FILTERS = [
@@ -37,7 +88,16 @@ export function PipelineExecutionsView({
   onApprove,
   onReject,
   onNavigateToTrace,
+  total,
+  limit,
+  offset,
+  onOffsetChange,
 }: PipelineExecutionsViewProps) {
+  const showPagination =
+    typeof total === 'number' &&
+    typeof limit === 'number' &&
+    typeof offset === 'number' &&
+    typeof onOffsetChange === 'function'
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
@@ -211,6 +271,15 @@ export function PipelineExecutionsView({
             ))}
           </div>
         </div>
+      )}
+
+      {showPagination && (
+        <PaginationFooter
+          total={total!}
+          limit={limit!}
+          offset={offset!}
+          onOffsetChange={onOffsetChange!}
+        />
       )}
     </div>
   )
