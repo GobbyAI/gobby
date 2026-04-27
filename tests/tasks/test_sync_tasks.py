@@ -53,14 +53,13 @@ class TestTaskSyncManager:
         assert task1_data["title"] == "Task 1"
         assert task1_data["deps_on"] == []
         assert "state" in task1_data
-        assert "compat" in task1_data
 
         # Verify Task 2
         task2_data = next(d for d in data if d["id"] == t2.id)
         assert task2_data["title"] == "Task 2"
         assert task2_data["deps_on"] == [t1.id]
         assert task2_data["state"]["is_closed"] is False
-        assert task2_data["compat"]["status"] == "open"
+        assert task2_data["status"] == "open"
 
     @pytest.mark.integration
     def test_import_from_jsonl(self, sync_manager, task_manager, sample_project) -> None:
@@ -391,10 +390,6 @@ class TestImportEdgeCases:
                 "closed_commit_sha": None,
                 "escalated_at": None,
                 "escalation_reason": None,
-            },
-            "compat": {
-                "status": "needs_review",
-                "assignee": "session-123",
             },
         }
 

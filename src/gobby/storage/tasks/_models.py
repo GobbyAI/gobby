@@ -306,10 +306,6 @@ class Task:
             "project_id": self.project_id,
             "title": self.title,
             "state": state,
-            "compat": {
-                "status": self.status,
-                "assignee": self.assignee,
-            },
             "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,
@@ -370,10 +366,6 @@ class Task:
             "ref": f"#{self.seq_num}" if self.seq_num else self.id[:8],
             "title": self.title,
             "state": state,
-            "compat": {
-                "status": self.status,
-                "assignee": self.assignee,
-            },
             "status": self.status,
             "priority": self.priority,
             "task_type": self.task_type,

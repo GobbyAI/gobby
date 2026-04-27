@@ -30,7 +30,6 @@ class TestGetTaskTool:
             assert result["id"] == sample_task.id
             assert result["title"] == "Test Task"
             assert "state" in result
-            assert "compat" in result
             assert result["state"]["is_blocked"] is False
             assert "dependencies" in result
             assert "blocked_by" in result["dependencies"]
@@ -128,7 +127,6 @@ class TestGetTaskTool:
 
             assert result["id"] == sample_task.id
             assert "state" in result
-            assert "compat" in result
             assert "description" in result
             assert "validation_criteria" in result
             assert "dependencies" in result

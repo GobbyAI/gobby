@@ -84,10 +84,6 @@ def mock_task():
             "escalated_at": None,
             "escalation_reason": None,
         },
-        "compat": {
-            "status": "open",
-            "assignee": None,
-        },
     }
     return task
 

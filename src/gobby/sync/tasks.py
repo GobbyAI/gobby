@@ -149,10 +149,6 @@ class TaskSyncManager:
                     "title": task.title,
                     "description": task.description,
                     "state": state,
-                    "compat": {
-                        "status": task.status,
-                        "assignee": task.assignee,
-                    },
                     "status": task.status,
                     "priority": task.priority,
                     "task_type": task.task_type,
@@ -335,7 +331,6 @@ class TaskSyncManager:
 
                         if should_update:
                             state = data.get("state") or {}
-                            compat = data.get("compat") or {}
 
                             # Handle commits array (stored as JSON in SQLite)
                             commits_json = (
@@ -354,7 +349,7 @@ class TaskSyncManager:
                             labels_raw = data.get("labels")
                             labels_json = json.dumps(labels_raw) if labels_raw else None
 
-                            legacy_status = data.get("status") or compat.get("status") or "open"
+                            legacy_status = data.get("status") or "open"
                             lifecycle_stage = data.get("lifecycle_stage")
                             if lifecycle_stage is None:
                                 lifecycle_stage = state.get("lifecycle_stage")

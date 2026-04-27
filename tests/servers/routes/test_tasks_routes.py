@@ -122,7 +122,6 @@ class TestListTasks:
         assert data["total"] >= 1
         task = next(t for t in data["tasks"] if t["id"] == sample_task["id"])
         assert "state" in task
-        assert "compat" in task
 
     def test_list_with_status_filter(self, client: TestClient, sample_task: dict) -> None:
         response = client.get("/api/tasks?status=open")
@@ -240,7 +239,6 @@ class TestCreateTask:
         assert data["title"] == "New task"
         assert data["status"] == "open"
         assert "state" in data
-        assert "compat" in data
         assert "id" in data
 
     def test_create_with_all_fields(self, client: TestClient) -> None:
@@ -294,7 +292,6 @@ class TestGetTask:
         assert data["id"] == sample_task["id"]
         assert data["title"] == "Sample task"
         assert "state" in data
-        assert "compat" in data
 
     def test_get_by_seq_num_uses_project_context(
         self, client: TestClient, sample_task: dict
