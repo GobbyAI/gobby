@@ -84,7 +84,8 @@ Canonical section-heading regex:
   `.coverage-ledger.yaml` companion file, adversary-reviewed before expansion,
   until the contract tooling is mature.
 - `.grandfathered` mechanism: reserved for already-merged epics; additions
-  require a paired `# remove-by: <task-ref>` annotation and an open task.
+  require a co-located removal task with a paired
+  `# remove-by: <task-ref>` annotation, and that task must be open.
   Epic 1 (#13175) is not grandfathered.
 - Table-row decomposition rule: any `deliverable` section whose body uses a
   markdown table to enumerate work items MUST emit one acceptance item per data
