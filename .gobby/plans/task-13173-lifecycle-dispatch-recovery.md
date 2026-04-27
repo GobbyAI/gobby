@@ -122,12 +122,24 @@ The grammar must cover, at minimum:
 **Canonical regex** (frozen at strategy level; pinned in A2 fixture):
 
 ```regex
-^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-])
+^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))(?=\s|[).:-]|$)
 ```
 
-Required parser fixtures (A2 must verify each): `1.1a`, `1.1d`, `2.8a`,
-`2.8b`, `A1`, `A10`, `D0.1`, `B5`, plus a negative case for an
-unparseable heading.
+The trailing `|$` lookahead allows bare headings with no title or
+delimiter (`### 1.1a`, `## A10`) — needed because both styles appear in
+real plans.
+
+Required parser fixtures (A2 must verify each), each pinned in **both
+bare and titled forms**:
+
+- Bare: `### 1.1a`, `### 1.1d`, `### 2.8a`, `### 2.8b`, `## A1`, `## A10`,
+  `### D0.1`, `## B5`.
+- Titled: `## §1.7 Decision rules`, `### 1.1a Lifecycle enum and
+  automation fields`, `## A1 Plan format spec (typed grammar)`,
+  `### D0.8 Dispatcher slot reservation primitive (F11)`.
+- Negative case: `## Phase A — Fix the Expansion/QA Contract` (a heading
+  with no canonical section ID; parser yields `kind: framing` or
+  raises depending on context).
 
 Other required structure:
 
@@ -253,16 +265,28 @@ Outputs:
   leaves, evidence)` where `status ∈ {covered, deferred, missing,
   invalid}`. Each `leaf` row carries the leaf's task ref and its
   `validation_criteria` snippet that satisfied the artifact match.
-- A coverage manifest at `.gobby/plans/<plan-stem>.coverage.yaml` that
-  records all header fields above plus the rows. The manifest is
-  checked in.
+- A coverage manifest keyed on the full identity tuple
+  `(project_id, plan_id, root_task_ref, plan_hash)`. **Canonical path
+  scheme:**
+
+  ```text
+  .gobby/plans/coverage/<project_id>/<root_task_ref>/<plan_id>.coverage.yaml
+  ```
+
+  `<root_task_ref>` is sanitized (e.g., `#12725` → `12725`) so it is a
+  legal path component. `plan_hash` lives inside the file, not the path,
+  so a re-generation overwrites in place; pre-existing manifests with
+  stale hashes are surfaced as CI failures (A9).
 - Exit 0 on all-covered-or-deferred; non-zero otherwise. Specific exit
   codes per failure category so CI can attribute them.
 
-**Multi-plan epics.** When a single epic carries multiple plans (e.g., a
-super-epic with sub-plans), each plan must run its own coverage check
-keyed on `(plan_id, root_task_ref)`. The manifest filename includes
-`plan_id` so manifests do not collide.
+**Multi-plan epics, multi-root plans.** Manifests are keyed on the full
+identity tuple. The same plan reused across two root tasks in the same
+project produces two manifests at distinct paths (one per
+`<root_task_ref>` directory). Two different plans under the same root
+produce two manifests at distinct paths (one per `<plan_id>` filename).
+Task artifacts (`task_artifacts.coverage_matrix_path`) point at the
+exact manifest for that root, never a shared one.
 
 Expansion-QA, holistic-review, and CI all call this library — never their
 own ad-hoc parser or matcher.
@@ -273,14 +297,19 @@ Update `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` and
 the expansion-qa skill so validation calls the A4 library, not its own
 parsing logic:
 
-1. Resolve the epic's `plan_file_path` and re-compute `plan_hash`.
-2. Call `coverage.evaluate(plan, plan_hash, task_tree="db")`.
+1. Resolve the epic's `plan_file_path`, `plan_id`, and `project_id`;
+   re-compute `plan_hash`.
+2. Call `coverage.evaluate(plan_path, plan_hash, plan_id=<id>,
+   task_tree="db", root_task_ref=<epic_ref>, project_id=<id>,
+   evidence="none")`. The library signature **rejects** `db`/`jsonl`
+   calls without `plan_id`, `root_task_ref`, and `project_id` at type-
+   and test-time, so a stale call site fails noisily.
 3. Reject the run if any deliverable acceptance item has status
-   `missing` or `invalid`. Cite each by `(section_id, item_id)` and by the
-   leaves that claimed but failed coverage (so the rejection points at
-   real artifacts).
-4. Persist the resulting manifest to
-   `.gobby/plans/<plan-stem>.coverage.yaml` and reference it from the epic
+   `missing` or `invalid`. Cite each by `(section_id, item_id)` and by
+   the leaves that claimed but failed coverage (so the rejection points
+   at real artifacts).
+4. Persist the resulting manifest to the canonical scoped path (see A4
+   path scheme) and reference it from the epic
    (`task_artifacts.coverage_matrix_path`).
 
 This is the gate the original epic lacked. It runs before any code task
@@ -303,10 +332,17 @@ kinds, treated identically by the matcher:**
   existing `gobby-tasks:get_task_diff`.
 - `worktree-diff:<artifact-ref>` — **resolves directly from the task's
   worktree or clone artifact** (F10). The artifact provides
-  `worktree_path` (or `clone_path`) and `target_branch`; the library
-  computes `git -C <path> diff <target_branch>...HEAD`. Required for yolo
-  flows whose commits are local to the isolation and not yet linked to
-  the task.
+  `worktree_path` (or `clone_path`), `target_branch`, and
+  `base_commit_sha` — an immutable SHA captured at worktree/clone
+  creation time. The library computes
+  `git -C <path> diff <base_commit_sha>...HEAD`, **not** against
+  `target_branch` (which is mutable: stale, advanced, or deleted
+  locally). Required for yolo flows whose commits are local to the
+  isolation and not yet linked to the task. If `base_commit_sha` is
+  missing, the SHA does not resolve in the artifact's repo, or both
+  `worktree_path` and `clone_path` are empty, the resolver yields an
+  `invalid` evidence row citing the artifact and requests repair —
+  it does **not** silently degrade to no-evidence (F15).
 - `coverage-matrix:<path>` — for dry runs (e.g., A8 ledger validation).
 
 `none` is reserved for explicit operator override and emits an audit
@@ -335,11 +371,24 @@ After A1–A6 ship, retro-apply them to #12725:
 - Edit `.gobby/plans/task-12725-lifecycle-dispatch.md` so it conforms to
   A1: stable section IDs (already mostly there), `kind` front-matter,
   `**Acceptance:**` items with stable item IDs.
-- Run `gobby plan coverage --plan task-12725-lifecycle-dispatch.md
-  --plan-hash <h> --task-tree db --evidence commits:<merged-range>
-  --manifest task-12725.coverage.yaml`.
-- The resulting `.gobby/plans/task-12725.coverage.yaml` is the
-  authoritative gap inventory and the acceptance checklist for Epic 2.
+- Run with full scope inputs:
+
+  ```bash
+  gobby plan coverage \
+    --plan .gobby/plans/task-12725-lifecycle-dispatch.md \
+    --plan-id task-12725-lifecycle-dispatch \
+    --plan-hash <sha256> \
+    --root-task '#12725' \
+    --project-id <gobby-project-uuid> \
+    --task-tree db \
+    --evidence 'commits:<merged-range>' \
+    --manifest <see A4 scoped path scheme>
+  ```
+
+- The resulting manifest at the scoped path
+  (`.gobby/plans/coverage/<project_id>/<root_task_ref>/task-12725-lifecycle-dispatch.coverage.yaml`)
+  is the authoritative gap inventory and the acceptance checklist for
+  Epic 2.
 
 The expected output (from the audit so far) is roughly: §1.1, §1.1a–§1.1d,
 §1.2, §1.3 = `covered`; §3.1 = `partial` (typed result calls out which
@@ -580,7 +629,7 @@ Tests in `tests/storage/tasks/test_candidates.py`:
   layer re-checks under lock; the scanner pre-filter spares wasted work).
 - Escalated dependencies always block; `yolo` does not bypass.
 
-### D0.6 Artifact plan-path/hash semantics
+### D0.6 Artifact plan-path/hash and isolation-base semantics
 
 Tests in `tests/storage/tasks/test_artifacts_plan_path.py`:
 
@@ -591,6 +640,22 @@ Tests in `tests/storage/tasks/test_artifacts_plan_path.py`:
   pair is a typed unit, like `worktree_path/id` and `clone_path/id`).
 - If `plan_file_hash` is not yet a column, D0 adds it via migration (small
   additive change; gated by test).
+
+Tests in `tests/storage/tasks/test_artifacts_isolation_base.py` (F15):
+
+- `base_commit_sha` is a new column on `task_artifacts`, captured at
+  worktree/clone creation. D0 adds it via migration.
+- `(worktree_path, worktree_id, base_commit_sha)` and `(clone_path,
+  clone_id, base_commit_sha)` are typed-unit triples: setting any of the
+  isolation-family columns without setting `base_commit_sha` raises;
+  clearing the family clears `base_commit_sha`.
+- The CHECK constraint enforces: `base_commit_sha IS NULL` iff both
+  isolation families are NULL.
+- B-phase isolation handlers populate `base_commit_sha` via
+  `git -C <path> rev-parse HEAD` immediately after creating the
+  worktree/clone, before any agent runs against it.
+- A6 resolver tests verify diff against the recorded base SHA, not
+  against `target_branch` ref.
 
 ### D0.7 Migration upgrade behavior
 
@@ -862,7 +927,8 @@ Update `CLAUDE.md`, `GUIDING_PRINCIPLES.md`, and `docs/` to:
 - `tests/storage/tasks/test_dispatch_mutex_runid.py`,
   `test_dispatch_mutex_sweep.py`, `test_dispatch_slots.py`,
   `test_artifacts_cascade.py`, `test_lifecycle_events_cascade.py`,
-  `test_candidates.py`, `test_artifacts_plan_path.py`.
+  `test_candidates.py`, `test_artifacts_plan_path.py`,
+  `test_artifacts_isolation_base.py`.
 - `tests/storage/test_migration_upgrade.py`.
 - `tests/hooks/test_task_dispatch_mutex_handlers.py`,
   `test_task_events.py`.
@@ -916,21 +982,33 @@ End-to-end acceptance, run after Phase G:
    further task across both ticks combined; N concurrent ticks with cap=N
    spawn exactly N; stale slot recovery reaps dead `agent_run_id` before
    their slots block.
-8. **Section-ID grammar (F8)**: `tests/plans/test_parser.py` matches all
-   required fixtures: `1.1a`, `1.1d`, `2.8a`, `2.8b`, `A1`, `A10`, `D0.1`,
-   `B5`, plus a negative case for an unparseable heading.
-9. **Coverage scope (F9)**: `gobby plan coverage --root-task <ref>
-   --task-tree db` ignores leaves outside the named subtree; multi-plan
-   epics produce one manifest per `(plan_id, root_task_ref)` pair without
-   collisions.
+8. **Section-ID grammar (F8/F12)**: `tests/plans/test_parser.py`
+   matches every fixture in **both** bare and titled forms — `### 1.1a`,
+   `## A10`, `## §1.7 Decision rules`, `### D0.8 Dispatcher slot
+   reservation primitive (F11)`, etc. — plus the negative case for a
+   framing heading without a section ID. End-of-line bare headings parse
+   correctly (the regex's `|$` lookahead is exercised).
+9. **Coverage scope (F9/F13/F14)**: `gobby plan coverage --root-task
+   <ref> --plan-id <id> --project-id <id> --task-tree db` ignores leaves
+   outside the named subtree; the library rejects `db`/`jsonl` calls
+   that omit any of the three scope inputs at type/test time. Multi-root
+   reuse: the same plan under two distinct root tasks produces two
+   distinct manifests at
+   `.gobby/plans/coverage/<project_id>/<root_a>/<plan_id>.coverage.yaml`
+   and `<root_b>/<plan_id>.coverage.yaml` without collision; a stale
+   manifest with a non-matching `plan_hash` is rejected by A9 CI.
 10. **Lifecycle rejection paths**: holistic rejection with
     `cited_subtasks=[A, B]` reopens A and B and rewinds to `in_development`;
     expansion rejection clears `expansion_run_id` and increments attempts;
     merging rejection (yolo) increments `merge-attempts:N` and re-dispatches.
-11. **Yolo evidence path (F10)**: a yolo run with worktree-local commits
-    not yet linked to the task passes A6 via `worktree-diff:<artifact-ref>`;
-    a yolo run missing evidence on any deliverable acceptance item yields
-    `request_changes` (never `escalate`).
+11. **Yolo evidence path (F10/F15)**: a yolo run with worktree-local
+    commits not yet linked to the task passes A6 via
+    `worktree-diff:<artifact-ref>`, diffing against the immutable
+    `base_commit_sha` captured at worktree creation. A run whose
+    artifact has a missing or unresolvable `base_commit_sha` produces
+    an `invalid` evidence row citing the artifact (not silent
+    no-evidence). A yolo run missing evidence on any deliverable
+    acceptance item yields `request_changes` (never `escalate`).
 12. **Yolo fallbacks**: on `merge-attempts` cap, append_description_section
     is written under `## Yolo Fallbacks` and lifecycle advances to `merged`
     with isolation pair preserved.
