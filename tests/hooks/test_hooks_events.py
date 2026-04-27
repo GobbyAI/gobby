@@ -59,6 +59,7 @@ class TestSessionSource:
     def test_source_values(self) -> None:
         """Test session source values."""
         assert SessionSource.CLAUDE.value == "claude"
+        assert SessionSource.DROID.value == "droid"
         assert SessionSource.GEMINI.value == "gemini"
         assert SessionSource.CODEX.value == "codex"
 

@@ -119,6 +119,45 @@ class TestSingleUnderscoreNormalization:
         assert data["mcp_tool"] == "create_memory"
 
 
+class TestTripleUnderscoreNormalization:
+    """Tests for droid <server>___<tool> MCP normalization."""
+
+    def test_triple_underscore_sets_canonical_tool_name(self) -> None:
+        data = {"tool_name": "gobby___list_mcp_servers"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "list_mcp_servers"
+
+    def test_canonical_mcp_name_is_idempotent(self) -> None:
+        data = {"tool_name": "mcp__gobby__list_mcp_servers"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "list_mcp_servers"
+
+    def test_single_underscore_regression(self) -> None:
+        data = {"tool_name": "mcp_gobby_list_mcp_servers"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "mcp__gobby__list_mcp_servers"
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "list_mcp_servers"
+
+    def test_pascal_case_native_tool_name_passes_through(self) -> None:
+        data = {"tool_name": "Read"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "Read"
+        assert "mcp_server" not in result
+        assert "mcp_tool" not in result
+
+    def test_server_names_with_underscore_are_not_rewritten(self) -> None:
+        data = {"tool_name": "gobby_tasks___claim_task"}
+        result = normalize_mcp_fields(data)
+        assert result["tool_name"] == "gobby_tasks___claim_task"
+        assert "mcp_server" not in result
+        assert "mcp_tool" not in result
+
+
 class TestCallToolExtraction:
     """Tests for call_tool / mcp__gobby__call_tool inner extraction (Step 1b)."""
 

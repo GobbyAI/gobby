@@ -1,8 +1,8 @@
 """Unified hook event models for multi-CLI session management.
 
 This module defines the unified internal representation for hook events across
-all supported CLIs (Claude Code, Gemini CLI, Qwen CLI, Codex CLI). Adapters translate
-between CLI-specific formats and these unified types.
+all supported CLIs (Claude Code, Droid CLI, Gemini CLI, Qwen CLI, Codex CLI).
+Adapters translate between CLI-specific formats and these unified types.
 
 Design Decision: This file coexists with hook_types.py. The existing HookType enum
 in hook_types.py uses Claude-specific kebab-case names (session-start, pre-tool-use)
@@ -21,6 +21,7 @@ class HookEventType(str, Enum):
 
     These map to CLI-specific hook names via adapters:
     - Claude Code: kebab-case (session-start, pre-tool-use)
+    - Droid CLI: PascalCase (SessionStart, PreToolUse)
     - Gemini CLI: PascalCase (SessionStart, BeforeTool)
     - Codex CLI: JSON-RPC methods (thread/started, item/completed)
     """
@@ -75,6 +76,7 @@ class SessionSource(str, Enum):
     """Identifies which CLI originated the session."""
 
     CLAUDE = "claude"
+    DROID = "droid"
     GEMINI = "gemini"
     QWEN = "qwen"
     CODEX = "codex"
