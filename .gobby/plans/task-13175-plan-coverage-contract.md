@@ -112,14 +112,18 @@ rejects with a structured failure message before applying its
 qualitative checklist when the plan exhibits any of:
 
 - A heading at level `##`–`######` that does not match the canonical
-  regex AND does not carry `kind: framing`.
+  regex AND does not carry `kind: framing` (strict / implementation
+  parse mode only; strategy plans are surveyed under permissive mode).
 - A section without a `kind:` front-matter line.
 - A `deliverable` section without an `**Acceptance:**` block.
-- An `**Acceptance:**` item without a concrete artifact reference.
+- An `**Acceptance:**` item with zero artifact references OR with two
+  or more artifact references (the rule: exactly one of
+  `file:`, `symbol:`, `test:`, `behavior:` per item).
 - An item ID that does not dotted-prefix-match its section ID.
 - A duplicate section ID anywhere in the document.
 - A `deferred` section whose deferral object fails A3 validation
-  (parser-level: missing fields; library-level: task lookup).
+  (parser-level: missing fields; library-level: task lookup, recovery-
+  epic dependency / cited-out-of-scope-parent check).
 
 **Files to modify:**
 
@@ -194,7 +198,8 @@ qualitative checklist when the plan exhibits any of:
   asserts the plan-adversary skill's documented rejection message
   fires for each of the seven cases (missing ID, missing kind,
   missing acceptance, ID collision, malformed item ID, malformed
-  deferral, malformed covers). test:
+  deferral, missing-or-multiple artifact references on an
+  acceptance item). test:
   `tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case`.
 - A1.10 — test:
   `tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar`
@@ -282,13 +287,17 @@ class PlanDocument:
     source_path: Path
     source_hash: str               # sha256 hex of file bytes at parse time
     sections: tuple[PlanSection, ...]
-    framing_headings: tuple[tuple[int, str, int], ...]  # (line, raw, level) for each `kind: framing` heading WITHOUT a section ID
+    framing_headings: tuple[tuple[int, str, int], ...]  # (line, raw, level) for each non-canonical heading recorded as framing
 
 class PlanParseError(ValueError):
     """Raised on any structural violation. .errors is a list of (line, message)."""
     def __init__(self, errors: list[tuple[int, str]], source_path: Path) -> None: ...
 
-def parse_plan(path: Path) -> PlanDocument: ...
+class PlanKind(StrEnum):
+    implementation = "implementation"   # strict mode; non-canonical headings without explicit kind: framing raise
+    strategy = "strategy"               # permissive; non-canonical headings without explicit kind default to framing_headings
+
+def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> PlanDocument: ...
 ```
 
 **Behavior contract:**
@@ -301,14 +310,34 @@ def parse_plan(path: Path) -> PlanDocument: ...
   raw heading line. A heading that fails to match AND whose first
   non-blank line below is `` `kind: framing` `` is recorded in
   `framing_headings` but does not contribute to `sections` and is not
-  an error. A heading that fails to match AND whose kind is anything
-  else (or absent) is a `PlanParseError`.
+  an error.
+- For `plan_kind=implementation` (strict, the default): a heading that
+  fails to match AND whose kind is anything else (or absent) is a
+  `PlanParseError`. This is the parse mode used by A5 expansion-qa,
+  A7 retrofit assertions, and A9 CI for implementation plans.
+- For `plan_kind=strategy` (permissive): a non-canonical heading
+  without an explicit `kind:` line is recorded in `framing_headings`
+  with no error; sections that DO match the regex still require
+  `kind:` front-matter. This mode exists so the strategy doc
+  `task-13173-lifecycle-dispatch-recovery.md` (which carries narrative
+  headings such as `## Context`, `## Phase A — ...`,
+  `## Adversary Review Log`, `## Verification`,
+  `## Out of Scope (filed as follow-ups)`) can be parsed without a
+  retrofit pass. Strategy plans are excluded from A9 manifest/hash/
+  zero-row CI by their `plan_kind` entry in `.gobby/plans/index.yaml`
+  (see A9).
 - A heading that matches but is missing `kind:` front-matter is a
   `PlanParseError`.
 - Duplicate `section_id` anywhere is a `PlanParseError`.
 - `deliverable` without `**Acceptance:**` block is a `PlanParseError`.
 - Acceptance item with item ID that does not dotted-prefix-match its
   section ID is a `PlanParseError`.
+- Acceptance item with **zero or more than one** artifact reference
+  (`file: ...`, `symbol: ...`, `test: ...`, or `behavior: "..."` —
+  exactly one per item) is a `PlanParseError`. This is the
+  load-bearing rule that backs A1's "every item names exactly one
+  concrete artifact" claim and the plan-adversary's mechanical
+  rejection (A1.9).
 - `deferred` section without a parseable deferral object is a
   `PlanParseError`. Deferral object syntax: a fenced YAML block of the
   form
@@ -341,11 +370,17 @@ def parse_plan(path: Path) -> PlanDocument: ...
   at parser-test time; the test runs against the post-A7 form, so it
   is gated on A7.1–A7.4 — see A7 dependency note.)
 - `tests/plans/test_parser.py::test_parses_task_13173_recovery`
-  — parses `.gobby/plans/task-13173-lifecycle-dispatch-recovery.md`;
-  asserts presence of `A1`–`A10`, `D0.1`–`D0.9`, `B1`–`B5`, `C1`–`C6`,
-  `D1`–`D8`, `F1`–`F4` (after the strategy doc itself is conformed —
-  it already uses these IDs as `### A1.` etc., so the parser must
-  handle the trailing-period delimiter via the `[).:-]` lookahead).
+  — parses `.gobby/plans/task-13173-lifecycle-dispatch-recovery.md`
+  with `plan_kind=strategy` (permissive); asserts presence of `A1`–
+  `A10`, `D0.1`–`D0.9`, `B1`–`B5`, `C1`–`C6`, `D1`–`D8`, `F1`–`F4`
+  (the parser handles the trailing-period delimiter via the
+  `[).:-]` lookahead). The strategy doc's narrative headings
+  (`## Context`, `## Phase A — ...`, `## Adversary Review Log`,
+  `## Verification`, `## Out of Scope (filed as follow-ups)`,
+  `### Round N — REJECTED`, etc.) are recorded in
+  `framing_headings` rather than raising. The strategy doc is
+  excluded from A9 manifest/hash CI by its
+  `plan_kind: strategy` entry in `.gobby/plans/index.yaml`.
 - `tests/plans/test_parser.py::test_parses_self`
   — parses this very plan
   (`.gobby/plans/task-13175-plan-coverage-contract.md`); asserts
@@ -377,6 +412,19 @@ def parse_plan(path: Path) -> PlanDocument: ...
 - `tests/plans/test_parser.py::test_deferred_without_object_raises`
   — fixture deferred section without YAML deferral block; asserts
   `PlanParseError`.
+- `tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises`
+  — fixture deliverable section with an acceptance bullet whose
+  prose contains no `file:`, `symbol:`, `test:`, or `behavior:`
+  reference; asserts `PlanParseError`.
+- `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_raises`
+  — fixture deliverable section with an acceptance bullet whose
+  prose contains two `file:` refs (or any combination of two
+  artifact-kind keys); asserts `PlanParseError`.
+- `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`
+  — fixture file with `## Context\n` and no `kind:` line; parses
+  cleanly with `plan_kind=PlanKind.strategy`; the heading appears
+  in `framing_headings`. Same fixture with
+  `plan_kind=PlanKind.implementation` raises `PlanParseError`.
 - `tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes`
   — assert `parse_plan(p).source_hash == hashlib.sha256(p.read_bytes()).hexdigest()`.
 - `tests/plans/test_parser.py::test_source_span_is_inclusive_1_indexed`
@@ -451,6 +499,17 @@ def parse_plan(path: Path) -> PlanDocument: ...
   `tests/plans/test_parser.py::test_deferred_without_object_raises` and
   the positive-case fixture in
   `tests/plans/test_parser.py::test_deferred_object_parsed`.
+- A2.14 — parser raises `PlanParseError` on an acceptance item with
+  zero or multiple artifact references (exactly one of
+  `file:`, `symbol:`, `test:`, `behavior:` per item). tests:
+  `tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises`,
+  `tests/plans/test_parser.py::test_acceptance_item_with_multiple_artifacts_raises`.
+- A2.15 — `parse_plan(path, plan_kind=PlanKind.strategy)` records
+  non-canonical narrative headings in `PlanDocument.framing_headings`
+  without raising; `plan_kind=PlanKind.implementation` (the default)
+  raises on the same input. symbol:
+  `gobby.plans.parser.PlanKind`. test:
+  `tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings`.
 
 ## A3 Typed deferral and structured covers contract
 
@@ -523,18 +582,22 @@ class DeferralValidationResult:
         "missing_provenance_label",
         "validation_criteria_does_not_duplicate",
         "missing_reason_or_owner",
+        "missing_dependency_or_cited_parent",
     ]
     detail: str
 
 class TaskStoreProtocol(Protocol):
     def get_task(self, task_ref: str) -> dict | None: ...
     def get_task_labels(self, task_ref: str) -> list[str]: ...
+    def get_task_dependencies(self, task_ref: str) -> list[str]: ...   # task refs this task depends on; reverse direction also reachable via the recovery_epic side
 
 def validate_deferral(
     deferral: Deferral,
     plan_id: str,
     section_id: str,
     task_store: TaskStoreProtocol,
+    *,
+    recovery_epic_ref: str,
 ) -> DeferralValidationResult: ...
 ```
 
@@ -574,6 +637,14 @@ def validate_deferral(
      `deferral.original_acceptance_items`, the artifact_ref of that
      item (substring match per artifact-kind rules above).
   5. `deferral.reason` and `deferral.owner` are both non-empty.
+  6. Task is **either** a transitive dependency of the
+     `recovery_epic_ref` (reachable via `get_task_dependencies`)
+     **or** carries a `cited-parent:<task_ref>` label whose target
+     resolves to a non-closed task explicitly out-of-scope of the
+     recovery epic. Failure status:
+     `missing_dependency_or_cited_parent`. This closes the F2 hole
+     where a deferred section could point at an unrelated open task
+     with the right label and still pass.
 - A4's coverage evaluator calls `validate_deferral` for every
   `deferred` section and `validate_covers` for every `covers` label
   on every leaf in scope.
@@ -605,6 +676,17 @@ def validate_deferral(
   (task exists with provenance label but validation_criteria does
   not contain the deferred section's acceptance artifact_refs).
 - `tests/plans/test_deferral.py::test_validate_missing_reason_or_owner`.
+- `tests/plans/test_deferral.py::test_validate_missing_dependency_or_cited_parent`
+  — task exists, open, has provenance label, criteria duplicates,
+  reason+owner non-empty, but is NOT a dependency of
+  `recovery_epic_ref` and has no `cited-parent:` label; asserts
+  status `missing_dependency_or_cited_parent`.
+- `tests/plans/test_deferral.py::test_validate_dependency_path`
+  — task is reachable via `get_task_dependencies` from
+  `recovery_epic_ref`; asserts status `valid`.
+- `tests/plans/test_deferral.py::test_validate_cited_parent_path`
+  — task carries `cited-parent:<ref>` label whose target is open
+  and out-of-scope of recovery_epic; asserts status `valid`.
 - `tests/plans/test_deferral.py::test_validate_happy_path`.
 
 **Acceptance:**
@@ -637,16 +719,28 @@ def validate_deferral(
 - A3.8 — `src/gobby/plans/deferral.py` exports `validate_deferral`,
   `DeferralValidationResult`, `TaskStoreProtocol`. file:
   `src/gobby/plans/deferral.py`.
-- A3.9 — `validate_deferral` short-circuits on each of the five
+- A3.9 — `validate_deferral` short-circuits on each of the six
   failure cases in the order documented. tests:
   `tests/plans/test_deferral.py::test_validate_task_missing`,
   `test_validate_task_closed`,
   `test_validate_missing_provenance_label`,
   `test_validate_criteria_does_not_duplicate`,
-  `test_validate_missing_reason_or_owner`.
-- A3.10 — `validate_deferral` returns `valid` only when all five
+  `test_validate_missing_reason_or_owner`,
+  `test_validate_missing_dependency_or_cited_parent`.
+- A3.10 — `validate_deferral` returns `valid` only when all six
   conditions hold. test:
   `tests/plans/test_deferral.py::test_validate_happy_path`.
+- A3.11 — `validate_deferral` accepts a kwarg-only
+  `recovery_epic_ref: str` and `TaskStoreProtocol` exposes
+  `get_task_dependencies(task_ref) -> list[str]` to enable the
+  dependency check. symbol:
+  `gobby.plans.deferral.validate_deferral`.
+- A3.12 — `validate_deferral` accepts the deferral when the target
+  task is a transitive dependency of `recovery_epic_ref`, OR when
+  the target carries a `cited-parent:<ref>` label resolving to an
+  open task. tests:
+  `tests/plans/test_deferral.py::test_validate_dependency_path`,
+  `tests/plans/test_deferral.py::test_validate_cited_parent_path`.
 
 ## A4 Coverage library and `gobby plan coverage` CLI
 
@@ -827,6 +921,23 @@ the identity matches but the hash differs, it raises
 audit line to `.gobby/plans/coverage/.regenerate.log` containing
 `<UTC ISO> <project_id> <root_task_ref> <plan_id> <old_hash> -> <new_hash>`.
 
+**Casefold-aware write protection (F5).** Before writing,
+`write_manifest` enumerates the parent directory and compares its
+target filename to every existing sibling with `str.casefold()`
+equality. If a sibling exists whose casefold-equal path holds a
+manifest with a **different** `(project_id, root_task_ref, plan_id)`
+identity, `write_manifest` raises `CasefoldCollisionError(existing_path,
+existing_identity, new_identity)` and writes nothing — even on a
+case-insensitive filesystem (macOS HFS+/APFS default, Windows NTFS),
+the writer side blocks the overwrite before the OS can conflate the
+two paths. Reader-side warning is unchanged but is now a defense in
+depth rather than the primary protection. The path-collision check is
+performed on the rendered final filename including the
+`.coverage.yaml` suffix so two `<plan_id>` differing only in case
+collide deterministically. New exit code: `8` for
+`CasefoldCollisionError` (CI surfaces this distinctly from identity
+collision exit `5`).
+
 **`gobby plan coverage` CLI** (Click command in `src/gobby/cli/plan.py`):
 
 ```bash
@@ -854,6 +965,8 @@ Exit codes:
 - `6` — `MissingScopeError` (db/jsonl without scope inputs), surfaced
   by the CLI Click validation layer with exit code 6.
 - `7` — `EmptyComponentError` (sanitization rejected an input).
+- `8` — `CasefoldCollisionError` (sibling manifest's casefolded
+  path matches the new path but identities differ).
 
 **Manifest YAML schema** (the file `<plan_id>.coverage.yaml`):
 
@@ -974,6 +1087,19 @@ rows:
   distinct files.
 - `tests/plans/test_coverage_identity.py::test_two_plans_one_root_distinct_manifests`
   — same root, different plan_ids.
+- `tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write`
+  — under the same `(project_id, root_task_ref)`, two plan_ids
+  `task-13175-Plan-Coverage-Contract` and
+  `task-13175-plan-coverage-contract` produce paths that casefold-
+  equal each other; `write_manifest` raises
+  `CasefoldCollisionError` and writes nothing on the second call.
+- `tests/plans/test_coverage_identity.py::test_casefold_collision_emits_exit_8`
+  — CLI invocation triggering `CasefoldCollisionError` exits with
+  code 8.
+- `tests/plans/test_coverage_identity.py::test_casefold_protection_works_on_case_sensitive_fs`
+  — fixture forces case-sensitive directory enumeration; the
+  writer-side `casefold()` comparison still fires on the second
+  write attempt regardless of FS case sensitivity.
 
 **Acceptance:**
 
@@ -1050,23 +1176,36 @@ rows:
 - A4.17 — `evaluate` excludes leaves outside `--root-task` subtree
   even if they carry matching `covers:` labels. test:
   `tests/plans/test_coverage.py::test_evaluate_root_scope_excludes_other_subtree`.
+- A4.18 — `write_manifest` raises `CasefoldCollisionError` and
+  writes nothing when a sibling manifest's casefolded path matches
+  the target path but the manifest identity differs; CLI exit code
+  `8` surfaces the failure. symbol:
+  `gobby.plans.coverage_manifest.CasefoldCollisionError`. tests:
+  `tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write`,
+  `tests/plans/test_coverage_identity.py::test_casefold_collision_emits_exit_8`,
+  `tests/plans/test_coverage_identity.py::test_casefold_protection_works_on_case_sensitive_fs`.
 
 ## A5 Expansion-QA integration
 
 `kind: deliverable`
 
-Update the expansion-qa workflow + skill so validation calls the A4
-library mechanically; replace any pre-existing ad-hoc parsing or
-matching.
+Update the expansion-qa agent so validation calls the A4 library
+mechanically; replace any pre-existing ad-hoc parsing or matching.
+
+The expansion-qa agent today carries its prompt/instructions inline
+in `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
+(verified: no `src/gobby/install/shared/skills/expansion-qa/`
+directory exists). All Epic 1 contract content for expansion-qa
+lands in the agent YAML's `instructions:` block plus the workflow
+step list — there is no separate SKILL.md.
 
 **Files to modify:**
 
 - `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` —
   workflow steps invoke the A4 library / CLI, persist manifest,
-  reject on missing/invalid rows.
-- `src/gobby/install/shared/skills/expansion-qa/SKILL.md` (or the
-  equivalent expansion-qa skill location — the agent prompt/skill
-  pair drives the flow) — document the contract.
+  reject on missing/invalid rows. The agent's `instructions:` block
+  documents the mechanical-rejection contract (replacing the
+  earlier "skill SKILL.md" target).
 
 **Files to create:**
 
@@ -1075,6 +1214,17 @@ matching.
 - `tests/workflows/test_expansion_qa_persists_manifest.py`.
 
 **Symbols / behavior contract:**
+
+**Sequencing (F6).** A5 reads `task_artifacts.plan_file_hash` and
+writes `coverage_matrix_path` through the artifact MCP surface.
+`plan_file_hash` is added by A6's migration (A6.8 / A6.9) and the
+existing artifact MCP tools' schemas are extended in A6.14 to surface
+it. A5's leaves therefore depend on A6.8, A6.9, A6.14, and A6.15
+landing first; the bootstrap ledger encodes this as an explicit
+`depends_on` edge in the `notes:` field of A5.1, A5.4, A5.5, and
+A5.7 expected_leaves and the Epic 1 expansion sequences leaves
+accordingly. Implementation work on A5 cannot start until A6's
+storage column and MCP schema changes are merged.
 
 The expansion-qa workflow gains a deterministic step that:
 
@@ -1167,11 +1317,12 @@ two and the test fixture asserts the chosen path).
   `--root-task` (= epic ref), `--project-id` (from session
   context), `--task-tree db`. file:
   `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
-- A5.2 —
-  `src/gobby/install/shared/skills/expansion-qa/SKILL.md` documents
-  the mechanical-rejection contract: any deliverable acceptance
-  item with status `missing` or `invalid` rejects the run. file:
-  `src/gobby/install/shared/skills/expansion-qa/SKILL.md`.
+- A5.2 — the `instructions:` block in
+  `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
+  documents the mechanical-rejection contract: any deliverable
+  acceptance item with status `missing` or `invalid` rejects the
+  run. file:
+  `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
 - A5.3 — rejection_notes cite each failing row by
   `(section_id, item_id, status, detail)` and the leaves that
   claimed-but-failed coverage. test:
@@ -1218,9 +1369,14 @@ isolation-base capture path.
 - `src/gobby/agents/isolation.py` (modify — capture
   `base_commit_sha` via `git rev-parse HEAD` immediately after
   worktree/clone creation; populate via `set_artifacts_atomic`).
-- `src/gobby/mcp_proxy/tools/tasks_ops.py` (modify — `get_artifacts`,
-  `set_artifact`, `set_artifacts_atomic` MCP tools surface the new
-  column in their schemas with explicit nullability).
+- `src/gobby/mcp_proxy/tools/tasks/_artifacts.py` (modify — extend
+  the existing `get_artifacts`, `set_artifact`,
+  `set_artifacts_atomic`, and `clear_isolation_pair` MCP tool
+  schemas to surface the new `base_commit_sha` and
+  `plan_file_hash` columns with explicit nullability). The artifact
+  tools were added under #12725's §1.1d and live in the modular
+  `tasks/` package — no `tasks_ops.py` file exists; Epic 1 extends
+  the existing surface, it does not introduce new tools or files.
 
 **Files to create:**
 
@@ -1435,7 +1591,7 @@ App-level enforcement is in `set_artifacts_atomic` and
   `base_commit_sha` and `plan_file_hash` with explicit nullability
   in their JSON schemas. behavior: "MCP schemas list
   base_commit_sha and plan_file_hash with type [string, null]" in
-  `src/gobby/mcp_proxy/tools/tasks_ops.py`. test:
+  `src/gobby/mcp_proxy/tools/tasks/_artifacts.py`. test:
   `tests/storage/tasks/test_artifacts_plan_file_hash.py::test_mcp_get_artifacts_includes_plan_file_hash`.
 - A6.15 — `plan_file_hash` round-trips through `set_artifact`
   and `get_artifacts`. test:
@@ -1663,11 +1819,23 @@ items.
   produces a manifest whose rows match the ledger's
   `expected_leaves`; mismatch (a deliverable section in the ledger
   that has zero matching leaves in the manifest, or vice versa)
-  blocks closing root task `#13175`. behavior: "Epic 1 close-task
-  workflow checks ledger-vs-manifest match and refuses on
-  mismatch" in `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
-  or a new close-time gate. test:
-  `tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch`.
+  blocks closing root task `#13175`. The gate is implemented as a
+  helper `verify_bootstrap_ledger(db, task_id)` in
+  `src/gobby/plans/bootstrap_ledger.py` (new) and called from the
+  close-task transition path at
+  `src/gobby/storage/tasks/_transitions.py:close_task` (existing
+  function — extended with a pre-close hook that, when the task is
+  the root of a plan whose `<plan_id>.coverage-ledger.yaml`
+  companion exists, calls `verify_bootstrap_ledger`; on mismatch
+  the close raises `BootstrapLedgerMismatchError` and the MCP
+  wrapper at
+  `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py:close_task`
+  surfaces the structured error to the caller). symbol:
+  `gobby.plans.bootstrap_ledger.verify_bootstrap_ledger`. tests:
+  `tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch`,
+  `tests/plans/test_bootstrap_ledger_revalidation.py::test_close_succeeds_on_ledger_match`,
+  `tests/storage/tasks/test_transitions_ledger_gate.py::test_close_task_invokes_verify_when_companion_exists`,
+  `tests/storage/tasks/test_transitions_ledger_gate.py::test_close_task_skips_verify_when_no_companion`.
 - A8.8 — `.gobby/plans/.grandfathered` mechanism is **not** used
   for Epic 1; documentation in A10 records that
   `.grandfathered` is reserved for already-merged epics (e.g.,
@@ -1828,9 +1996,11 @@ discoverable via these four places).
 - `src/gobby/install/shared/skills/plan-draft/SKILL.md` — already
   modified in A1 (grammar, kind enum, acceptance shape, deferral,
   covers).
-- `src/gobby/install/shared/skills/expansion-qa/SKILL.md` —
+- `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` —
   already modified in A5; A10 confirms the contract reference is
-  present.
+  present in the agent's `instructions:` block. (No expansion-qa
+  SKILL.md exists; the agent's inline instructions are the
+  documentation surface.)
 
 **Files to create:**
 
@@ -1872,13 +2042,13 @@ or by reference:
   containing all eight bullets above (verbatim or by reference
   to plan-draft / docs/contracts). file: `CLAUDE.md`.
 - A10.2 — `src/gobby/install/shared/skills/plan/SKILL.md`,
-  `plan-draft/SKILL.md`, `plan-review/SKILL.md`, and
-  `expansion-qa/SKILL.md` each contain or link to the contract
+  `plan-draft/SKILL.md`, `plan-review/SKILL.md`, and the
+  `expansion-qa` agent YAML each contain or link to the contract
   surface relevant to their authoring/review role. files:
   `src/gobby/install/shared/skills/plan/SKILL.md`,
   `src/gobby/install/shared/skills/plan-draft/SKILL.md`,
   `src/gobby/install/shared/skills/plan-review/SKILL.md`,
-  `src/gobby/install/shared/skills/expansion-qa/SKILL.md`.
+  `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
 - A10.3 — `docs/contracts/plan-coverage.md` exists as a
   contract-reference page linking back to the four skill files,
   `CLAUDE.md`, and the canonical regex / library / CLI / evidence

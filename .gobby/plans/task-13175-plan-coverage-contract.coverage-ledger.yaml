@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "7cec248472cd9039fa1f05c5e5b36a7db402cc0a799acf8270a747ac179ca009"
+plan_hash: "dde5f2ec62c6b906eacfdbf6382859dbd369e895ac8f923e4336d930b1be9246"
 root_task_ref: "13175"
 
 sections:
@@ -202,6 +202,28 @@ sections:
               into Deferral(task_ref, reason, owner,
               original_acceptance_items); proven by ::test_deferred_object_parsed
               and ::test_deferred_without_object_raises.
+      A2.14:
+        expected_leaves:
+          - title: "Parser raises on zero or multiple artifact references per acceptance item"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_acceptance_item_without_artifact_raises
+              and ::test_acceptance_item_with_multiple_artifacts_raises
+              both pass; gobby.plans.parser raises PlanParseError
+              when an item has zero or more than one of file:|symbol:
+              |test:|behavior:.
+      A2.15:
+        expected_leaves:
+          - title: "Parser plan_kind enum: implementation strict, strategy permissive"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.parser.PlanKind is a two-value StrEnum;
+              parse_plan(path, plan_kind=PlanKind.strategy) records
+              non-canonical narrative headings in framing_headings
+              without raising; parse_plan(path,
+              plan_kind=PlanKind.implementation) raises on the same
+              input. test:
+              tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings.
 
   A3:
     acceptance_items:
@@ -280,7 +302,26 @@ sections:
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_deferral.py::test_validate_happy_path
-              asserts status=valid when all five conditions hold.
+              asserts status=valid when all six conditions hold.
+      A3.11:
+        expected_leaves:
+          - title: "Extend validate_deferral with recovery_epic_ref and dependency check"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.deferral.validate_deferral accepts kwarg-
+              only recovery_epic_ref: str; TaskStoreProtocol exposes
+              get_task_dependencies(task_ref) -> list[str]; sixth
+              short-circuit check returns
+              missing_dependency_or_cited_parent.
+      A3.12:
+        expected_leaves:
+          - title: "Tests: validate_deferral dependency-path and cited-parent-path"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_deferral.py::test_validate_dependency_path,
+              ::test_validate_cited_parent_path, and
+              ::test_validate_missing_dependency_or_cited_parent
+              all pass.
 
   A4:
     acceptance_items:
@@ -420,6 +461,19 @@ sections:
               tests/plans/test_coverage.py::test_evaluate_root_scope_excludes_other_subtree
               passes; leaves in unrelated subtrees never count toward
               coverage even with a matching covers label.
+      A4.18:
+        expected_leaves:
+          - title: "Casefold-aware write_manifest with dedicated exit code 8"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.coverage_manifest.CasefoldCollisionError
+              raised when a sibling manifest's casefolded path
+              matches the target but identities differ; CLI exit
+              code 8 surfaces the failure; protection works on both
+              case-sensitive and case-insensitive filesystems. tests:
+              tests/plans/test_coverage_identity.py::test_casefold_collision_blocks_write,
+              ::test_casefold_collision_emits_exit_8,
+              ::test_casefold_protection_works_on_case_sensitive_fs.
 
   A5:
     acceptance_items:
@@ -432,6 +486,10 @@ sections:
               includes a workflow step that calls the A4 library or
               CLI with --plan, --plan-id, --plan-hash, --root-task,
               --project-id, --task-tree db.
+        notes: >-
+          Depends on A6.8 (plan_file_hash migration), A6.9 (baseline
+          schema), and A6.14 (MCP schema surfacing). Sequenced via
+          depends_on edges during Epic 1 expansion.
       A5.2:
         expected_leaves:
           - title: "Document mechanical rejection contract in expansion-qa SKILL.md"
@@ -457,6 +515,11 @@ sections:
               and ::test_artifact_pointer_written assert manifest at
               coverage_manifest_path and artifact write via
               gobby-tasks-ops:set_artifact.
+        notes: >-
+          Depends on A6.14 (MCP schemas surfacing the new columns)
+          before set_artifact / set_artifacts_atomic can carry
+          plan_file_hash. Sequenced via depends_on edges during
+          Epic 1 expansion.
       A5.5:
         expected_leaves:
           - title: "Test: A4 invoked with all four scope inputs"
@@ -464,6 +527,10 @@ sections:
             validation_criteria_summary: >-
               tests/workflows/test_expansion_qa_coverage_call.py::test_workflow_calls_evaluate_with_full_scope
               passes.
+        notes: >-
+          Depends on A5.1 (which depends on A6.8/A6.9/A6.14). Cannot
+          assert call shape until the storage column and MCP schema
+          changes are in place.
       A5.6:
         expected_leaves:
           - title: "Test: zero missing|invalid triggers approval"
@@ -480,6 +547,11 @@ sections:
               tests/workflows/test_expansion_qa_persists_manifest.py::test_plan_hash_drift_fails
               asserts run fails with reason plan_hash_drift when
               recomputed hash differs from task_artifacts.plan_file_hash.
+        notes: >-
+          Depends on A6.8 (plan_file_hash column exists),
+          A6.14 (MCP schema surfaces it), A6.15 (round-trip
+          works). Cannot test drift until those land. Sequenced
+          via depends_on during Epic 1 expansion.
 
   A6:
     acceptance_items:
