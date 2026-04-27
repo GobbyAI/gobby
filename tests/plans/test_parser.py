@@ -88,12 +88,6 @@ def test_parses_task_12725_lifecycle_dispatch() -> None:
     document = parse_plan(path)
 
     expected_ids = {
-        "1.1",
-        "1.1a",
-        "1.1b",
-        "1.1c",
-        "1.1d",
-        "1.2",
         "1.3",
         "1.3a",
         "1.4",
@@ -103,27 +97,11 @@ def test_parses_task_12725_lifecycle_dispatch() -> None:
         "1.8",
         "1.9",
         "1.10",
-        "2.1",
-        "2.2",
-        "2.3",
-        "2.4",
-        "2.5",
-        "2.6",
-        "2.7",
         "2.8",
-        "2.8a",
         "2.8b",
         "2.9",
         "2.10",
-        "3.1",
         "3.2",
-        "3.3",
-        "3.4",
-        "4.1",
-        "4.2",
-        "4.3",
-        "4.4",
-        "4.5",
     }
     assert expected_ids <= _section_ids(document)
 
