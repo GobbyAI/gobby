@@ -214,16 +214,21 @@ sections:
               |test:|behavior:.
       A2.15:
         expected_leaves:
-          - title: "Parser plan_kind enum: implementation strict, strategy permissive"
+          - title: "Parser plan_kind enum: implementation strict, strategy permissive on both narrative and canonical-no-kind headings"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              gobby.plans.parser.PlanKind is a two-value StrEnum;
-              parse_plan(path, plan_kind=PlanKind.strategy) records
-              non-canonical narrative headings in framing_headings
-              without raising; parse_plan(path,
-              plan_kind=PlanKind.implementation) raises on the same
-              input. test:
-              tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings.
+              gobby.plans.parser.PlanKind is a StrEnum exposing
+              implementation and strategy. parse_plan(path,
+              plan_kind=PlanKind.strategy) is permissive on both
+              missing-kind heading classes: (1) non-canonical
+              narrative headings record into
+              PlanDocument.framing_headings; (2) canonical headings
+              missing kind: yield PlanSection(kind=Kind.framing,
+              acceptance_items=()). parse_plan(path,
+              plan_kind=PlanKind.implementation) (the default)
+              raises PlanParseError on either input. tests:
+              tests/plans/test_parser.py::test_strategy_kind_permissive_no_raise_on_narrative_headings,
+              tests/plans/test_parser.py::test_strategy_kind_permissive_canonical_heading_no_kind.
 
   A3:
     acceptance_items:
@@ -494,8 +499,10 @@ sections:
               --project-id, --task-tree db.
         notes: >-
           Depends on A6.8 (plan_file_hash migration), A6.9 (baseline
-          schema), and A6.14 (MCP schema surfacing). Sequenced via
-          depends_on edges during Epic 1 expansion.
+          schema parity), A6.14 (MCP schema surfacing the new
+          columns), and A6.15 (plan_file_hash round-trip via
+          set_artifact/get_artifacts). Sequenced via depends_on
+          edges during Epic 1 expansion.
       A5.2:
         expected_leaves:
           - title: "Document mechanical rejection contract in expansion-qa.yaml instructions"
@@ -525,10 +532,11 @@ sections:
               coverage_manifest_path and artifact write via
               gobby-tasks-ops:set_artifact.
         notes: >-
-          Depends on A6.14 (MCP schemas surfacing the new columns)
-          before set_artifact / set_artifacts_atomic can carry
-          plan_file_hash. Sequenced via depends_on edges during
-          Epic 1 expansion.
+          Depends on A6.8 (plan_file_hash migration), A6.9 (baseline
+          schema parity), A6.14 (MCP schemas surfacing the new
+          columns), and A6.15 (round-trip via
+          set_artifact/get_artifacts). Sequenced via depends_on
+          edges during Epic 1 expansion.
       A5.5:
         expected_leaves:
           - title: "Test: A4 invoked with all four scope inputs"
@@ -537,9 +545,10 @@ sections:
               tests/workflows/test_expansion_qa_coverage_call.py::test_workflow_calls_evaluate_with_full_scope
               passes.
         notes: >-
-          Depends on A5.1 (which depends on A6.8/A6.9/A6.14). Cannot
-          assert call shape until the storage column and MCP schema
-          changes are in place.
+          Depends on A5.1 (transitively A6.8/A6.9/A6.14/A6.15) so
+          the entire prerequisite chain is in place before this
+          test asserts the call shape. Sequenced via depends_on
+          during Epic 1 expansion.
       A5.6:
         expected_leaves:
           - title: "Test: zero missing|invalid triggers approval"
@@ -557,10 +566,11 @@ sections:
               asserts run fails with reason plan_hash_drift when
               recomputed hash differs from task_artifacts.plan_file_hash.
         notes: >-
-          Depends on A6.8 (plan_file_hash column exists),
-          A6.14 (MCP schema surfaces it), A6.15 (round-trip
-          works). Cannot test drift until those land. Sequenced
-          via depends_on during Epic 1 expansion.
+          Depends on A6.8 (plan_file_hash column exists), A6.9
+          (baseline schema parity), A6.14 (MCP schema surfaces it),
+          and A6.15 (round-trip works). Cannot test drift until
+          all four land. Sequenced via depends_on during Epic 1
+          expansion.
 
   A6:
     acceptance_items:
@@ -745,10 +755,14 @@ sections:
           - title: "Confirm generated #12725 manifest is the gap inventory"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              The manifest header records plan_id, plan_hash,
-              root_task_ref='12725', project_id; rows enumerate every
-              acceptance item with status; the file is the
-              authoritative input to Epic 2.
+              .gobby/plans/coverage/d45545c5-ded5-4335-b115-0245752edacf/12725/task-12725-lifecycle-dispatch.coverage.yaml
+              exists and its header records plan_id
+              ('task-12725-lifecycle-dispatch'), plan_hash,
+              root_task_ref ('12725'), project_id, generated_at,
+              task_tree_source, task_tree_source_hash, and
+              evidence_summary. Rows enumerate every acceptance
+              item with status. The file is the authoritative
+              input to Epic 2.
         notes: >-
           Depends on A7.5 (and therefore A4) landing first.
 
@@ -819,10 +833,21 @@ sections:
           - title: "Wire Epic 1 close-time ledger-vs-manifest revalidation gate"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch
-              passes; the close-task workflow refuses to close root
-              task #13175 when the post-A4 manifest does not match
-              the ledger's expected_leaves coverage.
+              src/gobby/plans/bootstrap_ledger.py exists and exports
+              gobby.plans.bootstrap_ledger.verify_bootstrap_ledger;
+              src/gobby/storage/tasks/_transitions.py:close_task
+              calls verify_bootstrap_ledger as a pre-close hook
+              when the task is the root of a plan whose
+              <plan_id>.coverage-ledger.yaml companion exists, and
+              raises BootstrapLedgerMismatchError on mismatch; the
+              MCP wrapper at
+              src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py:close_task
+              surfaces the structured error to the caller. Tests:
+              tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch,
+              ::test_close_succeeds_on_ledger_match,
+              tests/storage/tasks/test_transitions_ledger_gate.py::test_close_task_invokes_verify_when_companion_exists,
+              ::test_close_task_skips_verify_when_no_companion all
+              pass.
       A8.8:
         expected_leaves:
           - title: "Document .grandfathered semantics in CLAUDE.md (Epic 1 not grandfathered)"
@@ -836,11 +861,19 @@ sections:
     acceptance_items:
       A9.1:
         expected_leaves:
-          - title: "Create tests/plans/test_plan_coverage_ci.py walking active plans"
+          - title: "Create tests/plans/test_plan_coverage_ci.py walking every plan file and rejecting unindexed"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_plan_coverage_ci.py walks .gobby/plans/*.md,
-              skips merged-and-grandfathered plans.
+              tests/plans/test_plan_coverage_ci.py walks every
+              .gobby/plans/task-*.md file and asserts each has an
+              entry in .gobby/plans/index.yaml; unindexed plan
+              files fail CI citing the missing entry. Expected
+              test:
+              tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry.
+              The earlier "active plans only / skip merged-and-
+              grandfathered" framing is superseded — every plan
+              file must be indexed (closes the Round 3 silent-skip
+              hole).
       A9.2:
         expected_leaves:
           - title: "Author .gobby/plans/index.yaml with all 19 plan entries and plan_kind/status fields"
