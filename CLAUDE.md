@@ -85,6 +85,7 @@ Canonical section-heading regex:
   until the contract tooling is mature.
 - `.grandfathered` mechanism: reserved for already-merged epics; additions
   require a paired `# remove-by: <task-ref>` annotation and an open task.
+  Epic 1 (#13175) is not grandfathered.
 - Table-row decomposition rule: any `deliverable` section whose body uses a
   markdown table to enumerate work items MUST emit one acceptance item per data
   row with stable IDs. Plan-adversary qualitatively rejects deliverables that
