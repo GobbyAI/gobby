@@ -138,8 +138,8 @@ class TaskExpansionConfig(FeatureDefaultConfig):
         description="Enable web research for task expansion using MCP tools",
     )
     max_subtasks: int = Field(
-        default=15,
-        description="Maximum number of subtasks to create per expansion",
+        default=50,
+        description="Maximum number of subtasks to create per expansion (interim until deterministic parser-driven compile lands; see #13343).",
     )
     default_strategy: Literal["auto", "phased", "sequential", "parallel"] = Field(
         default="auto",
