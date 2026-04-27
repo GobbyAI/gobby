@@ -32,5 +32,10 @@ entries:
   - plan_id: task-12898-memory-recall-helper
     project_id: d45545c5-ded5-4335-b115-0245752edacf
     root_task_ref: "12898"
+    plan_kind: implementation
+    status: active
+  - plan_id: task-12285-droid-cli
+    project_id: d45545c5-ded5-4335-b115-0245752edacf
+    root_task_ref: "12285"
     plan_kind: legacy
     status: archived

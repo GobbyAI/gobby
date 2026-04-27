@@ -1,4 +1,4 @@
-generated_at: "2026-04-27T19:19:23Z"
+generated_at: "2026-04-27T21:35:25Z"
 generator: "gobby plan legacy-classification-refresh"
 entries:
   - plan_id: task-12068-skillsmp-install-rewrite
@@ -10,11 +10,24 @@ entries:
     non_retrofit_acknowledgment_exists: true
     non_retrofit_acknowledgment_open: true
     non_retrofit_acknowledgment_title: "SkillsMP: implement install-from-hub (get_skill_details + download_skill rewrite)"
+  - plan_id: task-12285-droid-cli
+    root_task_ref: "12285"
+    root_open: true
+    root_title: "Add droid CLI adapter to Gobby"
+    legacy_reason: "Pre-contract plan expanded with the legacy task expander prior to plan-coverage gating; tree was reconciled against the post-R1-R4 plan body in session #3736 (#13336) and root epic #12285 remains the live tracking object for implementation."
+    non_retrofit_acknowledgment: "#12285"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "Add droid CLI adapter to Gobby"
   - plan_id: task-12725-lifecycle-dispatch-rev1
     root_task_ref: "12725"
-    root_open: false
+    root_open: true
     root_title: "Lifecycle-state-driven agent dispatch"
     legacy_reason: "Frozen pre-trim snapshot of task-12725-lifecycle-dispatch retained as historical reference; the live task-12725-lifecycle-dispatch.md owns any subsequent retrofit/gap-recovery work."
+    non_retrofit_acknowledgment: "#12725"
+    non_retrofit_acknowledgment_exists: true
+    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_title: "Lifecycle-state-driven agent dispatch"
   - plan_id: task-12746-neo4j-falkordb-swap
     root_task_ref: "12746"
     root_open: true
@@ -33,12 +46,3 @@ entries:
     non_retrofit_acknowledgment_exists: true
     non_retrofit_acknowledgment_open: true
     non_retrofit_acknowledgment_title: "PostgreSQL hub migration"
-  - plan_id: task-12898-memory-recall-helper
-    root_task_ref: "12898"
-    root_open: true
-    root_title: "Smarter memory recall via backgrounded Haiku helper agent"
-    legacy_reason: "Recovered pre-contract plan; root epic remains open and records the non-retrofit disposition."
-    non_retrofit_acknowledgment: "#12898"
-    non_retrofit_acknowledgment_exists: true
-    non_retrofit_acknowledgment_open: true
-    non_retrofit_acknowledgment_title: "Smarter memory recall via backgrounded Haiku helper agent"
