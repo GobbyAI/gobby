@@ -3,404 +3,609 @@ header:
   plan_hash: df624b35b5fc3d45c7d582969f4937b55ecd05ded19502aa76a5b32ffb9c6827
   root_task_ref: '12898'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-04-27T21:43:56Z'
-  task_tree_source: db
-  task_tree_source_hash: 7f2e6f144e6f1cecec52a1a73a6d9a4c5d6ce5579ee4775b43b990fe17deb818
+  generated_at: '2026-04-27T21:52:29Z'
+  task_tree_source: matrix-file
+  task_tree_source_hash: ''
   evidence_summary: []
 rows:
 - section_id: '1.1'
   item_id: 1.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.1'
+    validation_criteria_snippet: 'behavior: "Manual gate task for #12919 exists with
+      category=manual" in `.gobby/plans/task-12898-memory-recall-helper.md`'
+    matched_artifact_ref: '"Manual gate task for #12919 exists with category=manual"
+      in `.gobby/plans/task-12898-memory-recall-helper.md`'
   deferral_target: null
   evidence: []
 - section_id: '1.1'
   item_id: 1.1.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.1'
+    validation_criteria_snippet: 'behavior: "1.3 task body carries pre-edit gate-check
+      prose" in `.gobby/plans/task-12898-memory-recall-helper.md`'
+    matched_artifact_ref: '"1.3 task body carries pre-edit gate-check prose" in `.gobby/plans/task-12898-memory-recall-helper.md`'
   deferral_target: null
   evidence: []
 - section_id: '1.2'
   item_id: 1.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.2'
+    validation_criteria_snippet: 'symbol: gobby.config.sessions.MemoryRecallHelperConfig'
+    matched_artifact_ref: gobby.config.sessions.MemoryRecallHelperConfig
   deferral_target: null
   evidence: []
 - section_id: '1.2'
   item_id: 1.2.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.2'
+    validation_criteria_snippet: 'symbol: gobby.config.app.DaemonConfig.memory_recall_helper'
+    matched_artifact_ref: gobby.config.app.DaemonConfig.memory_recall_helper
   deferral_target: null
   evidence: []
 - section_id: '1.2'
   item_id: 1.2.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.2'
+    validation_criteria_snippet: 'test: tests/config/test_sessions.py::test_memory_recall_helper_config_shape'
+    matched_artifact_ref: tests/config/test_sessions.py::test_memory_recall_helper_config_shape
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'symbol: gobby.hooks.event_handlers._base.EventHandlersBase'
+    matched_artifact_ref: gobby.hooks.event_handlers._base.EventHandlersBase
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'symbol: gobby.hooks.event_handlers.EventHandlers.__init__'
+    matched_artifact_ref: gobby.hooks.event_handlers.EventHandlers.__init__
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'file: src/gobby/hooks/factory.py'
+    matched_artifact_ref: src/gobby/hooks/factory.py
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'symbol: gobby.hooks.event_handlers._session_start.SessionStartMixin._activate_default_agent'
+    matched_artifact_ref: gobby.hooks.event_handlers._session_start.SessionStartMixin._activate_default_agent
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'file: src/gobby/hooks/event_handlers/_session_start.py'
+    matched_artifact_ref: src/gobby/hooks/event_handlers/_session_start.py
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'file: src/gobby/hooks/event_handlers/_session_start.py'
+    matched_artifact_ref: src/gobby/hooks/event_handlers/_session_start.py
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'test: tests/hooks/test_event_handlers.py::test_parent_turn_seq_preserved_across_activation'
+    matched_artifact_ref: tests/hooks/test_event_handlers.py::test_parent_turn_seq_preserved_across_activation
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.3'
+    validation_criteria_snippet: 'test: tests/hooks/test_event_handlers.py::test_parent_turn_seq_seeded_on_first_activation'
+    matched_artifact_ref: tests/hooks/test_event_handlers.py::test_parent_turn_seq_seeded_on_first_activation
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.4'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/memory-recall-helper.yaml
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.4'
+    validation_criteria_snippet: 'symbol: gobby.workflows.definitions.AgentDefinitionBody'
+    matched_artifact_ref: gobby.workflows.definitions.AgentDefinitionBody
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.4'
+    validation_criteria_snippet: 'test: tests/agents/test_sync.py::test_memory_recall_helper_synced'
+    matched_artifact_ref: tests/agents/test_sync.py::test_memory_recall_helper_synced
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_agent_resolver.py::test_resolve_memory_recall_helper'
+    matched_artifact_ref: tests/workflows/test_agent_resolver.py::test_resolve_memory_recall_helper
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:1.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_step_enforcement.py::test_blocked_tools_overrides_infra_exempt_for_helper'
+    matched_artifact_ref: tests/workflows/test_step_enforcement.py::test_blocked_tools_overrides_infra_exempt_for_helper
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.1'
+    validation_criteria_snippet: 'symbol: gobby.mcp_proxy.tools.agent_messaging.send_message'
+    matched_artifact_ref: gobby.mcp_proxy.tools.agent_messaging.send_message
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.1'
+    validation_criteria_snippet: 'test: tests/mcp_proxy/tools/test_agent_messaging.py::test_send_message_no_session_context_returns_error'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_agent_messaging.py::test_send_message_no_session_context_returns_error
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.1'
+    validation_criteria_snippet: 'behavior: "send_message MCP schema marks from_session
+      optional" in `src/gobby/mcp_proxy/tools/agent_messaging.py`'
+    matched_artifact_ref: '"send_message MCP schema marks from_session optional" in
+      `src/gobby/mcp_proxy/tools/agent_messaging.py`'
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.1'
+    validation_criteria_snippet: 'test: tests/mcp_proxy/tools/test_agent_messaging.py::test_send_message_defaults_from_session_from_context'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_agent_messaging.py::test_send_message_defaults_from_session_from_context
   deferral_target: null
   evidence: []
 - section_id: '2.2'
   item_id: 2.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.2'
+    validation_criteria_snippet: 'symbol: gobby.workflows.engine.enforcement.EnforcementMixin._check_agent_tool_enforcement'
+    matched_artifact_ref: gobby.workflows.engine.enforcement.EnforcementMixin._check_agent_tool_enforcement
   deferral_target: null
   evidence: []
 - section_id: '2.2'
   item_id: 2.2.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.2'
+    validation_criteria_snippet: 'test: tests/workflows/test_step_enforcement.py::test_explicit_block_overrides_infra_exempt'
+    matched_artifact_ref: tests/workflows/test_step_enforcement.py::test_explicit_block_overrides_infra_exempt
   deferral_target: null
   evidence: []
 - section_id: '2.2'
   item_id: 2.2.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.2'
+    validation_criteria_snippet: 'test: tests/workflows/test_step_enforcement.py::test_infra_exempt_default_when_no_explicit_block'
+    matched_artifact_ref: tests/workflows/test_step_enforcement.py::test_infra_exempt_default_when_no_explicit_block
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.3'
+    validation_criteria_snippet: 'symbol: gobby.storage.agents.LocalAgentRunManager.get_cancelled_session_ids'
+    matched_artifact_ref: gobby.storage.agents.LocalAgentRunManager.get_cancelled_session_ids
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.3'
+    validation_criteria_snippet: 'test: tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_honors_recency_window'
+    matched_artifact_ref: tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_honors_recency_window
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.3'
+    validation_criteria_snippet: 'test: tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_agent_name_scoping'
+    matched_artifact_ref: tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_agent_name_scoping
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.3'
+    validation_criteria_snippet: 'test: tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_datetime_normalization'
+    matched_artifact_ref: tests/storage/test_agent_runs.py::test_get_cancelled_session_ids_datetime_normalization
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'symbol: gobby.workflows.engine.effects.EffectsMixin._format_delivery_result'
+    matched_artifact_ref: gobby.workflows.engine.effects.EffectsMixin._format_delivery_result
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'symbol: gobby.workflows.engine.effects.EffectsMixin._format_search_memories_result'
+    matched_artifact_ref: gobby.workflows.engine.effects.EffectsMixin._format_search_memories_result
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'file: src/gobby/workflows/engine/effects.py'
+    matched_artifact_ref: src/gobby/workflows/engine/effects.py
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'symbol: gobby.workflows.engine.effects._is_empty_inject_payload'
+    matched_artifact_ref: gobby.workflows.engine.effects._is_empty_inject_payload
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_empty_delivery_no_mutation'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_empty_delivery_no_mutation
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_single_memory_recall_inject'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_single_memory_recall_inject
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.7
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_dedup_against_injected_ids'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_dedup_against_injected_ids
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_mixed_memory_recall_and_plain_messages'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_mixed_memory_recall_and_plain_messages
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_concurrent_append_race_safe'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_concurrent_append_race_safe
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.10
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_freshness_guard_a_helper_scoped'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_freshness_guard_a_helper_scoped
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.11
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_session_key_uses_platform_session_id'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_session_key_uses_platform_session_id
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.12
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_freshness_guard_b_origin_turn_seq'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_freshness_guard_b_origin_turn_seq
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.13
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_fail_closed_when_parent_turn_seq_missing'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_fail_closed_when_parent_turn_seq_missing
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.14
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_kill_switch_drops_memory_recall_payloads'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_kill_switch_drops_memory_recall_payloads
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.15
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_delivery_pipeline.py::test_search_memories_formatter_dedup'
+    matched_artifact_ref: tests/workflows/test_delivery_pipeline.py::test_search_memories_formatter_dedup
   deferral_target: null
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.5'
+    validation_criteria_snippet: 'file: src/gobby/mcp_proxy/tools/agents.py'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/agents.py
   deferral_target: null
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.5'
+    validation_criteria_snippet: 'symbol: gobby.mcp_proxy.tools.agents.stop_agent'
+    matched_artifact_ref: gobby.mcp_proxy.tools.agents.stop_agent
   deferral_target: null
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.5'
+    validation_criteria_snippet: 'symbol: gobby.mcp_proxy.tools.agents.cancel_stale_helpers'
+    matched_artifact_ref: gobby.mcp_proxy.tools.agents.cancel_stale_helpers
   deferral_target: null
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.5'
+    validation_criteria_snippet: 'test: tests/mcp_proxy/tools/test_cancel_stale_helpers.py::test_best_effort_continues_on_per_run_failure'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_cancel_stale_helpers.py::test_best_effort_continues_on_per_run_failure
   deferral_target: null
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.5'
+    validation_criteria_snippet: 'test: tests/mcp_proxy/tools/test_cancel_stale_helpers.py::test_cleanup_step_order_parity_with_stop_agent'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_cancel_stale_helpers.py::test_cleanup_step_order_parity_with_stop_agent
   deferral_target: null
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:2.5'
+    validation_criteria_snippet: 'test: tests/mcp_proxy/tools/test_cancel_stale_helpers.py::test_db_less_registry_uses_runner_run_storage'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_cancel_stale_helpers.py::test_db_less_registry_uses_runner_run_storage
   deferral_target: null
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.1'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/messaging/deliver-pending-messages.yaml
   deferral_target: null
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.1'
+    validation_criteria_snippet: 'test: tests/workflows/test_messaging_rules.py::TestDeliverPendingMessages'
+    matched_artifact_ref: tests/workflows/test_messaging_rules.py::TestDeliverPendingMessages
   deferral_target: null
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.1'
+    validation_criteria_snippet: 'test: tests/e2e/test_inter_agent_messages.py::test_parent_child_message_exchange'
+    matched_artifact_ref: tests/e2e/test_inter_agent_messages.py::test_parent_child_message_exchange
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.2'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/rules/memory-lifecycle/cancel-stale-memory-recall-helpers.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/memory-lifecycle/cancel-stale-memory-recall-helpers.yaml
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.2'
+    validation_criteria_snippet: 'test: tests/workflows/test_memory_lifecycle_rules.py::TestCancelStaleMemoryRecallHelpers'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py::TestCancelStaleMemoryRecallHelpers
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.2'
+    validation_criteria_snippet: 'file: tests/workflows/test_memory_lifecycle_rules.py'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.2'
+    validation_criteria_snippet: 'test: tests/workflows/test_memory_recall_helper_ordering.py::test_cancel_dispatches_before_deliver_inline'
+    matched_artifact_ref: tests/workflows/test_memory_recall_helper_ordering.py::test_cancel_dispatches_before_deliver_inline
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.2'
+    validation_criteria_snippet: 'test: tests/workflows/test_memory_recall_helper_ordering.py::test_arguments_resolve_to_platform_session_id'
+    matched_artifact_ref: tests/workflows/test_memory_recall_helper_ordering.py::test_arguments_resolve_to_platform_session_id
   deferral_target: null
   evidence: []
 - section_id: '3.3'
   item_id: 3.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.3'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml
   deferral_target: null
   evidence: []
 - section_id: '3.3'
   item_id: 3.3.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.3'
+    validation_criteria_snippet: 'test: tests/workflows/test_memory_lifecycle_rules.py::TestSpawnMemoryRecallHelper'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py::TestSpawnMemoryRecallHelper
   deferral_target: null
   evidence: []
 - section_id: '3.3'
   item_id: 3.3.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.3'
+    validation_criteria_snippet: 'file: tests/workflows/test_memory_lifecycle_rules.py'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py
   deferral_target: null
   evidence: []
 - section_id: '3.3'
   item_id: 3.3.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.3'
+    validation_criteria_snippet: 'behavior: "spawn rule fires on prompt length >=
+      6 for non-spawned-agent parents only" in `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml`'
+    matched_artifact_ref: '"spawn rule fires on prompt length >= 6 for non-spawned-agent
+      parents only" in `src/gobby/install/shared/workflows/rules/memory-lifecycle/spawn-memory-recall-helper.yaml`'
   deferral_target: null
   evidence: []
 - section_id: '3.4'
   item_id: 3.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.4'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml
   deferral_target: null
   evidence: []
 - section_id: '3.4'
   item_id: 3.4.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_memory_lifecycle_rules.py::TestIncrementParentTurnSeq'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py::TestIncrementParentTurnSeq
   deferral_target: null
   evidence: []
 - section_id: '3.4'
   item_id: 3.4.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.4'
+    validation_criteria_snippet: 'file: tests/workflows/test_memory_lifecycle_rules.py'
+    matched_artifact_ref: tests/workflows/test_memory_lifecycle_rules.py
   deferral_target: null
   evidence: []
 - section_id: '3.4'
   item_id: 3.4.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12898:3.4'
+    validation_criteria_snippet: 'test: tests/workflows/test_memory_recall_helper_ordering.py::test_turn_seq_increment_and_freshness_filter'
+    matched_artifact_ref: tests/workflows/test_memory_recall_helper_ordering.py::test_turn_seq_increment_and_freshness_filter
   deferral_target: null
   evidence: []

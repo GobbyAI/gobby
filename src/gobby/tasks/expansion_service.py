@@ -14,6 +14,7 @@ from typing import Any, cast
 from jinja2 import Environment, StrictUndefined
 
 from gobby.config.app import DaemonConfig
+from gobby.plans.parser import Kind, PlanDocument, PlanParseError, PlanSection, parse_plan
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
@@ -29,9 +30,12 @@ from gobby.utils.project_context import get_project_context
 logger = logging.getLogger(__name__)
 
 _TDD_CATEGORIES = frozenset({"code", "config"})
-AUTOMATED_LEAF_CATEGORIES = frozenset({"code", "config", "docs", "test"})
+AUTOMATED_LEAF_CATEGORIES = frozenset(
+    {"code", "config", "docs", "manual", "refactor", "research", "test"}
+)
 _DEFAULT_AGENT = "backend-developer"
 _STAGE_LABEL_PREFIX = "stage-:"
+_DEFAULT_PHASE_ID = "phase-1"
 _EXPANSION_STAGES = frozenset(
     {"plan_review", "test_arch", "expanding", "dev", "qa", "holistic_review", "pr"}
 )
@@ -56,6 +60,19 @@ _FRONTEND_SIGNALS = frozenset(
         "webpack",
     }
 )
+_DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
+    r"\b(?:frontend|react|ui|vue|next\.?js)\b",
+    flags=re.IGNORECASE,
+)
+_DETERMINISTIC_AGENT_BY_CATEGORY = {
+    "code": "backend-developer",
+    "config": "backend-developer",
+    "docs": "backend-developer",
+    "manual": "backend-developer",
+    "research": "backend-developer",
+    "test": "backend-developer",
+    "refactor": "backend-developer",
+}
 _BACKEND_SIGNALS = frozenset(
     {
         "api",
@@ -232,6 +249,9 @@ _PHASE_SECTION_RE = re.compile(
     r"^##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+?)$",
     flags=re.MULTILINE,
 )
+_CONTRACT_PHASE_ID_RE = re.compile(r"^P(?P<number>\d+)$")
+_CATEGORY_RE = re.compile(r"\[category:\s*(?P<category>[a-z_]+)\]", flags=re.IGNORECASE)
+_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
 
 
 def _extract_phase_titles(description: str) -> dict[int, str]:
@@ -266,6 +286,122 @@ def _extract_phase_sections(content: str) -> list[dict[str, Any]]:
             }
         )
     return sections
+
+
+def _clean_contract_section_title(title: str) -> str:
+    """Remove plan-contract metadata annotations from a section title."""
+    title = _CATEGORY_RE.sub("", title)
+    title = _DEPENDS_RE.sub("", title)
+    return re.sub(r"\s+", " ", title).strip()
+
+
+def _contract_section_category(section: PlanSection) -> str:
+    match = _CATEGORY_RE.search(section.title)
+    if match is None:
+        return "code"
+    return match.group("category").lower()
+
+
+def _contract_section_depends(section: PlanSection) -> list[str]:
+    match = _DEPENDS_RE.search(section.title)
+    if match is None:
+        return []
+    raw_deps = re.split(r"[, ]+", match.group("depends"))
+    return [dep.strip() for dep in raw_deps if dep.strip()]
+
+
+def _contract_phase_number(phase_id: str) -> int:
+    match = _CONTRACT_PHASE_ID_RE.match(phase_id)
+    if match is None:
+        return 1
+    return int(match.group("number"))
+
+
+def _contract_phase_spec_id(phase_id: str) -> str:
+    if phase_id == _DEFAULT_PHASE_ID:
+        return _DEFAULT_PHASE_ID
+    return f"phase-{phase_id.lower()}"
+
+
+def _contract_plan_id(plan_doc: PlanDocument) -> str:
+    return plan_doc.source_path.stem
+
+
+def _contract_covers_labels(plan_id: str, section: PlanSection) -> list[str]:
+    return [
+        f"covers:{plan_id}:{section.section_id}:{item.item_id}" for item in section.acceptance_items
+    ]
+
+
+def _contract_acceptance_lines(section: PlanSection) -> list[str]:
+    return [f"- {item.item_id}: {item.prose}" for item in section.acceptance_items]
+
+
+def _contract_artifact_summary(section: PlanSection) -> str:
+    refs = [f"{item.artifact_kind.value}: {item.artifact_ref}" for item in section.acceptance_items]
+    return "; ".join(refs) if refs else "the documented acceptance artifacts"
+
+
+def _contract_affected_files(section: PlanSection) -> list[str]:
+    file_refs = [
+        item.artifact_ref
+        for item in section.acceptance_items
+        if item.artifact_kind.value in {"file", "test"}
+    ]
+    return sorted(dict.fromkeys(file_refs))
+
+
+def _contract_section_body(plan_doc: PlanDocument, section: PlanSection) -> str:
+    lines = plan_doc.source_path.read_text(encoding="utf-8").splitlines()
+    start_line, end_line = section.source_span
+    raw_lines = lines[start_line:end_line]
+    body_lines: list[str] = []
+    for line in raw_lines:
+        stripped = line.strip()
+        if stripped.startswith("`kind:") and stripped.endswith("`"):
+            continue
+        if stripped == "**Acceptance:**":
+            break
+        body_lines.append(line)
+    return "\n".join(body_lines).strip()
+
+
+def _contract_agent_fields(
+    *,
+    category: str,
+    title: str,
+    description: str,
+) -> tuple[str, list[str], str]:
+    signal_text = f"{title}\n{description}".lower()
+    if _DETERMINISTIC_FRONTEND_SIGNAL_RE.search(signal_text):
+        return "frontend-developer", [], description
+    assigned_agent = _DETERMINISTIC_AGENT_BY_CATEGORY.get(category)
+    if assigned_agent is not None:
+        return assigned_agent, [], description
+    return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)
+
+
+def _contract_task_ids(section_id: str) -> tuple[str, str, str]:
+    return f"{section_id}::test", f"{section_id}::impl", f"{section_id}::ref"
+
+
+def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
+    if section.deferral is None:
+        return None
+    return {
+        "section_id": section.section_id,
+        "task_ref": section.deferral.task_ref,
+        "reason": section.deferral.reason,
+        "owner": section.deferral.owner,
+        "original_acceptance_items": [
+            {
+                "item_id": item.item_id,
+                "artifact_kind": item.artifact_kind.value,
+                "artifact_ref": item.artifact_ref,
+            }
+            for item in section.deferral.original_acceptance_items
+        ],
+    }
 
 
 def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
@@ -537,6 +673,210 @@ class ExpansionService:
             "phases": phase_titles,
         }
 
+    def compile_plan_to_spec(self, plan_doc: PlanDocument, task: Task) -> dict[str, Any]:
+        """Compile a Plan-Coverage Contract document into a compiled expansion spec."""
+        plan_id = _contract_plan_id(plan_doc)
+        deliverables = [
+            section for section in plan_doc.sections if section.kind is Kind.deliverable
+        ]
+        section_by_id = {section.section_id: section for section in plan_doc.sections}
+        phase_by_section_id = self._contract_phase_index(plan_doc)
+
+        phases: list[dict[str, Any]] = []
+        phase_by_id: dict[str, dict[str, Any]] = {}
+        tasks: list[dict[str, Any]] = []
+        dependencies: list[dict[str, str]] = []
+        deferrals: list[dict[str, Any]] = []
+
+        for section in plan_doc.sections:
+            if section.kind is Kind.deferred:
+                record = _contract_deferral_record(section)
+                if record is not None:
+                    deferrals.append(record)
+                continue
+            if section.kind is not Kind.deliverable:
+                continue
+
+            phase_section = phase_by_section_id.get(section.section_id)
+            phase_id = _contract_phase_spec_id(
+                phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
+            )
+            phase_number = (
+                _contract_phase_number(phase_section.section_id) if phase_section is not None else 1
+            )
+            phase = phase_by_id.get(phase_id)
+            if phase is None:
+                phase = {
+                    "id": phase_id,
+                    "title": phase_section.title if phase_section is not None else task.title,
+                    "summary": phase_section.title
+                    if phase_section is not None
+                    else task.description or "",
+                    "test_intent": {
+                        "summary": f"Write failing tests for Phase {phase_number}.",
+                        "behaviors": [],
+                        "suggested_test_files": [],
+                        "entry_criteria": ["Tests should fail before implementation begins."],
+                    },
+                    "task_ids": [],
+                    "tdd_sandwich_emitted": True,
+                }
+                phases.append(phase)
+                phase_by_id[phase_id] = phase
+
+            test_task, impl_task, ref_task = self._contract_section_tasks(
+                plan_doc=plan_doc,
+                section=section,
+                phase_id=phase_id,
+                plan_id=plan_id,
+            )
+            phase["task_ids"].extend([test_task["id"], impl_task["id"], ref_task["id"]])
+            phase["test_intent"]["behaviors"].extend(
+                item.prose for item in section.acceptance_items
+            )
+            phase["test_intent"]["suggested_test_files"] = sorted(
+                set(phase["test_intent"]["suggested_test_files"])
+                | set(test_task.get("affected_files") or [])
+            )
+            tasks.extend([test_task, impl_task, ref_task])
+
+            for dependency in _contract_section_depends(section):
+                blocker = section_by_id.get(dependency)
+                if blocker is None or blocker.kind is not Kind.deliverable:
+                    continue
+                _blocker_test, _blocker_impl, blocker_ref = _contract_task_ids(dependency)
+                dependencies.append({"task_id": test_task["id"], "depends_on": blocker_ref})
+            dependencies.append({"task_id": impl_task["id"], "depends_on": test_task["id"]})
+            dependencies.append({"task_id": ref_task["id"], "depends_on": impl_task["id"]})
+
+        return {
+            "version": 1,
+            "parent_task_id": task.id,
+            "plan_file": str(plan_doc.source_path),
+            "phases": phases,
+            "tasks": tasks,
+            "dependencies": self._dedupe_dependencies(dependencies),
+            "execution_groups": [],
+            "deferrals": deferrals,
+            "contract_plan": True,
+            "plan_id": plan_id,
+            "deliverable_count": len(deliverables),
+        }
+
+    def _contract_section_tasks(
+        self,
+        *,
+        plan_doc: PlanDocument,
+        section: PlanSection,
+        phase_id: str,
+        plan_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        base_title = _clean_contract_section_title(section.title) or section.section_id
+        body = _contract_section_body(plan_doc, section)
+        category = _contract_section_category(section)
+        labels = _contract_covers_labels(plan_id, section)
+        affected_files = _contract_affected_files(section)
+        acceptance_lines = _contract_acceptance_lines(section)
+        acceptance_block = "\n".join(acceptance_lines)
+        artifact_summary = _contract_artifact_summary(section)
+        base_description = f"Plan section `{section.section_id}`.\n\n{body}".strip()
+        if acceptance_block:
+            base_description = f"{base_description}\n\nAcceptance items:\n{acceptance_block}"
+
+        assigned_agent, additional_skills, description = _contract_agent_fields(
+            category=category,
+            title=base_title,
+            description=base_description,
+        )
+        test_id, impl_id, ref_id = _contract_task_ids(section.section_id)
+        priority = 2
+
+        test_task = {
+            "id": test_id,
+            "phase_id": phase_id,
+            "title": f"[TEST] {base_title}",
+            "description": description,
+            "priority": priority,
+            "task_type": "task",
+            "category": "test",
+            "validation": (
+                f"Failing tests cover the plan acceptance artifacts: {artifact_summary}."
+            ),
+            "affected_files": _find_test_files(affected_files),
+            "labels": labels,
+            "assigned_agent": assigned_agent,
+            "additional_skills": additional_skills,
+            "source_section_id": section.section_id,
+        }
+        impl_task = {
+            "id": impl_id,
+            "phase_id": phase_id,
+            "title": f"[IMPL] {base_title}",
+            "description": description,
+            "priority": priority,
+            "task_type": "task",
+            "category": category,
+            "validation": f"Implementation satisfies acceptance artifacts: {artifact_summary}.",
+            "affected_files": affected_files,
+            "labels": labels,
+            "assigned_agent": assigned_agent,
+            "additional_skills": additional_skills,
+            "source_section_id": section.section_id,
+        }
+        ref_task = {
+            "id": ref_id,
+            "phase_id": phase_id,
+            "title": f"[REF] {base_title}",
+            "description": description,
+            "priority": priority,
+            "task_type": "task",
+            "category": "refactor",
+            "validation": (
+                "Refactoring keeps tests green while preserving acceptance artifacts: "
+                f"{artifact_summary}."
+            ),
+            "affected_files": affected_files,
+            "labels": labels,
+            "assigned_agent": assigned_agent,
+            "additional_skills": additional_skills,
+            "source_section_id": section.section_id,
+        }
+        return test_task, impl_task, ref_task
+
+    def _contract_phase_index(self, plan_doc: PlanDocument) -> dict[str, PlanSection]:
+        section_by_id = {section.section_id: section for section in plan_doc.sections}
+        phase_by_section_id: dict[str, PlanSection] = {}
+        for section in plan_doc.sections:
+            current = section
+            while current.parent_id is not None:
+                parent = section_by_id.get(current.parent_id)
+                if parent is None:
+                    break
+                if _CONTRACT_PHASE_ID_RE.match(parent.section_id):
+                    phase_by_section_id[section.section_id] = parent
+                    break
+                current = parent
+        return phase_by_section_id
+
+    def _parse_contract_plan(self, run: ExpansionRun, task: Task) -> PlanDocument | None:
+        if not run.plan_file:
+            return None
+        plan_path = Path(run.plan_file)
+        if not plan_path.is_absolute():
+            repo_path = self._resolve_repo_path(task)
+            if repo_path is not None:
+                plan_path = repo_path / plan_path
+        try:
+            return parse_plan(plan_path)
+        except (OSError, PlanParseError) as exc:
+            self.run_manager.append_log(
+                run.id,
+                level="info",
+                message="Plan file did not parse as Plan-Coverage Contract; using LLM compile",
+                extra={"plan_file": str(plan_path), "error": str(exc)},
+            )
+            return None
+
     async def compile_run(self, run_id: str) -> ExpansionRun:
         """Compile an expansion run into a normalized compiled spec."""
         run = self.run_manager.get(run_id)
@@ -550,19 +890,29 @@ class ExpansionService:
         if _dev_is_only_enabled_stage(task):
             return self._complete_dev_only_run(run_id, task)
 
-        phase_sections = self._load_phase_sections(run.plan_file, task)
-        if len(phase_sections) >= 2:
+        plan_doc = self._parse_contract_plan(run, task)
+        if plan_doc and any(section.kind is Kind.deliverable for section in plan_doc.sections):
             self.run_manager.append_log(
                 run_id,
                 level="info",
-                message=f"Detected {len(phase_sections)} phases; compiling per-phase",
+                message="Detected Plan-Coverage Contract plan; compiling deterministically",
+                extra={"plan_file": str(plan_doc.source_path)},
             )
-            compiled_spec = await self._compile_multi_phase(run, task, phase_sections)
+            compiled_spec = self.compile_plan_to_spec(plan_doc, task)
         else:
-            raw_spec = await self._generate_raw_spec(run, task)
-            compiled_spec = self.normalize_compiled_spec(
-                raw_spec, task=task, plan_file=run.plan_file
-            )
+            phase_sections = self._load_phase_sections(run.plan_file, task)
+            if len(phase_sections) >= 2:
+                self.run_manager.append_log(
+                    run_id,
+                    level="info",
+                    message=f"Detected {len(phase_sections)} phases; compiling per-phase",
+                )
+                compiled_spec = await self._compile_multi_phase(run, task, phase_sections)
+            else:
+                raw_spec = await self._generate_raw_spec(run, task)
+                compiled_spec = self.normalize_compiled_spec(
+                    raw_spec, task=task, plan_file=run.plan_file
+                )
         validation = self.validate_compiled_spec(compiled_spec)
         if not validation["valid"]:
             errors = "; ".join(validation["errors"])
@@ -655,10 +1005,13 @@ class ExpansionService:
         multi_phase = len(phase_list) > 1
         phase_index_by_id = {phase["id"]: i + 1 for i, phase in enumerate(phase_list)}
         phase_has_tdd = {
-            phase["id"]: any(
-                task_item.get("category") in _TDD_CATEGORIES
-                for task_item in tasks
-                if task_item["phase_id"] == phase["id"]
+            phase["id"]: (
+                not phase.get("tdd_sandwich_emitted")
+                and any(
+                    task_item.get("category") in _TDD_CATEGORIES
+                    for task_item in tasks
+                    if task_item["phase_id"] == phase["id"]
+                )
             )
             for phase in phase_list
         }
@@ -674,14 +1027,12 @@ class ExpansionService:
         phase_parent_map: dict[str, str] = {}
         created_task_map: dict[str, str] = {}
         phase_child_ids: dict[str, list[str]] = defaultdict(list)
-        task_label_map = {
-            task_item["id"]: (
-                [f"parallel:{task_item['execution_group']}"]
-                if task_item.get("execution_group")
-                else None
-            )
-            for task_item in tasks
-        }
+        task_label_map = {}
+        for task_item in tasks:
+            labels = list(task_item.get("labels") or [])
+            if task_item.get("execution_group"):
+                labels.append(f"parallel:{task_item['execution_group']}")
+            task_label_map[task_item["id"]] = labels or None
 
         with self.db.transaction():
             self.run_manager.mark_applying(run_id)

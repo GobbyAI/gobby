@@ -72,7 +72,15 @@ def test_skipped_stages_helper_ignores_dev_only_profile_without_resolved_labels(
 
 
 def test_automated_leaf_categories_are_explicit() -> None:
-    assert expansion_module.AUTOMATED_LEAF_CATEGORIES == {"code", "config", "docs", "test"}
+    assert expansion_module.AUTOMATED_LEAF_CATEGORIES == {
+        "code",
+        "config",
+        "docs",
+        "manual",
+        "refactor",
+        "research",
+        "test",
+    }
 
 
 def test_validate_compiled_spec_rejects_planning_leaves(
@@ -108,6 +116,7 @@ def test_normalize_preserves_registry_agent_selection_and_additional_skills(
     sample_project,
 ) -> None:
     epic = _parent(service, sample_project)
+    _store_agent(service, "frontend-developer", "Frontend development")
     spec = service.normalize_compiled_spec(
         {
             "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["ui"]}],

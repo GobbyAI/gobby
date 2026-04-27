@@ -3,176 +3,263 @@ header:
   plan_hash: 638e91654a508cd4043b0ae07f0962c69ee86f595d7ade8453132a68cd83b547
   root_task_ref: '12725'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-04-27T21:13:17Z'
-  task_tree_source: db
-  task_tree_source_hash: 031f49579fcf8f5e2df665c1dd7ac7e3ad6394484a87ae69b1ec96f9b6022150
+  generated_at: '2026-04-27T21:52:29Z'
+  task_tree_source: matrix-file
+  task_tree_source_hash: ''
   evidence_summary: []
 rows:
 - section_id: '1.3'
   item_id: 1.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.3'
+    validation_criteria_snippet: 'file: src/gobby/storage/tasks/_crud.py'
+    matched_artifact_ref: src/gobby/storage/tasks/_crud.py
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.3'
+    validation_criteria_snippet: 'file: src/gobby/storage/tasks/_dispatch_mutex.py'
+    matched_artifact_ref: src/gobby/storage/tasks/_dispatch_mutex.py
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.3'
+    validation_criteria_snippet: 'symbol: gobby.storage.tasks._crud.list_automation_candidates'
+    matched_artifact_ref: gobby.storage.tasks._crud.list_automation_candidates
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.3'
+    validation_criteria_snippet: 'symbol: gobby.storage.tasks._crud._skipped_stages'
+    matched_artifact_ref: gobby.storage.tasks._crud._skipped_stages
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.3'
+    validation_criteria_snippet: 'symbol: gobby.storage.tasks._crud._is_yolo'
+    matched_artifact_ref: gobby.storage.tasks._crud._is_yolo
   deferral_target: null
   evidence: []
 - section_id: 1.3a
   item_id: 1.3a.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.3a'
+    validation_criteria_snippet: 'file: src/gobby/storage/tasks/_dependencies.py'
+    matched_artifact_ref: src/gobby/storage/tasks/_dependencies.py
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.4'
+    validation_criteria_snippet: 'file: src/gobby/dispatch/mutex.py'
+    matched_artifact_ref: src/gobby/dispatch/mutex.py
   deferral_target: null
   evidence: []
 - section_id: '1.5'
   item_id: 1.5.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.5'
+    validation_criteria_snippet: 'file: src/gobby/hooks/event_handlers/_task.py'
+    matched_artifact_ref: src/gobby/hooks/event_handlers/_task.py
   deferral_target: null
   evidence: []
 - section_id: '1.6'
   item_id: 1.6.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.6'
+    validation_criteria_snippet: 'file: src/gobby/dispatch/actions.py'
+    matched_artifact_ref: src/gobby/dispatch/actions.py
   deferral_target: null
   evidence: []
 - section_id: '1.7'
   item_id: 1.7.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.7'
+    validation_criteria_snippet: 'file: src/gobby/dispatch/rules.py'
+    matched_artifact_ref: src/gobby/dispatch/rules.py
   deferral_target: null
   evidence: []
 - section_id: '1.8'
   item_id: 1.8.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.8'
+    validation_criteria_snippet: 'file: src/gobby/storage/tasks/_transitions.py'
+    matched_artifact_ref: src/gobby/storage/tasks/_transitions.py
   deferral_target: null
   evidence: []
 - section_id: '1.9'
   item_id: 1.9.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.9'
+    validation_criteria_snippet: 'file: src/gobby/dispatch/dispatcher.py'
+    matched_artifact_ref: src/gobby/dispatch/dispatcher.py
   deferral_target: null
   evidence: []
 - section_id: '1.10'
   item_id: 1.10.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:1.10'
+    validation_criteria_snippet: 'file: src/gobby/dispatch/cron_registration.py'
+    matched_artifact_ref: src/gobby/dispatch/cron_registration.py
   deferral_target: null
   evidence: []
 - section_id: '2.8'
   item_id: 2.8.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.8'
+    validation_criteria_snippet: 'file: src/gobby/tasks/expansion_service.py'
+    matched_artifact_ref: src/gobby/tasks/expansion_service.py
   deferral_target: null
   evidence: []
 - section_id: '2.8'
   item_id: 2.8.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.8'
+    validation_criteria_snippet: 'file: src/gobby/tasks/expansion_service.py'
+    matched_artifact_ref: src/gobby/tasks/expansion_service.py
   deferral_target: null
   evidence: []
 - section_id: '2.8'
   item_id: 2.8.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.8'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/agents/expansion-qa.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
   deferral_target: null
   evidence: []
 - section_id: 2.8b
   item_id: 2.8b.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.8b'
+    validation_criteria_snippet: 'file: src/gobby/mcp_proxy/tools/tasks_ops.py'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/tasks_ops.py
   deferral_target: null
   evidence: []
 - section_id: '2.9'
   item_id: 2.9.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.9'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/agents/expansion-qa.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
   deferral_target: null
   evidence: []
 - section_id: '2.10'
   item_id: 2.10.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.10'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/agents/merge.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/merge.yaml
   deferral_target: null
   evidence: []
 - section_id: '2.10'
   item_id: 2.10.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.10'
+    validation_criteria_snippet: 'file: src/gobby/install/shared/workflows/agents/merge.yaml'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/merge.yaml
   deferral_target: null
   evidence: []
 - section_id: '2.10'
   item_id: 2.10.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.10'
+    validation_criteria_snippet: "behavior: non-yolo merge conflict path in \xA72.10"
+    matched_artifact_ref: "non-yolo merge conflict path in \xA72.10"
   deferral_target: null
   evidence: []
 - section_id: '2.10'
   item_id: 2.10.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:2.10'
+    validation_criteria_snippet: "behavior: yolo merge conflict retry path in \xA7\
+      2.10"
+    matched_artifact_ref: "yolo merge conflict retry path in \xA72.10"
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:3.2'
+    validation_criteria_snippet: 'file: src/gobby/build/service.py'
+    matched_artifact_ref: src/gobby/build/service.py
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:3.2'
+    validation_criteria_snippet: 'file: src/gobby/cli/build.py'
+    matched_artifact_ref: src/gobby/cli/build.py
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:3.2'
+    validation_criteria_snippet: 'file: src/gobby/mcp_proxy/tools/build.py'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/build.py
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:3.2'
+    validation_criteria_snippet: 'file: src/gobby/servers/routes/build.py'
+    matched_artifact_ref: src/gobby/servers/routes/build.py
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:3.2'
+    validation_criteria_snippet: 'symbol: gobby.build.service._kick_dispatcher_tick'
+    matched_artifact_ref: gobby.build.service._kick_dispatcher_tick
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12725:3.2'
+    validation_criteria_snippet: 'behavior: `task_artifacts.target_branch` is never
+      persisted as `None` for plan-file or epic builds'
+    matched_artifact_ref: '`task_artifacts.target_branch` is never persisted as `None`
+      for plan-file or epic builds'
   deferral_target: null
   evidence: []
