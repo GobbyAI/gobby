@@ -1934,24 +1934,32 @@ manifests or un-paired `.grandfathered` entries.
 The test:
 
 1. Walks `.gobby/plans/*.md`, excluding `.coverage-ledger.yaml`
-   and any non-plan markdown.
+   and any non-plan markdown. **Asserts every plan file has an
+   entry in `.gobby/plans/index.yaml`** (closes the unindexed-
+   plan-silently-skipped hole). Unindexed plan files fail CI
+   citing the missing entry.
 2. Reads `.gobby/plans/index.yaml`; for each entry it knows
-   `plan_kind: implementation | strategy`, `status: active |
-   merged`, and the `(project_id, root_task_ref)` identity.
+   `plan_kind ∈ {implementation, strategy, legacy}`,
+   `status ∈ {active, merged, archived}`, and the
+   `(project_id, root_task_ref)` identity.
 3. For each plan file:
    - Parses with
      `gobby.plans.parser.parse_plan(path, plan_kind=<from index>)`.
-     Strategy entries parse permissively (canonical headings
-     without `kind:` yield `Kind.framing`, narrative headings go
-     to `framing_headings`); implementation entries parse strict.
-   - Skips plans whose epic status is `merged` AND whose plan_id
+     Implementation entries parse strict; strategy and legacy
+     entries parse permissively (canonical headings without
+     `kind:` yield `Kind.framing`, narrative headings go to
+     `framing_headings`).
+   - Skips plans whose `plan_kind ∈ {legacy}` AND `status ==
+     archived` from the manifest gate (they are surveyed only for
+     parse-without-raise and index-entry presence).
+   - Skips plans whose epic `status == merged` AND whose plan_id
      appears in `.gobby/plans/.grandfathered`.
    - For each `(project_id, plan_id, root_task_ref)` identity
      **whose `plan_kind == implementation`**, asserts the
      manifest exists at
      `coverage_manifest_path(project_id, root_task_ref, plan_id)`.
-     Strategy entries are exempt from manifest/hash/zero-row
-     checks but must still parse without raising under
+     Strategy and legacy entries are exempt from manifest/hash/
+     zero-row checks but must still parse without raising under
      `plan_kind=PlanKind.strategy`.
 4. For implementation entries: re-computes `plan_hash` from the
    on-disk plan file and asserts string equality with the
@@ -1965,9 +1973,9 @@ The test:
 6. Walks every manifest under `.gobby/plans/coverage/` and
    asserts each resolves to a `plan_kind: implementation` entry
    in `.gobby/plans/index.yaml`. Orphan manifests fail the test
-   citing the path. A manifest that points at a `plan_kind:
-   strategy` entry is also treated as orphan (strategy plans
-   should not have manifests).
+   citing the path. Manifests pointing at `plan_kind: strategy`
+   or `plan_kind: legacy` entries are also treated as orphan
+   (only implementation plans have manifests).
 7. Reads `.gobby/plans/.grandfathered`; for each entry asserts
    the line includes a `# remove-by: <task-ref>` annotation;
    asserts the named task exists and is open (queried via
@@ -1985,6 +1993,7 @@ The test:
 
   ```yaml
   entries:
+    # Implementation plans (subject to manifest/hash/rows gate)
     - plan_id: task-12725-lifecycle-dispatch
       project_id: d45545c5-ded5-4335-b115-0245752edacf
       root_task_ref: "12725"
@@ -1995,17 +2004,124 @@ The test:
       root_task_ref: "13175"
       plan_kind: implementation
       status: active
+    # Strategy plan (parser-permissive, exempt from manifest CI)
     - plan_id: task-13173-lifecycle-dispatch-recovery
       project_id: d45545c5-ded5-4335-b115-0245752edacf
       root_task_ref: "13173"
       plan_kind: strategy
       status: active
+    # Legacy plans (pre-Plan-Coverage-Contract; parser-permissive,
+    # exempt from manifest CI; tracked here so A9 cannot silently
+    # skip them. root_task_ref left empty when the originating
+    # task ref is unknown or the originating epic was deleted —
+    # status: archived alongside.)
+    - plan_id: task-12027-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12027"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12042-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12042"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12044-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12044"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12068-skillsmp-install-rewrite
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12068"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12079-plan-rev1
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12079"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12079-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12079"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12081-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12081"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12092-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12092"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12130-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12130"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12285-plan
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12285"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12746-neo4j-falkordb-swap
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12746"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12761-postgres-hub-migration
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12761"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12898-memory-recall-helper
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12898"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12902-pipeline-runs-rename
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12902"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12910-drawbridge-ui-batch
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12910"
+      plan_kind: legacy
+      status: archived
+    - plan_id: task-12948-codex-retry-verbatim-removal
+      project_id: d45545c5-ded5-4335-b115-0245752edacf
+      root_task_ref: "12948"
+      plan_kind: legacy
+      status: archived
   ```
 
-  Schema requirements: `plan_kind ∈ {implementation, strategy}`,
-  `status ∈ {active, merged}`, and an entry whose
-  `plan_kind == strategy` must NOT have a corresponding manifest
-  (the CI orphan-manifest check rejects strategy-plan manifests).
+  Schema requirements: `plan_kind ∈ {implementation, strategy,
+  legacy}`, `status ∈ {active, merged, archived}`, and entries
+  whose `plan_kind ∈ {strategy, legacy}` must NOT have a
+  corresponding manifest (the CI orphan-manifest check rejects
+  strategy-/legacy-plan manifests).
+
+  **`plan_kind: legacy`** is for pre-Epic-1 plans authored before
+  the Plan-Coverage Contract that should not be retrofitted (they
+  belong to merged or archived work and the cost of conforming
+  them is not justified). Legacy plans:
+  - parse under `PlanKind.strategy` (permissive),
+  - are exempt from manifest/hash/zero-row CI,
+  - are surveyed by A9 only for index-entry presence,
+  - and have `status: archived` to signal their historical
+    nature.
+
+  Epic 1 ships index entries for every `.gobby/plans/task-*.md`
+  file currently in the repo — the 16 legacy plans get
+  `plan_kind: legacy, status: archived` (or `merged` if their
+  epic shipped); the strategy plan gets `plan_kind: strategy,
+  status: active`; the implementation plans (#12725 and this one,
+  #13175) get `plan_kind: implementation` with their actual
+  status. Future plans MUST be added to `index.yaml` at authoring
+  time; A9 CI rejects any unindexed `.gobby/plans/task-*.md`
+  file.
 
 **Tests (this section's own test file is the deliverable; below are
 the assertions that file makes):**
@@ -2022,13 +2138,18 @@ the assertions that file makes):**
 **Acceptance:**
 
 - A9.1 — `tests/plans/test_plan_coverage_ci.py` walks every plan
-  file under `.gobby/plans/*.md` whose `plan_index.yaml` entry
-  status is not `merged`-and-grandfathered. file:
-  `tests/plans/test_plan_coverage_ci.py`.
+  file under `.gobby/plans/*.md` and asserts each has an entry
+  in `.gobby/plans/index.yaml`; unindexed plan files fail CI
+  citing the missing entry. file:
+  `tests/plans/test_plan_coverage_ci.py`. test:
+  `tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry`.
 - A9.2 — for each plan, `plan_id`, `root_task_ref`, and
   `plan_kind` resolve from `.gobby/plans/index.yaml`; the index
-  schema requires `plan_kind ∈ {implementation, strategy}` per
-  entry. file: `.gobby/plans/index.yaml`. test:
+  schema requires `plan_kind ∈ {implementation, strategy,
+  legacy}` and `status ∈ {active, merged, archived}` per entry.
+  Epic 1 ships index entries for all 19 current plan files (2
+  implementation, 1 strategy, 16 legacy). file:
+  `.gobby/plans/index.yaml`. test:
   `tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed`
   asserts the field is present and validated.
 - A9.3 — for each `(project_id, plan_id, root_task_ref)` whose
@@ -2048,9 +2169,10 @@ the assertions that file makes):**
 - A9.6 — every manifest under `.gobby/plans/coverage/` resolves
   to a live `plan_index.yaml` entry whose `plan_kind ==
   implementation`; orphan manifests AND manifests pointing at
-  strategy entries both fail. test:
+  strategy or legacy entries all fail. tests:
   `tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests`,
-  `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`.
+  `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`,
+  `tests/plans/test_plan_coverage_ci.py::test_legacy_plans_have_no_manifests`.
 - A9.7 — every `.gobby/plans/.grandfathered` entry has a paired
   `# remove-by: <task-ref>` annotation; the named task exists and
   is open. tests:
@@ -2064,9 +2186,16 @@ the assertions that file makes):**
   behavior: "test runs successfully with `GOBBY_LIVE_DB=0`" in
   `tests/plans/test_plan_coverage_ci.py`.
 - A9.10 — CI passes `plan_kind` from each index entry to
-  `parse_plan(path, plan_kind=...)` so strategy entries parse
-  permissively and implementation entries parse strictly. test:
+  `parse_plan(path, plan_kind=...)`. Strategy and legacy entries
+  parse permissively; implementation entries parse strictly.
+  test:
   `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`.
+- A9.11 — `tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry`
+  asserts every `.gobby/plans/task-*.md` file has a matching
+  `entries[*].plan_id` in `.gobby/plans/index.yaml`; an
+  unindexed plan file fails the test citing the missing entry.
+  This closes the silent-skip hole where legacy or newly added
+  plans could escape A9 by not appearing in the index.
 
 ## A10 Contract documentation
 
@@ -2273,10 +2402,17 @@ the deliverable section and the test or behavior that proves it.
   match the parser constant. Verified by
   `tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md`.
 - Manual smoke: in this repo, after Epic 1 lands,
-  `uv run gobby plan coverage --plan
-  .gobby/plans/task-13173-lifecycle-dispatch-recovery.md
-  --plan-id task-13173-lifecycle-dispatch-recovery --plan-hash
-  <recomputed> --root-task '#13173' --project-id
-  d45545c5-ded5-4335-b115-0245752edacf --task-tree db --evidence
-  none --manifest <path>` returns a manifest whose rows are
-  internally consistent (the strategy doc reviews itself).
+  `uv run python -c "from gobby.plans.parser import parse_plan,
+  PlanKind; doc =
+  parse_plan('.gobby/plans/task-13173-lifecycle-dispatch-recovery.md',
+  plan_kind=PlanKind.strategy); print(len(doc.sections),
+  len(doc.framing_headings))"` parses the strategy doc cleanly,
+  yielding canonical strategy sections (A1–A10, D0.x, B1–B5,
+  C1–C6, D1–D8, F1–F4) and recording the narrative headings
+  (`## Context`, `## Phase A — ...`, `## Adversary Review Log`,
+  `## Verification`, `## Out of Scope (filed as follow-ups)`,
+  `### Round N — REJECTED`, etc.) in `framing_headings`. **No
+  coverage manifest is generated for the strategy doc** — A9.6
+  treats any manifest pointing at a `plan_kind: strategy` entry
+  as orphan, and the strategy plan has no `--manifest` output by
+  design. The smoke is parse-only.

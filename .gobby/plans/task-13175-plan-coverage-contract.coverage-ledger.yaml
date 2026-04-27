@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "0d2a8c3d9b014af18594783fc67cbabed11215df3883fe0f765dd3957620a7c6"
+plan_hash: "892be32e31f7a86d6af3b8b6dad4c4011294dfabdfc4a40d500104af9551a333"
 root_task_ref: "13175"
 
 sections:
@@ -843,16 +843,14 @@ sections:
               skips merged-and-grandfathered plans.
       A9.2:
         expected_leaves:
-          - title: "Author .gobby/plans/index.yaml with three entries and plan_kind field"
+          - title: "Author .gobby/plans/index.yaml with all 19 plan entries and plan_kind/status fields"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              .gobby/plans/index.yaml lists task-12725-lifecycle-dispatch
-              (plan_kind=implementation, status=merged),
-              task-13175-plan-coverage-contract
-              (plan_kind=implementation, status=active), and
-              task-13173-lifecycle-dispatch-recovery
-              (plan_kind=strategy, status=active); the index schema
-              validates plan_kind ∈ {implementation, strategy};
+              .gobby/plans/index.yaml lists every existing
+              .gobby/plans/task-*.md file (2 implementation, 1
+              strategy, 16 legacy) with plan_kind ∈
+              {implementation, strategy, legacy} and status ∈
+              {active, merged, archived};
               tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed
               passes.
       A9.3:
@@ -879,13 +877,14 @@ sections:
               passes for every active plan's committed manifest.
       A9.6:
         expected_leaves:
-          - title: "CI assertion: orphan manifests AND strategy-plan manifests fail"
+          - title: "CI assertion: orphan, strategy-, and legacy-plan manifests fail"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests
-              and ::test_strategy_plans_have_no_manifests both pass;
-              manifests pointing at index entries with
-              plan_kind=strategy are treated as orphan.
+              tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests,
+              ::test_strategy_plans_have_no_manifests, and
+              ::test_legacy_plans_have_no_manifests all pass; only
+              plan_kind=implementation entries may have a manifest
+              under .gobby/plans/coverage/.
       A9.7:
         expected_leaves:
           - title: "CI assertion: .grandfathered entries require remove-by + open task"
@@ -912,13 +911,24 @@ sections:
               self-describing.
       A9.10:
         expected_leaves:
-          - title: "CI dispatches parse_plan plan_kind from index entries"
+          - title: "CI dispatches parse_plan plan_kind from index entries (impl strict, strategy/legacy permissive)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind
-              asserts strategy entries are parsed permissively and
-              implementation entries are parsed strictly via the
-              plan_kind from .gobby/plans/index.yaml.
+              asserts strategy and legacy entries are parsed
+              permissively and implementation entries are parsed
+              strictly via the plan_kind from
+              .gobby/plans/index.yaml.
+      A9.11:
+        expected_leaves:
+          - title: "CI rejects unindexed .gobby/plans/task-*.md files"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry
+              asserts every plan file under .gobby/plans/task-*.md
+              has a matching plan_id entry in
+              .gobby/plans/index.yaml; an unindexed file fails the
+              test.
 
   A10:
     acceptance_items:
