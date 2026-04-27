@@ -846,6 +846,90 @@ describe("ChatPage", () => {
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the activity panel open after repeated mobile user toggles", async () => {
+    isMobileState.value = true;
+    isPinnedState.value = false;
+    const chat = createChat();
+    const conversations = createConversations();
+    const voice = createVoice();
+
+    const { rerender } = render(
+      <ChatPage
+        chat={chat}
+        conversations={conversations}
+        voice={voice}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+    });
+
+    setIsPinnedSpy.mockClear();
+    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    expect(togglePanelSpy).toHaveBeenCalledTimes(1);
+
+    isPinnedState.value = true;
+    await act(async () => {
+      rerender(
+        <ChatPage
+          chat={chat}
+          conversations={conversations}
+          voice={voice}
+        />,
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    expect(togglePanelSpy).toHaveBeenCalledTimes(2);
+
+    isPinnedState.value = true;
+    await act(async () => {
+      rerender(
+        <ChatPage
+          chat={chat}
+          conversations={conversations}
+          voice={voice}
+        />,
+      );
+    });
+
+    expect(setIsPinnedSpy).not.toHaveBeenCalledWith(false);
+  });
+
+  it("auto-closes the activity panel when a pinned desktop layout becomes mobile", async () => {
+    isPinnedState.value = true;
+    const chat = createChat();
+    const conversations = createConversations();
+    const voice = createVoice();
+
+    const { rerender } = render(
+      <ChatPage
+        chat={chat}
+        conversations={conversations}
+        voice={voice}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+    });
+    expect(setIsPinnedSpy).not.toHaveBeenCalledWith(false);
+
+    isMobileState.value = true;
+    await act(async () => {
+      rerender(
+        <ChatPage
+          chat={chat}
+          conversations={conversations}
+          voice={voice}
+        />,
+      );
+    });
+
+    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
+  });
+
   it("keeps non-autonomous terminal swaps in observe mode", async () => {
     const continueSessionInChat = vi.fn(async () => "continued-session");
     const viewSession = vi.fn();
@@ -919,6 +1003,35 @@ describe("ChatPage", () => {
 
     expect(onApprovePlan).toHaveBeenCalledTimes(1);
     expect(setIsPinnedSpy).not.toHaveBeenCalled();
+  });
+
+  it("still closes the activity panel after plan approval on mobile when pinned", async () => {
+    isMobileState.value = true;
+    isPinnedState.value = true;
+    const onApprovePlan = vi.fn();
+
+    render(
+      <ChatPage
+        chat={createChat({
+          planPendingApproval: true,
+          onApprovePlan,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("approve-plan")).toBeInTheDocument();
+    });
+    setIsPinnedSpy.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("approve-plan"));
+    });
+
+    expect(onApprovePlan).toHaveBeenCalledTimes(1);
+    expect(setIsPinnedSpy).toHaveBeenCalledWith(false);
   });
 
   it("does not unpin on mobile when the activity panel is already unpinned", async () => {
