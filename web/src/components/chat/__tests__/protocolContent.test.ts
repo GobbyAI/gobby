@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import codexProtocolLeakFixture from './fixtures/codex-protocol-leak.txt?raw'
 import { hasProtocolToolContent, splitProtocolContent } from '../protocolContent'
 
 describe('protocolContent', () => {
@@ -48,6 +49,20 @@ describe('protocolContent', () => {
           candidate.type === 'text' && candidate.content.includes('system_instructions'),
       ),
     ).toBe(false)
+  })
+
+  it('collapses the captured Codex developer fixture without leaking protocol tags', () => {
+    const content = `<skills_instructions>\n${codexProtocolLeakFixture}\n</skills_instructions>`
+    const segments = splitProtocolContent(content, 'codex-fixture')
+    const leakedText = segments
+      .map((segment) => (segment.type === 'text' ? segment.content : ''))
+      .join('\n')
+    const toolCallCount = segments.filter((segment) => segment.type === 'tool_call').length
+
+    expect(toolCallCount).toBeGreaterThan(0)
+    expect(leakedText).not.toMatch(
+      /<\/?(?:permissions instructions|INSTRUCTIONS|skills_instructions)\b/i,
+    )
   })
 
   it('treats unterminated protocol tags as plain text', () => {
