@@ -20,6 +20,7 @@ import {
   extractBase64Image,
   extractResultContent,
   extractResultMetadata,
+  extractShellOutputContent,
   FILE_TOOL_TYPES,
   formatToolName,
   getToolDisplayName,
@@ -201,9 +202,12 @@ function getArtifactTypeForFile(filePath: string): { type: ArtifactType; languag
 }
 
 function ToolResultContent({ call }: { call: ToolCall }) {
-  const rawContent = extractResultContent(call.result)
-  const metadata = extractResultMetadata(call.result)
   const toolType = resolveToolType(call)
+  const extractedContent = extractResultContent(call.result)
+  const rawContent = toolType === 'bash'
+    ? extractShellOutputContent(extractedContent)
+    : extractedContent
+  const metadata = extractResultMetadata(call.result)
 
   const imageSrc = useMemo(() => extractBase64Image(rawContent), [rawContent])
 
@@ -459,7 +463,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
             <ToolArgumentsContent args={call.arguments} />
           )}
           {call.status === 'completed' && call.result !== undefined && toolType !== 'edit' && (
-            <div>
+            <div className="min-w-0 max-w-full overflow-hidden">
               <div className="text-muted-foreground mb-1 font-medium">Result</div>
               <ToolResultContent call={call} />
             </div>

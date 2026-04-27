@@ -76,9 +76,59 @@ describe('ToolCallCard rendering', () => {
     )
 
     const code = container.querySelector('code')?.textContent ?? ''
+    const resultPanel = screen.getByText('Result').parentElement
+    const jsonBlock = screen.getByText('Result').nextElementSibling
+
+    expect(resultPanel).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
+    expect(jsonBlock).toHaveClass('overflow-hidden', 'whitespace-pre-wrap', 'break-words')
+    expect(jsonBlock).not.toHaveClass('overflow-y-auto')
+    expect((jsonBlock as HTMLElement).firstElementChild).toHaveStyle({
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    })
     expect(code).toContain('"success": true')
     expect(code).toContain('"response_time_ms": 42')
     expect(code).not.toContain('"result":')
+  })
+
+  it('renders bash output envelopes as terminal text in the result panel', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-1',
+            tool_name: 'exec_command',
+            arguments: {
+              cmd: "UV_CACHE_DIR=/tmp/uv-cache uv run python - <<'PY'",
+            },
+            result: {
+              content: {
+                output:
+                  'Chunk ID: 21a8f9\nWall time: 0.1813 seconds\nOutput:\nhash ok? True\n',
+              },
+              content_type: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    const pre = container.querySelector('pre')
+    const resultPanel = screen.getByText('Result').parentElement
+
+    expect(screen.getByText('Result')).toBeInTheDocument()
+    expect(resultPanel).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
+    expect(pre).not.toBeNull()
+    expect(pre).toHaveClass(
+      'max-h-96',
+      'overflow-y-auto',
+      'overflow-x-hidden',
+      'whitespace-pre-wrap',
+      'break-words',
+    )
+    expect(pre?.textContent).toContain('hash ok? True')
+    expect(pre?.textContent).not.toContain('"output"')
   })
 
   it('renders protocol tool calls with a protocol header and tag summary', () => {

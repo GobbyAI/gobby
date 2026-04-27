@@ -163,6 +163,18 @@ export function extractResultMetadata(
   return normalizeDisplayResult(result.content, result.metadata).metadata
 }
 
+export function extractShellOutputContent(content: unknown): unknown {
+  const parsedContent = typeof content === 'string' ? tryParseJsonValue(content) : content
+  if (!isRecord(parsedContent)) return content
+
+  const keys = Object.keys(parsedContent)
+  if (keys.length === 1 && typeof parsedContent.output === 'string') {
+    return parsedContent.output
+  }
+
+  return content
+}
+
 export function getToolSummary(call: ToolCall): string | null {
   const args = call.arguments || {}
   const name = formatToolName(call.tool_name)
