@@ -496,7 +496,8 @@ class SessionLifecycleManager:
         session_context_window = (
             session.context_window if isinstance(session.context_window, int) else None
         )
-        last_model: str | None = None
+        session_model = session.model if isinstance(session.model, str) and session.model else None
+        last_model: str | None = session_model
         running_totals = self.token_event_store.get_session_totals(session_id)
         ws_server = None
         app_ctx = get_app_context()
@@ -505,8 +506,9 @@ class SessionLifecycleManager:
         saw_usage = False
 
         for msg in messages:
-            if isinstance(msg.model, str) and msg.model:
-                last_model = msg.model
+            message_model = msg.model if isinstance(msg.model, str) and msg.model else None
+            if message_model:
+                last_model = message_model
 
             usage = msg.usage
             if usage is None:
@@ -540,6 +542,7 @@ class SessionLifecycleManager:
                 message_id = None
             content_type = getattr(msg, "content_type", None)
             metadata = {"content_type": content_type} if isinstance(content_type, str) else None
+            event_model = message_model or last_model
 
             event = TokenEvent(
                 session_id=session_id,
@@ -547,7 +550,7 @@ class SessionLifecycleManager:
                 message_id=message_id,
                 source=session_source,
                 origin="transcript",
-                model=msg.model,
+                model=event_model,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 cache_creation_tokens=usage.cache_creation_tokens,
@@ -574,7 +577,7 @@ class SessionLifecycleManager:
                                     "source": session_source,
                                     "origin": "transcript",
                                     "event_at": canonicalize_event_timestamp(event_timestamp),
-                                    "model": msg.model,
+                                    "model": event_model,
                                     "model_family": event.normalized_model_family(),
                                     "input_tokens": usage.input_tokens,
                                     "output_tokens": usage.output_tokens,
