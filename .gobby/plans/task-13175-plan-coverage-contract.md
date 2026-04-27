@@ -197,7 +197,9 @@ qualitative checklist when the plan exhibits any of:
   `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
 - A1.5 — plan-review SKILL.md documents mechanical rejection by the
   plan-adversary using the A2 parser before qualitative review, and
-  enumerates the seven rejection cases. file:
+  enumerates the eight rejection cases (the seven mechanical
+  parser-level cases plus the qualitative table-row decomposition
+  case from A1.11). file:
   `src/gobby/install/shared/skills/plan-review/SKILL.md`.
 - A1.6 — `src/gobby/install/shared/workflows/agents/planner.yaml`
   prompt includes the typed-grammar requirement (canonical regex,
@@ -213,14 +215,23 @@ qualitative checklist when the plan exhibits any of:
   SKILL.md and the regex constant exported by `gobby.plans.parser`
   (A2.2). test:
   `tests/skills/test_plan_skill_grammar.py::test_canonical_regex_pinned`.
-- A1.9 — test:
-  `tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case`
-  asserts the plan-adversary skill's documented rejection message
-  fires for each of the seven cases (missing ID, missing kind,
+- A1.9 — `tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case`
+  asserts the plan-adversary skill's documented rejection
+  message fires for each of the eight cases: the seven
+  mechanical parser-level cases (missing ID, missing kind,
   missing acceptance, ID collision, malformed item ID, malformed
-  deferral, zero artifact references on an acceptance item).
-  test:
+  deferral, zero artifact references on an acceptance item) AND
+  the qualitative table-row decomposition case from A1.11
+  (deliverable section whose body contains a markdown
+  enumeration table with N data rows but fewer than N
+  acceptance items). test:
   `tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case`.
+  Companion test:
+  `tests/skills/test_plan_adversary_rejection.py::test_rejects_table_row_decomposition_violation`
+  feeds plan-adversary a fixture deliverable with a 5-row
+  enumeration table and only 2 acceptance items; asserts the
+  documented rejection message names "table-row decomposition"
+  and cites the missing rows.
 - A1.10 — test:
   `tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar`
   asserts the planner agent's compiled prompt includes the
@@ -1362,12 +1373,17 @@ rows:
   `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_root_task_ref`,
   `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_project_id`.
 - A4.4 — `src/gobby/cli/plan.py` defines the `gobby plan coverage`
-  Click command with all eight flags (`--plan`, `--plan-id`,
-  `--plan-hash`, `--task-tree`, `--root-task`, `--project-id`,
-  `--matrix-file`, `--evidence`, `--manifest`, `--regenerate`). file:
-  `src/gobby/cli/plan.py`.
+  Click command with all ten flags: four required
+  (`--plan`, `--plan-id`, `--plan-hash`, `--task-tree`) and six
+  optional (`--root-task`, `--project-id`, `--matrix-file`,
+  `--evidence`, `--manifest`, `--regenerate`). file:
+  `src/gobby/cli/plan.py`. test:
+  `tests/plans/test_coverage_cli.py::test_cli_help_lists_exact_ten_flags`
+  asserts `gobby plan coverage --help` lists exactly those ten
+  options — no extras, no omissions — with the four required
+  options marked as such.
 - A4.5 — CLI exit codes match the documented table (0, 2, 3, 4, 5,
-  6, 7). test:
+  6, 7, 8). test:
   `tests/plans/test_coverage_cli.py::test_cli_exit_codes_per_status`.
 - A4.6 — `coverage_manifest_path(project_id, root_task_ref, plan_id)`
   returns `Path(".gobby/plans/coverage") / sani(project) /
@@ -2616,8 +2632,11 @@ or by reference:
 - The structured covers record format
   (`covers:<plan-id>:<section-id>:<item-id>`); a one-line
   statement that free-form `plan-ref:` labels are not honored.
-- The `gobby plan coverage` CLI synopsis with all eight inputs
-  and exit codes.
+- The `gobby plan coverage` CLI synopsis with all ten flags
+  (four required: `--plan`, `--plan-id`, `--plan-hash`,
+  `--task-tree`; six optional: `--root-task`, `--project-id`,
+  `--matrix-file`, `--evidence`, `--manifest`, `--regenerate`)
+  and exit codes (0, 2, 3, 4, 5, 6, 7, 8).
 - The five evidence kinds (`commits | task-diff | worktree-diff |
   coverage-matrix | none`).
 - The bootstrap-ledger requirement: every new epic plan must
@@ -2635,11 +2654,12 @@ or by reference:
 **Acceptance:**
 
 - A10.1 — `CLAUDE.md` includes a "Plan-Coverage Contract" section
-  containing all nine bullets above (canonical regex, kind enum,
-  acceptance-item shape, deferral object, covers record, CLI,
-  evidence kinds, bootstrap ledger, .grandfathered, and the
-  table-row decomposition rule — verbatim or by reference to
-  plan-draft / docs/contracts). file: `CLAUDE.md`.
+  containing all ten bullets above (canonical regex, kind enum,
+  acceptance-item shape, deferral object, covers record, CLI
+  synopsis with all ten flags + exit codes, evidence kinds,
+  bootstrap ledger, .grandfathered, table-row decomposition —
+  verbatim or by reference to plan-draft / docs/contracts).
+  file: `CLAUDE.md`.
 - A10.2 — `src/gobby/install/shared/skills/plan/SKILL.md`,
   `plan-draft/SKILL.md`, `plan-review/SKILL.md`,
   `expand/SKILL.md`, and the `expansion-qa` agent YAML each
@@ -2674,10 +2694,12 @@ or by reference:
   "the .grandfathered rules are documented in CLAUDE.md and
   docs/contracts/plan-coverage.md" in `CLAUDE.md` and
   `docs/contracts/plan-coverage.md`.
-- A10.7 — test:
-  `tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present`
-  asserts the eight required documentation bullets are present in
-  `CLAUDE.md`. test:
+- A10.7 — `tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present`
+  asserts all ten required documentation bullets are present in
+  `CLAUDE.md` (canonical regex, kind enum, acceptance-item shape,
+  deferral object, covers record, CLI synopsis with ten flags +
+  exit codes, evidence kinds, bootstrap ledger, .grandfathered,
+  table-row decomposition). test:
   `tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present`.
 - A10.8 — test:
   `tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md`
@@ -2799,9 +2821,15 @@ the deliverable section and the test or behavior that proves it.
   blocks Epic 1 close on mismatch. Verified by
   `tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch`.
 - Repo-wide CI (A9) walks every active plan, asserts
-  manifest+hash+rows, rejects orphan manifests and un-paired
-  `.grandfathered` additions. Verified by
-  `tests/plans/test_plan_coverage_ci.py` (all eight assertions).
+  manifest+hash+rows, rejects orphan manifests, enforces
+  `.grandfathered` and `legacy-classification` snapshots, and
+  rejects un-paired additions. Verified by
+  `tests/plans/test_plan_coverage_ci.py` (covering A9.1–A9.16
+  assertions: bijective plan-file/index, manifest gate,
+  hash gate, zero-row gate, orphan-manifest rejection,
+  grandfathered + legacy-classification snapshots,
+  no-live-DB self-describing CI, plan_kind dispatch,
+  reciprocal index→file).
 - Documentation (A10) pins the canonical regex in `CLAUDE.md` to
   match the parser constant. Verified by
   `tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md`.

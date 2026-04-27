@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "3e645f283fcaf48cb80b4bbf3a9ca6f9d6d6e3b8a52c1a1beb9fe207b0214070"
+plan_hash: "a424d4c65f76b671c470b5713256eb5febe4aba344bcf6d3c9380804aae9f556"
 root_task_ref: "13175"
 
 sections:
@@ -53,12 +53,21 @@ sections:
               covers:<plan-id>:<section-id>:<item-id> record.
       A1.5:
         expected_leaves:
-          - title: "Document mechanical rejection cases in plan-review SKILL.md"
+          - title: "Document mechanical and qualitative rejection cases in plan-review SKILL.md (eight cases including table-row decomposition)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              plan-review SKILL.md instructs plan-adversary to load the
-              A2 parser and reject mechanically before qualitative
-              review; enumerates the seven rejection cases.
+              plan-review SKILL.md instructs plan-adversary to load
+              the A2 parser and reject mechanically before
+              qualitative review; enumerates the eight rejection
+              cases — seven mechanical parser-level (missing ID,
+              missing kind, missing acceptance, ID collision,
+              malformed item ID, malformed deferral, zero artifact
+              references) plus one qualitative (table-row
+              decomposition violation per A1.11).
+        notes: >-
+          Round 8 fix: prior ledger said "seven cases"; R7's
+          A1.11 made the table-row decomposition rule load-bearing
+          but A1.5/A1.9 weren't updated to count it.
       A1.6:
         expected_leaves:
           - title: "Add typed-grammar requirement to planner agent prompt"
@@ -86,12 +95,26 @@ sections:
               gobby.plans.parser.PLAN_HEADING_REGEX.pattern.
       A1.9:
         expected_leaves:
-          - title: "Test: plan-adversary mechanical-rejection cases"
+          - title: "Test: plan-adversary rejection across all eight cases (seven mechanical + table-row decomposition)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case
-              asserts the documented rejection message fires for each
-              of the seven cases.
+              asserts the documented rejection message fires for
+              each of the eight cases (seven mechanical
+              parser-level + qualitative table-row decomposition).
+              Companion test
+              tests/skills/test_plan_adversary_rejection.py::test_rejects_table_row_decomposition_violation
+              feeds plan-adversary a fixture deliverable with a
+              5-row enumeration table and only 2 acceptance items
+              and asserts the rejection message names "table-row
+              decomposition" and cites the missing rows.
+        notes: >-
+          Round 8 fix: prior ledger only required test_rejects_each_case
+          to cover seven cases. The table-row case (A1.11) had no
+          fixture-based assertion; R8 adds the eighth case to the
+          umbrella test plus a dedicated companion test so plan-
+          adversary's rejection of the #12725 failure mode is
+          explicitly proven.
       A1.10:
         expected_leaves:
           - title: "Test: planner agent compiled prompt contains grammar marker"
@@ -463,13 +486,23 @@ sections:
               ::test_matrix_file_rejects_project_id.
       A4.4:
         expected_leaves:
-          - title: "Click CLI: gobby plan coverage with eight flags"
+          - title: "Click CLI: gobby plan coverage with exact ten flags (4 required + 6 optional)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               src/gobby/cli/plan.py registers the gobby plan coverage
-              Click command; src/gobby/cli/__init__.py registers the
-              plan subgroup; tests/plans/test_coverage_cli.py covers
-              flag presence and required combinations.
+              Click command with all ten flags: four required
+              (--plan, --plan-id, --plan-hash, --task-tree) and six
+              optional (--root-task, --project-id, --matrix-file,
+              --evidence, --manifest, --regenerate);
+              src/gobby/cli/__init__.py registers the plan subgroup;
+              tests/plans/test_coverage_cli.py::test_cli_help_lists_exact_ten_flags
+              asserts the --help output lists exactly those ten
+              options — no extras, no omissions — with the four
+              required options marked as such.
+        notes: >-
+          Round 8 fix: prior ledger said "eight flags" while the
+          plan synopsis listed ten; the exact-help-listing test
+          eliminates the discrepancy.
       A4.5:
         expected_leaves:
           - title: "CLI exit codes per status table"
@@ -1254,14 +1287,19 @@ sections:
     acceptance_items:
       A10.1:
         expected_leaves:
-          - title: "Add Plan-Coverage Contract section to CLAUDE.md"
+          - title: "Add Plan-Coverage Contract section to CLAUDE.md (ten required topics)"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              CLAUDE.md includes a Plan-Coverage Contract section with
-              the eight required bullets (regex, kind enum, acceptance
-              shape, deferral object, covers record, CLI, evidence
-              kinds, bootstrap-ledger requirement, .grandfathered
-              rules).
+              CLAUDE.md includes a Plan-Coverage Contract section
+              with all ten required topics: canonical regex, kind
+              enum, acceptance-item shape, deferral object, covers
+              record, CLI synopsis (ten flags + exit codes), five
+              evidence kinds, bootstrap-ledger requirement,
+              .grandfathered rules, and table-row decomposition rule.
+        notes: >-
+          Round 8 fix: prior ledger said "eight required bullets"
+          but R7 added the table-row topic; A10.1 now covers all
+          ten topics.
       A10.2:
         expected_leaves:
           - title: "Update plan/plan-draft/plan-review/expand SKILL.md files plus expansion-qa.yaml instructions"
@@ -1315,11 +1353,19 @@ sections:
               open task.
       A10.7:
         expected_leaves:
-          - title: "Test: CLAUDE.md contract section bullets present"
+          - title: "Test: all ten CLAUDE.md contract section bullets present"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present
-              passes.
+              asserts all ten required documentation bullets are
+              present in CLAUDE.md (canonical regex, kind enum,
+              acceptance-item shape, deferral object, covers record,
+              CLI synopsis with ten flags + exit codes, evidence
+              kinds, bootstrap ledger, .grandfathered, table-row
+              decomposition).
+        notes: >-
+          Round 8 fix: prior ledger said "eight required bullets"
+          stale after R7's table-row addition.
       A10.8:
         expected_leaves:
           - title: "Test: canonical regex pinned in CLAUDE.md matches parser constant"
