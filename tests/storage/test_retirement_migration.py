@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import _apply_baseline, get_current_version, run_migrations
+from gobby.storage.migrations import (
+    BASELINE_VERSION,
+    MIGRATIONS,
+    _apply_baseline,
+    get_current_version,
+    run_migrations,
+)
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
 pytestmark = pytest.mark.unit
@@ -85,8 +91,10 @@ def test_retirement_migration_disables_installed_gobby_pipeline_rows(tmp_path: P
 
     applied = run_migrations(db)
 
-    assert applied == 3
-    assert get_current_version(db) == 223
+    expected_applied = sum(1 for version, _d, _a in MIGRATIONS if version > BASELINE_VERSION)
+    latest_version = max(version for version, _d, _a in MIGRATIONS)
+    assert applied == expected_applied
+    assert get_current_version(db) == latest_version
 
     for name in RETIRED_PIPELINES:
         row = manager.get_by_name(name)
@@ -123,8 +131,10 @@ def test_retirement_migration_disables_installed_gobby_agent_rows(tmp_path: Path
 
     applied = run_migrations(db)
 
-    assert applied == 3
-    assert get_current_version(db) == 223
+    expected_applied = sum(1 for version, _d, _a in MIGRATIONS if version > BASELINE_VERSION)
+    latest_version = max(version for version, _d, _a in MIGRATIONS)
+    assert applied == expected_applied
+    assert get_current_version(db) == latest_version
 
     for name in RETIRED_AGENTS:
         row = manager.get_by_name(name)

@@ -690,3 +690,155 @@ class TestReviewStorage:
 
         results = manager.get_unreviewed_completions()
         assert any(r.id == e.id for r in results)
+
+
+class TestPagination:
+    """Tests for offset, count_executions, count_search_executions, and status_summary_for_executions."""
+
+    def test_offset_progression_returns_distinct_pages(self, manager) -> None:
+        """Pages at distinct offsets contain distinct contiguous rows in created_at DESC order."""
+        ids = []
+        for i in range(7):
+            e = manager.create_execution(pipeline_name=f"pipeline-{i:02d}")
+            ids.append(e.id)
+        # Newest-first: page 1 starts with the last created.
+        page1 = manager.list_executions(limit=3, offset=0)
+        page2 = manager.list_executions(limit=3, offset=3)
+        page3 = manager.list_executions(limit=3, offset=6)
+
+        assert [ex.id for ex in page1] == list(reversed(ids))[0:3]
+        assert [ex.id for ex in page2] == list(reversed(ids))[3:6]
+        assert [ex.id for ex in page3] == list(reversed(ids))[6:7]
+
+        seen = {ex.id for ex in page1} | {ex.id for ex in page2} | {ex.id for ex in page3}
+        assert seen == set(ids)
+
+    def test_offset_past_end_returns_empty(self, manager) -> None:
+        """Offset beyond the result set yields an empty list."""
+        for i in range(3):
+            manager.create_execution(pipeline_name=f"pipeline-{i}")
+        assert manager.list_executions(limit=10, offset=100) == []
+
+    def test_count_executions_matches_unpaginated_total(self, manager) -> None:
+        """count_executions equals len(list_executions) when limit exceeds the filtered set."""
+        for i in range(5):
+            manager.create_execution(pipeline_name=f"pipeline-{i}")
+        all_rows = manager.list_executions(limit=100)
+        assert manager.count_executions() == len(all_rows) == 5
+
+    def test_count_executions_respects_status_filter(self, manager) -> None:
+        """count_executions reflects status filter."""
+        e1 = manager.create_execution(pipeline_name="p1")
+        e2 = manager.create_execution(pipeline_name="p2")
+        manager.create_execution(pipeline_name="p3")
+        manager.update_execution_status(e1.id, ExecutionStatus.RUNNING)
+        manager.update_execution_status(e2.id, ExecutionStatus.RUNNING)
+
+        assert manager.count_executions() == 3
+        assert manager.count_executions(status=ExecutionStatus.RUNNING) == 2
+        assert manager.count_executions(status=ExecutionStatus.PENDING) == 1
+
+    def test_count_executions_respects_pipeline_name_filter(self, manager) -> None:
+        """count_executions reflects pipeline_name filter."""
+        manager.create_execution(pipeline_name="deploy")
+        manager.create_execution(pipeline_name="deploy")
+        manager.create_execution(pipeline_name="test")
+
+        assert manager.count_executions(pipeline_name="deploy") == 2
+        assert manager.count_executions(pipeline_name="test") == 1
+        assert manager.count_executions(pipeline_name="unknown") == 0
+
+    def test_count_executions_respects_parent_execution_filter(self, manager) -> None:
+        """count_executions reflects parent_execution_id filter."""
+        parent = manager.create_execution(pipeline_name="orchestrator")
+        manager.create_execution(pipeline_name="child-1", parent_execution_id=parent.id)
+        manager.create_execution(pipeline_name="child-2", parent_execution_id=parent.id)
+        manager.create_execution(pipeline_name="unrelated")
+
+        assert manager.count_executions(parent_execution_id=parent.id) == 2
+
+    def test_count_executions_respects_session_filter(self, manager, db) -> None:
+        """count_executions reflects session_id filter."""
+        db.execute(
+            """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+            ("sess-x", "ext-x", "machine-1", "claude_code", "test-project", "active"),
+        )
+        manager.create_execution(pipeline_name="p1", session_id="sess-x")
+        manager.create_execution(pipeline_name="p2", session_id="sess-x")
+        manager.create_execution(pipeline_name="p3")
+        assert manager.count_executions(session_id="sess-x") == 2
+
+    def test_status_summary_is_filter_scoped_dropping_status_predicate(self, manager) -> None:
+        """status_summary_for_executions drops status filter but applies others."""
+        e1 = manager.create_execution(pipeline_name="deploy")
+        e2 = manager.create_execution(pipeline_name="deploy")
+        e3 = manager.create_execution(pipeline_name="test")
+        manager.update_execution_status(e1.id, ExecutionStatus.RUNNING)
+        manager.update_execution_status(e2.id, ExecutionStatus.COMPLETED)
+        manager.update_execution_status(e3.id, ExecutionStatus.FAILED)
+
+        # Whole project: 1 running, 1 completed, 1 failed.
+        whole = manager.status_summary_for_executions()
+        assert whole == {"running": 1, "completed": 1, "failed": 1}
+
+        # Filter to deploy: 1 running, 1 completed (test/failed excluded).
+        deploy_only = manager.status_summary_for_executions(pipeline_name="deploy")
+        assert deploy_only == {"running": 1, "completed": 1}
+
+    def test_status_summary_filter_scoped_by_session(self, manager, db) -> None:
+        """status_summary_for_executions filters by session_id."""
+        db.execute(
+            """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+            ("sess-q", "ext-q", "machine-1", "claude_code", "test-project", "active"),
+        )
+        e1 = manager.create_execution(pipeline_name="p1", session_id="sess-q")
+        e2 = manager.create_execution(pipeline_name="p2", session_id="sess-q")
+        manager.create_execution(pipeline_name="p3")
+        manager.update_execution_status(e1.id, ExecutionStatus.RUNNING)
+        manager.update_execution_status(e2.id, ExecutionStatus.RUNNING)
+
+        scoped = manager.status_summary_for_executions(session_id="sess-q")
+        assert scoped == {"running": 2}
+
+    def test_list_executions_rejects_bad_limit_and_offset(self, manager) -> None:
+        """list_executions raises ValueError on bad pagination."""
+        with pytest.raises(ValueError):
+            manager.list_executions(limit=0)
+        with pytest.raises(ValueError):
+            manager.list_executions(limit=-1)
+        with pytest.raises(ValueError):
+            manager.list_executions(offset=-1)
+
+    def test_search_executions_rejects_bad_limit_and_offset(self, manager) -> None:
+        """search_executions raises ValueError on bad pagination."""
+        with pytest.raises(ValueError):
+            manager.search_executions(query="any", limit=0)
+        with pytest.raises(ValueError):
+            manager.search_executions(query="any", limit=-1)
+        with pytest.raises(ValueError):
+            manager.search_executions(query="any", offset=-1)
+
+    def test_count_search_executions_matches_unpaginated_total(self, manager) -> None:
+        """count_search_executions equals len(search_executions) when limit exceeds the filtered set."""
+        for i in range(4):
+            manager.create_execution(pipeline_name=f"deploy-{i}")
+        manager.create_execution(pipeline_name="test")
+
+        all_matches = manager.search_executions(query="deploy", limit=100)
+        assert manager.count_search_executions(query="deploy") == len(all_matches) == 4
+        assert manager.count_search_executions(query="test") == 1
+        assert manager.count_search_executions(query="missing") == 0
+
+    def test_search_executions_offset_progression(self, manager) -> None:
+        """search_executions offset returns distinct contiguous pages."""
+        for i in range(5):
+            manager.create_execution(pipeline_name=f"deploy-{i:02d}")
+
+        page1 = manager.search_executions(query="deploy", limit=2, offset=0)
+        page2 = manager.search_executions(query="deploy", limit=2, offset=2)
+        ids = {ex.id for ex in page1} | {ex.id for ex in page2}
+        assert len(page1) == 2
+        assert len(page2) == 2
+        assert len(ids) == 4  # disjoint pages

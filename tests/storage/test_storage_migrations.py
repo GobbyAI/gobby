@@ -35,16 +35,21 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
+    migration_versions = [version for version, _description, _action in MIGRATIONS]
+    expected_versions = sorted({BASELINE_VERSION, *migration_versions})
+    latest_version = max(expected_versions)
+
     assert BASELINE_VERSION == 220
-    assert [version for version, _description, _action in MIGRATIONS] == [220, 221, 222, 223]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 4
-    assert get_current_version(db) == 223
+    # 1 for the baseline, plus one per migration whose version > BASELINE_VERSION.
+    expected_applied = 1 + sum(1 for version in migration_versions if version > BASELINE_VERSION)
+    assert applied == expected_applied
+    assert get_current_version(db) == latest_version
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [220, 221, 222, 223]
+    assert versions == expected_versions
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -54,10 +59,14 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
 
     run_migrations(db)
 
+    migration_versions = [version for version, _description, _action in MIGRATIONS]
+    expected_versions = sorted({BASELINE_VERSION, *migration_versions})
+    latest_version = max(expected_versions)
+
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 223
+    assert get_current_version(db) == latest_version
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [220, 221, 222, 223]
+    assert versions == expected_versions
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -148,10 +157,11 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
         )
         """
     )
-    db.execute("INSERT INTO schema_version (version) VALUES (224)")
+    future_version = max(version for version, _description, _action in MIGRATIONS) + 1
+    db.execute("INSERT INTO schema_version (version) VALUES (?)", (future_version,))
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 224
+    assert get_current_version(db) == future_version
     assert not _table_exists(db, "projects")
 
 

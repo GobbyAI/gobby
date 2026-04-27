@@ -158,6 +158,14 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Add evidence metadata to task_artifacts",
         _add_task_artifact_evidence_columns,
     ),
+    (
+        225,
+        "Index pipeline_executions(created_at DESC) for paginated listing",
+        """
+        CREATE INDEX IF NOT EXISTS idx_pipeline_executions_created_at
+            ON pipeline_executions (created_at DESC)
+        """,
+    ),
 ]
 
 

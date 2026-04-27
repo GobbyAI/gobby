@@ -26,7 +26,8 @@ def test_migration_adds_column_nullable(tmp_path: Path) -> None:
 def test_migration_preserves_legacy_rows(tmp_path: Path) -> None:
     db = _legacy_artifacts_db(tmp_path)
 
-    _run_migration_list(db, 222, [_migration_223()])
+    version, _description, _action = _evidence_migration()
+    _run_migration_list(db, version - 1, [_evidence_migration()])
 
     row = db.fetchone("SELECT * FROM task_artifacts WHERE task_id = ?", ("task-1",))
     assert row is not None
@@ -40,7 +41,8 @@ def test_migration_preserves_legacy_rows(tmp_path: Path) -> None:
 
 def test_baseline_schema_matches_post_migration(tmp_path: Path) -> None:
     migrated = _legacy_artifacts_db(tmp_path / "legacy")
-    _run_migration_list(migrated, 222, [_migration_223()])
+    version, _description, _action = _evidence_migration()
+    _run_migration_list(migrated, version - 1, [_evidence_migration()])
     fresh = LocalDatabase(tmp_path / "fresh.db")
     run_migrations(fresh)
 
@@ -95,8 +97,18 @@ def _legacy_artifacts_db(tmp_path: Path) -> LocalDatabase:
     return db
 
 
-def _migration_223() -> tuple[int, str, Any]:
-    return next(migration for migration in MIGRATIONS if migration[0] == 223)
+def _evidence_migration() -> tuple[int, str, Any]:
+    """Locate the migration that adds evidence-metadata columns to task_artifacts.
+
+    The version number has shifted as new migrations have been registered, so
+    look the migration up by its stable description rather than a hard-coded
+    version.
+    """
+    return next(
+        migration
+        for migration in MIGRATIONS
+        if migration[1] == "Add evidence metadata to task_artifacts"
+    )
 
 
 def _column_info(db: LocalDatabase, table: str) -> dict[str, dict[str, Any]]:
