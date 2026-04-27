@@ -36,15 +36,15 @@ def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
     db = LocalDatabase(db_path)
 
     assert BASELINE_VERSION == 220
-    assert [version for version, _description, _action in MIGRATIONS] == [220, 221, 222]
+    assert [version for version, _description, _action in MIGRATIONS] == [220, 221, 222, 223]
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    assert applied == 3
-    assert get_current_version(db) == 222
+    assert applied == 4
+    assert get_current_version(db) == 223
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [220, 221, 222]
+    assert versions == [220, 221, 222, 223]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -55,9 +55,9 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
     run_migrations(db)
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 222
+    assert get_current_version(db) == 223
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == [220, 221, 222]
+    assert versions == [220, 221, 222, 223]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -148,10 +148,10 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
         )
         """
     )
-    db.execute("INSERT INTO schema_version (version) VALUES (223)")
+    db.execute("INSERT INTO schema_version (version) VALUES (224)")
 
     assert run_migrations(db) == 0
-    assert get_current_version(db) == 223
+    assert get_current_version(db) == 224
     assert not _table_exists(db, "projects")
 
 

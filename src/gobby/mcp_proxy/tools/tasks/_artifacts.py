@@ -29,6 +29,17 @@ _ARTIFACT_MUTATION_FIELDS = frozenset(TaskArtifacts.__dataclass_fields__) - {
 }
 
 
+def _artifact_field_schema(field: str) -> dict[str, Any]:
+    if field == "expansion_attempts":
+        return {"type": ["integer", "null"]}
+    return {"type": ["string", "null"]}
+
+
+_ARTIFACT_FIELD_SCHEMAS = {
+    field: _artifact_field_schema(field) for field in sorted(_ARTIFACT_MUTATION_FIELDS)
+}
+
+
 def _artifact_payload(artifacts: TaskArtifacts) -> dict[str, Any]:
     if artifacts.updated_at is None:
         return {}
@@ -110,6 +121,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         ),
         input_schema={
             "type": "object",
+            "x-artifact-fields": _ARTIFACT_FIELD_SCHEMAS,
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference: #N, path, or UUID"},
                 "field": {
@@ -155,11 +167,13 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         ),
         input_schema={
             "type": "object",
+            "x-artifact-fields": _ARTIFACT_FIELD_SCHEMAS,
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference: #N, path, or UUID"},
                 "fields": {
                     "type": "object",
                     "description": "Artifact fields to set atomically",
+                    "properties": _ARTIFACT_FIELD_SCHEMAS,
                     "additionalProperties": {
                         "anyOf": [
                             {"type": "string"},
@@ -195,6 +209,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         ),
         input_schema={
             "type": "object",
+            "x-artifact-fields": _ARTIFACT_FIELD_SCHEMAS,
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference: #N, path, or UUID"},
                 "family": {
@@ -276,6 +291,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         ),
         input_schema={
             "type": "object",
+            "x-artifact-fields": _ARTIFACT_FIELD_SCHEMAS,
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference: #N, path, or UUID"},
             },

@@ -58,6 +58,7 @@ def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_proj
         task.id,
         worktree_path="/tmp/gobby-wt",
         worktree_id="worktree-row-1",
+        base_commit_sha="abc123",
     )
 
     with pytest.raises(TaskArtifactConstraintError) as exc_info:
@@ -65,6 +66,7 @@ def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_proj
             task.id,
             clone_path="/tmp/gobby-clone",
             clone_id="clone-row-1",
+            base_commit_sha="def456",
         )
 
     assert exc_info.value.predicate == "isolation_family_xor"
@@ -82,6 +84,7 @@ def test_clear_isolation_pair_atomically_clears_named_family(temp_db, sample_pro
         task.id,
         worktree_path="/tmp/gobby-wt",
         worktree_id="worktree-row-1",
+        base_commit_sha="abc123",
         target_branch="release/0.4",
     )
     manager.clear_isolation_pair(task.id, family="worktree")
@@ -95,6 +98,7 @@ def test_clear_isolation_pair_atomically_clears_named_family(temp_db, sample_pro
         task.id,
         clone_path="/tmp/gobby-clone",
         clone_id="clone-row-1",
+        base_commit_sha="def456",
     )
     artifacts = manager.get_artifacts(task.id)
     assert artifacts.clone_path == "/tmp/gobby-clone"

@@ -11,6 +11,7 @@ All public symbols are re-exported for backward compatibility.
 
 from gobby.storage.tasks._artifacts import (
     ArtifactCheckConstraintError,
+    MissingIsolationBaseError,
     TaskArtifactConstraintError,
     TaskArtifactManager,
     TaskArtifacts,
@@ -75,6 +76,7 @@ __all__ = [
     "TaskNotFoundError",
     "TaskArtifactConstraintError",
     "ArtifactCheckConstraintError",
+    "MissingIsolationBaseError",
     # Functions
     "generate_task_id",
     "validate_category",

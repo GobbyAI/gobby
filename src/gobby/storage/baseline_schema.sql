@@ -353,10 +353,12 @@ CREATE INDEX idx_dispatch_mutex_scan ON task_dispatch_mutex(lease_until, run_id)
 CREATE TABLE task_artifacts (
     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
     plan_file_path TEXT,
+    plan_file_hash TEXT,
     worktree_path TEXT,
     worktree_id TEXT,
     clone_path TEXT,
     clone_id TEXT,
+    base_commit_sha TEXT,
     target_branch TEXT,
     expansion_run_id TEXT,
     expansion_attempts INTEGER NOT NULL DEFAULT 0,
@@ -367,6 +369,11 @@ CREATE TABLE task_artifacts (
         (worktree_path IS NULL) = (worktree_id IS NULL)
         AND (clone_path IS NULL) = (clone_id IS NULL)
         AND (worktree_path IS NULL OR clone_path IS NULL)
+        AND (
+            base_commit_sha IS NULL
+            OR worktree_path IS NOT NULL
+            OR clone_path IS NOT NULL
+        )
     )
 );
 
