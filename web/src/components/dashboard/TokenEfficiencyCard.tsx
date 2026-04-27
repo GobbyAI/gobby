@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -15,7 +15,6 @@ import { useUsage } from '../../hooks/useUsage'
 import { useModelBreakdown } from '../../hooks/useModelBreakdown'
 import { cn } from '../../lib/utils'
 import { DashboardCard } from './DashboardCard'
-import { GranularityToggle } from './GranularityToggle'
 import { ModelDistributionBar } from './ModelDistributionBar'
 import { ModelBreakdownList } from './ModelBreakdownList'
 import {
@@ -76,7 +75,7 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
   const tokenEventsEnabled =
     import.meta.env.VITE_TOKEN_EVENTS !== '0' &&
     import.meta.env.VITE_TOKEN_EVENTS !== 'false'
-  const [granularity, setGranularity] = useState<TimeSeriesGranularity>('1h')
+  const granularity: TimeSeriesGranularity = hours <= 6 ? '30m' : hours <= 168 ? '1h' : '1d'
   const { data: tsData, isLoading } = useTokenTimeSeries(hours, projectId, granularity)
   const { data: savingsData } = useSavings(hours, projectId)
   const { data: usageData } = useUsage(hours, projectId)
@@ -111,9 +110,6 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
       className={dashboardFullCardClass}
       action={
         <div className="flex items-center gap-2">
-          {tokenEventsEnabled && (
-            <GranularityToggle value={granularity} onChange={setGranularity} />
-          )}
           {efficiencyPct > 0 ? (
             <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
               {efficiencyPct}% efficiency
