@@ -197,7 +197,7 @@ Three parallel Explore agents ran to verify APIs before this rewrite. Confirmed:
 ### 1.3 Extend task CRUD for new fields and helpers [category: code] (depends: 1.2)
 `kind: deliverable`
 
-> **Status: partial** — CRUD fields shipped via commit `614c5bbe` (`src/gobby/storage/tasks/_crud.py`); helpers `list_automation_candidates` and `_is_yolo` named in the acceptance items are not present.
+> **Status: partial** — CRUD fields shipped via commit `614c5bbe` (`src/gobby/storage/tasks/_crud.py`). Remaining: shared helpers `list_automation_candidates`, `_is_yolo`, and the storage-level `_skipped_stages(task) -> set[str]` (currently only a local copy at `src/gobby/tasks/expansion_service.py::_skipped_stages` exists; §1.7 imports the shared symbol from `_crud`).
 
 Target: `src/gobby/storage/tasks/_crud.py` and related modules
 
@@ -210,7 +210,11 @@ Target: `src/gobby/storage/tasks/_crud.py` and related modules
 
 **Acceptance:**
 
-- 1.3.1 — Extend task CRUD for new fields and helpers is implemented according to this section. file: `src/gobby/storage/tasks/_crud.py`.
+- 1.3.1 — CRUD helpers read/write the six new task columns (`additional_skills` JSON-serialized; `lifecycle` and `isolation` deserialized as their StrEnum types). file: `src/gobby/storage/tasks/_crud.py`.
+- 1.3.2 — Adjacent-table CRUD modules expose helpers for `task_dispatch_mutex`, `task_artifacts`, and `task_lifecycle_events`. file: `src/gobby/storage/tasks/_dispatch_mutex.py`. file: `src/gobby/storage/tasks/_artifacts.py`. file: `src/gobby/storage/tasks/_lifecycle_events.py`.
+- 1.3.3 — `list_automation_candidates(db) -> list[Task]` returns opted-in, unclaimed, dependency-unblocked, non-leased tasks via LEFT JOIN on `task_dispatch_mutex`. symbol: `gobby.storage.tasks._crud.list_automation_candidates`.
+- 1.3.4 — Shared `_skipped_stages(task) -> set[str]` parses `stage-:<name>` labels and returns an empty set when none are present; the local helper at `src/gobby/tasks/expansion_service.py::_skipped_stages` is removed in favor of this canonical symbol. symbol: `gobby.storage.tasks._crud._skipped_stages`.
+- 1.3.5 — `_is_yolo(task) -> bool` returns `task.yolo`. symbol: `gobby.storage.tasks._crud._is_yolo`.
 
 ### 1.3a `is_blocked_by_deps` predicate [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -1070,7 +1074,7 @@ The cron_jobs row:
 ### 2.8 Expansion: Agent Selection + profile-appropriate subtasks [category: code]
 `kind: deliverable`
 
-> **Status: partial** — agent-selection behavior shipped via commit `36a48d3e` at `src/gobby/tasks/expansion_service.py`; the section's named `src/gobby/tasks/expansion.py` path was not used (path drift).
+> **Status: partial** — Per-acceptance-item state: `2.8.1` (stage-driven tree shape) and `2.8.2` (`assigned_agent` population on automated leaves) shipped via commit `36a48d3e` at `src/gobby/tasks/expansion_service.py`; the section's originally named `src/gobby/tasks/expansion.py` path was not used (path drift — see corrected acceptance items below). `2.8.3` (planning-leaf rejection + test-category-leaf infrastructure-only validation) is **pending** — those checks are missing from `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` and land via §2.9 wiring.
 
 Target: `src/gobby/tasks/expansion_service.py` and `src/gobby/tasks/expansion.py`
 
@@ -1101,9 +1105,9 @@ Expansion has two responsibilities: shaping the subtask tree based on which stag
 
 **Acceptance:**
 
-- 2.8.1 — Expansion emits stage-driven task trees from skipped-stage state instead of stored profiles. file: `src/gobby/tasks/expansion_service.py`.
-- 2.8.2 — Every automated leaf in code, config, docs, or test categories receives an assigned_agent value and optional additional_skills. file: `src/gobby/tasks/expansion.py`.
-- 2.8.3 — Expansion rejects planning leaves and requires test-category leaves to describe infrastructure only. behavior: `expansion QA constraints in §2.8`.
+- 2.8.1 — Expansion emits stage-driven task trees from `_skipped_stages(epic)` state instead of stored profiles. file: `src/gobby/tasks/expansion_service.py`.
+- 2.8.2 — Every automated leaf in code, config, docs, or test categories receives an `assigned_agent` value (and optional `additional_skills`) selected via the `expansion-agent-selection` heuristic against `list_agent_definitions`; ambiguous leaves default to `backend-developer` and emit an `## Agent Selection` description marker. file: `src/gobby/tasks/expansion_service.py`.
+- 2.8.3 — Expansion-QA rejects any expansion run that emits a `category: planning` leaf and rejects any `[category: test]` leaf whose description does not clearly identify test infrastructure (fixtures, helpers, conftest, harness modules). file: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`. behavior: rejection cites the specific offending leaf in `rejection_notes`.
 
 ### 2.8b Expose `start_expansion_run_impl` for in-process dispatcher use [category: code] (depends: 1.1b)
 `kind: deliverable`
@@ -1286,6 +1290,8 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 - 3.2.2 — CLI build surface delegates to the shared build service. file: `src/gobby/cli/build.py`.
 - 3.2.3 — MCP build surface delegates to the shared build service. file: `src/gobby/mcp_proxy/tools/build.py`.
 - 3.2.4 — HTTP build route delegates to the shared build service. file: `src/gobby/servers/routes/build.py`.
+- 3.2.5 — `_kick_dispatcher_tick()` triggers an immediate dispatcher heartbeat after build-state writes (replaces the current placeholder that returns `0`); the periodic cron continues to fire independently. symbol: `gobby.build.service._kick_dispatcher_tick`. behavior: returns the count of tasks dispatched by the kicked tick (the same shape `BuildResult.tick_dispatched` exposes).
+- 3.2.6 — `BuildOptions.target_branch=None` resolves to `git rev-parse --abbrev-ref HEAD` at service-call time before any `task_artifacts` write; explicit `--target-branch <name>` is preserved as-is. behavior: `task_artifacts.target_branch` is never persisted as `None` for plan-file or epic builds. file: `src/gobby/build/service.py`. test: `tests/build/test_target_branch.py` covers the default-resolve path and the explicit-override path.
 
 ## V1 Verification
 `kind: verification`
