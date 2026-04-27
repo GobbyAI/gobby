@@ -8,6 +8,7 @@ import type { ArtifactType } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
+import { JsonBlock } from './JsonBlock'
 import type { A2UISurfaceState, UserAction } from '../canvas'
 import { A2UIRenderer } from '../canvas'
 import { useArtifactContext } from './artifacts/ArtifactContext'
@@ -170,14 +171,10 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
   return (
     <div>
       <div className="text-muted-foreground mb-1 font-medium">Arguments</div>
-      <SyntaxHighlighter
-        style={highlighterTheme}
-        language="json"
-        PreTag="div"
-        customStyle={{ margin: 0, borderRadius: '0.25rem', maxHeight: '24rem', overflow: 'auto' }}
-      >
-        {JSON.stringify(args, null, 2)}
-      </SyntaxHighlighter>
+      <JsonBlock
+        value={args}
+        className="bg-muted rounded p-2 text-foreground max-h-96"
+      />
     </div>
   )
 }
@@ -369,23 +366,10 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   const looksLikeJson = resultStr.trimStart().startsWith('{') || resultStr.trimStart().startsWith('[')
 
   return looksLikeJson ? (
-    <SyntaxHighlighter
-      style={highlighterTheme}
-      language="json"
-      PreTag="div"
-      wrapLongLines
-      customStyle={{
-        margin: 0,
-        borderRadius: '0.25rem',
-        maxHeight: '24rem',
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        whiteSpace: 'pre-wrap',
-        overflowWrap: 'anywhere',
-      }}
-    >
-      {resultStr}
-    </SyntaxHighlighter>
+    <JsonBlock
+      value={resultStr}
+      className="bg-muted rounded p-2 text-foreground max-h-96"
+    />
   ) : (
     <pre className={TOOL_RESULT_PRE_CLASS}>
       {resultStr}

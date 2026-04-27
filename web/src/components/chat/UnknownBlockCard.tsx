@@ -1,3 +1,5 @@
+import { JsonBlock } from './JsonBlock'
+
 interface UnknownBlockCardProps {
   blockType: string
   raw: Record<string, unknown>
@@ -10,9 +12,10 @@ export function UnknownBlockCard({ blockType, raw }: UnknownBlockCardProps) {
         <summary className="cursor-pointer select-none px-3 py-1.5 text-amber-400/80 hover:text-amber-300 font-medium">
           Unknown block: <code className="ml-1 font-mono">{blockType}</code>
         </summary>
-        <pre className="overflow-x-auto border-t border-amber-500/20 px-3 py-2 text-muted-foreground/70 font-mono leading-relaxed">
-          {JSON.stringify(raw, null, 2)}
-        </pre>
+        <JsonBlock
+          value={raw}
+          className="border-t border-amber-500/20 px-3 py-2 text-muted-foreground/70 leading-relaxed"
+        />
       </details>
     </div>
   )
