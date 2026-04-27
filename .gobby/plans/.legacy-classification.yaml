@@ -1,4 +1,4 @@
-generated_at: "2026-04-27T14:55:00Z"
+generated_at: "2026-04-27T18:00:32Z"
 generator: "gobby plan legacy-classification-refresh"
 entries:
   - plan_id: task-12068-skillsmp-install-rewrite
@@ -39,12 +39,12 @@ entries:
     non_retrofit_acknowledgment_title: "Smarter memory recall via backgrounded Haiku helper agent"
   - plan_id: task-12902-pipeline-runs-rename
     root_task_ref: "12902"
-    root_open: true
+    root_open: false
     root_title: "Canonical pipeline runs rename with pagination"
     legacy_reason: "Pre-contract plan kept for historical traceability; root epic owns any later retrofit decision."
     non_retrofit_acknowledgment: "#12902"
     non_retrofit_acknowledgment_exists: true
-    non_retrofit_acknowledgment_open: true
+    non_retrofit_acknowledgment_open: false
     non_retrofit_acknowledgment_title: "Canonical pipeline runs rename with pagination"
   - plan_id: task-12910-drawbridge-ui-batch
     root_task_ref: "12910"

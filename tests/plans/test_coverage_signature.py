@@ -34,13 +34,13 @@ def test_db_without_project_raises() -> None:
         )
 
 
-def test_jsonl_without_scope_raises() -> None:
-    with pytest.raises(MissingScopeError):
+def test_unknown_task_tree_source_raises() -> None:
+    with pytest.raises(MissingScopeError, match="unknown task tree source"):
         evaluate(
             plan=_plan(_section(_item())),
             plan_id="plan",
             plan_hash="hash",
-            task_tree=TaskTreeSource.jsonl,
+            task_tree="export-file",
         )
 
 

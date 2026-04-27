@@ -1,0 +1,1944 @@
+header:
+  plan_id: task-13175-plan-coverage-contract
+  plan_hash: 5d79b6c1c2759a12f2f825bfc5644e487bf0ff6e30f0e5cdec093312b291c3c1
+  root_task_ref: '13175'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-04-27T18:08:35Z'
+  task_tree_source: db
+  task_tree_source_hash: 0281fd9bdb9b6e1a575919785bd2a0e2807add1bdbefe80fe120caef9ad78afc
+  evidence_summary:
+  - none:none:resolved
+rows:
+- section_id: A1
+  item_id: A1.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13184'
+    validation_criteria_snippet: src/gobby/install/shared/skills/plan-draft/SKILL.md
+      contains the canonical regex from A1 verbatim inside a fenced code block; string-equality
+      test in A1.8 pass...
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-draft/SKILL.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13185'
+    validation_criteria_snippet: plan-draft SKILL.md documents the four-value kind
+      enum (deliverable | framing | verification | deferred) and the per-kind acceptance/no-acceptance
+      rule.
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-draft/SKILL.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13186'
+    validation_criteria_snippet: plan-draft SKILL.md specifies the acceptance-item
+      shape with the four artifact kinds (file | symbol | test | behavior) and the
+      dotted-suffix item-ID rule.
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-draft/SKILL.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13187'
+    validation_criteria_snippet: plan-draft SKILL.md documents the typed deferral
+      object YAML shape and the structured covers:<plan-id>:<section-id>:<item-id>
+      record.
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-draft/SKILL.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13188'
+    validation_criteria_snippet: "plan-review SKILL.md instructs plan-adversary to\
+      \ load the A2 parser and reject mechanically before qualitative review; enumerates\
+      \ the eight rejection cases \u2014 s..."
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-review/SKILL.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13189'
+    validation_criteria_snippet: src/gobby/install/shared/workflows/agents/planner.yaml
+      prompt includes the typed-grammar requirement (canonical regex, kind enum, acceptance-item
+      shape, deferr...
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/planner.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13190'
+    validation_criteria_snippet: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
+      allowed-tool list includes the A2 parser entry point and the prompt references
+      plan-review skill ...
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13191'
+    validation_criteria_snippet: tests/skills/test_plan_skill_grammar.py::test_canonical_regex_pinned
+      asserts the regex literal in plan-draft SKILL.md equals gobby.plans.parser.PLAN_HEADING_RE...
+    matched_artifact_ref: '`tests/skills/test_plan_skill_grammar.py::test_canonical_regex_pinned`
+      asserts string equality between the regex literal in plan-draft SKILL.md and
+      the regex constant exported by `gobby.plans.parser` (A2.2)'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13192'
+    validation_criteria_snippet: tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case
+      asserts the documented rejection message fires for each of the eight cases (seven
+      mechani...
+    matched_artifact_ref: '`tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case`.
+      Companion'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13193'
+    validation_criteria_snippet: tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar
+      asserts the planner agent's compiled prompt includes the typed-grammar req...
+    matched_artifact_ref: '`tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar`
+      asserts the planner agent''s compiled prompt includes the typed-grammar requirement
+      marker'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A1
+  item_id: A1.11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13194'
+    validation_criteria_snippet: src/gobby/install/shared/skills/plan-draft/SKILL.md,
+      src/gobby/install/shared/skills/plan-review/SKILL.md, src/gobby/install/shared/workflows/agents/planner.ya...
+    matched_artifact_ref: '`tests/skills/test_plan_skill_grammar.py::test_table_row_decomposition_rule_documented`
+      asserts the rule appears in plan-draft SKILL.md, plan-review SKILL.md, and the
+      compiled planner/plan-adversary YAML prompts'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13195'
+    validation_criteria_snippet: src/gobby/plans/parser.py exports PlanDocument, PlanSection,
+      AcceptanceItem, Deferral, Kind, ArtifactKind, PlanParseError, parse_plan, PLAN_HEADING_REGEX.
+    matched_artifact_ref: src/gobby/plans/parser.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13196'
+    validation_criteria_snippet: gobby.plans.parser.PLAN_HEADING_REGEX is a compiled
+      re.Pattern with the canonical pattern from A1.
+    matched_artifact_ref: gobby.plans.parser.PLAN_HEADING_REGEX
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13197'
+    validation_criteria_snippet: PlanDocument.source_hash equals sha256 hex of file
+      bytes read at parse time; verified by tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes.
+    matched_artifact_ref: tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13198'
+    validation_criteria_snippet: 'tests/plans/test_parser.py::test_parses_task_12725_lifecycle_dispatch
+      asserts every numeric/alpha-suffix ID shape from the post-A7-retrofit #12725
+      plan parses;...'
+    matched_artifact_ref: tests/plans/test_parser.py::test_parses_task_12725_lifecycle_dispatch
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13199'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_parses_task_13173_recovery
+      parses .gobby/plans/task-13173-lifecycle-dispatch-recovery.md with plan_kind=PlanKind.strategy
+      and ...
+    matched_artifact_ref: tests/plans/test_parser.py::test_parses_task_13173_recovery
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13200'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_bare_and_titled_headings
+      proves bare end-of-line and titled forms of the same heading parse to the same
+      section_id.
+    matched_artifact_ref: tests/plans/test_parser.py::test_bare_and_titled_headings
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13201'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_framing_without_id_is_recorded
+      and ::test_framing_without_id_no_kind_raises pass.
+    matched_artifact_ref: tests/plans/test_parser.py::test_framing_without_id_is_recorded`,
+      `tests/plans/test_parser.py::test_framing_without_id_no_kind_raises
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13202'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_duplicate_section_id_raises
+      asserts PlanParseError on duplicate IDs.
+    matched_artifact_ref: tests/plans/test_parser.py::test_duplicate_section_id_raises
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13203'
+    validation_criteria_snippet: gobby.plans.parser.ArtifactKind is a four-value StrEnum;
+      parser raises on any other artifact_kind value.
+    matched_artifact_ref: gobby.plans.parser.ArtifactKind
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13204'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_source_span_is_inclusive_1_indexed
+      asserts (start_line, end_line) inclusive 1-indexed.
+    matched_artifact_ref: tests/plans/test_parser.py::test_source_span_is_inclusive_1_indexed
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13205'
+    validation_criteria_snippet: tests/plans/test_parser_grammar.py::test_regex_pinned_strings
+      passes for every documented (input, expected_section_id) row in the table.
+    matched_artifact_ref: tests/plans/test_parser_grammar.py::test_regex_pinned_strings
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13206'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_parser_module_does_not_import_storage
+      asserts gobby.plans.parser has no gobby.storage import.
+    matched_artifact_ref: "\"parser does not import gobby.storage\" \u2014 verified\
+      \ by `tests/plans/test_parser.py::test_parser_module_does_not_import_storage`"
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13207'
+    validation_criteria_snippet: parser parses a deferred section's fenced YAML deferral
+      block into Deferral(task_ref, reason, owner, original_acceptance_items). Both
+      named tests in tests/plan...
+    matched_artifact_ref: '"Deferral.task_ref, reason, owner, original_acceptance_items
+      populated from YAML" in `tests/plans/test_parser.py::test_deferred_without_object_raises`
+      and the positive-case fixture in `tests/plans/test_parser.py::test_deferred_object_parsed`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13208'
+    validation_criteria_snippet: 'gobby.plans.parser raises PlanParseError when an
+      acceptance item has zero file:|symbol:|test:|behavior: references. Items with
+      multiple artifact references par...'
+    matched_artifact_ref: '`, `symbol:`, `test:`, `behavior:` per item; the FIRST
+      match in document order is the canonical artifact for coverage matching, additional
+      references are accepted as informational prose)'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.15
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13209'
+    validation_criteria_snippet: gobby.plans.parser.PlanKind is a StrEnum exposing
+      implementation and strategy. parse_plan(path, plan_kind=PlanKind.strategy) is
+      permissive on both missing-kind...
+    matched_artifact_ref: gobby.plans.parser.PlanKind
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13210'
+    validation_criteria_snippet: "gobby.plans.parser.parse_plan computes a code-fence\
+      \ mask before structural scanning. Open: \u22653 consecutive ` (backticks) or\
+      \ ~ (tildes), with optional info strin..."
+    matched_artifact_ref: "\"fenced markdown blocks are excluded from structural parsing\
+      \ per CommonMark fence-matching rules (closer length \u2265 opener length, same\
+      \ character)\" in `gobby.plans.parser.parse_plan`"
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A2
+  item_id: A2.17
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13211'
+    validation_criteria_snippet: 'tests/plans/test_parser.py::test_parses_self parses
+      .gobby/plans/task-13175-plan-coverage-contract.md and asserts: (1) PlanDocument.sections
+      contains exactly A...'
+    matched_artifact_ref: "tests/plans/test_parser.py::test_parses_self` \u2014 asserts\
+      \ that no fenced fake `A\u2099.\u2099` ID leaks into `PlanDocument.sections`\
+      \ or any section's `acceptance_items"
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13212'
+    validation_criteria_snippet: src/gobby/plans/coverage.py exports CoversRecord,
+      parse_covers_label, validate_covers, COVERS_LABEL_REGEX, CoversValidationResult,
+      InvalidCoversLabelError.
+    matched_artifact_ref: src/gobby/plans/coverage.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13213'
+    validation_criteria_snippet: tests/plans/test_covers.py::test_parse_valid_label
+      proves canonical inputs round-trip to CoversRecord.
+    matched_artifact_ref: tests/plans/test_covers.py::test_parse_valid_label
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13214'
+    validation_criteria_snippet: tests/plans/test_covers.py::test_parse_rejects_malformed
+      asserts InvalidCoversLabelError on missing prefix, missing parts, embedded slashes/colons,
+      empty plan_...
+    matched_artifact_ref: tests/plans/test_covers.py::test_parse_rejects_malformed
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13215'
+    validation_criteria_snippet: gobby.plans.coverage.COVERS_LABEL_REGEX plan_id group
+      is [A-Za-z0-9._-]+; identical to A4 _sanitize allowlist.
+    matched_artifact_ref: gobby.plans.coverage.COVERS_LABEL_REGEX
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13216'
+    validation_criteria_snippet: tests/plans/test_covers.py::test_validate_covers_missing_section
+      asserts unknown section_id yields missing_section.
+    matched_artifact_ref: tests/plans/test_covers.py::test_validate_covers_missing_section
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13217'
+    validation_criteria_snippet: tests/plans/test_covers.py::test_validate_covers_missing_item
+      asserts unknown item_id within a known section yields missing_item.
+    matched_artifact_ref: tests/plans/test_covers.py::test_validate_covers_missing_item
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13218'
+    validation_criteria_snippet: tests/plans/test_covers.py::test_validate_covers_overbroad_rejected
+      asserts artifact_not_referenced when leaf validation_criteria does not name
+      the artifact.
+    matched_artifact_ref: tests/plans/test_covers.py::test_validate_covers_overbroad_rejected
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13219'
+    validation_criteria_snippet: src/gobby/plans/deferral.py exports validate_deferral,
+      DeferralValidationResult, TaskStoreProtocol.
+    matched_artifact_ref: src/gobby/plans/deferral.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13220'
+    validation_criteria_snippet: 'All six tests in tests/plans/test_deferral.py exist
+      and assert short-circuit in documented order: tests/plans/test_deferral.py::test_validate_task_missing,
+      tes...'
+    matched_artifact_ref: tests/plans/test_deferral.py::test_validate_task_missing`,
+      `test_validate_task_closed`, `test_validate_missing_provenance_label`, `test_validate_criteria_does_not_duplicate`,
+      `test_validate_missing_reason_or_owner`, `test_validate_missing_dependency_or_cited_parent
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13221'
+    validation_criteria_snippet: tests/plans/test_deferral.py::test_validate_happy_path
+      asserts status=valid when all six conditions hold.
+    matched_artifact_ref: tests/plans/test_deferral.py::test_validate_happy_path
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13222'
+    validation_criteria_snippet: 'gobby.plans.deferral.validate_deferral accepts kwarg-
+      only recovery_epic_ref: str; TaskStoreProtocol exposes get_task_dependencies(task_ref)
+      -> list[str]; sixt...'
+    matched_artifact_ref: gobby.plans.deferral.validate_deferral
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A3
+  item_id: A3.12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13223'
+    validation_criteria_snippet: tests/plans/test_deferral.py::test_validate_dependency_path,
+      ::test_validate_cited_parent_path, ::test_validate_cited_parent_without_out_of_scope_label_rejecte...
+    matched_artifact_ref: tests/plans/test_deferral.py::test_validate_dependency_path`,
+      `tests/plans/test_deferral.py::test_validate_cited_parent_path`, `tests/plans/test_deferral.py::test_validate_cited_parent_without_out_of_scope_label_rejected`,
+      `tests/plans/test_deferral.py::test_validate_cited_parent_inside_dependency_closure_rejected
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13224'
+    validation_criteria_snippet: src/gobby/plans/coverage.py exports evaluate, CoverageReport,
+      CoverageRow, CoverageRowLeaf, CoverageHeader, CoverageStatus, EvidenceKind,
+      TaskTreeSource, Missi...
+    matched_artifact_ref: src/gobby/plans/coverage.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13225'
+    validation_criteria_snippet: gobby.plans.coverage.evaluate uses @overload chain
+      so task_tree=TaskTreeSource.db or .jsonl requires plan_id, root_task_ref, project_id;
+      missing any of those r...
+    matched_artifact_ref: gobby.plans.coverage.evaluate
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13226'
+    validation_criteria_snippet: gobby.plans.coverage.evaluate(task_tree=TaskTreeSource.matrix_file,
+      ...) accepts only matrix_file; passing root_task_ref or project_id raises (rejected
+      at type...
+    matched_artifact_ref: tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises`,
+      `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_root_task_ref`,
+      `tests/plans/test_coverage_signature.py::test_matrix_file_rejects_project_id
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13227'
+    validation_criteria_snippet: 'src/gobby/cli/plan.py registers the gobby plan coverage
+      Click command with all ten flags: four required (--plan, --plan-id, --plan-hash,
+      --task-tree) and six o...'
+    matched_artifact_ref: src/gobby/cli/plan.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13228'
+    validation_criteria_snippet: 'tests/plans/test_coverage_cli.py::test_cli_exit_codes_per_status
+      is table-driven and asserts the full documented exit code surface 0, 2, 3, 4,
+      5, 6, 7, 8: 0 (a...'
+    matched_artifact_ref: tests/plans/test_coverage_cli.py::test_cli_exit_codes_per_status
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13229'
+    validation_criteria_snippet: gobby.plans.coverage_manifest.coverage_manifest_path
+      returns .gobby/plans/coverage/<sani(project)>/<sani(root)>/<sani(plan)>.coverage.yaml;
+      proven by tests/pla...
+    matched_artifact_ref: gobby.plans.coverage_manifest.coverage_manifest_path
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13230'
+    validation_criteria_snippet: tests/plans/test_coverage_manifest_path.py::test_replaces_disallowed_chars
+      and ::test_rejects_empty_post_sanitize verify allowlist and EmptyComponentError
+      on e...
+    matched_artifact_ref: tests/plans/test_coverage_manifest_path.py::test_replaces_disallowed_chars`,
+      `test_rejects_empty_post_sanitize
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13231'
+    validation_criteria_snippet: tests/plans/test_coverage_manifest_path.py::test_drops_leading_hash
+      proves _sanitize('#12725', kind='root_task_ref') == '12725'.
+    matched_artifact_ref: tests/plans/test_coverage_manifest_path.py::test_drops_leading_hash
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13232'
+    validation_criteria_snippet: tests/plans/test_coverage_manifest_path.py::test_strips_punct
+      passes.
+    matched_artifact_ref: tests/plans/test_coverage_manifest_path.py::test_strips_punct
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13233'
+    validation_criteria_snippet: tests/plans/test_coverage_manifest_path.py::test_truncate_with_hash,
+      ::test_truncate_hash_uses_pre_replacement_input, ::test_truncate_hash_disambiguates_collis...
+    matched_artifact_ref: tests/plans/test_coverage_manifest_path.py::test_truncate_with_hash`,
+      `test_truncate_hash_uses_pre_replacement_input`, `test_truncate_hash_disambiguates_collisions
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13234'
+    validation_criteria_snippet: tests/plans/test_coverage_manifest_path.py::test_windows_reserved_disambiguated
+      proves CON, con, Lpt9 each get an underscore suffix.
+    matched_artifact_ref: tests/plans/test_coverage_manifest_path.py::test_windows_reserved_disambiguated
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13235'
+    validation_criteria_snippet: tests/plans/test_coverage_manifest_path.py covers
+      case collision, Windows reserved, slash/path traversal, distinct raws collapsing,
+      truncate-with-hash determin...
+    matched_artifact_ref: tests/plans/test_coverage_manifest_path.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13236'
+    validation_criteria_snippet: gobby.plans.coverage_manifest.write_manifest raises
+      IdentityCollisionError(existing_hash, new_hash) when an existing manifest at
+      the target path has the same (...
+    matched_artifact_ref: tests/plans/test_coverage_identity.py::test_identity_collision_blocks_overwrite`,
+      `test_regenerate_overwrites_and_audits
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13237'
+    validation_criteria_snippet: gobby.plans.coverage.CoverageHeader includes plan_id,
+      plan_hash, root_task_ref, project_id, generated_at, task_tree_source, task_tree_source_hash,
+      evidence_sum...
+    matched_artifact_ref: gobby.plans.coverage.CoverageHeader
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.15
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13238'
+    validation_criteria_snippet: "gobby.plans.coverage.CoverageRow.status is constrained\
+      \ to CoverageStatus (\u2208 {covered, deferred, missing, invalid}); CoverageRow\
+      \ includes section_id, item_id, s..."
+    matched_artifact_ref: gobby.plans.coverage.CoverageRow
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13239'
+    validation_criteria_snippet: tests/plans/test_coverage_identity.py::test_same_plan_two_root_tasks_distinct_manifests
+      and ::test_two_plans_one_root_distinct_manifests pass.
+    matched_artifact_ref: tests/plans/test_coverage_identity.py::test_same_plan_two_root_tasks_distinct_manifests`,
+      `test_two_plans_one_root_distinct_manifests
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.17
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13240'
+    validation_criteria_snippet: tests/plans/test_coverage.py::test_evaluate_root_scope_excludes_other_subtree
+      passes; leaves in unrelated subtrees never count toward coverage even with a
+      matc...
+    matched_artifact_ref: tests/plans/test_coverage.py::test_evaluate_root_scope_excludes_other_subtree
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A4
+  item_id: A4.18
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13241'
+    validation_criteria_snippet: gobby.plans.coverage_manifest.PathIdentityMismatchError
+      raised on any path-component collision (exact-path identity mismatch, casefold-equal
+      leaf filename, cas...
+    matched_artifact_ref: gobby.plans.coverage_manifest.PathIdentityMismatchError
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13242'
+    validation_criteria_snippet: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+      includes a workflow step that calls the A4 library or CLI with --plan, --plan-id,
+      --plan-hash, --ro...
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13243'
+    validation_criteria_snippet: the instructions block in src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+      documents that any deliverable item with status missing or invalid reject...
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13244'
+    validation_criteria_snippet: tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection
+      asserts rejection cites (section_id, item_id, status, detail) and the leave...
+    matched_artifact_ref: tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13245'
+    validation_criteria_snippet: tests/workflows/test_expansion_qa_persists_manifest.py::test_manifest_written_at_canonical_path
+      and ::test_artifact_pointer_written assert manifest at coverage...
+    matched_artifact_ref: tests/workflows/test_expansion_qa_persists_manifest.py::test_manifest_written_at_canonical_path`,
+      `test_artifact_pointer_written
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13246'
+    validation_criteria_snippet: tests/workflows/test_expansion_qa_coverage_call.py::test_workflow_calls_evaluate_with_full_scope
+      passes.
+    matched_artifact_ref: tests/workflows/test_expansion_qa_coverage_call.py::test_workflow_calls_evaluate_with_full_scope
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13247'
+    validation_criteria_snippet: tests/workflows/test_expansion_qa_rejection.py::test_zero_missing_invalid_triggers_approval
+      asserts mark_task_review_approved is invoked with the manifest path...
+    matched_artifact_ref: tests/workflows/test_expansion_qa_rejection.py::test_zero_missing_invalid_triggers_approval
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A5
+  item_id: A5.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13248'
+    validation_criteria_snippet: tests/workflows/test_expansion_qa_persists_manifest.py::test_plan_hash_drift_fails
+      asserts run fails with reason plan_hash_drift when recomputed hash differs f...
+    matched_artifact_ref: tests/workflows/test_expansion_qa_persists_manifest.py::test_plan_hash_drift_fails
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13249'
+    validation_criteria_snippet: src/gobby/plans/evidence.py exports resolve_evidence,
+      EvidenceBundle, EvidenceRow, EvidenceResolveStatus, InvalidEvidenceError, MissingIsolationBaseError,
+      Evid...
+    matched_artifact_ref: src/gobby/plans/evidence.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13250'
+    validation_criteria_snippet: tests/plans/test_evidence.py::test_resolve_commits_range
+      proves artifacts_touched lists changed files for a fixture commit range.
+    matched_artifact_ref: tests/plans/test_evidence.py::test_resolve_commits_range
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13251'
+    validation_criteria_snippet: tests/plans/test_evidence.py::test_resolve_task_diff
+      passes against a fixture context whose get_task_diff returns a known diff.
+    matched_artifact_ref: tests/plans/test_evidence.py::test_resolve_task_diff
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13252'
+    validation_criteria_snippet: tests/plans/test_evidence_worktree_diff.py::test_resolves_with_base_sha
+      asserts diff range uses base_commit_sha (never target_branch).
+    matched_artifact_ref: tests/plans/test_evidence_worktree_diff.py::test_resolves_with_base_sha
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13253'
+    validation_criteria_snippet: tests/plans/test_evidence.py::test_resolve_coverage_matrix
+      passes against a fixture YAML manifest.
+    matched_artifact_ref: tests/plans/test_evidence.py::test_resolve_coverage_matrix
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13254'
+    validation_criteria_snippet: tests/plans/test_evidence.py::test_resolve_none_emits_audit_row
+      asserts a single resolved audit row is emitted with detail='explicit operator
+      override'.
+    matched_artifact_ref: tests/plans/test_evidence.py::test_resolve_none_emits_audit_row
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13255'
+    validation_criteria_snippet: tests/plans/test_evidence_worktree_diff.py covers
+      ::test_invalid_when_artifacts_missing, ::test_invalid_when_no_isolation_path,
+      ::test_invalid_when_base_sha_nu...
+    matched_artifact_ref: tests/plans/test_evidence_worktree_diff.py::test_invalid_when_artifacts_missing`,
+      `test_invalid_when_no_isolation_path`, `test_invalid_when_base_sha_null`, `test_invalid_when_base_sha_unresolvable
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13256'
+    validation_criteria_snippet: src/gobby/storage/migrations.py adds an additive
+      migration for task_artifacts.base_commit_sha TEXT and plan_file_hash TEXT (both
+      nullable); migration tests pas...
+    matched_artifact_ref: src/gobby/storage/migrations.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13257'
+    validation_criteria_snippet: src/gobby/storage/baseline_schema.sql includes both
+      columns with the same nullable semantics; fresh-install parity test passes.
+    matched_artifact_ref: src/gobby/storage/baseline_schema.sql
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13258'
+    validation_criteria_snippet: tests/storage/tasks/test_artifacts_isolation_base.py::test_migration_preserves_legacy_rows
+      asserts pre-existing artifact rows survive migration with base_commi...
+    matched_artifact_ref: tests/storage/tasks/test_artifacts_isolation_base.py::test_migration_preserves_legacy_rows
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13259'
+    validation_criteria_snippet: tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_new_isolation_write_without_base_raises
+      asserts MissingIsolationBaseError on new wri...
+    matched_artifact_ref: tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_new_isolation_write_without_base_raises
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13260'
+    validation_criteria_snippet: src/gobby/agents/isolation.py runs git rev-parse
+      HEAD after worktree/clone creation and persists base via set_artifacts_atomic;
+      tests tests/agents/test_isolati...
+    matched_artifact_ref: tests/agents/test_isolation_base_capture.py::test_worktree_handler_captures_base`,
+      `test_clone_handler_captures_base`, `test_base_captured_before_first_agent_run
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13261'
+    validation_criteria_snippet: tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_clear_isolation_pair_clears_base
+      asserts base_commit_sha is cleared with the family ...
+    matched_artifact_ref: tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_clear_isolation_pair_clears_base
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13262'
+    validation_criteria_snippet: src/gobby/mcp_proxy/tools/tasks/_artifacts.py JSON
+      schemas for get_artifacts, set_artifact, set_artifacts_atomic, clear_isolation_pair
+      list base_commit_sha and...
+    matched_artifact_ref: '"MCP schemas list base_commit_sha and plan_file_hash with
+      type [string, null]" in `src/gobby/mcp_proxy/tools/tasks/_artifacts.py`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A6
+  item_id: A6.15
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13263'
+    validation_criteria_snippet: tests/storage/tasks/test_artifacts_plan_file_hash.py::test_set_artifact_plan_hash_round_trips
+      passes.
+    matched_artifact_ref: "`tests/storage/tasks/test_artifacts_plan_file_hash.py::test_set_artifact_plan_hash_round_trips`.\
+      \ > **Note on lifecycle linkage points:** The strategy lists > `link_commit`,\
+      \ `mark_task_needs_review`, and merge-finalize as the > three points where worktree-local\
+      \ commits become linked-task > evidence. `link_commit` and `mark_task_needs_review`\
+      \ are existing > tools (no Epic 1 modification); the evidence resolver consumes\
+      \ > their output via `EvidenceContextProtocol.get_task_diff`. The > merge-finalize\
+      \ linkage is Epic 2's merge agent (Phase E \xA72.10); > Epic 1 ships only the\
+      \ resolver and schema substrate"
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A7
+  item_id: A7.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13264'
+    validation_criteria_snippet: ".gobby/plans/task-12725-lifecycle-dispatch.md every\
+      \ ##\u2013###### heading either matches the canonical regex or carries kind:\
+      \ framing; parser test tests/plans/test..."
+    matched_artifact_ref: .gobby/plans/task-12725-lifecycle-dispatch.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A7
+  item_id: A7.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13265'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_task_12725_every_section_has_kind
+      asserts every parsed section has a non-None kind.
+    matched_artifact_ref: '"every parsed section has a non-None kind" in `.gobby/plans/task-12725-lifecycle-dispatch.md`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A7
+  item_id: A7.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13266'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_task_12725_every_deliverable_has_acceptance
+      asserts at least one acceptance item with non-empty artifact_ref per deliverable
+      s...
+    matched_artifact_ref: tests/plans/test_parser.py::test_task_12725_every_deliverable_has_acceptance
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A7
+  item_id: A7.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13267'
+    validation_criteria_snippet: tests/plans/test_parser.py::test_task_12725_table_rows_are_acceptance_items
+      proves Phase 2 agent table and Phase 4 task-mapping table rows surface as per-row
+      a...
+    matched_artifact_ref: "\"Phase 2 agent table converted to acceptance items A2.1.1\u2013\
+      A2.1.N or equivalent\" in `.gobby/plans/task-12725-lifecycle-dispatch.md`"
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A7
+  item_id: A7.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13268'
+    validation_criteria_snippet: After A4 lands, running `gobby plan coverage --plan
+      .gobby/plans/task-12725-lifecycle-dispatch.md --plan-id task-12725-lifecycle-dispatch
+      --plan-hash <recomput...
+    matched_artifact_ref: .gobby/plans/coverage/d45545c5-ded5-4335-b115-0245752edacf/12725/task-12725-lifecycle-dispatch.coverage.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A7
+  item_id: A7.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13269'
+    validation_criteria_snippet: .gobby/plans/coverage/d45545c5-ded5-4335-b115-0245752edacf/12725/task-12725-lifecycle-dispatch.coverage.yaml
+      exists and its header records plan_id ('task-12725...
+    matched_artifact_ref: "\"manifest header records plan_id, plan_hash, root_task_ref='12725',\
+      \ project_id, generated_at; rows enumerate every acceptance item with status\"\
+      \ in `.gobby/plans/coverage/d45545c5-ded5-4335-b115-0245752edacf/12725/task-12725-lifecycle-dispatch.coverage.yaml`.\
+      \ > **Implementation ordering:** A7.1\u2013A7.4 (Step 1) can run before A4 >\
+      \ lands \u2014 they are pure markdown edits. A7.5\u2013A7.6 (Step 2) require\
+      \ > A4. The Epic 1 expansion will sequence the leaves so that A4 > lands first;\
+      \ A7 leaves carry `depends_on` edges accordingly"
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13270'
+    validation_criteria_snippet: .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+      exists, parses as YAML, and is the canonical bootstrap-ledger artifact referenced
+      by A8.7's...
+    matched_artifact_ref: .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13271'
+    validation_criteria_snippet: .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+      header has project_id (d45545c5-ded5-4335-b115-0245752edacf), plan_id (task-13175-plan-cove...
+    matched_artifact_ref: '"header fields present and match plan identity" in `.gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13272'
+    validation_criteria_snippet: .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+      has sections keyed exactly A1, A2, A3, A4, A5, A6, A7, A8, A9, A10 (no extras,
+      no omissions...
+    matched_artifact_ref: '"ledger.sections has keys A1, A2, A3, A4, A5, A6, A7, A8,
+      A9, A10" in `.gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13273'
+    validation_criteria_snippet: for every deliverable acceptance item ID in .gobby/plans/task-13175-plan-coverage-contract.md
+      (the full set as parsed by gobby.plans.parser.parse_plan with cod...
+    matched_artifact_ref: '"every plan acceptance item ID appears in the ledger" in
+      `.gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13274'
+    validation_criteria_snippet: 'every acceptance_item entry under sections.<X>.acceptance_items
+      in .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml has expected_leaves:
+      a n...'
+    matched_artifact_ref: '"every ledger acceptance_item has a non-empty expected_leaves
+      list with the three required fields" in `.gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13275'
+    validation_criteria_snippet: 'ledger reviewed by plan-adversary as a separate
+      spawn from the plan-adversary review of the plan; verdict review_approved recorded
+      on root task #13175 with fin...'
+    matched_artifact_ref: '"ledger reviewed by plan-adversary; verdict review_approved
+      recorded on root task #13175 with adversary findings cleared" in task `#13175`
+      description'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13276'
+    validation_criteria_snippet: After A4 lands, running `gobby plan coverage --plan
+      .gobby/plans/task-13175-plan-coverage-contract.md --plan-id task-13175-plan-coverage-contract
+      --plan-hash <...
+    matched_artifact_ref: gobby.plans.bootstrap_ledger.verify_bootstrap_ledger
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A8
+  item_id: A8.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13277'
+    validation_criteria_snippet: CLAUDE.md states .grandfathered is reserved for already-merged
+      epics and additions require a co-located removal task; Epic 1 is not grandfathered.
+    matched_artifact_ref: '"CLAUDE.md states .grandfathered is reserved for already-merged
+      epics and additions require co-located removal task" in `CLAUDE.md`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13278'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py walks every
+      .gobby/plans/*.md file (NOT just task-*.md), with the discovery filter excluding
+      .coverage-ledger.yaml files a...
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13279'
+    validation_criteria_snippet: ".gobby/plans/index.yaml lists every existing .gobby/plans/task-*.md\
+      \ file at Epic 1 ship time (exactly 10: 2 implementation \u2014 task-12725-lifecycle-dispatch\
+      \ and ..."
+    matched_artifact_ref: .gobby/plans/index.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13280'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest
+      passes; strategy entries are exempt from the manifest-existence check.
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13281'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_manifest_plan_hash_matches_on_disk
+      fails on hash drift.
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_manifest_plan_hash_matches_on_disk
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13282'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_zero_missing_invalid_rows
+      passes for every active plan's committed manifest.
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_zero_missing_invalid_rows
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13283'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests,
+      ::test_strategy_plans_have_no_manifests, and ::test_legacy_plans_have_no_manifests
+      all pass; on...
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests`,
+      `tests/plans/test_plan_coverage_ci.py::test_strategy_plans_have_no_manifests`,
+      `tests/plans/test_plan_coverage_ci.py::test_legacy_plans_have_no_manifests
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13284'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_grandfathered_entries_require_remove_by_annotation,
+      ::test_grandfathered_target_task_exists_and_open_via_snapshot, a...
+    matched_artifact_ref: .gobby/plans/.grandfathered-task-state.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13285'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_no_unauthorized_grandfathered_additions
+      passes; new entries since the signed-off baseline require the remove-by anno...
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_no_unauthorized_grandfathered_additions
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13286'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py runs successfully
+      with GOBBY_LIVE_DB=0; .gobby/plans/index.yaml, committed manifests under .gobby/plans/coverage/,
+      and .go...
+    matched_artifact_ref: '"test runs successfully with `GOBBY_LIVE_DB=0`; no skipped
+      or conditionally-relaxed checks under that flag" in `tests/plans/test_plan_coverage_ci.py`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13287'
+    validation_criteria_snippet: CI helper (tests/plans/test_plan_coverage_ci.py ::_resolve_parser_kind
+      or equivalent module-level function) maps each index entry's plan_kind to the
+      parser's P...
+    matched_artifact_ref: '`tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`
+      asserts all three index values dispatch to the correct `PlanKind` constant and
+      that an index value outside `{implementation, strategy, legacy}` raises a clear
+      schema error'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13288'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry
+      asserts every plan file under .gobby/plans/task-*.md has a matching plan_id
+      entry in...
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_every_plan_file_has_index_entry
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.12
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13289'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file
+      asserts every entries[*].plan_id in .gobby/plans/index.yaml has a corresponding
+      .gob...
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_every_index_entry_has_plan_file
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13290'
+    validation_criteria_snippet: '.gobby/plans/.legacy-classification.yaml exists
+      with one row per plan_kind: legacy entry in .gobby/plans/index.yaml. Each row
+      carries plan_id, root_task_ref, r...'
+    matched_artifact_ref: .gobby/plans/.legacy-classification.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13291'
+    validation_criteria_snippet: 'src/gobby/cli/plan_snapshots.py exists and implements
+      two Click subcommands: gobby plan grandfathered-refresh regenerates .gobby/plans/.grandfathered-task-stat...'
+    matched_artifact_ref: src/gobby/cli/plan_snapshots.py
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.15
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13292'
+    validation_criteria_snippet: .pre-commit-config.yaml contains a gobby-plan-snapshots-refresh
+      hook that runs both A9.14 refresh subcommands in --check mode when .gobby/plans/.grandfathered,...
+    matched_artifact_ref: .pre-commit-config.yaml
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A9
+  item_id: A9.16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13293'
+    validation_criteria_snippet: tests/plans/test_plan_coverage_ci.py::test_snapshots_match_live_db_when_available
+      runs gobby plan grandfathered-refresh --check and gobby plan legacy-classific...
+    matched_artifact_ref: tests/plans/test_plan_coverage_ci.py::test_snapshots_match_live_db_when_available
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13294'
+    validation_criteria_snippet: 'CLAUDE.md includes a Plan-Coverage Contract section
+      with all ten required topics: canonical regex, kind enum, acceptance-item shape,
+      deferral object, covers re...'
+    matched_artifact_ref: CLAUDE.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13295'
+    validation_criteria_snippet: the four SKILL.md files at src/gobby/install/shared/skills/{plan,plan-draft,plan-review,expand}/SKILL.md
+      and the instructions block in src/gobby/install/shared...
+    matched_artifact_ref: '`src/gobby/install/shared/skills/plan-draft/SKILL.md` (canonical
+      authoring surface; the other four files link to it). The remaining four contract
+      surfaces are covered by A1.5 (plan-review), A1.6 (planner), A1.7 (plan-adversary),
+      A5.1 (expansion-qa), and A10.9 (expand)'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13296'
+    validation_criteria_snippet: docs/contracts/plan-coverage.md exists and links
+      back to the four skill files (plan, plan-draft, plan-review, expand), the expansion-qa
+      agent YAML, CLAUDE.md, ...
+    matched_artifact_ref: docs/contracts/plan-coverage.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13297'
+    validation_criteria_snippet: CLAUDE.md and docs/contracts/plan-coverage.md state
+      that free-form plan-ref labels are not honored and only structured covers records
+      are valid coverage signal.
+    matched_artifact_ref: '"the string ''plan-ref: labels are not honored'' (or substring
+      ''plan-ref'' alongside ''not honored'') appears in CLAUDE.md and docs/contracts/plan-coverage.md"
+      in `CLAUDE.md` and `docs/contracts/plan-coverage.md`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13298'
+    validation_criteria_snippet: CLAUDE.md and docs/contracts/plan-coverage.md state
+      that every new epic plan ships a .coverage-ledger.yaml companion until the tooling
+      is mature.
+    matched_artifact_ref: '"the bootstrap ledger requirement is documented in CLAUDE.md
+      and docs/contracts/plan-coverage.md" in `CLAUDE.md` and `docs/contracts/plan-coverage.md`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13299'
+    validation_criteria_snippet: 'CLAUDE.md and docs/contracts/plan-coverage.md state
+      that .grandfathered is reserved for already-merged epics and additions require
+      paired # remove-by: annotati...'
+    matched_artifact_ref: '"the .grandfathered rules are documented in CLAUDE.md and
+      docs/contracts/plan-coverage.md" in `CLAUDE.md` and `docs/contracts/plan-coverage.md`'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13300'
+    validation_criteria_snippet: tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present
+      asserts all ten required documentation bullets are present in CLAUDE.md (cano...
+    matched_artifact_ref: tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13301'
+    validation_criteria_snippet: tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md
+      passes.
+    matched_artifact_ref: '`tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md`
+      asserts the canonical regex literal in `CLAUDE.md` matches the `gobby.plans.parser.PLAN_HEADING_REGEX.pattern`
+      string'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13302'
+    validation_criteria_snippet: 'src/gobby/install/shared/skills/expand/SKILL.md
+      documents the expansion-side contract obligations: (1) a .coverage-ledger.yaml
+      companion MUST exist before expa...'
+    matched_artifact_ref: '`tests/docs/test_expand_skill_contract_section.py::test_expand_skill_documents_coverage_contract`
+      asserts the four bullets above are present (verbatim or by link to `docs/contracts/plan-coverage.md`)'
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []
+- section_id: A10
+  item_id: A10.10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13303'
+    validation_criteria_snippet: 'CLAUDE.md and docs/contracts/plan-coverage.md both
+      document the table-row decomposition rule: any deliverable section whose body
+      uses a markdown table to enume...'
+    matched_artifact_ref: tests/docs/test_claude_md_contract_section.py::test_table_row_decomposition_rule_documented`
+      asserts the rule appears in `CLAUDE.md` and `docs/contracts/plan-coverage.md
+  deferral_target: null
+  evidence:
+  - kind: none
+    ref: none
+    status: resolved
+    detail: explicit operator override
+    artifacts_touched: []

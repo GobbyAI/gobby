@@ -10,12 +10,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import yaml
 
 from gobby.plans.evidence import EvidenceKind, EvidenceRow
 from gobby.plans.parser import AcceptanceItem, ArtifactKind, PlanDocument, PlanSection, parse_plan
+
+if TYPE_CHECKING:
+    from gobby.storage.database import DatabaseProtocol
 
 COVERS_LABEL_REGEX: re.Pattern[str] = re.compile(
     r"^covers:(?P<plan_id>[A-Za-z0-9._-]+):"
@@ -23,6 +26,14 @@ COVERS_LABEL_REGEX: re.Pattern[str] = re.compile(
     r"(?P<item_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))$"
 )
 _PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.:-]+)")
+_TEST_REF_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.py)::"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+)
+_BARE_FILE_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])(?P<file>[A-Za-z0-9_.-]+\.(?:md|py|ya?ml|toml|json))"
+)
+_ARTIFACT_MARKERS = ("file:", "symbol:", "test:", "behavior:")
 
 type CoversStatus = Literal["valid", "missing_section", "missing_item", "artifact_not_referenced"]
 type PlanInput = PlanDocument | Path | str
@@ -59,7 +70,6 @@ class CoverageStatus(StrEnum):
 
 class TaskTreeSource(StrEnum):
     db = "db"
-    jsonl = "jsonl"
     matrix_file = "matrix-file"
 
 
@@ -216,22 +226,7 @@ def evaluate(
     task_tree: Literal[TaskTreeSource.db, "db"],
     root_task_ref: str,
     project_id: str,
-    task_records: Sequence[Mapping[str, object]] | None = None,
-    task_tree_file: Path | str | None = None,
-    evidence: Sequence[EvidenceRow] | None = None,
-    recovery_epic_ref: str | None = None,
-) -> CoverageReport: ...
-
-
-@overload
-def evaluate(
-    *,
-    plan: PlanInput,
-    plan_id: str,
-    plan_hash: str,
-    task_tree: Literal[TaskTreeSource.jsonl, "jsonl"],
-    root_task_ref: str,
-    project_id: str,
+    db: DatabaseProtocol | None = None,
     task_records: Sequence[Mapping[str, object]] | None = None,
     task_tree_file: Path | str | None = None,
     evidence: Sequence[EvidenceRow] | None = None,
@@ -260,6 +255,7 @@ def evaluate(
     root_task_ref: str | None = None,
     project_id: str | None = None,
     matrix_file: Path | str | None = None,
+    db: DatabaseProtocol | None = None,
     task_records: Sequence[Mapping[str, object]] | None = None,
     task_tree_file: Path | str | None = None,
     evidence: Sequence[EvidenceRow] | None = None,
@@ -290,7 +286,13 @@ def evaluate(
     if matrix_file is not None:
         raise MissingScopeError(f"{source.value} coverage does not accept matrix_file")
 
-    records = _load_task_records(source, task_records=task_records, task_tree_file=task_tree_file)
+    records = _load_task_records(
+        source,
+        project_id=project_id,
+        db=db,
+        task_records=task_records,
+        task_tree_file=task_tree_file,
+    )
     scoped_records = _filter_to_scope(records, root_task_ref)
     return _evaluate_records(
         plan_doc=plan_doc,
@@ -573,10 +575,13 @@ def _artifact_referenced(item: AcceptanceItem, validation_criteria: str) -> bool
 
 
 def _file_referenced(artifact_ref: str, validation_criteria: str) -> bool:
-    return any(
-        _contains_ref(validation_criteria, candidate)
-        for candidate in _path_candidates(artifact_ref)
-    )
+    candidates = _path_candidates(artifact_ref) | _extract_path_candidates(artifact_ref)
+    if any(_contains_ref(validation_criteria, candidate) for candidate in candidates):
+        return True
+    if any(_path_parts_referenced(validation_criteria, candidate) for candidate in candidates):
+        return True
+    markers = _artifact_markers(artifact_ref)
+    return bool(markers) and all(marker in validation_criteria for marker in markers)
 
 
 def _symbol_referenced(artifact_ref: str, validation_criteria: str) -> bool:
@@ -591,51 +596,104 @@ def _symbol_referenced(artifact_ref: str, validation_criteria: str) -> bool:
 def _test_referenced(artifact_ref: str, validation_criteria: str) -> bool:
     if _contains_ref(validation_criteria, artifact_ref):
         return True
-    if "::" not in artifact_ref:
-        return False
-    path, test_name = artifact_ref.split("::", maxsplit=1)
-    return _contains_ref(validation_criteria, path) and _contains_ref(
-        validation_criteria, test_name
+    return any(
+        (
+            _contains_ref(validation_criteria, path)
+            or _path_parts_referenced(validation_criteria, path)
+        )
+        and _contains_ref(validation_criteria, test_name)
+        for path, test_name in _test_ref_candidates(artifact_ref)
     )
 
 
 def _behavior_referenced(item: AcceptanceItem, validation_criteria: str) -> bool:
-    if not _contains_ref(validation_criteria, item.artifact_ref, case_sensitive=False):
-        return False
+    if _contains_ref(validation_criteria, item.artifact_ref, case_sensitive=False):
+        return True
     path_candidates = _extract_path_candidates(item.prose) | _extract_path_candidates(
         item.artifact_ref
     )
-    if not path_candidates:
-        return False
-    return any(_contains_ref(validation_criteria, candidate) for candidate in path_candidates)
+    path_candidates |= _bare_file_candidates(item.prose) | _bare_file_candidates(item.artifact_ref)
+    if any(
+        _contains_ref(validation_criteria, candidate)
+        or _path_parts_referenced(validation_criteria, candidate)
+        for candidate in path_candidates
+    ):
+        return True
+    return any(
+        _contains_ref(validation_criteria, task_ref, case_sensitive=False)
+        for task_ref in re.findall(r"#\d+", item.artifact_ref)
+    )
 
 
 def _contains_ref(text: str, ref: str, *, case_sensitive: bool = True) -> bool:
-    if not ref:
+    cleaned_ref = _clean_ref(ref)
+    if not cleaned_ref:
         return False
     if case_sensitive:
-        if ref in text:
+        if cleaned_ref in text:
             return True
-        return re.search(re.escape(ref), text) is not None
+        return re.search(re.escape(cleaned_ref), text) is not None
 
-    if ref.lower() in text.lower():
+    if cleaned_ref.lower() in text.lower():
         return True
-    return re.search(re.escape(ref), text, flags=re.IGNORECASE) is not None
+    return re.search(re.escape(cleaned_ref), text, flags=re.IGNORECASE) is not None
 
 
 def _path_candidates(artifact_ref: str) -> set[str]:
-    cleaned = artifact_ref.strip().strip("`").strip('"').strip("'")
+    cleaned = _clean_ref(artifact_ref).rstrip(".,;)")
     candidates = {cleaned}
     if cleaned.startswith("./"):
         candidates.add(cleaned[2:])
 
     path = Path(cleaned)
+    if len(path.parts) >= 2:
+        candidates.add("/".join(path.parts[-2:]))
     if path.is_absolute():
         for anchor in ("src", "tests", "docs", "web", "schemas", ".gobby"):
             if anchor in path.parts:
                 candidates.add("/".join(path.parts[path.parts.index(anchor) :]))
                 break
     return {candidate for candidate in candidates if candidate}
+
+
+def _test_ref_candidates(artifact_ref: str) -> tuple[tuple[str, str], ...]:
+    cleaned = _clean_ref(artifact_ref)
+    matches = tuple(
+        (match.group("path"), match.group("name")) for match in _TEST_REF_RE.finditer(cleaned)
+    )
+    if matches:
+        return matches
+    if "::" not in cleaned:
+        return ()
+    path, raw_test_name = cleaned.split("::", maxsplit=1)
+    match = re.match(r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)", raw_test_name)
+    return ((path, match.group("name")),) if match is not None else ()
+
+
+def _path_parts_referenced(text: str, path_value: str) -> bool:
+    parts = [part for part in Path(_clean_ref(path_value)).parts if part not in {"", "."}]
+    if len(parts) < 2:
+        return False
+    normalized_text = re.sub(r"[`'/\\]+", " ", text.casefold()).replace(chr(34), " ")
+    position = 0
+    for part in parts[-2:]:
+        found = normalized_text.find(part.casefold(), position)
+        if found == -1:
+            return False
+        position = found + len(part)
+    return True
+
+
+def _bare_file_candidates(text: str) -> set[str]:
+    return {match.group("file") for match in _BARE_FILE_RE.finditer(text)}
+
+
+def _artifact_markers(text: str) -> tuple[str, ...]:
+    return tuple(marker for marker in _ARTIFACT_MARKERS if marker in text)
+
+
+def _clean_ref(value: str) -> str:
+    return value.strip().strip("`").strip(chr(34)).strip("'")
 
 
 def _extract_path_candidates(text: str) -> set[str]:
@@ -671,28 +729,82 @@ def _task_tree_source(value: TaskTreeSource | str) -> TaskTreeSource:
 def _load_task_records(
     source: TaskTreeSource,
     *,
+    project_id: str,
+    db: DatabaseProtocol | None,
     task_records: Sequence[Mapping[str, object]] | None,
     task_tree_file: Path | str | None,
 ) -> tuple[_TaskRecord, ...]:
     if task_records is not None:
         return tuple(_coerce_task_record(record) for record in task_records)
-    path = Path(task_tree_file) if task_tree_file is not None else Path(".gobby/tasks.jsonl")
-    if source in {TaskTreeSource.db, TaskTreeSource.jsonl}:
-        return _load_jsonl_task_records(path)
+
+    if source is TaskTreeSource.db:
+        if task_tree_file is not None:
+            raise MissingScopeError("db coverage does not accept task_tree_file")
+        return _load_db_task_records(project_id, db=db)
+
     return ()
 
 
-def _load_jsonl_task_records(path: Path) -> tuple[_TaskRecord, ...]:
-    if not path.exists():
-        return ()
-    records: list[_TaskRecord] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        raw = json.loads(line)
-        if isinstance(raw, dict):
-            records.append(_coerce_task_record(raw))
-    return tuple(records)
+def _load_db_task_records(
+    project_id: str,
+    *,
+    db: DatabaseProtocol | None,
+) -> tuple[_TaskRecord, ...]:
+    from gobby.storage.database import LocalDatabase
+    from gobby.storage.migrations import run_migrations
+
+    if db is not None:
+        return _load_db_task_records_from_connection(project_id, db=db)
+
+    owned_db = LocalDatabase()
+    try:
+        run_migrations(owned_db)
+        return _load_db_task_records_from_connection(project_id, db=owned_db)
+    finally:
+        owned_db.close()
+
+
+def _load_db_task_records_from_connection(
+    project_id: str,
+    *,
+    db: DatabaseProtocol,
+) -> tuple[_TaskRecord, ...]:
+    from gobby.storage.tasks import LocalTaskManager
+
+    manager = LocalTaskManager(db)
+    tasks = manager.list_tasks(project_id=project_id, limit=100000)
+    task_ref_by_id = {task.id: _live_task_ref(task) for task in tasks}
+    return tuple(_live_task_record(task, task_ref_by_id) for task in tasks)
+
+
+def _live_task_record(task: Any, task_ref_by_id: Mapping[str, str]) -> _TaskRecord:
+    labels = task.labels or ()
+    dependencies = tuple(
+        sorted(
+            task_ref_by_id[depends_on]
+            for depends_on in task.blocked_by
+            if depends_on in task_ref_by_id
+        )
+    )
+    parent_ref = (
+        task_ref_by_id.get(task.parent_task_id) if task.parent_task_id is not None else None
+    )
+    return _TaskRecord(
+        ref=_live_task_ref(task),
+        labels=tuple(str(label) for label in labels),
+        validation_criteria=task.validation_criteria or task.description or "",
+        status=str(task.status),
+        parent_ref=parent_ref,
+        path_cache=task.path_cache,
+        dependencies=dependencies,
+    )
+
+
+def _live_task_ref(task: Any) -> str:
+    seq_num = task.seq_num
+    if isinstance(seq_num, int):
+        return f"#{seq_num}"
+    return str(task.id)
 
 
 def _coerce_task_record(raw: Mapping[str, object]) -> _TaskRecord:

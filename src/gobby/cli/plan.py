@@ -56,7 +56,7 @@ plan.add_command(legacy_classification_refresh_command)
 )
 @click.option("--plan-id", required=True)
 @click.option("--plan-hash", required=True)
-@click.option("--task-tree", type=click.Choice(["db", "jsonl", "matrix-file"]), required=True)
+@click.option("--task-tree", type=click.Choice(["db", "matrix-file"]), required=True)
 @click.option("--root-task")
 @click.option("--project-id")
 @click.option("--matrix-file", type=click.Path(dir_okay=False, path_type=Path))
@@ -142,21 +142,13 @@ def _evaluate_for_cli(
         raise MissingScopeError(f"{task_tree} coverage requires --project-id")
     normalized_root_task = _normalize_cli_root_task(root_task)
 
-    if task_tree == TaskTreeSource.db.value:
-        return evaluate(
-            plan=plan_path,
-            plan_id=plan_id,
-            plan_hash=plan_hash,
-            task_tree=TaskTreeSource.db,
-            root_task_ref=normalized_root_task,
-            project_id=project_id,
-            evidence=evidence,
-        )
+    if task_tree != TaskTreeSource.db.value:
+        raise MissingScopeError(f"unknown task tree source {task_tree!r}")
     return evaluate(
         plan=plan_path,
         plan_id=plan_id,
         plan_hash=plan_hash,
-        task_tree=TaskTreeSource.jsonl,
+        task_tree=TaskTreeSource.db,
         root_task_ref=normalized_root_task,
         project_id=project_id,
         evidence=evidence,

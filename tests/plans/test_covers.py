@@ -126,6 +126,56 @@ def test_validate_covers_artifact_referenced_by_path() -> None:
     assert result.status == "valid"
 
 
+def test_validate_covers_artifact_referenced_by_path_basename_with_parent() -> None:
+    item = _item(
+        "A1.1",
+        artifact_ref="src/gobby/install/shared/skills/plan-draft/SKILL.md",
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        "plan-draft SKILL.md documents the acceptance-item shape.",
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
+def test_validate_covers_artifact_referenced_by_embedded_path() -> None:
+    item = _item(
+        "A1.1",
+        artifact_ref=(
+            "`src/gobby/install/shared/skills/plan-draft/SKILL.md` (canonical authoring surface)"
+        ),
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        "src/gobby/install/shared/skills/{plan,plan-draft}/SKILL.md is covered.",
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
+def test_validate_covers_artifact_marker_list() -> None:
+    item = _item(
+        "A1.1",
+        artifact_ref="`, `symbol:`, `test:`, `behavior:` per item",
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        "PlanParseError raises on zero file:|symbol:|test:|behavior: references.",
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
 def test_validate_covers_artifact_referenced_by_symbol_short_name() -> None:
     item = _item(
         "A1.1",
@@ -160,6 +210,23 @@ def test_validate_covers_artifact_referenced_by_test_path_and_name() -> None:
     assert result.status == "valid"
 
 
+def test_validate_covers_artifact_referenced_by_backticked_test_ref() -> None:
+    item = _item(
+        "A1.1",
+        artifact_kind=ArtifactKind.test,
+        artifact_ref="`tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes` asserts it",
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        "tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes passes.",
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
 def test_validate_covers_artifact_referenced_by_behavior_substring() -> None:
     item = _item(
         "A1.1",
@@ -171,6 +238,42 @@ def test_validate_covers_artifact_referenced_by_behavior_substring() -> None:
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
         "Assert PARSER IGNORES FENCED FAKE HEADINGS in src/gobby/plans/parser.py.",
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
+def test_validate_covers_behavior_referenced_by_path() -> None:
+    item = _item(
+        "A1.1",
+        artifact_kind=ArtifactKind.behavior,
+        artifact_ref='"header fields present" in `.gobby/plans/plan.coverage-ledger.yaml`',
+        prose='behavior: "header fields present" in `.gobby/plans/plan.coverage-ledger.yaml`',
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        ".gobby/plans/plan.coverage-ledger.yaml contains the header fields.",
+        "#leaf",
+        _plan_doc("A1", item),
+    )
+
+    assert result.status == "valid"
+
+
+def test_validate_covers_behavior_referenced_by_bare_file() -> None:
+    item = _item(
+        "A1.1",
+        artifact_kind=ArtifactKind.behavior,
+        artifact_ref='"CLAUDE.md states .grandfathered rules" in `CLAUDE.md`',
+        prose='behavior: "CLAUDE.md states .grandfathered rules" in `CLAUDE.md`',
+    )
+
+    result = validate_covers(
+        CoversRecord("plan", "A1", "A1.1"),
+        "CLAUDE.md states .grandfathered is reserved for merged epics.",
         "#leaf",
         _plan_doc("A1", item),
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -90,7 +91,7 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
         plan=plan_doc,
         plan_id="plan",
         plan_hash="hash",
-        task_tree=TaskTreeSource.jsonl,
+        task_tree=TaskTreeSource.db,
         root_task_ref="#1",
         project_id="project",
         task_records=[
@@ -125,6 +126,70 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
     ]
     assert report.rows[0].leaves[0].leaf_task_ref == "#101"
     assert report.rows[3].deferral_target == "#200"
+
+
+def test_db_source_ignores_filesystem_task_export(
+    tmp_path: Path,
+    temp_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_DATABASE_PATH", str(temp_db.db_path))
+    project = LocalProjectManager(temp_db).create("project")
+    (tmp_path / ".gobby").mkdir()
+    (tmp_path / ".gobby" / "tasks.jsonl").write_text(
+        (
+            '{"ref":"#1","path_cache":"1"}\n'
+            '{"ref":"#101","path_cache":"1.101","labels":["covers:plan:A1:A1.1"],'
+            '"validation_criteria":"Touches src/covered.py."}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    report = evaluate(
+        plan=_plan(_section(_item("A1.1", "src/covered.py"))),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref="#1",
+        project_id=project.id,
+    )
+
+    assert report.rows[0].status is CoverageStatus.missing
+
+
+def test_db_source_loads_live_task_records(
+    temp_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    monkeypatch.setenv("GOBBY_DATABASE_PATH", str(temp_db.db_path))
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(project.id, "Root")
+    leaf = manager.create_task(
+        project.id,
+        "Leaf",
+        parent_task_id=root.id,
+        labels=["covers:plan:A1:A1.1"],
+        validation_criteria="Touches src/covered.py.",
+    )
+
+    report = evaluate(
+        plan=_plan(_section(_item("A1.1", "src/covered.py"))),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+    )
+
+    assert report.rows[0].status is CoverageStatus.covered
+    assert report.rows[0].leaves[0].leaf_task_ref == f"#{leaf.seq_num}"
 
 
 def test_evaluate_root_scope_excludes_other_subtree() -> None:

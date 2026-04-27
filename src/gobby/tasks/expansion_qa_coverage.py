@@ -81,7 +81,6 @@ def run_expansion_qa_coverage(
         task_tree=task_tree,
         root_task_ref=root_task_ref,
         project_id=project_id,
-        task_records=_task_records_for_project(task_manager, project_id),
     )
     report_dict = _report_to_dict(report)
     manifest_path = _resolve_manifest_path(repo_root, project_id, root_task_ref, plan_id)
@@ -138,7 +137,6 @@ def _evaluate_with_a4(
     task_tree: str,
     root_task_ref: str,
     project_id: str,
-    task_records: list[dict[str, Any]],
 ) -> Any:
     try:
         from gobby.plans import coverage as coverage_module
@@ -161,7 +159,6 @@ def _evaluate_with_a4(
         "root_task_ref": root_task_ref,
         "root_task": root_task_ref,
         "project_id": project_id,
-        "task_records": task_records,
     }
     return _call_with_supported_kwargs(evaluate, kwargs)
 
@@ -190,20 +187,6 @@ def _resolve_root_task(
 def _resolve_path(repo_root: Path, path_value: str) -> Path:
     path = Path(path_value)
     return path if path.is_absolute() else repo_root / path
-
-
-def _task_records_for_project(
-    task_manager: LocalTaskManager,
-    project_id: str,
-) -> list[dict[str, Any]]:
-    return [
-        task.to_dict()
-        for task in task_manager.list_tasks(
-            project_id=project_id,
-            limit=100_000,
-            sort_by="hierarchy",
-        )
-    ]
 
 
 def _sha256_file(path: Path) -> str:

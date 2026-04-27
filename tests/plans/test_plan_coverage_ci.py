@@ -294,6 +294,30 @@ def test_legacy_classification_snapshot_matches_live_db_when_available() -> None
         assert row[f"{prefix}_title"] == target.title, f"{row['plan_id']} {prefix}_title drift"
 
 
+def test_snapshots_match_live_db_when_available() -> None:
+    if not _live_db_enabled() or not _live_db_path().exists():
+        return
+
+    env = os.environ.copy()
+    env.pop("GOBBY_TEST_PROTECT", None)
+    env.pop("GOBBY_HOME", None)
+    env.pop("GOBBY_DATABASE_PATH", None)
+
+    for command in ("grandfathered-refresh", "legacy-classification-refresh"):
+        result = subprocess.run(
+            ["uv", "run", "gobby", "plan", command, "--check"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 0, (
+            f"gobby plan {command} --check failed: "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+
 def test_ci_runs_under_no_live_db_with_no_skipped_checks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -363,7 +387,7 @@ def _implementation_entries() -> dict[str, PlanIndexEntry]:
     return {
         plan_id: entry
         for plan_id, entry in _load_index().items()
-        if entry.plan_kind == "implementation"
+        if entry.plan_kind == "implementation" and entry.status == "active"
     }
 
 
@@ -509,7 +533,7 @@ def _live_db_enabled() -> bool:
 
 
 def _live_task(task_ref: str) -> LiveTask:
-    db_path = Path(os.environ.get("GOBBY_HUB_DB", "~/.gobby/gobby-hub.db")).expanduser()
+    db_path = _live_db_path()
     if not db_path.exists():
         return LiveTask(exists=False, open=False, title="")
 
@@ -527,6 +551,10 @@ def _live_task(task_ref: str) -> LiveTask:
         return LiveTask(exists=False, open=False, title="")
     title, status, closed_at = row
     return LiveTask(exists=True, open=status != "closed" and closed_at is None, title=str(title))
+
+
+def _live_db_path() -> Path:
+    return Path(os.environ.get("GOBBY_HUB_DB", "~/.gobby/gobby-hub.db")).expanduser()
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
