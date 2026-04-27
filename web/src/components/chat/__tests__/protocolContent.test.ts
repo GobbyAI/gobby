@@ -51,18 +51,40 @@ describe('protocolContent', () => {
     ).toBe(false)
   })
 
-  it('collapses the captured Codex developer fixture without leaking protocol tags', () => {
-    const content = `<skills_instructions>\n${codexProtocolLeakFixture}\n</skills_instructions>`
-    const segments = splitProtocolContent(content, 'codex-fixture')
-    const leakedText = segments
+  it('ignores inline protocol tag examples while matching Codex preamble tags', () => {
+    const content = [
+      '<collaboration_mode>',
+      'Use the literal `</collaboration_mode>` example without closing the outer block.',
+      'The remaining preamble text must stay inside the protocol result.',
+      '</collaboration_mode>',
+    ].join('\n')
+
+    const segments = splitProtocolContent(content, 'msg-inline')
+    const visibleText = segments
+      .map((segment) => (segment.type === 'text' ? segment.content : ''))
+      .join('\n')
+
+    expect(segments).toHaveLength(1)
+    const [segment] = segments
+    expect(segment.type).toBe('tool_call')
+    if (segment.type !== 'tool_call') {
+      throw new Error('Expected protocol tool call')
+    }
+    expect(String(segment.call.result?.content)).toContain(
+      'The remaining preamble text must stay inside the protocol result.',
+    )
+    expect(visibleText.trim()).toBe('')
+  })
+
+  it('collapses the captured Codex developer fixture without visible preamble leaks', () => {
+    const segments = splitProtocolContent(codexProtocolLeakFixture, 'codex-fixture')
+    const visibleText = segments
       .map((segment) => (segment.type === 'text' ? segment.content : ''))
       .join('\n')
     const toolCallCount = segments.filter((segment) => segment.type === 'tool_call').length
 
     expect(toolCallCount).toBeGreaterThan(0)
-    expect(leakedText).not.toMatch(
-      /<\/?(?:permissions instructions|INSTRUCTIONS|skills_instructions)\b/i,
-    )
+    expect(visibleText.trim()).toBe('')
   })
 
   it('treats unterminated protocol tags as plain text', () => {

@@ -34,8 +34,42 @@ const INLINE_WRAPPER_PROTOCOL_TAGS = [
 
 const PROTOCOL_CHILD_RE = /\s*<(?<tag>[\w:-]+)>(?<body>.*?)<\/\k<tag>\s*>/sy
 const PROTOCOL_ATTR_RE = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+const PROTOCOL_CODE_SPAN_RE = /```[\s\S]*?```|`[^`\n]*(?:`|$)/g
 const MAX_PROTOCOL_PARSE_DEPTH = 10
 const MAX_PROTOCOL_CONTENT_LENGTH = 200_000
+const SYSTEM_BOOTSTRAP_PREFIX_RE =
+  /^\s*(?:#\s*)?(?:AGENTS\.md instructions for\b|System instructions\b|Gobby Session ID:)/i
+const SYSTEM_BOOTSTRAP_HEADING_RE = /^\s{0,3}(?:#{1,6}\s+)?([^:#]+):?\s*$/
+const SYSTEM_BOOTSTRAP_HEADINGS = new Set([
+  'platform context',
+  'capabilities',
+  'lifecycle model',
+  'behavior',
+  'role',
+  'personality',
+  'values',
+  'interaction style',
+  'general',
+  'tools',
+  'working with the user',
+  'formatting rules',
+  'final answer instructions',
+  'intermediary updates',
+])
+const HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS = new Set([
+  'platform context',
+  'capabilities',
+  'lifecycle model',
+  'personality',
+  'interaction style',
+  'final answer instructions',
+  'intermediary updates',
+])
+
+interface TextRange {
+  start: number
+  end: number
+}
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -80,7 +114,79 @@ function sanitizeVisibleProtocolText(content: string): string {
 }
 
 function shouldParseProtocolContent(content: string): boolean {
-  return content.includes('<') && content.length <= MAX_PROTOCOL_CONTENT_LENGTH
+  return (
+    content.length <= MAX_PROTOCOL_CONTENT_LENGTH &&
+    (content.includes('<') || looksLikeSystemBootstrapText(content))
+  )
+}
+
+function countBootstrapHeadingMatches(content: string): [number, number] {
+  const matchedHeadings = new Set<string>()
+  const matchedHighSignalHeadings = new Set<string>()
+
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) {
+      continue
+    }
+
+    const match = SYSTEM_BOOTSTRAP_HEADING_RE.exec(line)
+    if (!match) {
+      continue
+    }
+
+    const normalizedHeading = match[1].trim().toLowerCase()
+    if (!SYSTEM_BOOTSTRAP_HEADINGS.has(normalizedHeading)) {
+      continue
+    }
+
+    matchedHeadings.add(normalizedHeading)
+    if (HIGH_SIGNAL_SYSTEM_BOOTSTRAP_HEADINGS.has(normalizedHeading)) {
+      matchedHighSignalHeadings.add(normalizedHeading)
+    }
+  }
+
+  return [matchedHeadings.size, matchedHighSignalHeadings.size]
+}
+
+function looksLikeSystemBootstrapText(content: string): boolean {
+  const stripped = content.trim()
+  if (!stripped) {
+    return false
+  }
+
+  if (SYSTEM_BOOTSTRAP_PREFIX_RE.test(stripped)) {
+    return true
+  }
+
+  const [headingCount, highSignalHeadingCount] = countBootstrapHeadingMatches(stripped)
+  return headingCount >= 3 || (headingCount >= 2 && highSignalHeadingCount >= 1)
+}
+
+function findProtocolProtectedRanges(content: string): TextRange[] {
+  const ranges: TextRange[] = []
+  PROTOCOL_CODE_SPAN_RE.lastIndex = 0
+
+  let match = PROTOCOL_CODE_SPAN_RE.exec(content)
+  while (match) {
+    ranges.push({ start: match.index, end: PROTOCOL_CODE_SPAN_RE.lastIndex })
+    match = PROTOCOL_CODE_SPAN_RE.exec(content)
+  }
+
+  return ranges
+}
+
+function isProtectedProtocolIndex(index: number, ranges: TextRange[]): boolean {
+  for (const range of ranges) {
+    if (index < range.start) {
+      return false
+    }
+    if (index < range.end) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function parseProtocolAttributes(attrText: string): Record<string, string> | undefined {
@@ -135,15 +241,23 @@ function findMatchingProtocolClose(
   content: string,
   startIndex: number,
   normalizedTag: string,
+  protectedRanges: TextRange[],
 ): RegExpExecArray | null {
   let depth = 1
   protocolTagRe.lastIndex = startIndex
 
-  for (const match of content.matchAll(protocolTagRe)) {
+  let match = protocolTagRe.exec(content)
+  while (match) {
     if (!match.groups) {
+      match = protocolTagRe.exec(content)
+      continue
+    }
+    if (isProtectedProtocolIndex(match.index, protectedRanges)) {
+      match = protocolTagRe.exec(content)
       continue
     }
     if (match.groups.tag.toLowerCase() !== normalizedTag) {
+      match = protocolTagRe.exec(content)
       continue
     }
 
@@ -155,6 +269,7 @@ function findMatchingProtocolClose(
     } else {
       depth += 1
     }
+    match = protocolTagRe.exec(content)
   }
 
   return null
@@ -162,18 +277,29 @@ function findMatchingProtocolClose(
 
 function findProtocolToolMatches(content: string): ProtocolToolMatch[] {
   const matches: ProtocolToolMatch[] = []
+  const protectedRanges = findProtocolProtectedRanges(content)
   protocolTagRe.lastIndex = 0
 
   let match = protocolTagRe.exec(content)
   while (match) {
-    if (!match.groups || match.groups.closing || match.index === undefined) {
+    if (
+      !match.groups ||
+      match.groups.closing ||
+      match.index === undefined ||
+      isProtectedProtocolIndex(match.index, protectedRanges)
+    ) {
       match = protocolTagRe.exec(content)
       continue
     }
 
     const openEnd = match.index + match[0].length
     const normalizedTag = match.groups.tag.toLowerCase()
-    const closingMatch = findMatchingProtocolClose(content, openEnd, normalizedTag)
+    const closingMatch = findMatchingProtocolClose(
+      content,
+      openEnd,
+      normalizedTag,
+      protectedRanges,
+    )
     if (!closingMatch?.groups || closingMatch.index === undefined) {
       protocolTagRe.lastIndex = openEnd
       match = protocolTagRe.exec(content)
@@ -222,6 +348,35 @@ function makeProtocolToolCall(
   }
 }
 
+function appendVisibleProtocolContent(
+  segments: ProtocolContentSegment[],
+  content: string,
+  idPrefix: string,
+  ordinal: number,
+): number {
+  if (!content.trim()) {
+    return ordinal
+  }
+
+  if (looksLikeSystemBootstrapText(content)) {
+    const nextOrdinal = ordinal + 1
+    segments.push({
+      type: 'tool_call',
+      call: makeProtocolToolCall(
+        'system_instructions',
+        content.trim(),
+        '',
+        idPrefix,
+        nextOrdinal,
+      ),
+    })
+    return nextOrdinal
+  }
+
+  segments.push({ type: 'text', content })
+  return ordinal
+}
+
 export function splitProtocolContent(
   content: string,
   idPrefix: string,
@@ -236,9 +391,7 @@ export function splitProtocolContent(
 
   for (const match of findProtocolToolMatches(content)) {
     const visibleText = sanitizeVisibleProtocolText(content.slice(lastIndex, match.index)).trimEnd()
-    if (visibleText.trim()) {
-      segments.push({ type: 'text', content: visibleText })
-    }
+    ordinal = appendVisibleProtocolContent(segments, visibleText, idPrefix, ordinal)
 
     ordinal += 1
     segments.push({
@@ -255,16 +408,16 @@ export function splitProtocolContent(
   }
 
   const trailingText = sanitizeVisibleProtocolText(content.slice(lastIndex)).trimStart()
-  if (trailingText.trim()) {
-    segments.push({ type: 'text', content: trailingText })
-  }
+  appendVisibleProtocolContent(segments, trailingText, idPrefix, ordinal)
 
   if (segments.length > 0) {
     return segments
   }
 
   const sanitized = sanitizeVisibleProtocolText(content)
-  return sanitized.trim() ? [{ type: 'text', content: sanitized }] : []
+  const fallbackSegments: ProtocolContentSegment[] = []
+  appendVisibleProtocolContent(fallbackSegments, sanitized, idPrefix, 0)
+  return fallbackSegments
 }
 
 export function hasProtocolToolContent(content: string): boolean {
@@ -272,5 +425,5 @@ export function hasProtocolToolContent(content: string): boolean {
     return false
   }
 
-  return findProtocolToolMatches(content).length > 0
+  return findProtocolToolMatches(content).length > 0 || looksLikeSystemBootstrapText(content)
 }

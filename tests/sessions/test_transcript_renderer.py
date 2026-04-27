@@ -321,6 +321,67 @@ def test_render_transcript_collapses_nested_protocol_tags_without_visible_leak()
     )
 
 
+def test_render_transcript_ignores_inline_protocol_tag_examples():
+    content = "\n".join(
+        [
+            "<collaboration_mode>",
+            "Use the literal `</collaboration_mode>` example without closing the block.",
+            "The remaining preamble text must stay inside the protocol result.",
+            "</collaboration_mode>",
+        ]
+    )
+    msgs = [make_msg(0, "system", content)]
+
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].content == ""
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert len(block.tool_calls) == 1
+    call = block.tool_calls[0]
+    assert call.arguments == {"tag": "collaboration_mode"}
+    assert call.result is not None
+    assert "The remaining preamble text must stay inside the protocol result." in str(
+        call.result.content
+    )
+
+
+def test_render_transcript_collapses_codex_bootstrap_text_around_protocol_blocks():
+    content = "\n".join(
+        [
+            "<permissions instructions>",
+            "Filesystem sandboxing defines which files can be read or written.",
+            "</permissions instructions>",
+            "<collaboration_mode>",
+            "Known mode names are Default and Plan.",
+            "Use a literal `<collaboration_mode>...</collaboration_mode>` example.",
+            "</collaboration_mode>",
+            "Gobby Session ID: #3426 (47bafb0e-c69c-440b-ba8f-890fab976145)",
+            "",
+            "## Instructions",
+            "LIFECYCLE MODEL:",
+            "- Rules are authored against semantic workflow events.",
+        ]
+    )
+    msgs = [make_msg(0, "user", content)]
+
+    rendered = render_transcript(msgs)
+
+    assert len(rendered) == 1
+    assert rendered[0].role == "system"
+    assert rendered[0].content == ""
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    assert block.tool_calls is not None
+    assert [call.arguments for call in block.tool_calls] == [
+        {"tag": "permissions instructions"},
+        {"tag": "collaboration_mode"},
+        {"tag": "system_instructions"},
+    ]
+
+
 def test_render_incremental_returns_completed_turns():
     state = RenderState()
 

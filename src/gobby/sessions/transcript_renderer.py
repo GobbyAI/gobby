@@ -343,6 +343,7 @@ _PROTOCOL_TAG_RE = re.compile(
     rf"<(?P<closing>/)?(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>",
     re.IGNORECASE,
 )
+_PROTOCOL_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]*(?:`|$)", re.DOTALL)
 
 _INLINE_WRAPPER_PROTOCOL_TAG_RE = re.compile(
     rf"</?(?:{_INLINE_WRAPPER_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>",
@@ -477,11 +478,31 @@ def _parse_protocol_payload(content: str, depth: int = 0) -> Any:
     return content
 
 
+def _find_protocol_protected_ranges(content: str) -> list[tuple[int, int]]:
+    return [(match.start(), match.end()) for match in _PROTOCOL_CODE_SPAN_RE.finditer(content)]
+
+
+def _is_protected_protocol_index(index: int, ranges: list[tuple[int, int]]) -> bool:
+    for start, end in ranges:
+        if index < start:
+            return False
+        if index < end:
+            return True
+
+    return False
+
+
 def _find_matching_protocol_close(
-    content: str, start_index: int, normalized_tag: str
+    content: str,
+    start_index: int,
+    normalized_tag: str,
+    protected_ranges: list[tuple[int, int]],
 ) -> re.Match[str] | None:
     depth = 1
     for match in _PROTOCOL_TAG_RE.finditer(content, start_index):
+        if _is_protected_protocol_index(match.start(), protected_ranges):
+            continue
+
         if match.group("tag").lower() != normalized_tag:
             continue
 
@@ -496,14 +517,19 @@ def _find_matching_protocol_close(
 
 
 def _iter_protocol_tool_matches(content: str) -> Iterable[_ProtocolToolMatch]:
+    protected_ranges = _find_protocol_protected_ranges(content)
     index = 0
     while match := _PROTOCOL_TAG_RE.search(content, index):
+        if _is_protected_protocol_index(match.start(), protected_ranges):
+            index = match.end()
+            continue
+
         if match.group("closing"):
             index = match.end()
             continue
 
         close_match = _find_matching_protocol_close(
-            content, match.end(), match.group("tag").lower()
+            content, match.end(), match.group("tag").lower(), protected_ranges
         )
         if close_match is None:
             index = match.end()
@@ -558,10 +584,39 @@ def _make_plain_text_protocol_tool_call(
     return _make_protocol_tool_call(tag, body, "", source_index, 0)
 
 
+def _append_visible_protocol_segment(
+    segments: list[_ProtocolContentSegment],
+    text: str,
+    source_index: int,
+    ordinal: int,
+) -> int:
+    if not text.strip():
+        return ordinal
+
+    if _looks_like_system_bootstrap_text(text):
+        ordinal += 1
+        segments.append(
+            _ProtocolContentSegment(
+                kind="protocol_tool",
+                tool_call=_make_protocol_tool_call(
+                    "system_instructions",
+                    text.strip(),
+                    "",
+                    source_index,
+                    ordinal,
+                ),
+            )
+        )
+        return ordinal
+
+    segments.append(_ProtocolContentSegment(kind="text", text=text))
+    return ordinal
+
+
 def _extract_protocol_content_segments(
     content: str, source_index: int
 ) -> list[_ProtocolContentSegment]:
-    if "<" not in content:
+    if "<" not in content and not _looks_like_system_bootstrap_text(content):
         return [_ProtocolContentSegment(kind="text", text=content)] if content else []
 
     segments: list[_ProtocolContentSegment] = []
@@ -570,8 +625,12 @@ def _extract_protocol_content_segments(
 
     for match in _iter_protocol_tool_matches(content):
         visible_text = _sanitize_visible_protocol_text(content[last_end : match.start]).rstrip()
-        if visible_text.strip():
-            segments.append(_ProtocolContentSegment(kind="text", text=visible_text))
+        ordinal = _append_visible_protocol_segment(
+            segments,
+            visible_text,
+            source_index,
+            ordinal,
+        )
 
         ordinal += 1
         segments.append(
@@ -589,14 +648,20 @@ def _extract_protocol_content_segments(
         last_end = match.end
 
     trailing_text = _sanitize_visible_protocol_text(content[last_end:]).lstrip()
-    if trailing_text.strip():
-        segments.append(_ProtocolContentSegment(kind="text", text=trailing_text))
+    ordinal = _append_visible_protocol_segment(
+        segments,
+        trailing_text,
+        source_index,
+        ordinal,
+    )
 
     if segments:
         return segments
 
     sanitized = _sanitize_visible_protocol_text(content)
-    return [_ProtocolContentSegment(kind="text", text=sanitized)] if sanitized.strip() else []
+    fallback_segments: list[_ProtocolContentSegment] = []
+    _append_visible_protocol_segment(fallback_segments, sanitized, source_index, 0)
+    return fallback_segments
 
 
 def _is_protocol_only_text(content: str) -> bool:
