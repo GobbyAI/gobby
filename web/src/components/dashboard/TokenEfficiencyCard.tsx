@@ -56,6 +56,12 @@ function formatTokensShort(n: number): string {
   return String(n)
 }
 
+function granularityForHours(hours: number): TimeSeriesGranularity {
+  if (hours <= 6) return '30m'
+  if (hours <= 168) return '1h'
+  return '1d'
+}
+
 const CHART_MARGIN = { top: 5, right: 10, left: 0, bottom: 5 }
 const GRID_STROKE = 'rgba(255,255,255,0.06)'
 const AXIS_STYLE = { fontSize: 10, fill: 'var(--text-secondary)' }
@@ -75,7 +81,7 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
   const tokenEventsEnabled =
     import.meta.env.VITE_TOKEN_EVENTS !== '0' &&
     import.meta.env.VITE_TOKEN_EVENTS !== 'false'
-  const granularity: TimeSeriesGranularity = hours <= 6 ? '30m' : hours <= 168 ? '1h' : '1d'
+  const granularity = granularityForHours(hours)
   const { data: tsData, isLoading } = useTokenTimeSeries(hours, projectId, granularity)
   const { data: savingsData } = useSavings(hours, projectId)
   const { data: usageData } = useUsage(hours, projectId)
@@ -103,20 +109,17 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
 
   const hasData = chartData.length > 0
   const categories = savingsData?.categories ?? {}
+  const efficiencyBadge = efficiencyPct > 0 ? (
+    <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
+      {efficiencyPct}% efficiency
+    </span>
+  ) : undefined
 
   return (
     <DashboardCard
       title="Token Efficiency"
       className={dashboardFullCardClass}
-      action={
-        <div className="flex items-center gap-2">
-          {efficiencyPct > 0 ? (
-            <span className={cn('text-xs font-semibold', dashboardEfficiencyClass(efficiencyPct))}>
-              {efficiencyPct}% efficiency
-            </span>
-          ) : null}
-        </div>
-      }
+      action={efficiencyBadge}
     >
         {isLoading && !hasData ? (
           <div className={dashboardChartEmptyClass}>Loading token data...</div>
@@ -130,13 +133,13 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 width={45}
                 tickFormatter={formatTokensShort}
               />
-                <Tooltip
-                  contentStyle={{
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border)',
-                    fontSize: 12,
-                  }}
-                  formatter={(value, name) => [
+              <Tooltip
+                contentStyle={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border)',
+                  fontSize: 12,
+                }}
+                formatter={(value, name) => [
                   formatTokens(Number(value)),
                   String(name) === 'tokens_spent' ? 'Spent' : 'Saved',
                 ]}
