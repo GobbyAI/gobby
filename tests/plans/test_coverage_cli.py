@@ -109,6 +109,34 @@ def test_cli_exit_codes_per_status(tmp_path: Path, status: str, expected_exit: i
     assert result.exit_code == expected_exit
 
 
+def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
+    matrix = _matrix_file(tmp_path, "covered", plan_hash=plan_hash)
+    manifest = tmp_path / "out.coverage.yaml"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            *_base_args(plan_path, plan_hash, matrix, manifest),
+            "--evidence",
+            "none",
+        ],
+    )
+
+    assert result.exit_code == 0
+    raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    assert raw["header"]["evidence_summary"] == ["none:none:resolved"]
+    assert raw["rows"][0]["evidence"] == [
+        {
+            "kind": "none",
+            "ref": "none",
+            "status": "resolved",
+            "detail": "explicit operator override",
+            "artifacts_touched": [],
+        }
+    ]
+
+
 def test_cli_exit_codes_for_errors(tmp_path: Path) -> None:
     plan_path, plan_hash = _plan_file(tmp_path)
     stale_matrix = _matrix_file(tmp_path, "covered", plan_hash="old")
