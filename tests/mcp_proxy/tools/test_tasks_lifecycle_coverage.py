@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -184,6 +185,45 @@ class TestCloseTaskTool:
             )
 
             assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_close_task_surfaces_bootstrap_ledger_mismatch(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        """Test close_task returns structured bootstrap ledger mismatch errors."""
+        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+
+        mock_task = MagicMock()
+        mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_task.commits = None
+        mock_task.project_id = "proj-1"
+        mock_task.task_type = "epic"
+        mock_task.seq_num = 13175
+        mock_task.requires_user_review = False
+        mock_task_manager.get_task.return_value = mock_task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.side_effect = BootstrapLedgerMismatchError(
+            ["A8:A8.7 expected leaves ['x'], manifest has []"],
+            plan_id="task-13175-plan-coverage-contract",
+        )
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.utils.git.run_git_command", return_value="abc123"),
+        ):
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+
+            result = await registry.call(
+                "close_task",
+                {"task_id": "550e8400-e29b-41d4-a716-446655440000"},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "bootstrap_ledger_mismatch"
+        assert result["plan_id"] == "task-13175-plan-coverage-contract"
+        assert result["mismatches"] == ["A8:A8.7 expected leaves ['x'], manifest has []"]
 
     @pytest.mark.asyncio
     async def test_close_task_with_commit_sha_links_first(
