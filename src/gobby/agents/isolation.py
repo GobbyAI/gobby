@@ -277,8 +277,9 @@ class WorktreeIsolationHandler(IsolationHandler):
         self._created_worktree_id = worktree.id
 
         if config.task_id is not None:
-            base_commit_sha = _capture_base_commit_sha(worktree_path)
-            TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic(
+            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, worktree_path)
+            await asyncio.to_thread(
+                TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
                 config.task_id,
                 worktree_path=worktree_path,
                 worktree_id=worktree.id,
@@ -500,8 +501,9 @@ class CloneIsolationHandler(IsolationHandler):
         self._created_clone_id = clone.id
 
         if config.task_id is not None:
-            base_commit_sha = _capture_base_commit_sha(clone_path)
-            TaskArtifactManager(self._clone_storage.db).set_artifacts_atomic(
+            base_commit_sha = await asyncio.to_thread(_capture_base_commit_sha, clone_path)
+            await asyncio.to_thread(
+                TaskArtifactManager(self._clone_storage.db).set_artifacts_atomic,
                 config.task_id,
                 clone_path=clone_path,
                 clone_id=clone.id,

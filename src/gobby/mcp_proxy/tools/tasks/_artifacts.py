@@ -6,6 +6,7 @@ agents that need to record task artifact pointers or append audit sections.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -241,7 +242,11 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if row is None:
                 return {"error": f"Task {task_id} not found"}
             current_description = row["description"] or ""
-            if section in current_description:
+            heading_pattern = re.compile(
+                rf"^##\s+{re.escape(heading.strip())}\s*$",
+                re.MULTILINE,
+            )
+            if heading_pattern.search(current_description):
                 return {"ok": True, "task_id": resolved_id, "appended": False}
 
             prefix = current_description.rstrip()

@@ -6,13 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
-def _registry(temp_db) -> object:
+def _registry(temp_db) -> InternalToolRegistry:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
         sync_manager=MagicMock(),

@@ -50,10 +50,10 @@ describe('SessionsTab Phase 1 chip contract', () => {
   beforeEach(() => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
+      vi.fn(async (): Promise<{ ok: true; json: () => Promise<{ agents: unknown[] }> }> => ({
         ok: true,
         json: async () => ({ agents: [] }),
-      })),
+      })) as unknown as typeof fetch,
     )
   })
 

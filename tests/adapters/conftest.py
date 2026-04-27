@@ -90,6 +90,7 @@ def make_before_tool_event() -> Callable[[dict], HookEvent]:
             data={"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input},
             machine_id="test-machine",
         )
+        # HookEvent does not accept project_id in __init__; set it as an attribute.
         event.project_id = "proj-1"
         return event
 

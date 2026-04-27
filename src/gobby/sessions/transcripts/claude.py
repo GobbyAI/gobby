@@ -737,16 +737,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         idx = 0
         while idx < len(lines):
             line = lines[idx]
-            data = self._load_json_for_dedupe(line)
-            tool_use_id = self._tool_use_id_from_turn(data) if data is not None else None
-            skip_next = (
-                data is not None
-                and tool_use_id is not None
-                and self._is_hook_blocking_error(data)
-                and idx + 1 < len(lines)
-                and (next_data := self._load_json_for_dedupe(lines[idx + 1])) is not None
-                and self._is_tool_result_for(next_data, tool_use_id)
-            )
+            skip_next = self._should_skip_next_line(idx, lines)
 
             expanded = self._expand_line(line, current_index)
             for msg in expanded:
@@ -756,6 +747,20 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             idx += 2 if skip_next else 1
 
         return parsed_messages
+
+    def _should_skip_next_line(self, idx: int, lines: list[str]) -> bool:
+        data = self._load_json_for_dedupe(lines[idx])
+        if data is None:
+            return False
+        tool_use_id = self._tool_use_id_from_turn(data)
+        if tool_use_id is None or not self._is_hook_blocking_error(data):
+            return False
+        if idx + 1 >= len(lines):
+            return False
+        next_data = self._load_json_for_dedupe(lines[idx + 1])
+        if next_data is None:
+            return False
+        return self._is_tool_result_for(next_data, tool_use_id)
 
     # Backward-compatible alias
     is_clear_command = is_session_boundary

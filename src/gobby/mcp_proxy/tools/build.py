@@ -83,6 +83,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "max_review_rounds": {"type": "integer", "default": 3},
                 "target_branch": {"type": "string"},
                 "agent": {"type": "string"},
+                "project_id": {"type": "string"},
             },
             "required": ["input_ref"],
         },

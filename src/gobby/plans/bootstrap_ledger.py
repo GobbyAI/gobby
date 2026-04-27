@@ -337,14 +337,15 @@ def _task_title(db: DatabaseProtocol, *, project_id: str, task_ref: str) -> str 
         if row is not None:
             return str(row["title"])
 
+    escaped = normalized.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     row = db.fetchone(
         """
         SELECT title FROM tasks
-        WHERE project_id = ? AND (id = ? OR id LIKE ?)
+        WHERE project_id = ? AND (id = ? OR id LIKE ? ESCAPE '!')
         ORDER BY id
         LIMIT 1
         """,
-        (project_id, normalized, f"{normalized}%"),
+        (project_id, normalized, f"{escaped}%"),
     )
     return str(row["title"]) if row is not None else None
 
@@ -352,7 +353,10 @@ def _task_title(db: DatabaseProtocol, *, project_id: str, task_ref: str) -> str 
 def _load_yaml_mapping(path: Path) -> Mapping[str, object] | None:
     if not path.is_file():
         return None
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return None
     return raw if isinstance(raw, Mapping) else None
 
 

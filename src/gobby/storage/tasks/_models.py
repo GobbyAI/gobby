@@ -286,10 +286,18 @@ class Task:
             path_cache=row["path_cache"] if "path_cache" in keys else None,
             start_date=row["start_date"] if "start_date" in keys else None,
             due_date=row["due_date"] if "due_date" in keys else None,
-            lifecycle=Lifecycle(row["lifecycle"]) if "lifecycle" in keys else Lifecycle.open,
+            lifecycle=(
+                Lifecycle(row["lifecycle"])
+                if "lifecycle" in keys and row["lifecycle"] is not None
+                else Lifecycle.open
+            ),
             allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
             yolo=bool(row["yolo"]) if "yolo" in keys else False,
-            isolation=Isolation(row["isolation"]) if "isolation" in keys else Isolation.worktree,
+            isolation=(
+                Isolation(row["isolation"])
+                if "isolation" in keys and row["isolation"] is not None
+                else Isolation.worktree
+            ),
             assigned_agent=row["assigned_agent"] if "assigned_agent" in keys else None,
             additional_skills=(
                 json.loads(row["additional_skills"])

@@ -231,7 +231,8 @@ def _append_regenerate_audit(
         f"{timestamp} {identity.project_id} {identity.root_task_ref} {identity.plan_id} "
         f"{existing_hash} -> {new_hash}\n"
     )
-    (coverage_root / ".regenerate.log").open("a", encoding="utf-8").write(line)
+    with (coverage_root / ".regenerate.log").open("a", encoding="utf-8") as log_file:
+        log_file.write(line)
 
 
 def _required_header(report: object, field: str) -> str:
@@ -311,7 +312,6 @@ __all__ = [
     "IdentityCollisionError",
     "ManifestIdentity",
     "PathIdentityMismatchError",
-    "_sanitize",
     "coverage_manifest_path",
     "write_manifest",
 ]

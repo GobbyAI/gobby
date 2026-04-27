@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 class _TaskOpsToolRegistry(InternalToolRegistry):
     """Ops registry with build_task schema exposed for the build MCP contract."""
 
-    def list_tools(self) -> Any:
+    def list_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = [dict(tool) for tool in super().list_tools()]
         schema = self.get_schema("build_task")
         if schema is None:

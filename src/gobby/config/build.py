@@ -126,7 +126,10 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
 
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"build config has invalid YAML at {path}: {exc}") from exc
     if raw is None:
         return {}
     if not isinstance(raw, Mapping):

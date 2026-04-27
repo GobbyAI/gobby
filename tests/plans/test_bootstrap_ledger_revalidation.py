@@ -12,7 +12,7 @@ from gobby.plans.bootstrap_ledger import (
 )
 from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -82,7 +82,9 @@ def test_close_succeeds_on_ledger_match(temp_db, tmp_path: Path) -> None:
     verify_bootstrap_ledger(temp_db, root.id)
 
 
-def _seed_plan_task_tree(temp_db, tmp_path: Path, *, expected_leaf_title: str):
+def _seed_plan_task_tree(
+    temp_db, tmp_path: Path, *, expected_leaf_title: str
+) -> tuple[Task, Task, str]:
     repo = tmp_path / "repo"
     repo.mkdir()
     project = LocalProjectManager(temp_db).create(

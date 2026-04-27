@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -68,7 +68,7 @@ async def build(
 
     _validate_profile_for_input(opts.profile, input_kind)
     _validate_clones_dir(opts)
-    _validate_target_branch(db, project_id, opts.target_branch)
+    await _validate_target_branch(db, project_id, opts.target_branch)
 
     if input_kind == "plan_file":
         assert isinstance(task_or_plan, Path)
@@ -219,7 +219,7 @@ def _validate_clones_dir(opts: BuildOptions) -> None:
         raise ValueError(f"clones_dir must be writable for clone isolation: {opts.clones_dir}")
 
 
-def _validate_target_branch(
+async def _validate_target_branch(
     db: DatabaseProtocol,
     project_id: str,
     target_branch: str | None,
@@ -233,24 +233,30 @@ def _validate_target_branch(
     if not (repo_path / ".git").exists():
         return
 
-    result = subprocess.run(
-        ["git", "branch", "--list", target_branch],
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "branch",
+        "--list",
+        target_branch,
         cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    if result.returncode != 0 or result.stdout.strip():
+    stdout_bytes, _ = await proc.communicate()
+    if proc.returncode != 0 or stdout_bytes.decode().strip():
         return
 
-    branches = subprocess.run(
-        ["git", "branch", "--format", "%(refname:short)"],
+    list_proc = await asyncio.create_subprocess_exec(
+        "git",
+        "branch",
+        "--format",
+        "%(refname:short)",
         cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    available = ", ".join(branches.stdout.split()) or "main"
+    branches_stdout, _ = await list_proc.communicate()
+    available = ", ".join(branches_stdout.decode().split()) or "main"
     raise ValueError(f"target branch {target_branch} is missing; available branches: {available}")
 
 
@@ -298,6 +304,7 @@ def _record_build_event(
 
 
 def _kick_dispatcher_tick() -> int:
+    """Placeholder for dispatcher-tick wiring; tracked as a separate follow-up task."""
     return 0
 
 

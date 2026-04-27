@@ -45,9 +45,8 @@ class TaskDispatchMutexManager:
 
     def __init__(self, db: DatabaseProtocol):
         self.db = db
-        self._ensure_table()
 
-    def _ensure_table(self) -> None:
+    def ensure_table(self) -> None:
         """Create the table for focused tests before the canonical migration lands."""
         with self.db.transaction() as conn:
             conn.execute(

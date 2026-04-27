@@ -70,4 +70,4 @@ phases of the plan. All `tasks[]` entries must reference this phase's `id`.
 - Emit `additional_skills` as an array, usually empty, when a leaf needs skills beyond
   the assigned agent's baseline.
 - Do not emit `planning` leaves; planning belongs to epics and stage tasks.
-- Resolved skipped stages: {{ skipped_stages }}
+- Resolved skipped stages: {{ skipped_stages | join(", ") if skipped_stages else "none" }}

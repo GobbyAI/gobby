@@ -4,22 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import (
+    LocalTaskManager,
+    TaskArtifactConstraintError,
+    TaskArtifactManager,
+)
 
 pytestmark = pytest.mark.unit
-
-
-def _artifact_symbols() -> tuple[type, type[Exception]]:
-    import gobby.storage.tasks as task_module
-
-    return task_module.TaskArtifactManager, task_module.TaskArtifactConstraintError
 
 
 def test_set_artifacts_atomic_enforces_worktree_pair_copresence(
     temp_db,
     sample_project,
 ) -> None:
-    TaskArtifactManager, TaskArtifactConstraintError = _artifact_symbols()
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
@@ -33,7 +30,6 @@ def test_set_artifacts_atomic_enforces_worktree_pair_copresence(
 
 
 def test_set_artifacts_atomic_enforces_clone_pair_copresence(temp_db, sample_project) -> None:
-    TaskArtifactManager, TaskArtifactConstraintError = _artifact_symbols()
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
@@ -47,7 +43,6 @@ def test_set_artifacts_atomic_enforces_clone_pair_copresence(temp_db, sample_pro
 
 
 def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_project) -> None:
-    TaskArtifactManager, TaskArtifactConstraintError = _artifact_symbols()
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
@@ -73,7 +68,6 @@ def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_proj
 
 
 def test_clear_isolation_pair_atomically_clears_named_family(temp_db, sample_project) -> None:
-    TaskArtifactManager, _TaskArtifactConstraintError = _artifact_symbols()
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Clear artifacts",

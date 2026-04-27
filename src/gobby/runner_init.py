@@ -720,7 +720,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
         try:
             conductor_job = runner.cron_storage.get_job_by_name("gobby:conductor-tick")
             if conductor_job and conductor_job.enabled:
-                runner.cron_storage.update_job(conductor_job.id, enabled=0, next_run_at=None)
+                runner.cron_storage.update_job(conductor_job.id, enabled=False, next_run_at=None)
                 logger.info("Disabled retired system cron job: gobby:conductor-tick")
         except Exception as e:
             logger.warning(f"Failed to disable retired conductor cron job: {e}")

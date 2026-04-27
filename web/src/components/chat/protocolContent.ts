@@ -82,10 +82,12 @@ function buildTagPattern(tags: readonly string[]): string {
 const protocolToolTagPattern = buildTagPattern(PROTOCOL_TOOL_TAGS)
 const inlineWrapperTagPattern = buildTagPattern(INLINE_WRAPPER_PROTOCOL_TAGS)
 
-const protocolTagRe = new RegExp(
-  `<(?<closing>\\/)?(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>`,
-  'gi',
-)
+function makeProtocolTagRe(): RegExp {
+  return new RegExp(
+    `<(?<closing>\\/)?(?<tag>${protocolToolTagPattern})(?=[\\s>])(?<attrs>[^>]*)>`,
+    'gi',
+  )
+}
 
 const inlineWrapperProtocolTagRe = new RegExp(
   `</?(?:${inlineWrapperTagPattern})(?=[\\s>])[^>]*>`,
@@ -243,6 +245,7 @@ function findMatchingProtocolClose(
   normalizedTag: string,
   protectedRanges: TextRange[],
 ): RegExpExecArray | null {
+  const protocolTagRe = makeProtocolTagRe()
   let depth = 1
   protocolTagRe.lastIndex = startIndex
 
@@ -276,6 +279,7 @@ function findMatchingProtocolClose(
 }
 
 function findProtocolToolMatches(content: string): ProtocolToolMatch[] {
+  const protocolTagRe = makeProtocolTagRe()
   const matches: ProtocolToolMatch[] = []
   const protectedRanges = findProtocolProtectedRanges(content)
   protocolTagRe.lastIndex = 0

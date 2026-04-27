@@ -43,7 +43,6 @@ instructions: |
   whose body uses a markdown table to enumerate work items MUST emit one
   acceptance item per table data row with stable IDs; this is the table-row
   decomposition rule.
-  Table-row decomposition requires one acceptance item per table data row.
 
   WORKFLOW:
   - Read the parent task first, then any referenced supporting docs, then

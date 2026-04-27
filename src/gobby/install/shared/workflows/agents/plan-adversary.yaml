@@ -46,7 +46,6 @@ instructions: |
   malformed item IDs. The qualitative pass must also enforce the table-row
   decomposition rule: any deliverable table enumerating work items needs one
   acceptance item per data row with stable IDs.
-  Table-row decomposition requires one acceptance item per table data row.
 
   WORKFLOW:
   - Review the plan artifact referenced in your prompt against the parent task

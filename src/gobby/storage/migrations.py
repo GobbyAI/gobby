@@ -62,6 +62,7 @@ BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 
 
 def _table_columns(db: LocalDatabase, table_name: str) -> set[str]:
+    # PRAGMA does not accept SQL parameter binding; table_name is internally controlled.
     return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table_name})")}
 
 

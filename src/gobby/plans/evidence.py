@@ -254,7 +254,7 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
         row_status = row.get("status")
         status = (
             EvidenceResolveStatus.invalid
-            if row_status == "invalid"
+            if row_status in {"invalid", "missing"}
             else EvidenceResolveStatus.resolved
         )
         evidence_rows.append(

@@ -14,7 +14,7 @@ import yaml
 
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 
 PLANS_DIR = Path(".gobby") / "plans"
 GRANDFATHERED_PATH = PLANS_DIR / ".grandfathered"
@@ -181,7 +181,7 @@ def _task_snapshot(
 ) -> TaskSnapshot:
     try:
         task_id = task_manager.resolve_task_reference(task_ref, project_id)
-    except Exception:
+    except (TaskNotFoundError, ValueError):
         return TaskSnapshot(exists=False, open=False, title="")
     task = task_manager.get_task(task_id)
     if task is None:

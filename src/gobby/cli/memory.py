@@ -508,6 +508,10 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) ->
 
     manager = get_memory_manager(ctx)
     restore_path = Path(input_path) if input_path else Path(".gobby/memories.jsonl")
+    if not restore_path.is_file():
+        if not quiet:
+            click.echo(f"No memory backup found at {restore_path}")
+        return
     config = MemoryBackupConfig(enabled=True, export_path=restore_path)
     backup_mgr = MemoryBackupManager(
         db=manager.db,

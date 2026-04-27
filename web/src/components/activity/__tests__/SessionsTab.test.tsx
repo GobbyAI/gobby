@@ -391,41 +391,53 @@ describe("SessionsTab", () => {
   it("scrolls the watching transcript to bottom when selecting another session", async () => {
     localStorage.removeItem("gobby-watching-session-id");
     const scrollIntoView = vi.fn();
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      "scrollIntoView",
+    );
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
       value: scrollIntoView,
     });
-    mockUseSessionDetail.mockImplementation((sessionId) => ({
-      session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
-      messages: [
-        {
-          id: `msg-${sessionId ?? "none"}`,
-          role: "assistant",
-          content: `Transcript output for ${sessionId ?? "none"}`,
-          timestamp: "2026-04-08T12:11:00Z",
-        },
-      ],
-      isLoading: false,
-      transcriptStatus: null,
-    }));
+    try {
+      mockUseSessionDetail.mockImplementation((sessionId) => ({
+        session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+        messages: [
+          {
+            id: `msg-${sessionId ?? "none"}`,
+            role: "assistant",
+            content: `Transcript output for ${sessionId ?? "none"}`,
+            timestamp: "2026-04-08T12:11:00Z",
+          },
+        ],
+        isLoading: false,
+        transcriptStatus: null,
+      }));
 
-    render(
-      <SessionsTab
-        sessions={[LIVE_SESSION, PAUSED_SESSION]}
-      />,
-    );
+      render(
+        <SessionsTab
+          sessions={[LIVE_SESSION, PAUSED_SESSION]}
+        />,
+      );
 
-    await waitFor(() => {
-      expect(screen.getByText("Transcript output for paused-1")).toBeInTheDocument();
-      expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    });
+      await waitFor(() => {
+        expect(screen.getByText("Transcript output for paused-1")).toBeInTheDocument();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      });
 
-    fireEvent.click(screen.getByText("#201: Live Terminal"));
+      fireEvent.click(screen.getByText("#201: Live Terminal"));
 
-    await waitFor(() => {
-      expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
-    });
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      await waitFor(() => {
+        expect(screen.getByText("Transcript output for live-1")).toBeInTheDocument();
+      });
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Element.prototype, "scrollIntoView", originalDescriptor);
+      } else {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      }
+    }
   });
 
   it("keeps session token accounting out of the sessions list UI", async () => {

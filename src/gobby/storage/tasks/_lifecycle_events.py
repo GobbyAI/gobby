@@ -36,9 +36,8 @@ class TaskLifecycleEventManager:
 
     def __init__(self, db: DatabaseProtocol):
         self.db = db
-        self._ensure_table()
 
-    def _ensure_table(self) -> None:
+    def ensure_table(self) -> None:
         """Create the table for focused tests before the canonical migration lands."""
         with self.db.transaction() as conn:
             conn.execute(
@@ -103,7 +102,6 @@ class TaskLifecycleEventManager:
         limit: int | None = None,
         newest_first: bool = False,
     ) -> list[TaskLifecycleEvent]:
-        params: tuple[object, ...]
         if newest_first:
             sql = """
                 SELECT *
@@ -118,10 +116,10 @@ class TaskLifecycleEventManager:
                  WHERE task_id = ?
                  ORDER BY id
             """
-        params = (task_id,)
+        params: tuple[object, ...] = (task_id,)
         if limit is not None:
             sql += " LIMIT ?"
-            params = (task_id, limit)
+            params = (*params, limit)
         return [TaskLifecycleEvent.from_row(row) for row in self.db.fetchall(sql, params)]
 
     def list_events(
@@ -168,9 +166,11 @@ def list_lifecycle_events(
     task_id: str,
     *,
     limit: int | None = None,
+    newest_first: bool = True,
 ) -> list[TaskLifecycleEvent]:
+    """List lifecycle events for a task. Wrapper defaults to newest_first=True."""
     return TaskLifecycleEventManager(db).list_lifecycle_events(
         task_id,
         limit=limit,
-        newest_first=True,
+        newest_first=newest_first,
     )

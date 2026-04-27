@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 HOOK_ID = "gobby-plan-snapshots-refresh"
 EXPECTED_CALLS = [

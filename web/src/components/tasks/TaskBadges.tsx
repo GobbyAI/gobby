@@ -112,9 +112,10 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 // =============================================================================
 
 export function PriorityBadge({ priority }: { priority: number }) {
-  const style = PRIORITY_STYLES[priority] || PRIORITY_STYLES[2];
+  const normalizedPriority = priority in PRIORITY_STYLES ? priority : 2;
+  const style = PRIORITY_STYLES[normalizedPriority];
   return (
-    <span className={`task-badge chip chip--priority-${chipToken(priority)}`}>
+    <span className={`task-badge chip chip--priority-${chipToken(normalizedPriority)}`}>
       {style.label}
     </span>
   );

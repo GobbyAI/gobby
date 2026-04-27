@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,7 +44,7 @@ def _index_names(db: LocalDatabase) -> set[str]:
     return {row["name"] for row in db.fetchall("SELECT name FROM sqlite_master WHERE type='index'")}
 
 
-def _task_column(db: LocalDatabase, name: str) -> dict:
+def _task_column(db: LocalDatabase, name: str) -> dict[str, Any]:
     row = db.fetchone("SELECT * FROM pragma_table_info('tasks') WHERE name = ?", (name,))
     assert row is not None
     return dict(row)

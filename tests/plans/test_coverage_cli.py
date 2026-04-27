@@ -88,7 +88,12 @@ def test_cli_help_lists_exact_ten_flags() -> None:
     }
     assert options == expected
     for required in ("--plan", "--plan-id", "--plan-hash", "--task-tree"):
-        assert f"{required} " in result.output and "[required]" in result.output
+        line = next(
+            (line for line in result.output.splitlines() if required in line),
+            None,
+        )
+        assert line is not None, f"Flag {required} not present in output"
+        assert "[required]" in line, f"Flag {required} missing [required] marker"
 
 
 @pytest.mark.parametrize(

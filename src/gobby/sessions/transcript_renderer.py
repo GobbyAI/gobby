@@ -483,6 +483,7 @@ def _find_protocol_protected_ranges(content: str) -> list[tuple[int, int]]:
 
 
 def _is_protected_protocol_index(index: int, ranges: list[tuple[int, int]]) -> bool:
+    # Assumes ranges are sorted by start (re.finditer yields matches in order).
     for start, end in ranges:
         if index < start:
             return False

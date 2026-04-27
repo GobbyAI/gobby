@@ -213,7 +213,7 @@ def _agent_selection_fields(
         return None, None, description
 
     assigned_agent = task_item.get("assigned_agent")
-    if assigned_agent:
+    if assigned_agent and str(assigned_agent) in _available_agent_names(agent_definitions):
         return str(assigned_agent), _additional_skills(task_item.get("additional_skills")), description
 
     selected_agent = _select_agent_from_registry(task_item, agent_definitions)

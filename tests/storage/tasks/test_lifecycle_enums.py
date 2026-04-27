@@ -10,6 +10,8 @@ import pytest
 
 from gobby.tasks.state_semantics import serialize_task_state
 
+pytestmark = pytest.mark.unit
+
 EXPECTED_LIFECYCLES = [
     "open",
     "plan_review",

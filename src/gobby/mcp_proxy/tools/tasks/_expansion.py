@@ -558,7 +558,6 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "plan_hash",
                 "root_task",
                 "project_id",
-                "task_tree",
             ],
         },
         func=run_expansion_qa_coverage,

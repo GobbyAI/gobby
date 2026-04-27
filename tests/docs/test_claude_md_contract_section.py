@@ -93,8 +93,10 @@ def test_plan_coverage_section_present() -> None:
 
 
 def test_canonical_regex_pinned_in_claude_md() -> None:
-    assert _first_regex_block(_section()) == CANONICAL_PLAN_HEADING_REGEX
-    assert _first_regex_block(_section()) == _parser_heading_pattern()
+    section = _section()
+    block = _first_regex_block(section)
+    assert block == CANONICAL_PLAN_HEADING_REGEX
+    assert block == _parser_heading_pattern()
 
 
 def test_table_row_decomposition_rule_documented() -> None:

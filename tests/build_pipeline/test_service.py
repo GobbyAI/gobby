@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
+if TYPE_CHECKING:
+    from gobby.build.service import BuildOptions, BuildResult
+
 pytestmark = pytest.mark.unit
 
 
-async def _build(input_ref: str, opts: object, db: object, project_id: str) -> object:
+async def _build(input_ref: str, opts: object, db: object, project_id: str) -> BuildResult:
     from gobby.build.service import build
 
     return await build(input_ref, opts, db=db, project_id=project_id)
 
 
-def _options(**overrides: object) -> object:
+def _options(**overrides: object) -> BuildOptions:
     from gobby.build.service import BuildOptions
 
     values = {

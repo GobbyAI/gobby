@@ -142,14 +142,20 @@ class LocalTaskManager:
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
         self._searcher: TaskFTS5Searcher | None = None
+        self._artifact_manager: TaskArtifactManager | None = None
+        self._lifecycle_event_manager: TaskLifecycleEventManager | None = None
 
     @property
     def artifacts(self) -> TaskArtifactManager:
-        return TaskArtifactManager(self.db)
+        if self._artifact_manager is None:
+            self._artifact_manager = TaskArtifactManager(self.db)
+        return self._artifact_manager
 
     @property
     def lifecycle_events(self) -> TaskLifecycleEventManager:
-        return TaskLifecycleEventManager(self.db)
+        if self._lifecycle_event_manager is None:
+            self._lifecycle_event_manager = TaskLifecycleEventManager(self.db)
+        return self._lifecycle_event_manager
 
     def add_change_listener(self, listener: Callable[[], Any]) -> None:
         """Add a listener to be called when tasks change."""

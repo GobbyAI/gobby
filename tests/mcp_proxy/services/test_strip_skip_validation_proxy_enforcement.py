@@ -60,6 +60,8 @@ class _StubService:
         self._hook_manager = hook_manager
 
     def _evaluate(self, event: HookEvent) -> HookResponse:
+        # Production calls workflow_handler.evaluate via asyncio.to_thread,
+        # so the stub is sync and can safely use asyncio.run for the async engine.
         return asyncio.run(
             self._engine.evaluate(
                 event=event,

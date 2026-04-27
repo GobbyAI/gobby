@@ -149,6 +149,8 @@ def _evaluate_with_a4(
 
     source_type = getattr(coverage_module, "TaskTreeSource", None)
     task_tree_value = getattr(source_type, task_tree, task_tree) if source_type else task_tree
+    # Aliases plan/plan_path and root_task/root_task_ref so _call_with_supported_kwargs
+    # can route to either parameter spelling depending on the evaluate signature.
     kwargs = {
         "db": db,
         "plan_path": plan_path,
