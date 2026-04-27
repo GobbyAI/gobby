@@ -1995,6 +1995,43 @@ manifests or un-paired `.grandfathered` entries.
 - `.gobby/plans/.grandfathered` (create if absent) — initially
   empty (Epic 1 does not grandfather any plan; A7 retrofit makes
   #12725 conformant).
+- `.gobby/plans/.legacy-classification.yaml` (create if absent) —
+  committed self-describing snapshot for every `plan_kind: legacy`
+  index entry, recording its root-task open/closed state and the
+  retrofit/non-retrofit disposition. Required so legacy
+  classification cannot silently exempt active plan files from
+  the manifest gate (closes the F1/Round 5 hole). Format:
+
+  ```yaml
+  # Self-describing snapshot for A9.13 verification under
+  # GOBBY_LIVE_DB=0 (A9.9). One row per plan_kind: legacy entry
+  # in .gobby/plans/index.yaml. The pre-commit hook in A9.13
+  # regenerates this file from the live task DB so committed
+  # entries always reflect the snapshot author's verified state.
+  generated_at: "<ISO-8601 UTC at last edit>"
+  generator: "gobby plan legacy-classification-refresh"  # CLI in A4
+  entries:
+    - plan_id: task-12068-skillsmp-install-rewrite
+      root_task_ref: "12068"
+      root_open: true                # snapshot of live DB at edit time
+      legacy_reason: "<prose: why this plan is classified legacy>"
+      retrofit_target: "#NNNN"       # required iff root_open: true
+      # OR
+      non_retrofit_acknowledgment: "#NNNN"
+    - plan_id: task-12725-lifecycle-dispatch
+      root_task_ref: "12725"
+      root_open: false               # closed root: no retrofit_target needed
+      legacy_reason: "Epic 0 — merged before contract; A7 retrofit handles its conformance separately."
+  ```
+
+  Schema requirements: every `plan_kind: legacy` entry in
+  `.gobby/plans/index.yaml` MUST have a matching row here.
+  When `root_open: true`, the row MUST carry exactly one of
+  `retrofit_target` or `non_retrofit_acknowledgment` pointing at
+  an open task. When `root_open: false`, neither field is
+  required (a closed root is auto-exempt). `legacy_reason` is
+  always required and must be non-empty prose.
+
 - `.gobby/plans/.grandfathered-task-state.yaml` (create if absent) —
   committed self-describing snapshot of every `# remove-by:` task
   ref's open/closed state, refreshed when `.grandfathered` is
@@ -2208,6 +2245,9 @@ the assertions that file makes):**
 - `tests/plans/test_plan_coverage_ci.py::test_legacy_plans_have_no_manifests`.
 - `tests/plans/test_plan_coverage_ci.py::test_parse_plan_dispatch_by_plan_kind`.
 - `tests/plans/test_plan_coverage_ci.py::test_every_active_implementation_plan_has_manifest`.
+- `tests/plans/test_plan_coverage_ci.py::test_every_legacy_entry_has_classification_row`.
+- `tests/plans/test_plan_coverage_ci.py::test_open_root_legacy_requires_retrofit_or_acknowledgment`.
+- `tests/plans/test_plan_coverage_ci.py::test_legacy_classification_snapshot_matches_live_db_when_available`.
 
 **Acceptance:**
 
@@ -2293,6 +2333,23 @@ the assertions that file makes):**
   path. This is the reciprocal of A9.11 — together they enforce
   a strict bijection between the on-disk plan-file set and the
   indexed entry set, with no silent additions on either side.
+- A9.13 — every `plan_kind: legacy` entry in
+  `.gobby/plans/index.yaml` has a matching row in
+  `.gobby/plans/.legacy-classification.yaml`; the row carries
+  `root_open` (snapshot), non-empty `legacy_reason`, and — when
+  `root_open: true` — exactly one of `retrofit_target` or
+  `non_retrofit_acknowledgment` referencing an open task. CI
+  fails on: missing row, missing `legacy_reason`, open root
+  without retrofit/non-retrofit field, or both fields present.
+  When the live DB is available, A9 also asserts the snapshot's
+  `root_open` matches live state and fails on drift. file:
+  `.gobby/plans/.legacy-classification.yaml`. tests:
+  `tests/plans/test_plan_coverage_ci.py::test_every_legacy_entry_has_classification_row`,
+  `tests/plans/test_plan_coverage_ci.py::test_open_root_legacy_requires_retrofit_or_acknowledgment`,
+  `tests/plans/test_plan_coverage_ci.py::test_legacy_classification_snapshot_matches_live_db_when_available`.
+  This closes the Round 5 hole where active plan files could be
+  silently exempted from the manifest gate by classification
+  alone.
 
 ## A10 Contract documentation
 
@@ -2313,6 +2370,15 @@ discoverable via these four places).
 - `src/gobby/install/shared/skills/plan-draft/SKILL.md` — already
   modified in A1 (grammar, kind enum, acceptance shape, deferral,
   covers).
+- `src/gobby/install/shared/skills/expand/SKILL.md` — documents
+  the expansion-side obligations under the Plan-Coverage
+  Contract: a `.coverage-ledger.yaml` companion file MUST exist
+  before expansion proceeds, leaves MUST emit structured
+  `covers:<plan-id>:<section-id>:<item-id>` labels, expansion-qa
+  is the gate (A5), and free-form `plan-ref:` labels are not
+  honored. Strategy A10 explicitly names the expansion skill
+  README as a contract surface; this is the canonical authoring
+  surface for `/gobby expand` consumers.
 - `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` —
   already modified in A5; A10 confirms the contract reference is
   present in the agent's `instructions:` block. (No expansion-qa
@@ -2359,17 +2425,20 @@ or by reference:
   containing all eight bullets above (verbatim or by reference
   to plan-draft / docs/contracts). file: `CLAUDE.md`.
 - A10.2 — `src/gobby/install/shared/skills/plan/SKILL.md`,
-  `plan-draft/SKILL.md`, `plan-review/SKILL.md`, and the
-  `expansion-qa` agent YAML each contain or link to the contract
-  surface relevant to their authoring/review role. files:
+  `plan-draft/SKILL.md`, `plan-review/SKILL.md`,
+  `expand/SKILL.md`, and the `expansion-qa` agent YAML each
+  contain or link to the contract surface relevant to their
+  authoring/review/expansion role. files:
   `src/gobby/install/shared/skills/plan/SKILL.md`,
   `src/gobby/install/shared/skills/plan-draft/SKILL.md`,
   `src/gobby/install/shared/skills/plan-review/SKILL.md`,
+  `src/gobby/install/shared/skills/expand/SKILL.md`,
   `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
 - A10.3 — `docs/contracts/plan-coverage.md` exists as a
-  contract-reference page linking back to the four skill files,
-  `CLAUDE.md`, and the canonical regex / library / CLI / evidence
-  surfaces. file: `docs/contracts/plan-coverage.md`.
+  contract-reference page linking back to the four skill files
+  (plan, plan-draft, plan-review, expand), the expansion-qa
+  agent YAML, `CLAUDE.md`, and the canonical regex / library /
+  CLI / evidence surfaces. file: `docs/contracts/plan-coverage.md`.
 - A10.4 — documentation explicitly states that free-form
   `plan-ref:` labels are not honored; only structured
   `covers:<plan-id>:<section-id>:<item-id>` labels are valid
@@ -2399,6 +2468,17 @@ or by reference:
   asserts the canonical regex literal in `CLAUDE.md` matches the
   `gobby.plans.parser.PLAN_HEADING_REGEX.pattern` string. test:
   `tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md`.
+- A10.9 — `src/gobby/install/shared/skills/expand/SKILL.md`
+  documents the expansion-side contract obligations: a
+  `.coverage-ledger.yaml` companion MUST exist before expansion;
+  leaves MUST emit structured
+  `covers:<plan-id>:<section-id>:<item-id>` labels;
+  expansion-qa is the mechanical gate (A5); free-form
+  `plan-ref:` labels are not honored. Test:
+  `tests/docs/test_expand_skill_contract_section.py::test_expand_skill_documents_coverage_contract`
+  asserts the four bullets above are present (verbatim or by
+  link to `docs/contracts/plan-coverage.md`). file:
+  `src/gobby/install/shared/skills/expand/SKILL.md`.
 
 ## A11 Out of scope
 

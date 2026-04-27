@@ -12,7 +12,7 @@
 
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: task-13175-plan-coverage-contract
-plan_hash: "e7366a8bfac47e8aa141f5b80877ec571bbb73485fbaf6b0f42e94a995a32ca5"
+plan_hash: "ea1047cfba67bece5d29c926cc81d0160386a4b633ef13722be893d6952776bf"
 root_task_ref: "13175"
 
 sections:
@@ -1085,6 +1085,33 @@ sections:
           Round 4 addition: closes F3 by adding the reciprocal of
           A9.11. Prevents stale index rows for nonexistent plan
           files (which the prior 19-entry / 16-legacy block had).
+      A9.13:
+        expected_leaves:
+          - title: "CI verifies every legacy index entry against committed legacy-classification snapshot with retrofit/non-retrofit disposition for open roots"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              .gobby/plans/.legacy-classification.yaml exists with
+              one row per plan_kind: legacy entry in
+              .gobby/plans/index.yaml. Each row carries plan_id,
+              root_task_ref, root_open (snapshot), non-empty
+              legacy_reason, and — when root_open: true — exactly
+              one of retrofit_target or non_retrofit_acknowledgment
+              referencing an open task. CI tests:
+              tests/plans/test_plan_coverage_ci.py::test_every_legacy_entry_has_classification_row,
+              ::test_open_root_legacy_requires_retrofit_or_acknowledgment,
+              ::test_legacy_classification_snapshot_matches_live_db_when_available
+              all pass; CI fails on missing row, missing
+              legacy_reason, open root without retrofit/non-retrofit
+              field, both fields present, or live-DB drift. file:
+              .gobby/plans/.legacy-classification.yaml.
+        notes: >-
+          Round 5 addition: closes F1. Prior 10-plan inventory let
+          active plan files (12068, 12746, 12761, 12898, 12902 —
+          all open epics) bypass manifest gate by being indexed
+          legacy/archived. The classification snapshot makes the
+          legacy disposition self-describing AND traceable to root
+          task state, with explicit retrofit/non-retrofit
+          accountability for open-rooted entries.
 
   A10:
     acceptance_items:
@@ -1100,23 +1127,30 @@ sections:
               rules).
       A10.2:
         expected_leaves:
-          - title: "Update plan/plan-draft/plan-review SKILL.md files plus expansion-qa.yaml instructions"
+          - title: "Update plan/plan-draft/plan-review/expand SKILL.md files plus expansion-qa.yaml instructions"
             owner_agent: backend-developer
             validation_criteria_summary: >-
-              the three SKILL.md files at
-              src/gobby/install/shared/skills/{plan,plan-draft,plan-review}/SKILL.md
+              the four SKILL.md files at
+              src/gobby/install/shared/skills/{plan,plan-draft,plan-review,expand}/SKILL.md
               and the instructions block in
               src/gobby/install/shared/workflows/agents/expansion-qa.yaml
               contain or link to the contract surface relevant to
-              their role. (No expansion-qa SKILL.md exists.)
+              their role. (No expansion-qa SKILL.md exists; the
+              agent YAML is its documentation surface.)
+        notes: >-
+          Round 5 addition: F2 added expand/SKILL.md to the contract
+          surface set; strategy A10 explicitly names the expansion
+          skill README, but prior ledger entry omitted it.
       A10.3:
         expected_leaves:
           - title: "Author docs/contracts/plan-coverage.md reference page"
             owner_agent: backend-developer
             validation_criteria_summary: >-
               docs/contracts/plan-coverage.md exists and links back
-              to the four skill files, CLAUDE.md, and the canonical
-              regex / library / CLI / evidence surfaces.
+              to the four skill files (plan, plan-draft, plan-review,
+              expand), the expansion-qa agent YAML, CLAUDE.md, and
+              the canonical regex / library / CLI / evidence
+              surfaces.
       A10.4:
         expected_leaves:
           - title: "Document deprecation of free-form plan-ref labels"
@@ -1156,3 +1190,24 @@ sections:
             validation_criteria_summary: >-
               tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md
               passes.
+      A10.9:
+        expected_leaves:
+          - title: "Document expansion-side coverage contract obligations in expand SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/skills/expand/SKILL.md
+              documents the expansion-side contract obligations:
+              (1) a .coverage-ledger.yaml companion MUST exist
+              before expansion proceeds; (2) leaves MUST emit
+              structured covers:<plan-id>:<section-id>:<item-id>
+              labels; (3) expansion-qa is the mechanical gate (A5);
+              (4) free-form plan-ref: labels are not honored. test:
+              tests/docs/test_expand_skill_contract_section.py::test_expand_skill_documents_coverage_contract
+              asserts the four bullets are present (verbatim or by
+              link to docs/contracts/plan-coverage.md). file:
+              src/gobby/install/shared/skills/expand/SKILL.md.
+        notes: >-
+          Round 5 addition: F2 closure. Strategy A10 explicitly
+          names the expansion skill README as a contract surface;
+          prior plan/ledger had only plan/plan-draft/plan-review
+          and the expansion-qa YAML.
