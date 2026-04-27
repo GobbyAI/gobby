@@ -15,7 +15,7 @@
   height: 100%;
   cursor: pointer;
   transition: background 0.1s;
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--font-size-base);
 }
 
 .tree-node:hover {
@@ -47,13 +47,14 @@
 
 .tree-node-ref {
   font-family: inherit;
-  font-size: calc(var(--font-size-base) * 0.7);
+  font-size: inherit;
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .tree-node-title {
   flex: 1;
+  font-size: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
