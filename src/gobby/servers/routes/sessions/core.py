@@ -217,6 +217,9 @@ def register_core_routes(
 
             machine_id = get_machine_id() or "unknown-machine"
             model = body.model if isinstance(body.model, str) and body.model else None
+            from gobby.llm.local_detection import is_local_agent_definition
+
+            is_local = is_local_agent_definition(provider, model)
             chat_mode = (
                 body.chat_mode if isinstance(body.chat_mode, str) and body.chat_mode else None
             )
@@ -234,6 +237,7 @@ def register_core_routes(
                 source=provider,
                 title=body.title,
                 model=model,
+                is_local=is_local,
                 chat_mode=chat_mode,
                 sandbox_enabled=sandbox_enabled,
                 sandbox_policy_hash=sandbox_policy_hash,

@@ -85,8 +85,8 @@ def test_retirement_migration_disables_installed_gobby_pipeline_rows(tmp_path: P
 
     applied = run_migrations(db)
 
-    assert applied == 2
-    assert get_current_version(db) == 222
+    assert applied == 3
+    assert get_current_version(db) == 223
 
     for name in RETIRED_PIPELINES:
         row = manager.get_by_name(name)
@@ -123,8 +123,8 @@ def test_retirement_migration_disables_installed_gobby_agent_rows(tmp_path: Path
 
     applied = run_migrations(db)
 
-    assert applied == 2
-    assert get_current_version(db) == 222
+    assert applied == 3
+    assert get_current_version(db) == 223
 
     for name in RETIRED_AGENTS:
         row = manager.get_by_name(name)

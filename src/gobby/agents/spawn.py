@@ -92,6 +92,8 @@ def prepare_terminal_spawn(
     title: str | None = None,
     git_branch: str | None = None,
     prompt: str | None = None,
+    model: str | None = None,
+    is_local: bool = False,
     max_agent_depth: int = 5,
     agent_run_id: str | None = None,
     task_id: str | None = None,
@@ -124,6 +126,8 @@ def prepare_terminal_spawn(
         title: Optional session title
         git_branch: Optional git branch
         prompt: Optional initial prompt
+        model: Optional model override.
+        is_local: Whether the spawned runtime uses a local model endpoint.
         max_agent_depth: Maximum agent depth
         task_id: Optional task ID to link to the agent
         claimed_session_id: Session that owned the task when the run was created.
@@ -148,6 +152,7 @@ def prepare_terminal_spawn(
         workflow_name=workflow_name,
         title=title,
         git_branch=git_branch,
+        is_local=is_local,
         sandbox_enabled=sandbox_enabled,
     )
 
@@ -182,6 +187,8 @@ def prepare_terminal_spawn(
         prompt=prompt or "",
         workflow_name=workflow_name,
         agent_name=agent_name,
+        model=model,
+        is_local=is_local,
         child_session_id=child_session.id,
         claimed_session_id=claimed_session_id,
         run_id=agent_run_id,

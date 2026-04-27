@@ -469,6 +469,7 @@ class TestCreateWebChatSession:
             source="claude",
             title="Web Chat",
             model="sonnet",
+            is_local=False,
             chat_mode="plan",
             sandbox_enabled=True,
             sandbox_policy_hash="hash-123",

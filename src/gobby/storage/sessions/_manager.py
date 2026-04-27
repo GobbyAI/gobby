@@ -101,6 +101,7 @@ class SessionManager(
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         agent_depth: int = 0,
+        is_local: bool = False,
         sandbox_enabled: bool | None = None,
     ) -> str:
         """
@@ -134,6 +135,7 @@ class SessionManager(
                 terminal_context=terminal_context,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
+                is_local=is_local,
                 sandbox_enabled=sandbox_enabled,
             )
 
@@ -154,6 +156,7 @@ class SessionManager(
                     "git_branch": git_branch,
                     "workflow_name": workflow_name,
                     "agent_depth": agent_depth,
+                    "is_local": is_local,
                     "sandbox_enabled": sandbox_enabled,
                 }
 

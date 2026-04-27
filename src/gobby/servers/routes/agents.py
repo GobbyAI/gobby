@@ -181,8 +181,12 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         from gobby.workflows.template_hashes import get_template_hash_cache
 
         cache = get_template_hash_cache()
+        from gobby.llm.local_detection import is_local_agent_definition
+
+        definition = body.model_dump(exclude_none=True)
+        definition["is_local"] = is_local_agent_definition(body.provider, body.model)
         return {
-            "definition": body.model_dump(exclude_none=True),
+            "definition": definition,
             "source": row.source,
             "enabled": row.enabled,
             "db_id": row.id,

@@ -61,6 +61,7 @@ class SpawnRequest:
     )
     machine_id: str | None = None
     model: str | None = None  # Model override (e.g., gemini-3-pro-preview)
+    is_local: bool = False
     api_base: str | None = None  # API base URL for local model endpoints
     api_token: str | None = None  # Auth token for the endpoint
     requested_reasoning_effort: str | None = None
@@ -154,6 +155,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         claimed_session_id=request.claimed_session_id,
         title=request.title,
         agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
         sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
         requested_reasoning_effort=request.requested_reasoning_effort,
@@ -281,6 +284,8 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         claimed_session_id=request.claimed_session_id,
         title=request.title,
         agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
         sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
         requested_reasoning_effort=request.requested_reasoning_effort,
@@ -402,6 +407,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         claimed_session_id=request.claimed_session_id,
         title=request.title,
         agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
         sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
         requested_reasoning_effort=request.requested_reasoning_effort,
@@ -515,6 +522,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         claimed_session_id=request.claimed_session_id,
         title=request.title,
         agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
         sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
         requested_reasoning_effort=request.requested_reasoning_effort,

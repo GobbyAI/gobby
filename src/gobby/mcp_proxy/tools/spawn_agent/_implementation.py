@@ -125,6 +125,9 @@ async def spawn_agent_impl(
     effective_model = model
     if effective_model is None and agent_body:
         effective_model = agent_body.model
+    from gobby.llm.local_detection import is_local_agent_definition
+
+    is_local_run = is_local_agent_definition(effective_provider, effective_model)
 
     requested_reasoning_effort = reasoning_effort
     if requested_reasoning_effort is None and agent_body:
@@ -419,6 +422,7 @@ async def spawn_agent_impl(
         session_manager=runner.child_session_manager,
         machine_id=get_machine_id() or "unknown",
         model=effective_model,
+        is_local=is_local_run,
         api_base=effective_api_base,
         api_token=effective_api_token,
         requested_reasoning_effort=reasoning.requested_effort,

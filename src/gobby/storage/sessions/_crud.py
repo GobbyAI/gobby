@@ -51,6 +51,7 @@ class _SessionCRUDHost(Protocol):
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         session_type: str = "terminal",
+        is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
     ) -> Session: ...
@@ -72,6 +73,7 @@ class _SessionCRUDMixin:
         terminal_context: dict[str, Any] | None = None,
         workflow_name: str | None = None,
         session_type: str = "terminal",
+        is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
     ) -> Session:
@@ -141,6 +143,7 @@ class _SessionCRUDMixin:
                         parent_session_id = COALESCE(?, parent_session_id),
                         terminal_context = COALESCE(?, terminal_context),
                         workflow_name = COALESCE(?, workflow_name),
+                        is_local = CASE WHEN ? THEN 1 ELSE is_local END,
                         sandbox_enabled = COALESCE(?, sandbox_enabled),
                         sandbox_policy_hash = COALESCE(?, sandbox_policy_hash),
                         status = 'active',
@@ -154,6 +157,7 @@ class _SessionCRUDMixin:
                         parent_session_id,
                         terminal_context_json,
                         workflow_name,
+                        int(is_local),
                         sandbox_enabled,
                         sandbox_policy_hash,
                         now,
@@ -181,11 +185,11 @@ class _SessionCRUDMixin:
                     id, external_id, machine_id, source, project_id, title, title_source,
                     transcript_path, git_branch, parent_session_id,
                     agent_depth, spawned_by_agent_id, terminal_context,
-                    workflow_name, session_type, sandbox_enabled, sandbox_policy_hash,
+                    workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
                     status, created_at, updated_at, seq_num,
                     had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0, 0, 0, NULL)
                 """,
                 (
                     session_id,
@@ -202,6 +206,7 @@ class _SessionCRUDMixin:
                     terminal_context_json,
                     workflow_name,
                     session_type,
+                    int(is_local),
                     None if sandbox_enabled is None else int(bool(sandbox_enabled)),
                     sandbox_policy_hash,
                     now,
@@ -225,6 +230,7 @@ class _SessionCRUDMixin:
         source: str,
         title: str | None = None,
         model: str | None = None,
+        is_local: bool = False,
         chat_mode: str | None = None,
         sandbox_enabled: bool,
         sandbox_policy_hash: str,
@@ -249,6 +255,7 @@ class _SessionCRUDMixin:
                 project_id=project_id,
                 title=title,
                 session_type="web_chat",
+                is_local=is_local,
                 sandbox_enabled=sandbox_enabled,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
@@ -260,11 +267,12 @@ class _SessionCRUDMixin:
                 """
                 UPDATE sessions
                 SET model = COALESCE(?, model),
+                    is_local = CASE WHEN ? THEN 1 ELSE is_local END,
                     chat_mode = COALESCE(?, chat_mode),
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (model, chat_mode, now, session.id),
+                (model, int(is_local), chat_mode, now, session.id),
             )
             updated = self.get(session.id)
             if updated is None:

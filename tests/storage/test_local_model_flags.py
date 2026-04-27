@@ -59,7 +59,12 @@ def test_session_manager_persists_is_local_flag(tmp_path) -> None:
         title="Local session",
         model="qwen2.5-coder",
         is_local=True,
+        sandbox_enabled=False,
+        sandbox_policy_hash="",
     )
 
-    assert session["is_local"] is True
-    assert SessionManager(db).get(session["id"]).is_local is True
+    assert session.is_local is True
+    assert session.to_dict()["is_local"] is True
+    reloaded = SessionManager(db).get(session.id)
+    assert reloaded is not None
+    assert reloaded.is_local is True

@@ -48,6 +48,7 @@ class Session:
     usage_cache_read_tokens: int = 0
     context_window: int | None = None
     model: str | None = None  # LLM model used (e.g., "claude-3-5-sonnet-20241022")
+    is_local: bool = False
     # Terminal context (JSON blob with tty, parent_pid, tmux_pane, term_program)
     terminal_context: dict[str, Any] | None = None
     # Global sequence number
@@ -105,6 +106,7 @@ class Session:
             usage_cache_read_tokens=row["usage_cache_read_tokens"] or 0,
             context_window=row["context_window"] if "context_window" in row.keys() else None,
             model=row["model"] if "model" in row.keys() else None,
+            is_local=bool(row["is_local"]) if "is_local" in row.keys() else False,
             terminal_context=cls._parse_terminal_context(row["terminal_context"]),
             seq_num=row["seq_num"] if "seq_num" in row.keys() else None,
             had_edits=bool(row["had_edits"]) if "had_edits" in row.keys() else False,
@@ -224,6 +226,7 @@ class Session:
             "usage_cache_read_tokens": self.usage_cache_read_tokens,
             "context_window": self.context_window,
             "model": self.model,
+            "is_local": self.is_local,
             "terminal_context": self.terminal_context,
             "had_edits": self.had_edits,
             "digest_markdown": self.digest_markdown,
@@ -257,6 +260,7 @@ class Session:
             "status": self.status,
             "git_branch": self.git_branch,
             "model": self.model,
+            "is_local": self.is_local,
             "had_edits": self.had_edits,
             "message_count": self.message_count,
             "turn_count": self.turn_count,

@@ -44,6 +44,10 @@ def _task_columns(db: LocalDatabase) -> set[str]:
     return {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
 
 
+def _table_columns(db: LocalDatabase, table_name: str) -> set[str]:
+    return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table_name})")}  # nosec B608
+
+
 def _add_task_column_if_missing(
     db: LocalDatabase,
     existing_columns: set[str],
@@ -167,6 +171,40 @@ def _add_lifecycle_dispatch_schema(db: LocalDatabase) -> None:
     )
 
 
+def _add_is_local_flags(db: LocalDatabase) -> None:
+    """Add explicit local-model flags and backfill legacy local rows."""
+    agent_columns = _table_columns(db, "agent_runs")
+    if "is_local" not in agent_columns:
+        db.execute("ALTER TABLE agent_runs ADD COLUMN is_local INTEGER NOT NULL DEFAULT 0")
+
+    session_columns = _table_columns(db, "sessions")
+    if "is_local" not in session_columns:
+        db.execute("ALTER TABLE sessions ADD COLUMN is_local INTEGER NOT NULL DEFAULT 0")
+
+    db.execute(
+        """
+        UPDATE agent_runs
+        SET is_local = 1
+        WHERE is_local = 0
+          AND (
+            lower(COALESCE(provider, '')) IN ('lmstudio', 'ollama', 'llamacpp', 'local')
+            OR lower(COALESCE(model, '')) LIKE '%gpt-oss%'
+          )
+        """
+    )
+    db.execute(
+        """
+        UPDATE sessions
+        SET is_local = 1
+        WHERE is_local = 0
+          AND (
+            lower(COALESCE(source, '')) IN ('lmstudio', 'ollama', 'llamacpp', 'local')
+            OR lower(COALESCE(model, '')) LIKE '%gpt-oss%'
+          )
+        """
+    )
+
+
 # Historical SQLite migrations through v219 are folded into baseline_schema.sql.
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     (
@@ -185,5 +223,10 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         222,
         "Add lifecycle dispatch task schema",
         _add_lifecycle_dispatch_schema,
+    ),
+    (
+        223,
+        "Add local-model flags to sessions and agent runs",
+        _add_is_local_flags,
     ),
 ]

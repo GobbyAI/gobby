@@ -265,12 +265,16 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
                 sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
 
+            from gobby.llm.local_detection import is_local_agent_definition
+
+            source = req.provider or "claude"
             conversation = session_manager.create_web_chat_session(
                 machine_id=get_machine_id() or "web",
                 project_id=effective_project_id,
-                source=req.provider or "claude",
+                source=source,
                 title=task.title,
                 model=req.model,
+                is_local=is_local_agent_definition(source, req.model),
                 sandbox_enabled=sandbox_enabled,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
