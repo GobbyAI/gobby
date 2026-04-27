@@ -77,9 +77,9 @@ function getSessionTypeBadge(sessionType: string | undefined): {
   className: string;
 } {
   if (sessionType === "web_chat") {
-    return { label: "web", className: "session-kind-badge--web" };
+    return { label: "web", className: "chip--web" };
   }
-  return { label: "tmux", className: "session-kind-badge--tmux" };
+  return { label: "tmux", className: "chip--tmux" };
 }
 
 function getAgentBadge(agentRunId: string | null | undefined): {
@@ -87,7 +87,7 @@ function getAgentBadge(agentRunId: string | null | undefined): {
   className: string;
 } | null {
   if (!agentRunId) return null;
-  return { label: "auto", className: "session-kind-badge--auto" };
+  return { label: "auto", className: "chip--auto" };
 }
 
 function getSandboxBadge(sandboxEnabled: boolean): {
@@ -95,7 +95,7 @@ function getSandboxBadge(sandboxEnabled: boolean): {
   className: string;
 } | null {
   if (!sandboxEnabled) return null;
-  return { label: "SB", className: "session-kind-badge--sandbox" };
+  return { label: "SB", className: "chip--sandbox" };
 }
 
 function renderBadges(entry: WatchingSessionEntry) {
@@ -121,7 +121,7 @@ function renderBadges(entry: WatchingSessionEntry) {
       {badges.map((badge) => (
         <span
           key={`${badge.className}:${badge.label}`}
-          className={`session-kind-badge ${badge.className}`}
+          className={`chip ${badge.className}`}
         >
           {badge.label}
         </span>

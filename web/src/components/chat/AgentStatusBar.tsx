@@ -36,10 +36,10 @@ function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType'])
   className: string
 } | null {
   if (sessionType === 'web_chat') {
-    return { label: 'WEB', className: 'session-kind-badge--web' }
+    return { label: 'WEB', className: 'chip--web' }
   }
   if (sessionType === 'terminal') {
-    return { label: 'TMUX', className: 'session-kind-badge--tmux' }
+    return { label: 'TMUX', className: 'chip--tmux' }
   }
 
   return null
@@ -125,7 +125,7 @@ export function AgentStatusBar({
           <div className="chat-session-status">
             <span className="chat-session-status__state">{stateText}</span>
             {sessionBadge ? (
-              <span className={`session-kind-badge ${sessionBadge.className}`}>
+              <span className={`chip ${sessionBadge.className}`}>
                 {sessionBadge.label}
               </span>
             ) : null}
