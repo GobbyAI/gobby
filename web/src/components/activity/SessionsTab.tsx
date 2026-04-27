@@ -516,10 +516,10 @@ export const SessionsTab = memo(function SessionsTab({
     if (contentMode === "transcript") {
       const messagesEnd = messagesEndRef.current;
       if (messagesEnd && typeof messagesEnd.scrollIntoView === "function") {
-        messagesEnd.scrollIntoView({ behavior: "smooth" });
+        messagesEnd.scrollIntoView({ behavior: "auto" });
       }
     }
-  }, [chatMessages.length, contentMode]);
+  }, [chatMessages.length, contentMode, selectedSessionId]);
 
   const handleSelect = useCallback((id: string) => {
     selectionClearedRef.current = false;
@@ -661,7 +661,7 @@ export const SessionsTab = memo(function SessionsTab({
           onChange={(event) =>
             setStatusFilter(event.target.value as SessionStatusFilter)
           }
-          className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none"
+          className="rounded-md border border-border bg-accent px-2 py-1.5 text-sm text-accent-foreground outline-none"
         >
           <option value="live">Live</option>
           <option value="expired">Expired</option>
