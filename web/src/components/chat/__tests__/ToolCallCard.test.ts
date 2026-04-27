@@ -293,5 +293,45 @@ describe('ToolCallCards rendering', () => {
     expect(jsonBlock as HTMLElement).toHaveClass('whitespace-pre-wrap')
     expect(jsonBlock as HTMLElement).toHaveClass('break-words')
     expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-x-auto')
+    expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-y-auto')
+    expect((jsonBlock as HTMLElement).querySelector('code')).not.toBeNull()
+    expect((jsonBlock as HTMLElement).querySelector('span[style]')).not.toBeNull()
+    expect((jsonBlock as HTMLElement).firstElementChild).toHaveStyle({
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    })
+  })
+
+  it('keeps JSON results syntax-highlighted while wrapping long output', () => {
+    const call = makeCall({
+      id: 'json-result-wrap',
+      tool_name: 'CustomTool',
+      status: 'completed',
+      result: {
+        content: {
+          url:
+            'https://example.test/a/very/long/result/path/that/should/wrap/instead/of/forcing/a/horizontal/scrollbar?with=query-values-and-more-values',
+        },
+        content_type: 'json',
+        truncated: false,
+      },
+    })
+
+    render(createElement(ToolCallCards, { toolCalls: [call] }))
+
+    const resultLabel = screen.getByText('Result')
+    const jsonBlock = resultLabel.nextElementSibling
+
+    expect(jsonBlock).not.toBeNull()
+    expect(jsonBlock as HTMLElement).toHaveClass('whitespace-pre-wrap')
+    expect(jsonBlock as HTMLElement).toHaveClass('break-words')
+    expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-x-auto')
+    expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-y-auto')
+    expect((jsonBlock as HTMLElement).querySelector('code')).not.toBeNull()
+    expect((jsonBlock as HTMLElement).querySelector('span[style]')).not.toBeNull()
+    expect((jsonBlock as HTMLElement).firstElementChild).toHaveStyle({
+      overflowY: 'auto',
+      overflowX: 'hidden',
+    })
   })
 })
