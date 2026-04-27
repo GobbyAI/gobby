@@ -3,6 +3,15 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { SessionsTab } from '../SessionsTab'
 import type { GobbySession } from '../../../types/sessions'
 
+vi.mock('../../../hooks/useSessionDetail', () => ({
+  useSessionDetail: () => ({
+    session: null,
+    messages: [],
+    isLoading: false,
+    transcriptStatus: null,
+  }),
+}))
+
 type LocalSession = GobbySession & {
   is_local?: boolean | null
 }
@@ -81,6 +90,15 @@ describe('SessionsTab Phase 1 chip contract', () => {
             is_local: true,
           }),
           makeSession({
+            id: 'legacy-local-session',
+            ref: '#303',
+            title: 'Legacy Local Session',
+            seq_num: 303,
+            source: 'lmstudio',
+            model: 'qwen2.5-coder',
+            is_local: null,
+          }),
+          makeSession({
             id: 'cloud-session',
             ref: '#302',
             title: 'Cloud Session',
@@ -93,8 +111,15 @@ describe('SessionsTab Phase 1 chip contract', () => {
 
     await waitFor(() => expect(screen.getByText('#301: Local Session')).toBeInTheDocument())
 
-    const localBadge = screen.getByText('LOCAL')
+    const localBadges = screen.getAllByText('LOCAL')
+    expect(localBadges).toHaveLength(2)
+    const localBadge = localBadges[0]
     expect(localBadge).toHaveClass('chip', 'chip--local')
-    expect(screen.getByText('#302: Cloud Session').parentElement).not.toHaveTextContent('LOCAL')
+    expect(
+      screen.getByText('#303: Legacy Local Session').closest('.session-entry')?.textContent,
+    ).toContain('LOCAL')
+    expect(
+      screen.getByText('#302: Cloud Session').closest('.session-entry')?.textContent,
+    ).not.toContain('LOCAL')
   })
 })

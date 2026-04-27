@@ -26,6 +26,7 @@ export interface GobbySession {
   agent_depth: number;
   chat_mode: string | null;
   agent_run_id: string | null;
+  is_local?: boolean | null;
   workflow_name?: string | null;
   parent_session_id: string | null;
   session_type: string;

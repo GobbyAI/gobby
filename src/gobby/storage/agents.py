@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from gobby.llm.local_detection import is_local_legacy_fallback
 from gobby.storage.database import DatabaseProtocol
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,13 @@ class AgentRun:
     @classmethod
     def from_row(cls, row: Any) -> AgentRun:
         """Create AgentRun from database row."""
+        is_local: bool
+        if "is_local" in row.keys() and row["is_local"] is not None:
+            is_local = bool(row["is_local"])
+        else:
+            model = row["model"] if "model" in row.keys() else None
+            is_local = is_local_legacy_fallback(row["provider"], model)
+
         return cls(
             id=row["id"],
             parent_session_id=row["parent_session_id"],
@@ -78,7 +86,7 @@ class AgentRun:
             agent_name=row["agent_name"] if "agent_name" in row.keys() else None,
             provider=row["provider"],
             model=row["model"],
-            is_local=bool(row["is_local"]) if "is_local" in row.keys() else False,
+            is_local=is_local,
             requested_reasoning_effort=(
                 row["requested_reasoning_effort"]
                 if "requested_reasoning_effort" in row.keys()
@@ -205,7 +213,17 @@ class LocalAgentRunManager:
                 ar.agent_name,
                 ar.provider,
                 ar.model,
-                ar.is_local,
+                COALESCE(
+                    ar.is_local,
+                    CASE
+                        WHEN lower(COALESCE(ar.provider, '')) IN (
+                            'lmstudio', 'ollama', 'llamacpp', 'local'
+                        )
+                            OR lower(COALESCE(ar.model, '')) LIKE '%gpt-oss%'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS is_local,
                 ar.requested_reasoning_effort,
                 ar.effective_reasoning_effort,
                 ar.reasoning_required,

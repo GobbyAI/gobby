@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.llm.local_detection import is_local_legacy_fallback
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +80,13 @@ class Session:
     @classmethod
     def from_row(cls, row: Any) -> Session:
         """Create Session from database row."""
+        is_local: bool
+        if "is_local" in row.keys() and row["is_local"] is not None:
+            is_local = bool(row["is_local"])
+        else:
+            model = row["model"] if "model" in row.keys() else None
+            is_local = is_local_legacy_fallback(row["source"], model)
+
         return cls(
             id=row["id"],
             external_id=row["external_id"],
@@ -106,7 +115,7 @@ class Session:
             usage_cache_read_tokens=row["usage_cache_read_tokens"] or 0,
             context_window=row["context_window"] if "context_window" in row.keys() else None,
             model=row["model"] if "model" in row.keys() else None,
-            is_local=bool(row["is_local"]) if "is_local" in row.keys() else False,
+            is_local=is_local,
             terminal_context=cls._parse_terminal_context(row["terminal_context"]),
             seq_num=row["seq_num"] if "seq_num" in row.keys() else None,
             had_edits=bool(row["had_edits"]) if "had_edits" in row.keys() else False,
