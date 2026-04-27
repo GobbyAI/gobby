@@ -46,6 +46,7 @@ def _register_agent_workflow(
     session_id: str = "agent-session",
     workflow_name: str = "plan-adversary-steps",
     review_tool: str = "mark_task_review_approved",
+    review_error_handlers: list[dict[str, object]] | None = None,
 ) -> WorkflowInstanceManager:
     _create_session(db, session_id)
     manager = LocalWorkflowDefinitionManager(db)
@@ -69,6 +70,7 @@ def _register_agent_workflow(
                         "value": True,
                     }
                 ],
+                "on_mcp_error": review_error_handlers or [],
                 "transitions": [{"to": "terminate", "when": "vars.review_complete"}],
             },
             {
@@ -252,6 +254,59 @@ class TestAgentWorkflowCompletion:
             session_id="agent-session",
             variables=variables,
         )
+
+        instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert response.context is not None
+        completion_registry.notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_closed_review_target_error_completes_plan_adversary_workflow(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            review_tool="mark_task_review_rejected",
+            review_error_handlers=[
+                {
+                    "server": "gobby-tasks",
+                    "tool": "mark_task_review_rejected",
+                    "when": "'closed' in str(tool_output)",
+                    "action": "set_variable",
+                    "variable": "review_complete",
+                    "value": True,
+                }
+            ],
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        event = _after_tool_event(
+            source=SessionSource.CODEX,
+            mcp_tool="mark_task_review_rejected",
+            tool_output={
+                "success": True,
+                "result": {
+                    "error": (
+                        "Cannot reject review for task with status 'closed'. "
+                        "Task must be in 'needs_review' or 'in_progress' status."
+                    )
+                },
+            },
+        )
+
+        response = await engine.evaluate(event, session_id="agent-session", variables=variables)
 
         instance = instance_manager.get_instance("agent-session", "plan-adversary-steps")
         assert instance is not None

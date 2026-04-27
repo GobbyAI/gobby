@@ -82,6 +82,18 @@ class TestAdversarySkillLoading:
         assert "claim_task(task_id=assigned_task_id)" in claim_step.status_message
         assert "force=true" not in ADVERSARY_PATH.read_text()
 
+    def test_claim_step_treats_closed_assigned_task_as_claim_complete(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        claim_step = find_step(agent.steps or [], "claim")
+        assert claim_step is not None
+        mcp_error = getattr(claim_step, "on_mcp_error", []) or []
+        handlers = [
+            (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
+            for entry in mcp_error
+        ]
+        assert ("gobby-tasks", "claim_task", "task_claimed") in handlers
+
 
 class TestAdversaryInstructionsPreserveContracts:
     def test_instructions_reference_plan_review(self, agent: AgentDefinitionBody) -> None:
@@ -116,6 +128,20 @@ class TestAdversaryInstructionsPreserveContracts:
             for entry in mcp_success
         ]
         assert ("gobby-tasks", "mark_task_review_rejected", "review_complete") in triples
+
+    def test_review_step_completes_on_closed_task_review_error(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        review_step = find_step(agent.steps or [], "review")
+        assert review_step is not None
+        mcp_error = getattr(review_step, "on_mcp_error", None) or []
+        triples = [
+            (_field(entry, "server"), _field(entry, "tool"), _field(entry, "variable"))
+            for entry in mcp_error
+        ]
+        assert ("gobby-tasks", "mark_task_review_approved", "review_complete") in triples
+        assert ("gobby-tasks", "mark_task_review_rejected", "review_complete") in triples
+        assert ("gobby-tasks", "escalate_task", "review_complete") in triples
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""

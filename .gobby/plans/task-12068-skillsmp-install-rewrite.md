@@ -11,7 +11,7 @@ exposes only `GET /api/v1/skills/search`, `GET /api/v1/skills/ai-search`, and
 index into GitHub-hosted skills, not a ZIP CDN. This plan rewrites the two
 broken methods to thread `githubUrl` through the data model, derive details
 from `/skills/search`, and fetch skill contents from GitHub via the Contents
-API. Outcome: `install_skill(hub_name="skillsmp", slug=...)` succeeds
+API. Outcome: `install_skill(source="skillsmp:<slug>")` succeeds
 end-to-end via the existing `/hubs/install` route and `install_skill` MCP tool.
 
 ## Constraints
@@ -125,7 +125,7 @@ unspecified is `None`.
 
 ## Phase 2: SkillsMPProvider Rewrite
 
-**Goal**: Make `install_skill(hub_name="skillsmp", slug=...)` succeed
+**Goal**: Make `install_skill(source="skillsmp:<slug>")` succeed
 end-to-end. Route `get_skill_details` through `/skills/search`, replace the ZIP
 download path with a GitHub Contents API fetch, thread `githubUrl` through
 `HubSkillDetails.source_url`.
@@ -1202,10 +1202,13 @@ After the delete, the `skillsmp.py` module must still pass
 `uv run ruff check src/gobby/skills/hubs/skillsmp.py` and
 `uv run mypy src/gobby/skills/hubs/skillsmp.py` with no new warnings.
 
-### 2.4 Wire consumer cleanup of temp downloads at hub install call sites [category: code] (depends: 2.2)
+### 2.4 Wire consumer cleanup + hub provenance at hub install call sites [category: code] (depends: 2.2)
 
 Targets: `src/gobby/mcp_proxy/tools/skills/install_skill.py`,
 `src/gobby/servers/routes/skills.py`,
+`src/gobby/skills/sync.py` (rename `_persist_skill_files` →
+`persist_skill_files` and update its 3 internal callers at L123,
+L155, L190),
 `tests/mcp_proxy/tools/skills/test_install_skill.py` (or wherever the
 hub-install path is covered),
 `tests/servers/routes/test_skills_routes.py`.
@@ -1213,16 +1216,117 @@ hub-install path is covered),
 **Why this is in scope.** §2.2 returns `DownloadResult(is_temp=True)` on
 success, which by the existing `DownloadResult` contract means the caller
 owns cleanup. Today neither real consumer cleans up: every successful
-SkillsMP install leaks one `/tmp/skillsmp_*` directory until the OS
-reaps it. This is not SkillsMP-specific — every provider that returns
-`is_temp=True` triggers the same leak — but shipping the SkillsMP rewrite
-without fixing the leak ships a known-leaking happy path. The fix is
-4 lines per call site; bundle it here rather than file a separate task.
+SkillsMP install leaks one `/tmp/skillsmp_*` directory until the OS reaps
+it. Four additional bugs live at the same two call sites and get fixed
+in the same task because they share the same scaffold:
+
+1. **MCP-side missing hub provenance.** The MCP `install_skill.py` hub
+   branch passes `source_path=parsed_skill.source_path` (which points at
+   the about-to-be-deleted temp dir) into `create_skill` and never
+   threads `hub_name` / `hub_slug` / `hub_version` through, even though
+   `SkillMetadataMixin.create_skill` accepts all three
+   (`src/gobby/storage/skills/_metadata.py:29-43`, explicit kwargs in
+   the SQL `INSERT`) and `SkillManager.create_skill` forwards arbitrary
+   kwargs via `**kwargs` to the storage layer
+   (`src/gobby/skills/manager.py:158`). Net effect on the MCP side:
+   hub installs land in the DB with a stale `source_path` and NULL
+   `hub_name` / `hub_slug` / `hub_version`, leaving §3.1's verification
+   with no stable identifier to assert against. The route, by
+   contrast, **already** passes `source_path="hub:<hub>/<slug>"` and
+   the three `hub_*` kwargs in production
+   (`src/gobby/servers/routes/skills.py:403–410`); it only needs the
+   added `source_ref=download.version` for parity with the MCP fix.
+2. **Route-side lost loaded files.** `SkillLoader.load_skill` populates
+   `parsed.loaded_files` with the in-memory bodies of every non-`SKILL.md`
+   file (references, scripts, assets). The MCP tool persists those into
+   `SkillFile` rows after `create_skill`
+   (`src/gobby/mcp_proxy/tools/skills/install_skill.py:230–247`); the
+   route does **not**. For single-file skills this is harmless because
+   `loaded_files` is empty, but §2.2 explicitly enables directory-shape
+   downloads, and once §2.4's `try/finally` cleanup runs, every
+   reference and script in a multi-file skill is silently and
+   deterministically lost. This is a pre-existing route bug that §2.2
+   makes reachable and §2.4's cleanup turns from "latent" into
+   "data-loss every install." Fixing it here keeps the cleanup wiring
+   and the data-preservation wiring on the same diff and the same test
+   surface.
+3. **Cross-consumer drift.** The MCP-side fix sets
+   `source_ref=download_result.version`, the route currently sets no
+   `source_ref` at all. §3.1's verification asserts a single
+   `source_ref` shape regardless of which surface installed the skill,
+   so the route gets the same kwarg added.
+4. **Half-installed-skill recovery.** Both consumers already have a
+   latent failure mode: `create_skill` succeeds, then `set_skill_files`
+   raises (DB error mid-write, disk full, etc.). The top-level `Skill`
+   row stays in the DB without its companion `SkillFile` rows; the
+   skill becomes "installed" by `list_skills` but missing all
+   non-`SKILL.md` content. A retry hits the duplicate-name uniqueness
+   conflict in `create_skill` and never reaches `set_skill_files`,
+   stranding the user with a broken install they have to manually
+   delete. This is pre-existing on the MCP side and newly introduced
+   on the route side by the §2.4 file-persistence work. Fix it on
+   both consumers with explicit hard-delete rollback
+   (`LocalSkillManager.hard_delete(skill.id)` on `persist_skill_files`
+   failure — soft-delete via `delete_skill` would leave the
+   `(name, project, source)` unique-index entry intact and still
+   block retries; the call-site code blocks below have the full
+   reasoning).
+
+The leak itself is not SkillsMP-specific — every provider returning
+`is_temp=True` triggers it. But shipping the SkillsMP rewrite without
+fixing the leak, the missing MCP-side provenance, the missing route-side
+file persistence, the missing route-side `source_ref`, and the
+no-rollback half-install recovery gap ships five known-broken happy
+paths. They get bundled here rather than split across tasks because the
+call sites, exception ordering, and test surface all overlap.
+
+**Shared helper rename**: this task promotes the existing
+`_persist_skill_files(storage, skill_id, loaded_files)` helper at
+`src/gobby/skills/sync.py:52` to public API by dropping the underscore
+prefix → `persist_skill_files`. The helper currently has only three
+intra-module callers (sync.py L123, L155, L190); update those at the
+same time. The helper's signature, behavior, and `LocalSkillManager`
+parameter type are unchanged — this is purely a visibility rename so
+both new consumer call sites can import it without depending on a
+module-private utility.
+
+After the rename:
+
+- MCP `install_skill.py` (Call site 1) imports
+  `from gobby.skills.sync import persist_skill_files` and calls
+  `persist_skill_files(ctx.storage, skill.id, parsed_skill.loaded_files)`,
+  replacing the existing inline `set_skill_files` block.
+- HTTP route `install_from_hub` (Call site 2) imports the same
+  `persist_skill_files` and calls
+  `persist_skill_files(server.skill_manager.storage, skill.id, parsed.loaded_files)`.
+- Both consumers stay on the `LocalSkillManager` storage layer (where
+  `set_skill_files` actually lives), matching the helper's parameter
+  type — no `SkillManager` facade method is added (the MCP context
+  exposes `storage: LocalSkillManager` directly via `SkillsContext`,
+  and the route already uses `server.skill_manager.storage` to reach
+  the same layer; a manager-side wrapper would just be a one-line
+  pass-through).
+- `_loaded_to_skill_files` (the inner conversion helper at sync.py:42)
+  stays private — only the file-persistence facade is promoted.
 
 **Call site 1**: `src/gobby/mcp_proxy/tools/skills/install_skill.py`,
 inside the `if hub_match and not source.startswith('http'):` branch
 (currently around L66–L93). Wrap the post-download work in a
-`try/finally`:
+`try/finally`, override `parsed_skill.source_path` to a stable hub URI
+before cleanup runs, and capture hub provenance for the existing
+`ctx.storage.create_skill(...)` call further down the function:
+
+At the top of `install_skill` (alongside the existing
+`parsed_skill: ParsedSkill | list[ParsedSkill] | None = None` and
+`source_type: SkillSourceType | None = None` initializers), add a
+provenance carrier seeded for the non-hub flows:
+
+```python
+hub_metadata: dict[str, str | None] = {}
+hub_source_ref: str | None = None
+```
+
+Then the hub branch:
 
 ```python
 provider = ctx.hub_manager.get_provider(hub_name)
@@ -1238,12 +1342,29 @@ try:
     skill_path = Path(download_result.path)
     parsed_skill = ctx.loader.load_skill(skill_path, check_dir_name=False)
     source_type = 'hub'
+    # Override the temp-dir source_path with a stable hub URI before the
+    # finally block deletes the directory; otherwise the DB row would
+    # store a path that no longer exists after this call returns.
+    parsed_skill.source_path = f"hub:{hub_name}/{skill_slug}"
+    hub_metadata = {
+        'hub_name': hub_name,
+        'hub_slug': skill_slug,
+        'hub_version': download_result.version,
+    }
+    hub_source_ref = download_result.version
 finally:
     if download_result.is_temp and download_result.path:
         shutil.rmtree(download_result.path, ignore_errors=True)
 ```
 
 Add `import shutil` at module top if not already present.
+
+The `parsed_skill.source_path` mutation is in-memory only; `ParsedSkill`
+is a dataclass with a writable `source_path` attribute. The mutation has
+to happen inside the `try` body (not outside) because it must run before
+the `finally`-block `rmtree` deletes the temp dir, and so that any
+exception from `load_skill` skips both the override and the carrier
+update (preserving the failure-path semantics).
 
 `load_skill` populates `parsed_skill.loaded_files[*].content` eagerly
 (verified at the existing call site that builds `SkillFile` rows from
@@ -1255,8 +1376,124 @@ The outer `try/except Exception` block already in `install_skill` still
 catches any later persistence error; the inner `finally` only owns the
 temp-dir cleanup and runs even when the persistence path raises later.
 
+At the existing `ctx.storage.create_skill(...)` call (currently around
+L196–L211), thread the carrier through. `SkillMetadataMixin.create_skill`
+accepts the three hub kwargs explicitly, so spreading a possibly-empty
+`hub_metadata` is safe for non-hub flows:
+
+```python
+skill = ctx.storage.create_skill(
+    name=parsed_skill.name,
+    description=parsed_skill.description,
+    content=parsed_skill.content,
+    version=parsed_skill.version,
+    license=parsed_skill.license,
+    compatibility=parsed_skill.compatibility,
+    allowed_tools=parsed_skill.allowed_tools,
+    metadata=parsed_skill.metadata,
+    source_path=parsed_skill.source_path,
+    source_type=source_type,
+    source_ref=(
+        hub_source_ref
+        if source_type == 'hub'
+        else getattr(parsed_skill, 'source_ref', None)
+    ),
+    project_id=skill_project_id,
+    enabled=True,
+    **hub_metadata,
+)
+```
+
+For the hub flow this persists `source_path="hub:<hub>/<slug>"`,
+`source_type="hub"`, `source_ref=<download_result.version>`,
+`hub_name=<hub>`, `hub_slug=<slug>`, `hub_version=<download_result.version>`.
+For all other flows `hub_metadata` is `{}` and `hub_source_ref` is `None`,
+so the call shape is unchanged from today.
+
+Replace the existing inline `set_skill_files` block at the bottom of
+`install_skill` with a call to the renamed `persist_skill_files` helper,
+plus rollback on failure so a half-installed `Skill` row never blocks
+retries on the duplicate-name conflict:
+
+```python
+# Replace this existing block (currently around L234-L247):
+#   if hasattr(parsed_skill, "loaded_files") and parsed_skill.loaded_files:
+#       from gobby.storage.skills import SkillFile
+#       skill_files = [SkillFile(...) for lf in parsed_skill.loaded_files]
+#       ctx.storage.set_skill_files(skill.id, skill_files)
+# with:
+from gobby.skills.sync import persist_skill_files
+
+try:
+    persist_skill_files(ctx.storage, skill.id, parsed_skill.loaded_files)
+except Exception:
+    # Roll back the just-created Skill row so retries don't fail at the
+    # create_skill duplicate-name check before reaching set_skill_files.
+    # Must use hard_delete, not delete_skill: delete_skill is a soft
+    # delete (sets deleted_at), and create_skill's pre-insert
+    # get_by_name(..., include_deleted=True) check at
+    # `src/gobby/storage/skills/_metadata.py:90` would still find the
+    # soft-deleted row and re-raise the duplicate-name ValueError.
+    # `hard_delete` (`src/gobby/storage/skills/_metadata.py:401`) issues
+    # a `DELETE FROM skills WHERE id = ?` which actually removes the
+    # row and clears the unique-index entry over
+    # `(name, COALESCE(project_id, '__global__'), source)`.
+    ctx.storage.hard_delete(skill.id)
+    raise
+```
+
+The inline `SkillFile` construction and `from gobby.storage.skills import
+SkillFile` line are deleted — both consumers funnel through the
+`persist_skill_files` helper now. The `from gobby.skills.sync import
+persist_skill_files` line can sit at module top or be local-scoped to
+the function (project preference); either works because the MCP
+rollback test patches `LocalSkillManager.set_skill_files` (instance
+method on the storage class), not `gobby.skills.sync.persist_skill_files`,
+so the patch is robust against import-binding shape. The `hard_delete`
+rollback runs inside the existing outer `try/except Exception` block,
+so the final return shape is unchanged: rollback failure surfaces as
+`{"success": False, "error": str(e)}` with the original
+`set_skill_files` exception message preserved (the `raise` re-raises
+the original). If `hard_delete` *also* raises (cascading DB failure),
+the original exception is replaced by the rollback exception in the
+outer handler — that is acceptable because both indicate the same
+underlying storage problem and the user is going to need manual
+cleanup either way.
+
 **Call site 2**: `src/gobby/servers/routes/skills.py::install_from_hub`
-(currently around L380–L426). Same pattern:
+(currently around L380–L426).
+
+The route's `server.skill_manager.create_skill(...)` call **already**
+passes `source_path=f"hub:{request_data.hub_name}/{request_data.slug}"`,
+`source_type="hub"`, `hub_name=request_data.hub_name`,
+`hub_slug=request_data.slug`, `hub_version=download.version` in
+production today (verified at `src/gobby/servers/routes/skills.py:403–410`).
+Provenance is **not** the route's gap — that gap exists only on the MCP
+side and is fixed by Call site 1 above. The route's gaps are:
+
+1. **Temp-dir leak.** Same as Call site 1: hub installs leave
+   `/tmp/skillsmp_*` lying around because the route never cleans up.
+2. **Lost loaded files.** `SkillLoader.load_skill` returns a
+   `ParsedSkill` whose `loaded_files` list carries the in-memory bodies
+   of every non-`SKILL.md` file in the skill (references, scripts,
+   assets). The MCP `install_skill.py` later persists those into
+   `SkillFile` rows via `ctx.storage.set_skill_files(skill.id, …)`
+   (`src/gobby/mcp_proxy/tools/skills/install_skill.py:230–247`). The
+   route does **not** — it only persists the top-level skill row. For
+   single-file skills (just `SKILL.md`) this is harmless because
+   `loaded_files` is empty. For directory-shape skills (the new flow
+   §2.2 enables), every reference and script is silently dropped, and
+   §2.4's temp-dir cleanup deletes the only on-disk copy at the same
+   time. This is a pre-existing route bug that §2.2 makes reachable
+   and §2.4's cleanup turns from "latent" into "deterministic
+   data-loss."
+3. **Missing `source_ref`.** The route passes `hub_version` but not
+   `source_ref`; the MCP fix (Call site 1) sets both to
+   `download_result.version` for hub flows, so the route should match
+   for cross-consumer parity (the §3.1 verification asserts a single
+   `source_ref` value regardless of which surface installed the skill).
+
+Target shape:
 
 ```python
 provider = server.hub_manager.get_provider(request_data.hub_name)
@@ -1273,6 +1510,7 @@ if not download.success:
 
 try:
     from gobby.skills.loader import SkillLoader
+    from gobby.skills.sync import persist_skill_files
 
     loader = SkillLoader(default_source_type='hub')
     parsed = loader.load_skill(download.path, validate=True, check_dir_name=False)
@@ -1280,9 +1518,42 @@ try:
     skill = server.skill_manager.create_skill(
         name=parsed.name,
         description=parsed.description,
-        # ... existing kwargs ...
+        content=parsed.content,
+        version=parsed.version or download.version,
+        license=parsed.license,
+        compatibility=parsed.compatibility,
+        allowed_tools=parsed.allowed_tools,
+        metadata=parsed.metadata,
+        source_path=f"hub:{request_data.hub_name}/{request_data.slug}",
+        source_type='hub',
+        source_ref=download.version,           # NEW — parity with MCP Call site 1
+        hub_name=request_data.hub_name,
+        hub_slug=request_data.slug,
+        hub_version=download.version,
+        enabled=True,
+        always_apply=parsed.always_apply,
+        injection_format=parsed.injection_format,
         project_id=request_data.project_id,
     )
+    # NEW — persist references/scripts/assets that the loader read into
+    # memory. Without this, multi-file directory-shape skills lose their
+    # non-SKILL.md content the moment `finally` deletes the temp dir.
+    # `persist_skill_files` no-ops when `loaded_files` is empty/None,
+    # so single-file skills are unaffected. Wrap in a local try/except
+    # so a file-persistence failure rolls back the just-created Skill
+    # row — otherwise a retry would hit the create_skill duplicate-name
+    # conflict before ever reaching set_skill_files.
+    try:
+        persist_skill_files(server.skill_manager.storage, skill.id, parsed.loaded_files)
+    except Exception:
+        # Hard-delete (not soft-delete): create_skill's pre-insert
+        # `get_by_name(..., include_deleted=True)` check would still
+        # find a soft-deleted row and block the next install with the
+        # same name. Reach through `server.skill_manager.storage` to
+        # `LocalSkillManager.hard_delete` for a real DELETE.
+        server.skill_manager.storage.hard_delete(skill.id)
+        raise
+
     await _broadcast_skill('skill_created', skill.id)
     return {'installed': True, 'skill': skill.to_dict()}
 finally:
@@ -1290,32 +1561,88 @@ finally:
         shutil.rmtree(download.path, ignore_errors=True)
 ```
 
-Add `import shutil` at module top if not already present.
+Add `import shutil` at module top if not already present. The
+`persist_skill_files` import is local-scoped to keep route-module imports
+narrow (the helper lives in `src/gobby/skills/sync.py:52` and accepts a
+`LocalSkillManager` storage object; `SkillManager.storage` is the public
+property that exposes it — `src/gobby/skills/manager.py:100–103`). The
+broadcast is intentionally **outside** the rollback-protected inner
+`try`: a websocket-broadcast failure leaves a correctly-installed skill
+in place; rolling that back would be wrong.
 
-`_broadcast_skill` is awaited inside the `try`; the `finally` runs after
-the await completes (or the await raises). The route-level
+`_broadcast_skill` is awaited inside the outer `try`; the `finally` runs
+after the await completes (or the await raises). The route-level
 `try/except (HTTPException, ValueError, Exception)` handlers still see
-the raise and produce the right status code; only the temp-dir cleanup
-is added.
+any raised exception and produce the right status code; the inner
+`try/finally` adds only temp-dir cleanup, `SkillFile` persistence, and
+the rollback guard.
 
-**Behavioral contract** (additive across both call sites):
+The `loaded_files[*].content` is in-memory by the time `persist_skill_files`
+runs (the SkillLoader populates content eagerly during `load_skill`,
+verified by the MCP side at the existing callsite that builds `SkillFile`
+rows from `lf.content`), so persisting after the temp dir is removed
+would also work — but persisting **before** the `finally` keeps
+file-row creation paired with the original load and gives clean failure
+semantics: a `set_skill_files` exception triggers rollback, cleanup
+still runs, and no half-installed skills are left behind.
 
-- Hub install succeeds → temp dir is removed after persistence.
-- `SkillLoader.load_skill` raises (malformed SKILL.md, validation fail) →
-  temp dir is removed; the loader exception propagates through the
-  outer handler unchanged.
+**Behavioral contract** (after this task lands):
+
+- Hub install succeeds (either consumer) → temp dir is removed after
+  persistence; the resulting `Skill` row carries
+  `source_path="hub:<hub>/<slug>"`, `source_type="hub"`,
+  `source_ref=<download.version>`, `hub_name=<hub>`, `hub_slug=<slug>`,
+  `hub_version=<download.version>`. For directory-shape downloads, the
+  route now also writes one `SkillFile` row per file in
+  `parsed.loaded_files` (matching the MCP tool's existing behavior).
+- `SkillLoader.load_skill` raises (malformed SKILL.md, validation
+  failure) → temp dir is removed; `source_path` override and provenance
+  capture (MCP side) and `SkillFile` persistence (route side) never run
+  because they live after `load_skill` inside the same `try` body. The
+  loader exception propagates through the outer handler unchanged.
 - `create_skill` raises (DB error, duplicate name) → temp dir is
-  removed; the storage exception propagates through the outer handler
-  unchanged.
-- `_broadcast_skill` raises (only relevant on the route path) → temp
-  dir is removed; the broadcast exception propagates.
-- `download.is_temp` is `False` (provider returned a non-temp path,
+  removed; `SkillFile` persistence is skipped on the route path because
+  `skill.id` is never bound. The storage exception propagates through
+  the outer handler unchanged.
+- `persist_skill_files` raises (either consumer; DB-level failure
+  during multi-file write) → the inner `except` hard-deletes the
+  just-created `Skill` row via
+  `LocalSkillManager.hard_delete(skill.id)` (the *hard* delete, not
+  the soft `delete_skill`) and re-raises. Hard-delete is required
+  because `create_skill`'s pre-insert
+  `get_by_name(..., include_deleted=True)` check at
+  `src/gobby/storage/skills/_metadata.py:90` would still find a
+  soft-deleted row and reject the retry with the same duplicate-name
+  `ValueError` — only `hard_delete` removes the row from the underlying
+  unique-index. Temp dir is removed by the surrounding `finally`. The
+  broadcast does not fire on the route path. The exception propagates
+  through the outer handler unchanged (MCP path: returns
+  `{"success": False, "error": ...}`; route path: 500 response). After
+  rollback, `get_by_name(skill_name, include_deleted=True)` returns
+  `None` and the unique-index entry over
+  `(name, COALESCE(project_id, '__global__'), source)` is gone, so a
+  fresh install with the same slug runs through `create_skill` cleanly.
+- If `hard_delete` itself raises during rollback (cascading DB
+  failure) → the original `persist_skill_files` exception is replaced
+  by the rollback exception in the outer handler. Both indicate the
+  same underlying storage problem; the user needs operator-level
+  recovery (direct DB intervention) regardless of which one surfaces.
+- `_broadcast_skill` raises (route only) → temp dir is removed; the
+  broadcast exception propagates.
+- `download.is_temp` is `False` (provider returned a caller-owned path,
   e.g., a future provider that honors `target_dir`) → cleanup skipped;
-  caller-supplied directory left untouched.
+  every other invariant above still holds. The directory the caller
+  supplied is left untouched.
 - `download.path` is empty/None on success (defensive guard) → cleanup
   skipped (the success-without-path case already returns failure
   earlier in `install_skill`; on the route path, `download.path` is
-  required by the contract but the guard is cheap).
+  required by the route contract but the guard is cheap).
+- Non-hub flows on the MCP side (local path, GitHub URL, ZIP) →
+  `hub_metadata` stays `{}` and `hub_source_ref` stays `None`; the
+  spread `**hub_metadata` is a no-op and `source_ref` falls through
+  to the existing `getattr(parsed_skill, "source_ref", None)` value.
+  No behavior change for any non-hub flow. (The route only serves the
+  hub flow, so this clause does not apply there.)
 
 **Tests**:
 
@@ -1323,34 +1650,242 @@ is added.
 
 - `test_hub_install_cleans_temp_dir_on_success` — mock provider returns
   a real `tempfile.mkdtemp()` path with a `SKILL.md` inside,
-  `is_temp=True`. Assert the directory does NOT exist after the install
-  call returns success.
+  `is_temp=True`, `version="v1.2.3"`. Assert the directory does NOT
+  exist after the install call returns success.
 - `test_hub_install_cleans_temp_dir_on_loader_failure` — mock provider
   returns a temp path with invalid SKILL.md content so
   `load_skill` raises. Assert temp dir is removed after the install
   call returns failure.
-- `test_hub_install_cleans_temp_dir_on_persistence_failure` — same as
-  above but force `ctx.storage.create_skill` to raise; assert temp dir
-  is removed.
+- `test_hub_install_cleans_temp_dir_on_create_skill_failure` — mock
+  `ctx.storage.create_skill` to raise; assert temp dir is removed
+  (cleanup `finally` ran). No rollback assertion needed because no
+  `Skill` row was ever created.
+- `test_hub_install_rolls_back_on_persist_loaded_files_failure` —
+  must use a **migrated real** `LocalSkillManager` (same fixture
+  pattern as the route tests below — `LocalDatabase(...)` then
+  `run_migrations(db)` then `LocalSkillManager(db)`). Mock provider
+  returns a multi-file temp dir on every call. Monkeypatch
+  **`LocalSkillManager.set_skill_files`** (instance-method patch on
+  the storage class — robust regardless of whether the impl imports
+  `persist_skill_files` at module top or locally inside the function)
+  with a **one-shot** side effect that raises on the first call and
+  delegates to the real implementation on subsequent calls (same
+  pattern as the route-side rollback test below). Do **not** patch
+  `gobby.skills.sync.persist_skill_files` for the MCP test — if the
+  impl uses a module-top `from gobby.skills.sync import
+  persist_skill_files`, the call-site-bound name will not be
+  intercepted by patching the source module. Assert
+  (a) the **first** install returns `{"success": False, ...}`;
+  (b) `ctx.storage.get_by_name(skill_name, include_deleted=True)` is
+  `None` after rollback (verifies `hard_delete`, not soft-delete, ran);
+  (c) the temp dir was removed;
+  (d) a **second** install with the same slug — under the same
+  one-shot monkeypatch — returns `{"success": True, ...}` with
+  populated `SkillFile` rows, proving the rollback is recoverable and
+  the unique-index entry is gone. This test is the load-bearing cover
+  against the Round 4 F1 soft-delete-blocks-retry regression on the
+  MCP side.
 - `test_hub_install_skips_cleanup_when_not_is_temp` — mock provider
   returns `is_temp=False` and a real directory; assert directory is
   preserved after install.
+- `test_hub_install_persists_hub_provenance` — mock provider returns
+  `is_temp=True`, `path=<tempdir>`, `version="v1.2.3"`. Capture the
+  kwargs passed to `ctx.storage.create_skill` (e.g., via `MagicMock`)
+  and assert `source_path == "hub:<hub_name>/<skill_slug>"`,
+  `source_type == "hub"`, `source_ref == "v1.2.3"`,
+  `hub_name == "<hub_name>"`, `hub_slug == "<skill_slug>"`,
+  `hub_version == "v1.2.3"`. Also load the persisted `Skill` row and
+  assert the same fields round-trip through SQLite.
+- `test_hub_install_persists_hub_provenance_when_version_is_none` —
+  mock provider returns `is_temp=True`, `path=<tempdir>`, `version=None`.
+  Assert `source_ref` and `hub_version` are persisted as `None` (not
+  the string `"None"`); other provenance fields are populated as above.
+- `test_non_hub_install_does_not_set_hub_fields` — install via a local
+  path (no `hub:` prefix). Assert `create_skill` is called with no
+  `hub_name`/`hub_slug`/`hub_version` kwargs (or all `None`), and that
+  `source_path` retains the loader-set value (no override applied for
+  non-hub flows).
 
 `tests/servers/routes/test_skills_routes.py::TestHubs`:
 
-- `test_install_from_hub_cleans_temp_dir_on_success` — same shape.
+**Fixture override (required for all loaded-files tests below).** The
+existing `skill_manager` fixture at
+`tests/servers/routes/test_skills_routes.py:16–19` returns a
+`MagicMock`. That fixture exercises the route's call shape but does not
+exercise SQLite, `LocalSkillManager.set_skill_files`, soft-delete
+behavior, or persistence-after-filesystem-deletion. Tests that prove
+the data-loss regression is closed **must** use real storage, not the
+mock. Add a parallel fixture (`skill_manager_real`, or a
+class-scoped override) that builds a real `SkillManager` over a
+migrated temp DB:
+
+```python
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
+from gobby.skills.manager import SkillManager
+
+@pytest.fixture
+def skill_manager_real(tmp_path):
+    # LocalDatabase.__init__ does NOT run migrations — schema creation
+    # is explicit via run_migrations(db). Without this call the test
+    # fails on missing `skills` / `skill_files` tables before observing
+    # the loaded-files regression. Pattern matches existing test
+    # fixtures (e.g., `tests/conftest.py::temp_db`,
+    # `tests/storage/test_storage_skills.py` setup).
+    db_path = tmp_path / "test.db"
+    db = LocalDatabase(str(db_path))
+    run_migrations(db)
+    manager = SkillManager(db)
+    yield manager
+    db.close()
+
+@pytest.fixture
+def server_real_skills(skill_manager_real, hub_manager, websocket_server):
+    svr = create_http_server(
+        config=DaemonConfig(),
+        websocket_server=websocket_server,
+    )
+    svr.skill_manager = skill_manager_real
+    svr.hub_manager = hub_manager
+    return svr
+```
+
+(If the project's existing migrated-test-DB conftest fixture is the
+preferred shape, reuse it instead of rebuilding the wiring inline —
+the load-bearing requirement is `run_migrations(db)` before
+`SkillManager(db)`, not the specific fixture name.)
+
+`hub_manager` and `websocket_server` stay mocked (the tests are about
+post-download persistence, not hub/transport behavior). Tests that need
+real storage take `server_real_skills` as the server fixture; tests
+that only need to capture call shape stay on the existing mocked
+`server` fixture.
+
+**Tests:**
+
+- `test_install_from_hub_cleans_temp_dir_on_success` — same shape as
+  the MCP-side cleanup test. Uses a `tempfile.mkdtemp()` directory
+  containing only `SKILL.md` and the existing mocked `skill_manager`
+  fixture (no storage assertions needed). Assert the temp directory
+  does NOT exist after the route returns success.
 - `test_install_from_hub_cleans_temp_dir_on_create_skill_error` — force
-  `create_skill` to raise; assert cleanup ran and the route returned
-  500.
+  the mocked `create_skill` to raise; assert cleanup ran and the route
+  returned 500.
 - `test_install_from_hub_cleans_temp_dir_on_broadcast_error` — force
-  `_broadcast_skill` to raise; assert cleanup ran.
+  the mocked `_broadcast_skill` (or `websocket_server.broadcast_skill_event`)
+  to raise; assert cleanup ran.
+- `test_install_from_hub_persists_loaded_files` — **uses
+  `server_real_skills`** (real storage). Mock the hub provider only
+  (returns a `DownloadResult` whose `path` is a real
+  `tempfile.mkdtemp()` directory containing `SKILL.md`,
+  `references/foo.md`, `scripts/bar.py` with known content). Run the
+  install. Assert (a) the temp dir is removed after success;
+  (b) `server.skill_manager.storage.get_skill_files(skill_id,
+  include_content=True)` (real storage; **`include_content=True` is
+  load-bearing** — `SkillFilesMixin.get_skill_files` defaults
+  `include_content=False` and returns `SkillFile(content="")` in that
+  mode, so the default call would either fail literally or weaken the
+  test to path-only coverage and miss the data-loss regression)
+  returns rows whose `path` values include `references/foo.md` and
+  `scripts/bar.py` and whose `content` matches the bytes the test
+  wrote to those files (verifies the data-loss regression is closed);
+  (c) the wrapping test's own `try/finally` cleanup removes the temp
+  dir as a fallback in case the route's `finally` mis-fires (defensive
+  against test-suite-pollution if a regression slips through).
+- `test_install_from_hub_skips_set_skill_files_for_single_file_skill`
+  — **uses `server_real_skills`**. Hub provider returns a temp dir
+  containing only `SKILL.md` (so `parsed.loaded_files` is empty).
+  Assert (a) the install succeeds; (b)
+  `server.skill_manager.storage.get_skill_files(skill_id)` returns an
+  empty list (real query against real storage, not mock-call-count;
+  default `include_content=False` is fine here — the assertion is on
+  the empty list, not on row contents). This pins the helper's
+  empty-input contract against the real DB so a future change to
+  `persist_skill_files` cannot insert phantom rows.
+- `test_install_from_hub_rolls_back_on_persist_loaded_files_failure`
+  — **uses `server_real_skills`**. Monkeypatch
+  `gobby.skills.sync.persist_skill_files` (or
+  `LocalSkillManager.set_skill_files`) with a **one-shot** side effect:
+  raise on the first call, then either delegate to the real
+  implementation or be undone before the retry. Concrete shape (the
+  `side_effect` list pattern is idiomatic in this codebase):
+  ```python
+  real_persist = persist_skill_files  # captured before monkeypatch
+  call_log = []
+  def one_shot(storage, skill_id, loaded_files):
+      call_log.append(skill_id)
+      if len(call_log) == 1:
+          raise RuntimeError("simulated mid-write DB failure")
+      return real_persist(storage, skill_id, loaded_files)
+  monkeypatch.setattr("gobby.skills.sync.persist_skill_files", one_shot)
+  ```
+  Hub provider returns a multi-file temp dir on every call. Assert
+  (a) the **first** install returns 500;
+  (b) `server.skill_manager.storage.get_by_name(skill_name,
+  include_deleted=True)` returns `None` after rollback (the
+  hard-delete actually removed the row, not soft-deleted it — this
+  assertion is the load-bearing one against the Round 4 F1
+  soft-delete regression);
+  (c) the temp dir was removed;
+  (d) a **second** install with the same slug — under the same
+  one-shot monkeypatch (so this call hits the `else` branch and
+  delegates to the real `persist_skill_files`) — returns 200 with
+  populated `SkillFile` rows. This proves the duplicate-name /
+  unique-index entry is gone and the rollback is *actually*
+  recoverable, not just "the row appears gone but a real retry
+  would still hit the injected failure."
+- `test_install_from_hub_persists_hub_provenance_regression` —
+  uses the existing mocked `skill_manager` fixture; capture kwargs
+  passed to `create_skill` and assert the route still passes
+  `source_path="hub:<hub>/<slug>"`, `source_type="hub"`,
+  `source_ref=download.version`, `hub_name`, `hub_slug`, and
+  `hub_version`. The route already passes these in production except
+  for `source_ref`; this test pins both the pre-existing kwargs and
+  the new `source_ref` so a refactor cannot silently regress
+  provenance. (Real storage is unnecessary here — the assertion is
+  about call shape, not persistence.)
+
+The MCP-side test list above already includes the analogous rollback
+coverage as `test_hub_install_rolls_back_on_persist_loaded_files_failure`
+(uses the same migrated-real-storage fixture pattern; asserts
+post-rollback `get_by_name(..., include_deleted=True)` returns `None`
+to prove `hard_delete` ran, not `delete_skill`). The existing
+`test_hub_install_cleans_temp_dir_on_persistence_failure` was renamed to
+`test_hub_install_cleans_temp_dir_on_create_skill_failure` to disambiguate
+from the rollback test (the create-skill-failure path has no rollback
+because no `Skill` row was ever created).
 
 Validation criteria: hub installs through both the MCP and HTTP routes
-no longer leak `/tmp/skillsmp_*` directories. After running the
-existing test suite for the two files plus the four new tests, no test
-is left with a lingering temp dir under `/tmp/`. The cleanup is
-contract-driven (`download.is_temp`), not provider-specific, so a
-future provider that returns `is_temp=False` is unaffected.
+no longer leak `/tmp/skillsmp_*` directories, persist consistent hub
+provenance to the `skills` table, persist all loaded files, and roll
+back cleanly on multi-file persistence failure. After running the
+existing test suite for the affected files plus the new tests, the
+following must all hold:
+
+- No test is left with a lingering temp dir under `/tmp/`.
+- Every persisted hub-flow `Skill` row has non-NULL `source_path`
+  (matching `hub:<hub>/<slug>`), `source_type="hub"`,
+  `source_ref=download.version`, and the three `hub_*` columns
+  populated.
+- Every directory-shape install (either consumer) has one `SkillFile`
+  row per non-`SKILL.md` file in `parsed.loaded_files`.
+- For each consumer, a forced `persist_skill_files` raise leaves the
+  `skills` table with no row (hard-deleted) for the failed install:
+  `get_by_name(skill_name, include_deleted=True)` returns `None`
+  (the load-bearing assertion — soft-delete would still return the
+  row), and a fresh install with the same slug succeeds without
+  hitting the duplicate-name conflict at `create_skill`'s
+  pre-insert `get_by_name` check.
+- `_loaded_to_skill_files` (private) and `_persist_skill_files`
+  (now-renamed-to-public `persist_skill_files`) keep their existing
+  behavior; the three intra-`sync.py` call sites are updated to use
+  the new name and pass mypy/ruff cleanly.
+
+The cleanup is contract-driven (`download.is_temp`), not
+provider-specific, so a future provider returning `is_temp=False` is
+unaffected. On the MCP side, the provenance kwargs are spread via
+`**hub_metadata`, so non-hub flows remain byte-for-byte identical at
+the `create_skill` call site.
 
 ## Phase 3: Live Verification
 
@@ -1390,17 +1925,55 @@ Verification steps:
    live corpus exposes only one shape, document the missing shape and
    confirm it is covered by the §2.2 mocked tests; do not block the
    review on a corpus that lacks one shape.
-3. For each captured slug, run `install_skill` with `hub_name="skillsmp"`.
-   Expected: `installed: true` and a populated `skill` dict.
-4. `list_skills` — confirm each newly installed skill appears with
-   `source_type="hub"`, `hub_name="skillsmp"`, `hub_slug=<captured slug>`.
-5. `get_skill(name=...)` for each — confirm SKILL.md content, description,
-   and `content` are populated.
-6. **Temp-dir cleanup check (§2.4)**: before step 3, snapshot
-   `/tmp/skillsmp_*` (e.g., `ls -d /tmp/skillsmp_* 2>/dev/null`). After
-   each successful install, re-run the same command and confirm no new
-   `/tmp/skillsmp_*` directories remain. The cleanup wired by §2.4
-   should leave `/tmp` exactly as it was.
+3. **Snapshot `/tmp/skillsmp_*` baseline** before any install runs:
+   `ls -d /tmp/skillsmp_* 2>/dev/null` — capture the output as
+   `BASELINE_TEMPS` (may be empty). This is the reference the post-install
+   cleanup check in step 7 compares against.
+4. For each captured slug, run the MCP `install_skill` tool with
+   `source=f"skillsmp:{slug}"` (the actual signature — `install_skill`
+   accepts only `source: str | None` and `project_scoped: bool`; the
+   `hub:slug` syntax in `source` routes through the
+   `src/gobby/mcp_proxy/tools/skills/install_skill.py` hub branch).
+   Expected: `installed: true` and a populated `skill` dict in the
+   response.
+5. `list_skills` — confirm each newly installed skill appears in the
+   response by name. Note: the MCP `list_skills` tool is intentionally
+   lightweight (`name`, `description`, `category`, `tags`, `enabled`,
+   `source` only — see `src/gobby/mcp_proxy/tools/skills/list_skills.py`
+   :131–141), so it does **not** surface `source_type` / `hub_name` /
+   `hub_slug`. Full provenance assertion lives in step 6 below.
+6. `get_skill(name=...)` for each — confirm:
+   - `content` and `description` are populated (carries the SKILL.md
+     body and frontmatter description).
+   - `source_type == "hub"`.
+   - `source_path == f"hub:skillsmp/{slug}"` exactly (the stable URI
+     written by §2.4; no temp-dir paths leak into the DB).
+   - `source_ref` matches the value returned in `DownloadResult.version`
+     by §2.2's `download_skill`. §2.2 sets that field to the parsed
+     ref segment of the chosen `source_url` (e.g. the `main` /
+     `<branch>` / `<tag>` / `<commit-sha>` extracted from the GitHub
+     URL when the search record carries a `/tree/<ref>/...` or
+     `/blob/<ref>/...` shape, or whatever default §2.2 specifies for
+     ref-less URLs). Derive the expected value from the captured
+     `source_url` for each slug, **not** from the SkillsMP search
+     record's top-level `version` field — those are unrelated. Treat
+     `source_ref is None` as a real assertion only when §2.2's
+     `download_skill` returns `version=None` for that exact URL shape.
+   The MCP `get_skill` tool currently surfaces `source_type`,
+   `source_path`, and `source_ref`
+   (`src/gobby/mcp_proxy/tools/skills/get_skill.py`:67–82) but not the
+   three `hub_*` columns; those are persisted by §2.4 for future
+   surfacing and are not asserted here. If verification of the
+   `hub_name` / `hub_slug` / `hub_version` columns is needed, query the
+   running daemon's SQLite directly (`SELECT hub_name, hub_slug,
+   hub_version FROM skills WHERE name = ?`) and capture the values in
+   the close-summary; do not block live verification on this side
+   check.
+7. **Temp-dir cleanup check (§2.4)**: after each successful install
+   in step 4, re-run `ls -d /tmp/skillsmp_* 2>/dev/null` and confirm
+   the output is identical to the `BASELINE_TEMPS` captured in step 3
+   — no new `/tmp/skillsmp_*` directories should remain. The cleanup
+   wired by §2.4 should leave `/tmp` exactly as it was at baseline.
 
 Failure modes to check and report:
 
@@ -1426,6 +1999,13 @@ Close this task with a `changes_summary` reporting:
 - If only one shape was available in the live corpus, name the
   uncovered-by-live shape and reference the corresponding §2.2 mocked
   test that covers it.
+- For each install: the observed `source_type`, `source_path`, and
+  `source_ref` from `get_skill(name=...)` (proving §2.4's provenance
+  contract held against the live API and a real SkillLoader run).
+  Optionally the side-channel SQLite `hub_name` / `hub_slug` /
+  `hub_version` values for the same skills.
+- Confirmation that `/tmp/skillsmp_*` returned to its pre-install
+  state after every successful install (§2.4 cleanup).
 
 ## Task Mapping
 
