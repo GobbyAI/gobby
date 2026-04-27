@@ -1,0 +1,890 @@
+# Bootstrap coverage ledger for Epic 1 — Plan-Coverage Contract.
+#
+# This ledger is the manual stand-in for the A4 coverage tooling that
+# does not yet exist. It enumerates every deliverable acceptance item
+# in the Epic 1 plan and the leaves that are expected to cover it.
+# Adversary-reviewed before Epic 1 expansion (per strategy A8); re-
+# validated by the new tooling after A4 lands (blocks Epic 1 close
+# on mismatch — A8.7).
+#
+# Sections A0 (framing), A11 (framing), and A12 (verification) are
+# intentionally absent: they have no acceptance items.
+
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: task-13175-plan-coverage-contract
+plan_hash: "7cec248472cd9039fa1f05c5e5b36a7db402cc0a799acf8270a747ac179ca009"
+root_task_ref: "13175"
+
+sections:
+
+  A1:
+    acceptance_items:
+      A1.1:
+        expected_leaves:
+          - title: "Pin canonical plan-format regex in plan-draft SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/skills/plan-draft/SKILL.md contains
+              the canonical regex from A1 verbatim inside a fenced code
+              block; string-equality test in A1.8 passes.
+      A1.2:
+        expected_leaves:
+          - title: "Document kind enum in plan-draft SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              plan-draft SKILL.md documents the four-value kind enum
+              (deliverable | framing | verification | deferred) and the
+              per-kind acceptance/no-acceptance rule.
+      A1.3:
+        expected_leaves:
+          - title: "Document acceptance-item shape in plan-draft SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              plan-draft SKILL.md specifies the acceptance-item shape
+              with the four artifact kinds (file | symbol | test |
+              behavior) and the dotted-suffix item-ID rule.
+      A1.4:
+        expected_leaves:
+          - title: "Document typed deferral object and covers record in plan-draft SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              plan-draft SKILL.md documents the typed deferral object
+              YAML shape and the structured
+              covers:<plan-id>:<section-id>:<item-id> record.
+      A1.5:
+        expected_leaves:
+          - title: "Document mechanical rejection cases in plan-review SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              plan-review SKILL.md instructs plan-adversary to load the
+              A2 parser and reject mechanically before qualitative
+              review; enumerates the seven rejection cases.
+      A1.6:
+        expected_leaves:
+          - title: "Add typed-grammar requirement to planner agent prompt"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/workflows/agents/planner.yaml
+              prompt includes the typed-grammar requirement (canonical
+              regex, kind enum, acceptance-item shape, deferral object);
+              compiled-prompt test A1.10 passes.
+      A1.7:
+        expected_leaves:
+          - title: "Wire A2 parser callable into plan-adversary agent definition"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/workflows/agents/plan-adversary.yaml
+              allowed-tool list includes the A2 parser entry point and
+              the prompt references plan-review skill content.
+      A1.8:
+        expected_leaves:
+          - title: "Test: canonical regex string equality between SKILL.md and parser constant"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/skills/test_plan_skill_grammar.py::test_canonical_regex_pinned
+              asserts the regex literal in plan-draft SKILL.md equals
+              gobby.plans.parser.PLAN_HEADING_REGEX.pattern.
+      A1.9:
+        expected_leaves:
+          - title: "Test: plan-adversary mechanical-rejection cases"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/skills/test_plan_adversary_rejection.py::test_rejects_each_case
+              asserts the documented rejection message fires for each
+              of the seven cases.
+      A1.10:
+        expected_leaves:
+          - title: "Test: planner agent compiled prompt contains grammar marker"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/workflows/test_planner_grammar_prompt.py::test_planner_prompt_contains_grammar
+              asserts the planner agent's compiled prompt includes the
+              typed-grammar requirement marker.
+
+  A2:
+    acceptance_items:
+      A2.1:
+        expected_leaves:
+          - title: "Create gobby.plans.parser module with public API"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/plans/parser.py exports PlanDocument, PlanSection,
+              AcceptanceItem, Deferral, Kind, ArtifactKind,
+              PlanParseError, parse_plan, PLAN_HEADING_REGEX.
+      A2.2:
+        expected_leaves:
+          - title: "Pin canonical regex as module constant in parser.py"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.parser.PLAN_HEADING_REGEX is a compiled
+              re.Pattern with the canonical pattern from A1.
+      A2.3:
+        expected_leaves:
+          - title: "Compute sha256 source_hash on PlanDocument"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              PlanDocument.source_hash equals sha256 hex of file bytes
+              read at parse time; verified by
+              tests/plans/test_parser.py::test_source_hash_is_sha256_of_bytes.
+      A2.4:
+        expected_leaves:
+          - title: "Parser fixture test against task-12725-lifecycle-dispatch.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_parses_task_12725_lifecycle_dispatch
+              asserts every numeric/alpha-suffix ID shape from the
+              post-A7-retrofit #12725 plan parses; depends_on A7.1-A7.4.
+      A2.5:
+        expected_leaves:
+          - title: "Parser fixture test against task-13173-recovery.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_parses_task_13173_recovery
+              asserts A1–A10, D0.1–D0.9, B1–B5, C1–C6, D1–D8, F1–F4
+              section IDs parse from the strategy doc.
+      A2.6:
+        expected_leaves:
+          - title: "Parser handles bare and titled heading forms"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_bare_and_titled_headings
+              proves bare end-of-line and titled forms of the same
+              heading parse to the same section_id.
+      A2.7:
+        expected_leaves:
+          - title: "Parser records framing headings without IDs and rejects when kind absent"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_framing_without_id_is_recorded
+              and ::test_framing_without_id_no_kind_raises pass.
+      A2.8:
+        expected_leaves:
+          - title: "Parser raises on duplicate section IDs"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_duplicate_section_id_raises
+              asserts PlanParseError on duplicate IDs.
+      A2.9:
+        expected_leaves:
+          - title: "ArtifactKind enum constrains acceptance-item parsing"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.parser.ArtifactKind is a four-value StrEnum;
+              parser raises on any other artifact_kind value.
+      A2.10:
+        expected_leaves:
+          - title: "PlanSection.source_span inclusive 1-indexed"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_source_span_is_inclusive_1_indexed
+              asserts (start_line, end_line) inclusive 1-indexed.
+      A2.11:
+        expected_leaves:
+          - title: "Pinned-strings grammar test for canonical regex"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser_grammar.py::test_regex_pinned_strings
+              passes for every documented (input, expected_section_id)
+              row in the table.
+      A2.12:
+        expected_leaves:
+          - title: "Test: parser module does not import storage"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_parser_module_does_not_import_storage
+              asserts gobby.plans.parser has no gobby.storage import.
+      A2.13:
+        expected_leaves:
+          - title: "Parser populates Deferral from YAML block"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              parser parses a deferred section's YAML deferral block
+              into Deferral(task_ref, reason, owner,
+              original_acceptance_items); proven by ::test_deferred_object_parsed
+              and ::test_deferred_without_object_raises.
+
+  A3:
+    acceptance_items:
+      A3.1:
+        expected_leaves:
+          - title: "Create covers-record portion of gobby.plans.coverage"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/plans/coverage.py exports CoversRecord,
+              parse_covers_label, validate_covers, COVERS_LABEL_REGEX,
+              CoversValidationResult, InvalidCoversLabelError.
+      A3.2:
+        expected_leaves:
+          - title: "Test: parse_covers_label happy path across ID shapes"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_covers.py::test_parse_valid_label
+              proves canonical inputs round-trip to CoversRecord.
+      A3.3:
+        expected_leaves:
+          - title: "Test: parse_covers_label rejects malformed labels"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_covers.py::test_parse_rejects_malformed
+              asserts InvalidCoversLabelError on missing prefix,
+              missing parts, embedded slashes/colons, empty plan_id.
+      A3.4:
+        expected_leaves:
+          - title: "COVERS_LABEL_REGEX plan_id grammar matches A4 sanitize allowlist"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.coverage.COVERS_LABEL_REGEX plan_id group is
+              [A-Za-z0-9._-]+; identical to A4 _sanitize allowlist.
+      A3.5:
+        expected_leaves:
+          - title: "Test: validate_covers missing_section status"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_covers.py::test_validate_covers_missing_section
+              asserts unknown section_id yields missing_section.
+      A3.6:
+        expected_leaves:
+          - title: "Test: validate_covers missing_item status"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_covers.py::test_validate_covers_missing_item
+              asserts unknown item_id within a known section yields
+              missing_item.
+      A3.7:
+        expected_leaves:
+          - title: "Test: validate_covers rejects overbroad leaves"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_covers.py::test_validate_covers_overbroad_rejected
+              asserts artifact_not_referenced when leaf
+              validation_criteria does not name the artifact.
+      A3.8:
+        expected_leaves:
+          - title: "Create gobby.plans.deferral module"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/plans/deferral.py exports validate_deferral,
+              DeferralValidationResult, TaskStoreProtocol.
+      A3.9:
+        expected_leaves:
+          - title: "Test: validate_deferral five short-circuit failure cases"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_deferral.py asserts each of
+              test_validate_task_missing, _task_closed,
+              _missing_provenance_label, _criteria_does_not_duplicate,
+              _missing_reason_or_owner short-circuits in order.
+      A3.10:
+        expected_leaves:
+          - title: "Test: validate_deferral happy path returns valid"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_deferral.py::test_validate_happy_path
+              asserts status=valid when all five conditions hold.
+
+  A4:
+    acceptance_items:
+      A4.1:
+        expected_leaves:
+          - title: "Coverage library public API surface"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/plans/coverage.py exports evaluate,
+              CoverageReport, CoverageRow, CoverageRowLeaf,
+              CoverageHeader, CoverageStatus, EvidenceKind,
+              TaskTreeSource, MissingScopeError, StaleHashError.
+      A4.2:
+        expected_leaves:
+          - title: "evaluate signature: db|jsonl require scope at type and runtime"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.coverage.evaluate uses @overload chain such
+              that db|jsonl require plan_id, root_task_ref, project_id;
+              tests/plans/test_coverage_signature.py covers all four
+              cases including mypy --strict on a fixture file.
+      A4.3:
+        expected_leaves:
+          - title: "evaluate signature: matrix_file accepts only matrix_file"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_signature.py::test_matrix_file_without_path_raises
+              asserts MissingScopeError when matrix_file kind is used
+              without --matrix-file path.
+      A4.4:
+        expected_leaves:
+          - title: "Click CLI: gobby plan coverage with eight flags"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/cli/plan.py registers the gobby plan coverage
+              Click command; src/gobby/cli/__init__.py registers the
+              plan subgroup; tests/plans/test_coverage_cli.py covers
+              flag presence and required combinations.
+      A4.5:
+        expected_leaves:
+          - title: "CLI exit codes per status table"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_cli.py::test_cli_exit_codes_per_status
+              proves exit codes 0, 2, 3, 4, 5, 6, 7 for documented
+              outcomes.
+      A4.6:
+        expected_leaves:
+          - title: "coverage_manifest_path canonical Path scheme"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.coverage_manifest.coverage_manifest_path
+              returns .gobby/plans/coverage/<sani(project)>/<sani(root)>/<sani(plan)>.coverage.yaml;
+              proven by tests/plans/test_coverage_manifest_path.py::test_canonical_form.
+      A4.7:
+        expected_leaves:
+          - title: "_sanitize allowlist [A-Za-z0-9._-] and empty rejection"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_manifest_path.py::test_replaces_disallowed_chars
+              and ::test_rejects_empty_post_sanitize verify allowlist
+              and EmptyComponentError on empty.
+      A4.8:
+        expected_leaves:
+          - title: "_sanitize drops leading # for root_task_ref"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_manifest_path.py::test_drops_leading_hash
+              proves _sanitize('#12725', kind='root_task_ref') == '12725'.
+      A4.9:
+        expected_leaves:
+          - title: "_sanitize strips leading/trailing -, ., _"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_manifest_path.py::test_strips_punct
+              passes.
+      A4.10:
+        expected_leaves:
+          - title: "_sanitize 64-char cap with truncate-with-hash"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_manifest_path.py::test_truncate_with_hash,
+              ::test_truncate_hash_uses_pre_replacement_input,
+              ::test_truncate_hash_disambiguates_collisions verify
+              deterministic truncate-with-hash semantics.
+      A4.11:
+        expected_leaves:
+          - title: "_sanitize disambiguates Windows reserved names case-insensitively"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_manifest_path.py::test_windows_reserved_disambiguated
+              proves CON, con, Lpt9 each get an underscore suffix.
+      A4.12:
+        expected_leaves:
+          - title: "Sanitization edge-case test suite"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_manifest_path.py covers case
+              collision, Windows reserved, slash/path traversal,
+              distinct raws collapsing, truncate-with-hash determinism.
+      A4.13:
+        expected_leaves:
+          - title: "IdentityCollisionError + --regenerate audit log"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_identity.py::test_identity_collision_blocks_overwrite
+              and ::test_regenerate_overwrites_and_audits prove the
+              gate and the audit-line append.
+      A4.14:
+        expected_leaves:
+          - title: "CoverageHeader fields populated"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.coverage.CoverageHeader includes plan_id,
+              plan_hash, root_task_ref, project_id, generated_at,
+              task_tree_source, task_tree_source_hash, evidence_summary.
+      A4.15:
+        expected_leaves:
+          - title: "CoverageRow shape with leaves and evidence"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              gobby.plans.coverage.CoverageRow includes section_id,
+              item_id, status, leaves (CoverageRowLeaf list),
+              deferral_target, evidence rows.
+      A4.16:
+        expected_leaves:
+          - title: "Multi-plan-multi-root distinct manifests"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage_identity.py::test_same_plan_two_root_tasks_distinct_manifests
+              and ::test_two_plans_one_root_distinct_manifests pass.
+      A4.17:
+        expected_leaves:
+          - title: "Root-scope filter excludes leaves outside subtree"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_coverage.py::test_evaluate_root_scope_excludes_other_subtree
+              passes; leaves in unrelated subtrees never count toward
+              coverage even with a matching covers label.
+
+  A5:
+    acceptance_items:
+      A5.1:
+        expected_leaves:
+          - title: "Wire expansion-qa.yaml to A4 coverage call"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+              includes a workflow step that calls the A4 library or
+              CLI with --plan, --plan-id, --plan-hash, --root-task,
+              --project-id, --task-tree db.
+      A5.2:
+        expected_leaves:
+          - title: "Document mechanical rejection contract in expansion-qa SKILL.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/install/shared/skills/expansion-qa/SKILL.md
+              documents that any deliverable item with status missing
+              or invalid rejects the run mechanically.
+      A5.3:
+        expected_leaves:
+          - title: "Test: rejection_notes cite section/item/status/detail"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/workflows/test_expansion_qa_rejection.py::test_missing_row_triggers_rejection
+              asserts rejection cites (section_id, item_id, status,
+              detail) and the leaves that claimed-but-failed coverage.
+      A5.4:
+        expected_leaves:
+          - title: "Persist manifest to canonical path; write artifact pointer"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/workflows/test_expansion_qa_persists_manifest.py::test_manifest_written_at_canonical_path
+              and ::test_artifact_pointer_written assert manifest at
+              coverage_manifest_path and artifact write via
+              gobby-tasks-ops:set_artifact.
+      A5.5:
+        expected_leaves:
+          - title: "Test: A4 invoked with all four scope inputs"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/workflows/test_expansion_qa_coverage_call.py::test_workflow_calls_evaluate_with_full_scope
+              passes.
+      A5.6:
+        expected_leaves:
+          - title: "Test: zero missing|invalid triggers approval"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/workflows/test_expansion_qa_rejection.py::test_zero_missing_invalid_triggers_approval
+              asserts mark_task_review_approved is invoked with the
+              manifest path in approval_notes.
+      A5.7:
+        expected_leaves:
+          - title: "Test: plan-hash drift fails the run"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/workflows/test_expansion_qa_persists_manifest.py::test_plan_hash_drift_fails
+              asserts run fails with reason plan_hash_drift when
+              recomputed hash differs from task_artifacts.plan_file_hash.
+
+  A6:
+    acceptance_items:
+      A6.1:
+        expected_leaves:
+          - title: "Create gobby.plans.evidence module"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/plans/evidence.py exports resolve_evidence,
+              EvidenceBundle, EvidenceRow, EvidenceResolveStatus,
+              InvalidEvidenceError, MissingIsolationBaseError,
+              EvidenceContextProtocol.
+      A6.2:
+        expected_leaves:
+          - title: "Test: resolve_evidence commits range"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_evidence.py::test_resolve_commits_range
+              proves artifacts_touched lists changed files for a
+              fixture commit range.
+      A6.3:
+        expected_leaves:
+          - title: "Test: resolve_evidence task-diff via context protocol"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_evidence.py::test_resolve_task_diff
+              passes against a fixture context whose get_task_diff
+              returns a known diff.
+      A6.4:
+        expected_leaves:
+          - title: "worktree-diff resolves via base_commit_sha"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_evidence_worktree_diff.py::test_resolves_with_base_sha
+              asserts diff range uses base_commit_sha (never
+              target_branch).
+      A6.5:
+        expected_leaves:
+          - title: "Test: resolve_evidence coverage-matrix loads YAML"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_evidence.py::test_resolve_coverage_matrix
+              passes against a fixture YAML manifest.
+      A6.6:
+        expected_leaves:
+          - title: "Test: resolve_evidence none emits audit row"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_evidence.py::test_resolve_none_emits_audit_row
+              asserts a single resolved audit row is emitted with
+              detail='explicit operator override'.
+      A6.7:
+        expected_leaves:
+          - title: "Worktree-diff failure paths return invalid (never silent)"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_evidence_worktree_diff.py covers
+              ::test_invalid_when_artifacts_missing,
+              ::test_invalid_when_no_isolation_path,
+              ::test_invalid_when_base_sha_null,
+              ::test_invalid_when_base_sha_unresolvable.
+      A6.8:
+        expected_leaves:
+          - title: "Migration: add base_commit_sha and plan_file_hash (nullable)"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/storage/migrations.py adds an additive migration
+              for task_artifacts.base_commit_sha TEXT and plan_file_hash
+              TEXT (both nullable); migration tests pass.
+      A6.9:
+        expected_leaves:
+          - title: "Add base_commit_sha and plan_file_hash to baseline_schema.sql"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/storage/baseline_schema.sql includes both
+              columns with the same nullable semantics; fresh-install
+              parity test passes.
+      A6.10:
+        expected_leaves:
+          - title: "Test: migration preserves legacy isolation rows"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/storage/tasks/test_artifacts_isolation_base.py::test_migration_preserves_legacy_rows
+              asserts pre-existing artifact rows survive migration with
+              base_commit_sha=NULL.
+      A6.11:
+        expected_leaves:
+          - title: "App-level enforcement: new isolation write requires base"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_new_isolation_write_without_base_raises
+              asserts MissingIsolationBaseError on new write missing
+              base_commit_sha.
+      A6.12:
+        expected_leaves:
+          - title: "Isolation handlers capture base_commit_sha at creation"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/agents/isolation.py runs git rev-parse HEAD
+              after worktree/clone creation and persists base via
+              set_artifacts_atomic; tests
+              tests/agents/test_isolation_base_capture.py::test_worktree_handler_captures_base,
+              ::test_clone_handler_captures_base,
+              ::test_base_captured_before_first_agent_run pass.
+      A6.13:
+        expected_leaves:
+          - title: "clear_isolation_pair clears base_commit_sha atomically"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/storage/tasks/test_artifacts_isolation_base_app_enforcement.py::test_clear_isolation_pair_clears_base
+              asserts base_commit_sha is cleared with the family pair.
+      A6.14:
+        expected_leaves:
+          - title: "MCP artifact tool schemas surface base_commit_sha and plan_file_hash"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              src/gobby/mcp_proxy/tools/tasks_ops.py JSON schemas for
+              get_artifacts, set_artifact, set_artifacts_atomic,
+              clear_isolation_pair list base_commit_sha and
+              plan_file_hash with explicit nullability;
+              tests/storage/tasks/test_artifacts_plan_file_hash.py::test_mcp_get_artifacts_includes_plan_file_hash
+              asserts.
+      A6.15:
+        expected_leaves:
+          - title: "Test: plan_file_hash round-trips via set_artifact/get_artifacts"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/storage/tasks/test_artifacts_plan_file_hash.py::test_set_artifact_plan_hash_round_trips
+              passes.
+
+  A7:
+    acceptance_items:
+      A7.1:
+        expected_leaves:
+          - title: "Retrofit task-12725-lifecycle-dispatch.md to canonical regex (Step 1)"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              .gobby/plans/task-12725-lifecycle-dispatch.md every
+              ##–###### heading either matches the canonical regex or
+              carries kind: framing; parser test
+              tests/plans/test_parser.py::test_parses_task_12725_lifecycle_dispatch
+              passes without raising.
+      A7.2:
+        expected_leaves:
+          - title: "Add kind front-matter to every section in #12725 plan"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_task_12725_every_section_has_kind
+              asserts every parsed section has a non-None kind.
+      A7.3:
+        expected_leaves:
+          - title: "Add Acceptance items to every deliverable in #12725 plan"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_task_12725_every_deliverable_has_acceptance
+              asserts at least one acceptance item with non-empty
+              artifact_ref per deliverable section.
+      A7.4:
+        expected_leaves:
+          - title: "Decompose tabular deliverables in #12725 plan into per-row items"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_parser.py::test_task_12725_table_rows_are_acceptance_items
+              proves Phase 2 agent table and Phase 4 task-mapping table
+              rows surface as per-row acceptance items.
+      A7.5:
+        expected_leaves:
+          - title: "Generate #12725 compliance manifest using gobby plan coverage (Step 2)"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              .gobby/plans/coverage/d45545c5-ded5-4335-b115-0245752edacf/12725/task-12725-lifecycle-dispatch.coverage.yaml
+              exists and is generated by gobby plan coverage with the
+              full scope inputs documented in A7.
+        notes: >-
+          Depends on A4 landing first. Sequenced via depends_on edges
+          during Epic 1 expansion.
+      A7.6:
+        expected_leaves:
+          - title: "Confirm generated #12725 manifest is the gap inventory"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              The manifest header records plan_id, plan_hash,
+              root_task_ref='12725', project_id; rows enumerate every
+              acceptance item with status; the file is the
+              authoritative input to Epic 2.
+        notes: >-
+          Depends on A7.5 (and therefore A4) landing first.
+
+  A8:
+    acceptance_items:
+      A8.1:
+        expected_leaves:
+          - title: "Author bootstrap ledger YAML file"
+            owner_agent: unspecified
+            validation_criteria_summary: >-
+              .gobby/plans/task-13175-plan-coverage-contract.coverage-ledger.yaml
+              exists and parses as YAML.
+        notes: >-
+          This ledger file is itself the deliverable for A8.1; it is
+          authored as part of plan authoring (the present task,
+          #13175) and not by Epic 1 expansion.
+      A8.2:
+        expected_leaves:
+          - title: "Bootstrap ledger header carries plan identity"
+            owner_agent: unspecified
+            validation_criteria_summary: >-
+              ledger header has project_id, plan_id, plan_hash,
+              root_task_ref matching the plan file identity.
+        notes: >-
+          Authored alongside A8.1 in the present task.
+      A8.3:
+        expected_leaves:
+          - title: "Bootstrap ledger covers every deliverable section A1–A10"
+            owner_agent: unspecified
+            validation_criteria_summary: >-
+              ledger.sections has keys A1, A2, A3, A4, A5, A6, A7,
+              A8, A9, A10.
+        notes: >-
+          Authored alongside A8.1 in the present task.
+      A8.4:
+        expected_leaves:
+          - title: "Bootstrap ledger lists every acceptance item ID"
+            owner_agent: unspecified
+            validation_criteria_summary: >-
+              every plan acceptance item ID appears as a key under
+              sections.<X>.acceptance_items.
+        notes: >-
+          Authored alongside A8.1 in the present task.
+      A8.5:
+        expected_leaves:
+          - title: "Bootstrap ledger expected_leaves shape per item"
+            owner_agent: unspecified
+            validation_criteria_summary: >-
+              every ledger acceptance_item has expected_leaves with
+              non-empty list of {title, owner_agent,
+              validation_criteria_summary}.
+        notes: >-
+          Authored alongside A8.1 in the present task.
+      A8.6:
+        expected_leaves:
+          - title: "Plan-adversary review of ledger artifact"
+            owner_agent: plan-adversary
+            validation_criteria_summary: >-
+              ledger reviewed by plan-adversary as a separate spawn
+              from the plan-adversary review of the plan; verdict
+              review_approved recorded on root task #13175 with
+              findings cleared.
+        notes: >-
+          Runs during plan-authoring task #13175 before Epic 1
+          expansion proceeds.
+      A8.7:
+        expected_leaves:
+          - title: "Wire Epic 1 close-time ledger-vs-manifest revalidation gate"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_bootstrap_ledger_revalidation.py::test_close_blocked_on_ledger_mismatch
+              passes; the close-task workflow refuses to close root
+              task #13175 when the post-A4 manifest does not match
+              the ledger's expected_leaves coverage.
+      A8.8:
+        expected_leaves:
+          - title: "Document .grandfathered semantics in CLAUDE.md (Epic 1 not grandfathered)"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              CLAUDE.md states .grandfathered is reserved for
+              already-merged epics and additions require a
+              co-located removal task; Epic 1 is not grandfathered.
+
+  A9:
+    acceptance_items:
+      A9.1:
+        expected_leaves:
+          - title: "Create tests/plans/test_plan_coverage_ci.py walking active plans"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py walks .gobby/plans/*.md,
+              skips merged-and-grandfathered plans.
+      A9.2:
+        expected_leaves:
+          - title: "Author .gobby/plans/index.yaml with three entries"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              .gobby/plans/index.yaml lists task-12725-lifecycle-dispatch
+              (merged), task-13175-plan-coverage-contract (active),
+              task-13173-lifecycle-dispatch-recovery (active);
+              tests/plans/test_plan_coverage_ci.py::test_index_file_present_and_well_formed
+              passes.
+      A9.3:
+        expected_leaves:
+          - title: "CI assertion: every active plan has a manifest at canonical path"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_every_active_plan_has_manifest
+              passes.
+      A9.4:
+        expected_leaves:
+          - title: "CI assertion: manifest plan_hash matches on-disk plan"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_manifest_plan_hash_matches_on_disk
+              fails on hash drift.
+      A9.5:
+        expected_leaves:
+          - title: "CI assertion: zero missing|invalid rows via matrix-file"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_zero_missing_invalid_rows
+              passes for every active plan's committed manifest.
+      A9.6:
+        expected_leaves:
+          - title: "CI assertion: orphan manifests fail"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_no_orphan_manifests
+              passes.
+      A9.7:
+        expected_leaves:
+          - title: "CI assertion: .grandfathered entries require remove-by + open task"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_grandfathered_entries_require_remove_by_annotation
+              and ::test_grandfathered_target_task_exists_and_open
+              both pass.
+      A9.8:
+        expected_leaves:
+          - title: "CI assertion: no unauthorized .grandfathered additions"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py::test_no_unauthorized_grandfathered_additions
+              passes; new entries since the signed-off baseline
+              require the remove-by annotation.
+      A9.9:
+        expected_leaves:
+          - title: "CI runs without live task DB"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/plans/test_plan_coverage_ci.py runs with
+              GOBBY_LIVE_DB=0; index.yaml and committed manifests are
+              self-describing.
+
+  A10:
+    acceptance_items:
+      A10.1:
+        expected_leaves:
+          - title: "Add Plan-Coverage Contract section to CLAUDE.md"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              CLAUDE.md includes a Plan-Coverage Contract section with
+              the eight required bullets (regex, kind enum, acceptance
+              shape, deferral object, covers record, CLI, evidence
+              kinds, bootstrap-ledger requirement, .grandfathered
+              rules).
+      A10.2:
+        expected_leaves:
+          - title: "Update plan/plan-draft/plan-review/expansion-qa SKILL.md files"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              all four SKILL.md files at
+              src/gobby/install/shared/skills/{plan,plan-draft,plan-review,expansion-qa}/SKILL.md
+              contain or link to the contract surface relevant to
+              their role.
+      A10.3:
+        expected_leaves:
+          - title: "Author docs/contracts/plan-coverage.md reference page"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              docs/contracts/plan-coverage.md exists and links back
+              to the four skill files, CLAUDE.md, and the canonical
+              regex / library / CLI / evidence surfaces.
+      A10.4:
+        expected_leaves:
+          - title: "Document deprecation of free-form plan-ref labels"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              CLAUDE.md and docs/contracts/plan-coverage.md state that
+              free-form plan-ref labels are not honored and only
+              structured covers records are valid coverage signal.
+      A10.5:
+        expected_leaves:
+          - title: "Document bootstrap-ledger requirement"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              CLAUDE.md and docs/contracts/plan-coverage.md state that
+              every new epic plan ships a .coverage-ledger.yaml
+              companion until the tooling is mature.
+      A10.6:
+        expected_leaves:
+          - title: "Document .grandfathered mechanism rules"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              CLAUDE.md and docs/contracts/plan-coverage.md state that
+              .grandfathered is reserved for already-merged epics and
+              additions require paired # remove-by: annotation and an
+              open task.
+      A10.7:
+        expected_leaves:
+          - title: "Test: CLAUDE.md contract section bullets present"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/docs/test_claude_md_contract_section.py::test_plan_coverage_section_present
+              passes.
+      A10.8:
+        expected_leaves:
+          - title: "Test: canonical regex pinned in CLAUDE.md matches parser constant"
+            owner_agent: backend-developer
+            validation_criteria_summary: >-
+              tests/docs/test_claude_md_contract_section.py::test_canonical_regex_pinned_in_claude_md
+              passes.
