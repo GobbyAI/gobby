@@ -19,12 +19,3 @@ entries:
     non_retrofit_acknowledgment_exists: true
     non_retrofit_acknowledgment_open: true
     non_retrofit_acknowledgment_title: "Lifecycle-state-driven agent dispatch"
-  - plan_id: task-12761-postgres-hub-migration
-    root_task_ref: "12761"
-    root_open: true
-    root_title: "PostgreSQL hub migration"
-    legacy_reason: "Pre-contract planning artifact; root epic remains the open tracking object for retrofit disposition."
-    non_retrofit_acknowledgment: "#12761"
-    non_retrofit_acknowledgment_exists: true
-    non_retrofit_acknowledgment_open: true
-    non_retrofit_acknowledgment_title: "PostgreSQL hub migration"
