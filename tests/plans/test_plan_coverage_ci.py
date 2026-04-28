@@ -26,13 +26,13 @@ COVERAGE_DIR = PLANS_DIR / "coverage"
 
 EXPECTED_PLAN_IDS = {
     "task-12068-skillsmp-install-rewrite",
+    "task-12285-droid-cli",
     "task-12725-lifecycle-dispatch",
     "task-12725-lifecycle-dispatch-rev1",
     "task-12746-neo4j-falkordb-swap",
     "task-12761-postgres-hub-migration",
     "task-12898-memory-recall-helper",
     "task-13173-lifecycle-dispatch-recovery",
-    "task-13305-compat-dict-removal",
 }
 PLAN_KINDS = {"implementation", "strategy", "legacy"}
 STATUSES = {"active", "merged", "archived"}
