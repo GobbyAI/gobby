@@ -13,10 +13,13 @@ Each handler implements the IsolationHandler ABC to provide:
 """
 
 import asyncio
+import json
 import logging
+import os
 import subprocess  # nosec B404 # needed for git error handling
 import time
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -610,9 +613,13 @@ async def _copy_cli_hooks(
     Args:
         source_path: Path to the source repository
         target_path: Path to the isolated environment (worktree or clone)
-        provider: CLI provider (gemini, claude, codex)
+        provider: CLI provider (gemini, claude, codex, droid)
     """
     import shutil
+
+    if provider == "droid":
+        await _copy_droid_hooks_for_isolation(target_path)
+        return
 
     cli_dirs = {
         "gemini": ".gemini",
@@ -645,6 +652,96 @@ async def _copy_cli_hooks(
             f"Filesystem error copying CLI hooks: provider={provider}, src={src_path}, dst={dst_path}",
             exc_info=True,
         )
+
+
+async def _copy_droid_hooks_for_isolation(target_path: str) -> None:
+    """Ensure isolated Droid sessions have Gobby hooks.
+
+    Droid normally reads user-global ``~/.factory/hooks/hooks.json`` regardless
+    of ``--cwd``, but project-local Factory config can shadow that file and
+    global inheritance is hard to prove in automated isolation tests. Writing
+    Gobby-owned hook entries into the isolated worktree or clone gives spawned
+    Droid agents deterministic lifecycle hooks while preserving user entries.
+    """
+    hooks_path = Path(target_path) / ".factory" / "hooks" / "hooks.json"
+    try:
+        await asyncio.to_thread(_write_droid_isolation_hooks, hooks_path)
+        logger.info(f"Wrote Droid isolation hooks to {hooks_path}")
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+        logger.warning(
+            f"Failed to write Droid isolation hooks: target={hooks_path}",
+            exc_info=True,
+        )
+
+
+def _write_droid_isolation_hooks(hooks_path: Path) -> None:
+    existing_settings = _load_json_object(hooks_path)
+    gobby_settings = _load_droid_isolation_hooks_template()
+    updated_settings = _merge_droid_isolation_hooks(existing_settings, gobby_settings)
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(updated_settings, indent=2) + "\n")
+
+
+def _load_droid_isolation_hooks_template() -> dict[str, Any]:
+    from gobby.cli.installers.hook_commands import rewrite_hook_template_commands
+    from gobby.paths import get_install_dir
+
+    template_path = get_install_dir() / "droid" / "hooks-template.json"
+    if not template_path.exists():
+        raise FileNotFoundError(f"Missing Droid hooks template: {template_path}")
+
+    template = _load_json_object(template_path)
+    hooks_dir = Path(os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks")))
+    rewrite_hook_template_commands(
+        template,
+        cli_name="droid",
+        hooks_dir=hooks_dir.expanduser(),
+    )
+    return template
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+
+    with path.open() as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
+
+
+def _merge_droid_isolation_hooks(
+    existing_settings: dict[str, Any],
+    gobby_settings: dict[str, Any],
+) -> dict[str, Any]:
+    from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
+    from gobby.cli.installers.hook_commands import config_contains_gobby_hook
+
+    updated = deepcopy(existing_settings)
+    hooks = updated.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        updated["hooks"] = hooks
+
+    gobby_hooks = gobby_settings.get("hooks")
+    if not isinstance(gobby_hooks, dict):
+        raise ValueError("Droid hooks template does not contain a hooks object")
+
+    for hook_type in DROID_PASCAL_HOOK_NAMES:
+        hook_config = gobby_hooks.get(hook_type)
+        if not isinstance(hook_config, list) or not hook_config:
+            raise ValueError(f"Droid hooks template missing hook type: {hook_type}")
+
+        current_config = hooks.get(hook_type)
+        preserved: list[Any] = []
+        if isinstance(current_config, list):
+            preserved = [
+                deepcopy(entry) for entry in current_config if not config_contains_gobby_hook(entry)
+            ]
+        hooks[hook_type] = preserved + deepcopy(hook_config)
+
+    return updated
 
 
 async def _patch_mcp_config_for_isolation(
