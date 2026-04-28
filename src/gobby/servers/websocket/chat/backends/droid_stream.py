@@ -172,7 +172,9 @@ def _stream_events_from_droid_jsonrpc_record(record: dict[str, Any]) -> list[Str
         return [
             _content_delta(
                 "tool_result",
-                call_id=notification.get("toolUseId") or notification.get("tool_use_id") or "unknown",
+                call_id=notification.get("toolUseId")
+                or notification.get("tool_use_id")
+                or "unknown",
                 success=not is_error,
                 result=content if not is_error else None,
                 error=str(content) if is_error else None,
@@ -189,7 +191,10 @@ def _stream_events_from_droid_jsonrpc_record(record: dict[str, Any]) -> list[Str
                 },
             )
         ]
-    if notification_type == "droid_working_state_changed" and notification.get("newState") == "idle":
+    if (
+        notification_type == "droid_working_state_changed"
+        and notification.get("newState") == "idle"
+    ):
         return [StreamEvent(event_type="result", data=record)]
     if notification_type == "session_token_usage_changed":
         return [
@@ -253,7 +258,9 @@ def _stream_events_from_droid_record(record: dict[str, Any]) -> list[StreamEvent
                 "tool_use",
                 call_id=record.get("id") or "unknown",
                 tool_name=record.get("toolName") or record.get("tool_name"),
-                tool_input=record.get("parameters") if isinstance(record.get("parameters"), dict) else {},
+                tool_input=record.get("parameters")
+                if isinstance(record.get("parameters"), dict)
+                else {},
             )
         ]
     if record_type == "tool_result":
