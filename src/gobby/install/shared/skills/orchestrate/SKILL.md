@@ -132,7 +132,7 @@ First, fetch available agent definitions:
 defs = call_tool("gobby-workflows", "list_agent_definitions", {"enabled": true})
 ```
 
-Filter to developer-class agents (exclude agents whose name contains "qa", "reviewer", "conductor", "merge", "expansion", "default", "pipeline", "web-chat", "codex", "nightly"). Show the filtered list:
+Filter to developer-class agents (exclude agents whose name contains "qa", "reviewer", "conductor", "merge-worker", "merge-orchestrator", "expansion", "default", "pipeline", "web-chat", "codex", "nightly"). Show the filtered list:
 
 ```text
 Available developer agents:

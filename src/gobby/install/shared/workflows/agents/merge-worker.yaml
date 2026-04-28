@@ -1,6 +1,8 @@
-name: merge
+name: merge-worker
 description: |
-  Merge agent: merges isolated work (worktree or clone) back to target branch.
+  Merge worker agent: merges a single isolated worktree (or clone) back to its
+  target branch. Single-target executor — the merge-orchestrator dispatches
+  many of these in a campaign.
   Detects isolation type from session variables and calls the appropriate merge tool.
   Uses gobby-merge for AI-powered conflict resolution on worktree merges.
 
