@@ -9,7 +9,9 @@ import { SourceIcon } from "../shared/SourceIcon";
 import { cn } from "../../lib/utils";
 import {
   fetchProviderModelCatalog,
+  getOrderedProviders,
   getModelsForProvider,
+  getProviderDisplayName,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
 
@@ -73,8 +75,9 @@ export function ProviderPicker({
   }, [open]);
 
   const effectiveProvider = currentProvider || "claude";
-  const visibleProviders =
-    availableProviders.length > 0 ? availableProviders : [effectiveProvider];
+  const visibleProviders = getOrderedProviders(
+    availableProviders.length > 0 ? availableProviders : [effectiveProvider],
+  );
 
   const handleSelect = useCallback(
     (provider: string, model: string) => {
@@ -158,8 +161,7 @@ export function ProviderPicker({
             <DialogDescription className="text-xs mb-4">
               Switching to{" "}
               <span className="text-foreground font-medium">
-                {confirmSwitch.provider.charAt(0).toUpperCase() +
-                  confirmSwitch.provider.slice(1)}
+                {getProviderDisplayName(confirmSwitch.provider)}
               </span>{" "}
               will start a new conversation. Your current chat will be preserved
               in session history.
@@ -207,7 +209,7 @@ export function ProviderPicker({
                     <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
                       <SourceIcon source={provider} size={14} />
                       <span className="font-medium text-foreground">
-                        {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                        {getProviderDisplayName(provider)}
                       </span>
                       {isActive && (
                         <span className="text-[10px] px-1 py-0.5 rounded bg-accent/20 text-accent">

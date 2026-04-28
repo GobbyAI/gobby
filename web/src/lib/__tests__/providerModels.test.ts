@@ -200,11 +200,13 @@ describe("providerModels", () => {
     );
   });
 
-  it("labels and orders Droid as a known provider", () => {
+  it("labels and sorts known providers alphabetically by display name", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
-    expect(getOrderedProviders(["qwen", "droid", "claude"])).toEqual([
+    expect(getOrderedProviders(["qwen", "droid", "claude", "gemini", "codex"])).toEqual([
       "claude",
+      "codex",
       "droid",
+      "gemini",
       "qwen",
     ]);
   });

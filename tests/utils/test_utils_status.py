@@ -224,6 +224,26 @@ class TestFormatStatusMessage:
         assert "Dependencies:" in result
         assert "3.4" in result
 
+    def test_coding_clis_include_qwen_and_droid(self) -> None:
+        result = format_status_message(
+            running=True,
+            deps_info={
+                "coding_clis": {
+                    "claude": "1.0.12",
+                    "codex": "0.125.0",
+                    "droid": "0.106.0",
+                    "gemini": "0.38.2",
+                    "qwen": "0.15.3",
+                    "hooks": {"droid": True, "qwen": True},
+                },
+            },
+        )
+
+        assert "Qwen CLI:" in result
+        assert "0.15.3 (hooks installed)" in result
+        assert "Droid CLI:" in result
+        assert "0.106.0 (hooks installed)" in result
+
 
 class TestFormatStartupSummary:
     def test_basic(self) -> None:

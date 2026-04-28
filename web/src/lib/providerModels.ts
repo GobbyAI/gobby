@@ -46,7 +46,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
 };
 
-const PROVIDER_SORT_ORDER = ["claude", "droid", "codex", "gemini", "qwen"] as const;
 const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 export const AUTO_REASONING_EFFORT = "auto";
 
@@ -118,16 +117,12 @@ export function getOrderedProviders(providers: string[]): string[] {
   );
 
   return uniqueProviders.sort((left, right) => {
-    const leftIndex = PROVIDER_SORT_ORDER.indexOf(left as (typeof PROVIDER_SORT_ORDER)[number]);
-    const rightIndex = PROVIDER_SORT_ORDER.indexOf(
-      right as (typeof PROVIDER_SORT_ORDER)[number],
+    const labelOrder = getProviderDisplayName(left).localeCompare(
+      getProviderDisplayName(right),
+      undefined,
+      { sensitivity: "base" },
     );
-    if (leftIndex >= 0 || rightIndex >= 0) {
-      if (leftIndex < 0) return 1;
-      if (rightIndex < 0) return -1;
-      return leftIndex - rightIndex;
-    }
-    return getProviderDisplayName(left).localeCompare(getProviderDisplayName(right));
+    return labelOrder || left.localeCompare(right);
   });
 }
 

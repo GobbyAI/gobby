@@ -99,6 +99,29 @@ describe("ProviderPicker", () => {
     });
   });
 
+  it("sorts visible providers alphabetically by display name", async () => {
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["qwen", "droid", "claude", "gemini", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        onSwitchProvider={vi.fn()}
+        hasMessages={false}
+      />,
+    );
+
+    await screen.findByText("GPT 5.4");
+
+    const providerLabels = screen
+      .getAllByText(/^(Claude|Codex|Droid|Gemini|Qwen)$/)
+      .map((element) => element.textContent);
+    expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Gemini", "Qwen"]);
+  });
+
   it("switches provider, model, and conversation when picking a new provider before first send", async () => {
     const onModelChange = vi.fn();
     const onProviderChange = vi.fn();
