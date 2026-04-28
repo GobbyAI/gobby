@@ -1,6 +1,5 @@
----
-name: figure-to-life
-description: Converts figure photos to photorealistic human cosplayer images using a strict JSON-based reasoning mandate.
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
 
 # Figure to Life

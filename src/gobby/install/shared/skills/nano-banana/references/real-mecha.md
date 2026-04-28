@@ -1,6 +1,5 @@
----
-name: real-mecha
-description: Converts 2D/anime mecha art into photorealistic 3D/real-world visualizations with high-fidelity material textures.
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
 
 # Real Mecha

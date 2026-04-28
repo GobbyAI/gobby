@@ -1,6 +1,5 @@
----
-name: anime-to-life
-description: Transforms anime, art, or 3D rendering images into photorealistic cosplay-style photographs.
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
 
 # Anime to Life
@@ -16,4 +15,3 @@ Important requirements you must follow and think twice before generating:
 - The cosplayer's ethnicity should either be Russian or Japanese, determine by identify the character in the original image with search.
 - **The photograph shall match the angle and framing of the uploaded image**
 - The background is the same as it is the original image however rendered in a realistic style.
-

@@ -1,6 +1,6 @@
 ---
 name: nano-banana
-description: REQUIRED for all image generation requests. Generate and edit images using Nano Banana (Gemini CLI). Handles blog featured images, YouTube thumbnails, icons, diagrams, patterns, illustrations, photos, visual assets, graphics, artwork, pictures. Use this skill whenever the user asks to create, generate, make, draw, design, or edit any image or visual content.
+description: REQUIRED for all image generation requests. Generate and edit images using Nano Banana (Gemini CLI). Handles blog featured images, YouTube thumbnails, icons, diagrams, patterns, illustrations, photos, visual assets, graphics, artwork, pictures. Also routes specialty creative recipes (anime-to-life, character-reference-sheet, figure-to-life, imax-portrait, j-cover, j-idol, j-poses, photo-restoration, real-mecha). Use this skill whenever the user asks to create, generate, make, draw, design, or edit any image or visual content.
 allowed-tools: Bash(gemini:*)
 version: 1.0.0
 category: utility
@@ -8,7 +8,7 @@ category: utility
 
 # Nano Banana Image Generation
 
-Generate professional images via the Gemini CLI's nanobanana extension.
+Generate professional images via the Gemini CLI's nanobanana extension. This skill is both the generic image-generation surface AND the router for specialty creative recipes.
 
 ## When to Use This Skill
 
@@ -18,8 +18,31 @@ ALWAYS use this skill when the user:
 - Requests icons, diagrams, or patterns
 - Asks to edit, modify, or restore a photo
 - Uses words like: generate, create, make, draw, design, visualize
+- Names one of the specialty recipes below (e.g. "make this an IMAX portrait", "j-idol gravure", "real mecha")
 
 Do NOT attempt to generate images through any other method.
+
+## Specialty Recipes (load on demand)
+
+When the user's request matches one of these recipes — by name or by intent — call
+`get_skill_file(name="nano-banana", path="references/<recipe>.md")` on `gobby-skills` and
+follow that file's instructions, then generate via the commands below.
+
+| Recipe | Use when the user asks for… |
+|--------|------------------------------|
+| `anime-to-life` | Turning anime/art/3D characters into photorealistic cosplayer photos |
+| `character-reference-sheet` | A 3-column character sheet (portrait + front + back) in a matching style |
+| `figure-to-life` | Converting a figure/statue/toy photo into a photorealistic human cosplayer |
+| `imax-portrait` | Recomposing a portrait into 1.43:1 IMAX 70mm framing with bokeh and grain |
+| `j-cover` | Turning a character image into a Japanese magazine cover with bilingual typography |
+| `j-idol` | Photorealistic J-Idol gravure portrait (2:3 knee-up, dreamy bokeh, rim light) |
+| `j-poses` | A pose library to mix into other prompts (silhouette/line/mood reference) |
+| `photo-restoration` | Restoring blurry/vintage photos to clean 8k while preserving identity |
+| `real-mecha` | Converting 2D mecha art into a photorealistic hard-surface render |
+
+If the request doesn't match a specialty recipe, skip this section and use the generic commands below.
+
+If `get_skill_file` returns `{"success": false, ...}`, surface the error to the user and fall back to generic generation.
 
 ## Before First Use
 
@@ -150,3 +173,4 @@ When the user asks for changes:
 | Quota exceeded | Wait for reset or switch to flash model |
 | Image generation failed | Check prompt for policy violations, simplify request |
 | Output directory missing | Will be created automatically on first run |
+| Specialty recipe not found | Verify the recipe name against the table above; fall back to generic generation if needed |

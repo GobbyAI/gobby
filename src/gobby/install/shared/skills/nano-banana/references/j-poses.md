@@ -1,6 +1,5 @@
----
-name: j-poses
-description: A library of alluring Japanese style photography poses.
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
 
 # J Poses

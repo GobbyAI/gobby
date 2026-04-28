@@ -1,7 +1,8 @@
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
-name: j-idol
-description: Creates photorealistic J-Idol gravure portraits featuring 2:3 knee-up framing, dreamy bokeh, moist skin textures, and professional rim lighting.
----
+
+# J-Idol Gravure Portrait
 
 ## declare process
 

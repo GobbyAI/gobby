@@ -1,6 +1,5 @@
----
-name: photo-restoration
-description: Restores vintage and blurry photos to high-definition 8k images while preserving identity.
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
 
 # Photo Restoration

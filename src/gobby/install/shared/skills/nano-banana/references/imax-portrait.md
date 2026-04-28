@@ -1,6 +1,5 @@
----
-name: imax-portrait
-description: Expands and recomposes images into an IMAX 70mm portrait style (1.43:1 aspect ratio) with high-fidelity Christopher Nolan-esque aesthetics.
+> You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
+
 ---
 
 # IMAX Portrait
