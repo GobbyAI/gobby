@@ -6,6 +6,7 @@ import { useNow } from '../../hooks/useNow'
 import { useSessionDetail } from '../../hooks/useSessionDetail'
 import { SessionDetail } from './SessionDetail'
 import { SourceIcon } from '../shared/SourceIcon'
+import { SOURCE_LABELS } from '../shared/sourceTheme'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { MobileSessionDrawer } from './MobileSessionDrawer'
 import { getSessionTitleText } from '../../lib/sessionTitle'
@@ -22,12 +23,7 @@ interface SessionsPageProps {
 }
 
 function sourceLabel(source: string): string {
-  switch (source) {
-    case 'claude': return 'Claude'
-    case 'gemini': return 'Gemini'
-    case 'codex': return 'Codex'
-    default: return source
-  }
+  return SOURCE_LABELS[source] ?? source
 }
 
 export function SessionsPage({

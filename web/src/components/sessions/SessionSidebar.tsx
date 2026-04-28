@@ -1,5 +1,6 @@
 import type { GobbySession, SessionFilters, ProjectInfo } from '../../types/sessions'
 import { getSessionDisplayTitle } from '../../lib/sessionTitle'
+import { SOURCE_LABELS } from '../shared/sourceTheme'
 
 interface SessionSidebarProps {
   sessions: GobbySession[]
@@ -29,13 +30,7 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 function sourceLabel(source: string): string {
-  switch (source) {
-    case 'claude': return 'Claude'
-    case 'gemini': return 'Gemini'
-    case 'qwen': return 'Qwen'
-    case 'codex': return 'Codex'
-    default: return source
-  }
+  return SOURCE_LABELS[source] ?? source
 }
 
 function sourceDotClass(source: string): string {
@@ -44,6 +39,7 @@ function sourceDotClass(source: string): string {
     case 'gemini': return 'session-source-dot gemini'
     case 'qwen': return 'session-source-dot qwen'
     case 'codex': return 'session-source-dot codex'
+    case 'droid': return 'session-source-dot droid'
     default: return 'session-source-dot'
   }
 }

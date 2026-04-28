@@ -121,7 +121,7 @@ interface AgentEditFormProps {
   agentNames?: string[]
 }
 
-const FALLBACK_PROVIDER_OPTIONS = ['claude', 'codex', 'gemini', 'qwen']
+const FALLBACK_PROVIDER_OPTIONS = ['claude', 'codex', 'gemini', 'qwen', 'droid']
 
 function FormInput({ label, value, onChange, placeholder, required }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean

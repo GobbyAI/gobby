@@ -36,6 +36,9 @@
 [data-theme="light"] .session-source-dot.codex {
   background: #7c3aed;
 }
+[data-theme="light"] .session-source-dot.droid {
+  background: #22d3ee;
+}
 
 /* Read-only badge */
 .read-only-badge {

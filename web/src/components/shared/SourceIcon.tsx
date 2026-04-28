@@ -1,4 +1,5 @@
 import claudeLogo from "../../assets/provider-logos/claude-symbol.svg";
+import droidLogo from "../../assets/provider-logos/droid-logo.svg";
 import geminiLogo from "../../assets/provider-logos/gemini-icon-2025.svg";
 import qwenLogo from "../../assets/provider-logos/qwen-logo.svg";
 import { SOURCE_COLORS } from "./sourceTheme";
@@ -11,6 +12,7 @@ interface SourceIconProps {
 
 const PROVIDER_LOGOS = {
   claude: claudeLogo,
+  droid: droidLogo,
   gemini: geminiLogo,
   qwen: qwenLogo,
 } as const;

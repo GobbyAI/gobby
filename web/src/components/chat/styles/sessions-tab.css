@@ -131,6 +131,10 @@
   background: #a855f7;
 }
 
+.session-source-dot.droid {
+  background: #22d3ee;
+}
+
 /* Source badge */
 .source-badge {
   background: var(--bg-tertiary);

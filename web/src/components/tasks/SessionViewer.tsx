@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { SOURCE_LABELS } from '../shared/sourceTheme'
 
 // =============================================================================
 // Types
@@ -50,13 +51,6 @@ function duration(start: string, end: string): string {
   const hours = Math.floor(minutes / 60)
   const rem = minutes % 60
   return rem > 0 ? `${hours}h ${rem}m` : `${hours}h`
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  claude: 'Claude Code',
-  gemini: 'Gemini CLI',
-  qwen: 'Qwen CLI',
-  codex: 'Codex',
 }
 
 const STATUS_COLORS: Record<string, string> = {
