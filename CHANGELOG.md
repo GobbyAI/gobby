@@ -8,6 +8,32 @@ All notable changes to Gobby are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+
+- Add Factory Droid as a first-class CLI source across hooks, sessions, storage,
+  web chat, and spawned-agent flows (#12285).
+- Add the Droid hook adapter, installer, shared hook contract, and
+  `SessionSource.DROID` enum so Droid hook events use the same lifecycle,
+  memory, task, and workflow paths as Claude, Gemini, Qwen, and Codex (#12285).
+- Add Droid transcript parsing with adjacent `.settings.json` sidecar token
+  accounting, plus Droid web-chat and terminal agent spawning through
+  `droid exec --input-format stream-json` (#12285).
+- Normalize Droid MCP tool names that arrive in triple-underscore form, such as
+  `gobby___list_mcp_servers`, into Gobby's canonical MCP server/tool fields
+  (#12285).
+- Add the upstream `ghook --cli=droid` route in
+  [GobbyAI/gobby-cli#5](https://github.com/GobbyAI/gobby-cli/pull/5), including
+  Droid diagnose support and `source="droid"` forwarding to the unified Gobby
+  hook endpoint (#12285).
+
+### Notice
+
+- The legacy `gobby agents spawn` CLI command remains scheduled for removal in
+  #12615. Use the `spawn_agent` MCP tool and agent workflow APIs for new
+  automation.
+
 ## [0.3.8]
 
 ### Features
