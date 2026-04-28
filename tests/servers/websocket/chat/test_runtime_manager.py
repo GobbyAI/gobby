@@ -57,6 +57,24 @@ class TestWebChatRuntimeManager:
         assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
 
+    def test_health_snapshot_contains_droid(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        health = manager.health_snapshot()
+
+        assert "droid" in health
+        assert health["droid"]["provider"] == "droid"
+
+    def test_create_session_routes_droid_to_managed_backend(self) -> None:
+        from gobby.servers.websocket.chat.backends import DroidManagedChatSession
+
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        droid_session = manager.create_session(provider="droid", conversation_id="conv-droid")
+
+        assert isinstance(droid_session, DroidManagedChatSession)
+        assert droid_session.provider == "droid"
+
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,

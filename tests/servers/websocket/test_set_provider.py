@@ -86,6 +86,15 @@ class TestSetProviderNoExistingSession:
 
         assert server._pending_providers["conv-1"] == "gemini"
 
+    async def test_accepts_droid_provider(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "droid"})
+
+        assert server._pending_providers["conv-1"] == "droid"
+        server._send_error.assert_not_awaited()
+
     async def test_sends_confirmation(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()

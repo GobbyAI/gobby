@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.cli.installers.hook_commands import rewrite_hook_template_commands
@@ -40,3 +41,17 @@ def test_droid_template_matches_contract_and_rewrites_commands() -> None:
         assert command == (
             f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
         )
+
+
+def test_default_agent_template_lists_droid_as_supported_source() -> None:
+    template_path = Path("src/gobby/install/shared/workflows/agents/default.yaml")
+    template = yaml.safe_load(template_path.read_text())
+
+    assert "droid" in template["sources"]
+
+
+def test_automation_skill_provider_example_documents_droid() -> None:
+    skill_path = Path("src/gobby/install/shared/skills/automate/SKILL.md")
+    content = skill_path.read_text()
+
+    assert "inherit | claude | gemini | qwen | codex | droid" in content

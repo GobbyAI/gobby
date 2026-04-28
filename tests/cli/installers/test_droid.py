@@ -207,6 +207,43 @@ def test_install_droid_warns_on_empty_project_hooks_override(
     assert "Project-level hooks config" in capsys.readouterr().err
 
 
+def test_install_droid_warns_when_ghook_is_outdated(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    with patch("gobby.cli.installers.droid.get_ghook_version", return_value="0.99.0", create=True):
+        result = install_droid(project_path, mode="global")
+
+    assert result["success"] is True
+    assert (droid_env / ".factory" / "hooks" / "hooks.json").exists()
+    assert any("ghook" in warning and "upgrade" in warning for warning in result["warnings"])
+
+
+def test_install_droid_does_not_warn_when_ghook_meets_minimum(
+    project_path: Path,
+    droid_env: Path,
+) -> None:
+    with patch("gobby.cli.installers.droid.get_ghook_version", return_value="1.0.0", create=True):
+        result = install_droid(project_path, mode="global")
+
+    assert result["success"] is True
+    assert "warnings" not in result
+
+
+@pytest.mark.parametrize("version", [None, "not-a-version"])
+def test_install_droid_warns_when_ghook_version_cannot_be_checked(
+    project_path: Path,
+    droid_env: Path,
+    version: str | None,
+) -> None:
+    with patch("gobby.cli.installers.droid.get_ghook_version", return_value=version, create=True):
+        result = install_droid(project_path, mode="global")
+
+    assert result["success"] is True
+    assert (droid_env / ".factory" / "hooks" / "hooks.json").exists()
+    assert any("ghook" in warning and "version" in warning for warning in result["warnings"])
+
+
 def test_validate_settings_accepts_fresh_droid_install(
     project_path: Path,
     droid_env: Path,

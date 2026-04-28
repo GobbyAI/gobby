@@ -233,6 +233,50 @@ class TestProviderModelCatalog:
 
         assert models == [{"value": "gpt-5(openai)", "label": "gpt-5"}]
 
+    @pytest.mark.asyncio
+    async def test_discover_droid_models_returns_static_catalog(self, temp_dir: Path) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+
+        models = await catalog._discover_provider_models("droid")
+
+        assert {model["value"] for model in models} == {
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-opus-4-6-fast",
+            "claude-opus-4-5-20251101",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "gpt-5.4",
+            "gpt-5.4-fast",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex",
+            "gpt-5.3-codex-fast",
+            "gpt-5.2",
+            "gpt-5.2-codex",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "minimax-m2.7",
+            "minimax-m2.5",
+            "kimi-k2.6",
+            "kimi-k2.5",
+            "glm-5.1",
+            "glm-5",
+            "glm-4.7",
+            "gpt-5.1-codex-max",
+        }
+        assert len(models) == 24
+
+        by_id = {model["value"]: model for model in models}
+        assert "xhigh" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
+        assert "max" in by_id["claude-opus-4-7"]["reasoning"]["supported_efforts"]
+        assert "minimal" in by_id["gemini-3-flash-preview"]["reasoning"]["supported_efforts"]
+        assert by_id["minimax-m2.7"]["reasoning"]["supported_efforts"] == ["high"]
+        for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
+            assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []
+
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
         global_settings = temp_dir / ".qwen" / "settings.json"
         global_settings.parent.mkdir(parents=True)
