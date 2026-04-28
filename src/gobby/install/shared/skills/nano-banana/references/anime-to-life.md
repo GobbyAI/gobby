@@ -6,7 +6,7 @@
 
 The uploaded image is an anime or art or 3D rendering, you will create a photorealistic photograph featuring the same character in the same background.
 
-In the to be generated photo graph:
+In the to be generated photograph:
 
 Important requirements you must follow and think twice before generating:
 - **The character turns to a real person cosplayer, cosplaying the character in the uploaded image.**

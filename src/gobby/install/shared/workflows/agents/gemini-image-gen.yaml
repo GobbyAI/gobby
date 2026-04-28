@@ -57,6 +57,7 @@ workflows:
 step_variables:
   skill_loaded: false
   generation_complete: false
+  generation_failed: false
 
 steps:
   - name: load_skill
@@ -89,15 +90,26 @@ steps:
         action: set_variable
         variable: generation_complete
         value: true
+    on_mcp_error:
+      - server: gobby-tasks
+        tool: close_task
+        action: set_variable
+        variable: generation_failed
+        value: true
     transitions:
       - to: terminate
         when: "vars.generation_complete"
+      - to: terminate
+        when: "vars.generation_failed"
 
   - name: terminate
     description: "Self-terminate"
     status_message: "Task complete. Terminating agent."
     allowed_tools:
       - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
       - "gobby-agents:kill_agent"
 

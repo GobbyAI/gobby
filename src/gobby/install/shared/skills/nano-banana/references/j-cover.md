@@ -47,6 +47,6 @@
 * **Magazine Data:**
     * Barcode: Place in a bottom corner (left or right) where it DOES NOT cover the character's legs or feet.
     * Price: (make a random price in Japanese ¥)
-    * Date: (Make a magazine month year combination)
+    * Date: (Make a magazine month-year combination)
 # OUTPUT GOAL
 Generate a high-quality magazine cover scan. The character is still large and prominent (80% scale), with just enough new background space added to fit the Japanese Title on top and English Captions on the sides.

@@ -10,7 +10,7 @@ Transforms an uploaded anime, art, or 2D rendering of a mecha/robot into a compl
 ## Triggers
 - "Make this mecha look real."
 - "Convert this robot drawing to a photo."
-- "Real life version of this mecha."
+- "Real-life version of this mecha."
 - "Photorealistic mecha."
 
 ## Instructions

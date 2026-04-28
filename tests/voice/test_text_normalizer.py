@@ -27,6 +27,8 @@ pytestmark = pytest.mark.unit
             "Use the docs and report 50 percent.",
         ),
         ("- [x] `pytest` passed.", "pytest passed."),
+        ("", ""),
+        ("   \n\t", ""),
     ],
 )
 def test_normalize_tts_text_removes_markdown_symbols(raw: str, expected: str) -> None:

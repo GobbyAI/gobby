@@ -47,14 +47,19 @@ If `get_skill_file` returns `{"success": false, ...}`, surface the error to the 
 ## Before First Use
 
 1. Verify extension is installed:
+
    ```bash
    gemini extensions list | grep nanobanana
    ```
+
 2. If missing, install it:
+
    ```bash
    gemini extensions install https://github.com/gemini-cli-extensions/nanobanana
    ```
+
 3. Verify API key is set:
+
    ```bash
    [ -n "$GEMINI_API_KEY" ] && echo "API key configured" || echo "Missing GEMINI_API_KEY"
    ```

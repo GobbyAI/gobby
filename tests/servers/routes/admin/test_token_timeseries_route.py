@@ -22,7 +22,8 @@ from gobby.storage.token_events import VALID_GRANULARITIES
 pytestmark = pytest.mark.unit
 
 
-def _granularity_pattern() -> str:
+@pytest.fixture(scope="module")
+def granularity_pattern() -> str:
     app = FastAPI()
     router = APIRouter()
     server_mock = MagicMock()
@@ -46,8 +47,8 @@ def _granularity_pattern() -> str:
     raise AssertionError("granularity Query is missing a string `pattern` constraint")
 
 
-def test_route_pattern_accepts_every_valid_granularity() -> None:
-    pattern = re.compile(_granularity_pattern())
+def test_route_pattern_accepts_every_valid_granularity(granularity_pattern: str) -> None:
+    pattern = re.compile(granularity_pattern)
     for value in VALID_GRANULARITIES:
         assert pattern.fullmatch(value), (
             f"VALID_GRANULARITIES member {value!r} not accepted by route pattern "
@@ -56,8 +57,8 @@ def test_route_pattern_accepts_every_valid_granularity() -> None:
 
 
 @pytest.mark.parametrize("value", ["", "5m", "1h ", " 1h", "1H", "2h", "1d1h"])
-def test_route_pattern_rejects_non_members(value: str) -> None:
-    pattern = re.compile(_granularity_pattern())
+def test_route_pattern_rejects_non_members(value: str, granularity_pattern: str) -> None:
+    pattern = re.compile(granularity_pattern)
     assert not pattern.fullmatch(value), (
         f"route pattern {pattern.pattern!r} unexpectedly accepted non-member {value!r}"
     )

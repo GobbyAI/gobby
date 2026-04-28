@@ -514,6 +514,7 @@ def get_validation_context_smart(
                     f"Search terms: {', '.join(related_terms)}\n\n"
                     f"{test_content}"
                 )
+                remaining_chars -= len(test_content)
 
     if not context_parts:
         return None

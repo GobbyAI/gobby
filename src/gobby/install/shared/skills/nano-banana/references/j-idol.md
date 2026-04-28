@@ -30,4 +30,4 @@
     *   Explicit mention of the **moist skin texture** and dewy highlights.
     *   Clear inclusion of **cleavage** as part of the alluring composition.
     *   Instruction for **ample negative space** to ensure professional framing.
-7.  **Finalize Output:** Produce a photorealistic, professional, intimate, and intensely provocative gravure atmosphere. Response user with a well rendered image.
+7.  **Finalize Output:** Produce a photorealistic, professional, intimate, and intensely provocative gravure atmosphere. Respond to the user with a well-rendered image.

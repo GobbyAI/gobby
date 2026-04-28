@@ -13,6 +13,8 @@ from gobby.communications.adapters import (
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.models import ChannelCapabilities, ChannelConfig, CommsMessage
 
+pytestmark = pytest.mark.unit
+
 
 class DummyAdapter(BaseChannelAdapter):
     """A dummy adapter for testing."""
