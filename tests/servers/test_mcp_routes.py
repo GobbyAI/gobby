@@ -2230,7 +2230,9 @@ class TestHooksEndpoints:
             )
 
         assert response.status_code == 400
-        assert "Unsupported source" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "Unsupported source" in detail
+        assert "droid" in detail
 
     def test_execute_hook_no_hook_manager(self, session_storage: SessionManager) -> None:
         """Test execute hook when hook manager not initialized."""
@@ -2347,12 +2349,79 @@ class TestHooksEndpoints:
 
         assert response.status_code == 200
 
+    def test_execute_hook_droid_source(self, session_storage: SessionManager) -> None:
+        """Test execute hook with Droid source."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.droid.DroidAdapter") as MockAdapter,
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "PreToolUse",
+                    "source": "droid",
+                    "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["continue"] is True
+        MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        assert mock_adapter.handle_native.call_args.args[0] == {
+            "hook_type": "PreToolUse",
+            "source": "droid",
+            "input_data": {"session_id": "droid-123", "cwd": "/tmp"},
+        }
+
+    def test_execute_hook_droid_adapter_error_is_graceful(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Droid adapter failures should return Droid-shaped non-fatal output."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.handle.side_effect = RuntimeError("droid adapter failed")
+        server.app.state.hook_manager = mock_hook_manager
+
+        with TestClient(server.app) as client:
+            response = client.post(
+                "/api/hooks/execute",
+                json={
+                    "hook_type": "PreToolUse",
+                    "source": "droid",
+                    "input_data": {"session_id": "droid-123", "tool_name": "Read"},
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is True
+        assert "droid adapter failed" in data["systemMessage"]
+        assert "hookSpecificOutput" not in data
+
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),
         [
             ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
             ("gemini", "BeforeTool", "gobby.adapters.gemini.GeminiAdapter"),
             ("qwen", "BeforeTool", "gobby.adapters.qwen.QwenAdapter"),
+            ("droid", "PreToolUse", "gobby.adapters.droid.DroidAdapter"),
         ],
     )
     def test_execute_hook_normalizes_provider_pre_tool_use_for_hold_open(
