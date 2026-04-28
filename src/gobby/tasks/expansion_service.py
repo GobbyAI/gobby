@@ -1251,7 +1251,7 @@ class ExpansionService:
     ) -> dict[str, Any]:
         """Normalize raw LLM output into the compiled expansion schema."""
         expansion_config = self._get_expansion_config()
-        max_subtasks = expansion_config.max_subtasks if expansion_config else 15
+        max_subtasks = expansion_config.max_subtasks if expansion_config else 50
 
         if "phases" in raw_spec and "tasks" in raw_spec:
             normalized = self._normalize_native_compiled_spec(
@@ -1460,7 +1460,7 @@ class ExpansionService:
     ) -> dict[str, Any]:
         """Compile a multi-phase plan by issuing one LLM call per phase, then merging."""
         expansion_config = self._get_expansion_config()
-        max_subtasks = expansion_config.max_subtasks if expansion_config else 15
+        max_subtasks = expansion_config.max_subtasks if expansion_config else 50
 
         merged_phases: list[dict[str, Any]] = []
         merged_tasks: list[dict[str, Any]] = []

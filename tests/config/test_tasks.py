@@ -181,7 +181,7 @@ class TestTaskExpansionConfigDefaults:
         assert config.codebase_research_enabled is True
         assert config.research_model is None
         assert config.research_max_steps == 10
-        assert config.max_subtasks == 15
+        assert config.max_subtasks == 50
         assert config.default_strategy == "auto"
         assert config.timeout == 300.0
         assert config.research_timeout == 60.0
@@ -521,7 +521,7 @@ class TestTaskExpansionConfigFromTasksModule:
 
         config = TaskExpansionConfig()
         assert config.enabled is True
-        assert config.max_subtasks == 15
+        assert config.max_subtasks == 50
 
 
 class TestTaskValidationConfigFromAppPy:
