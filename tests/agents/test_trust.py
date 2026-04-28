@@ -148,3 +148,20 @@ class TestCodexNoop:
         # Should not create any files
         assert not (tmp_path / ".claude").exists()
         assert not (tmp_path / ".gemini").exists()
+
+
+class TestDroidNoop:
+    def test_droid_is_noop_with_debug_log(self, tmp_path: Path, caplog) -> None:
+        """Droid uses --auto for spawned-agent permissions, so no trust file is written."""
+        clone_dir = "/private/tmp/gobby-clones/test-task"
+
+        with (
+            patch("gobby.agents.trust.Path.home", return_value=tmp_path),
+            caplog.at_level("DEBUG", logger="gobby.agents.trust"),
+        ):
+            pre_approve_directory("droid", clone_dir)
+
+        assert "Droid workspace trust pre-approval is a no-op" in caplog.text
+        assert not (tmp_path / ".factory").exists()
+        assert not (tmp_path / ".claude").exists()
+        assert not (tmp_path / ".gemini").exists()

@@ -1,7 +1,7 @@
 """CLI command building for agent spawning.
 
-Provides functions to construct CLI commands for Claude, Gemini, Qwen, and Codex
-with proper flags for prompts, permissions, and session management.
+Provides functions to construct CLI commands for Claude, Gemini, Qwen, Codex,
+and Droid with proper flags for prompts, permissions, and session management.
 """
 
 from __future__ import annotations
@@ -40,12 +40,16 @@ def build_cli_command(
     Codex CLI:
     - codex --ask-for-approval never --disable guardian_approval -C <dir> [PROMPT]
 
+    Droid CLI:
+    - droid exec --input-format stream-json --cwd <dir> [--model <id>]
+      [--reasoning-effort <level>] --auto <low|high> [PROMPT]
+
     Args:
-        cli: CLI name (claude, gemini, qwen, codex)
+        cli: CLI name (claude, gemini, qwen, codex, droid)
         prompt: Optional prompt to pass (agent mode)
         session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
-        working_directory: Optional working directory (used by Codex -C flag)
+        working_directory: Optional working directory (used by Codex -C and Droid --cwd)
         sandbox_args: Optional list of CLI args for sandbox configuration
         model: Optional model name
         mode: "agent" (default), "interactive", or "headless"
@@ -96,6 +100,17 @@ def build_cli_command(
             command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
         if working_directory:
             command.extend(["-C", working_directory])
+
+    elif cli == "droid":
+        # Droid exec flags, verified against `droid exec --help` on v0.106.0.
+        command.extend(["exec", "--input-format", "stream-json"])
+        if working_directory:
+            command.extend(["--cwd", working_directory])
+        if model:
+            command.extend(["--model", model])
+        if reasoning_effort:
+            command.extend(["--reasoning-effort", reasoning_effort])
+        command.extend(["--auto", "high" if auto_approve else "low"])
 
     # Add sandbox args before prompt (prompt must be last)
     if sandbox_args:

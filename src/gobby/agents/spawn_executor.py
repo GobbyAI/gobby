@@ -6,6 +6,7 @@ and clones.py into a single executor. All agents spawn via tmux.
 """
 
 import logging
+import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -117,6 +118,9 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
         return await _spawn_qwen_terminal(request)
     elif request.provider == "codex":
         return await _spawn_codex_terminal(request)
+    elif request.provider == "droid":
+        return await _spawn_droid_terminal(request)
+    # Unknown providers intentionally preserve the historical Claude fallback.
     return await _spawn_claude_terminal(request)
 
 
@@ -586,4 +590,100 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         tmux_socket_name=terminal_result.tmux_socket_name,
         tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Codex agent spawned in terminal with session {gobby_session_id}",
+    )
+
+
+async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
+    """Spawn Droid agent in terminal with direct hook/env-based session linkage."""
+    if request.session_manager is None:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error="session_manager is required for Droid spawn",
+        )
+    if shutil.which("droid") is None:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error="droid CLI not found in PATH. Install droid first: see docs/cli-integrations/droid.md",
+        )
+
+    spawn_context = prepare_terminal_spawn(
+        session_manager=cast("ChildSessionManager", request.session_manager),
+        parent_session_id=request.parent_session_id,
+        project_id=request.project_id,
+        machine_id=request.machine_id or "unknown",
+        source="droid",
+        workflow_name=request.workflow,
+        initial_variables=request.initial_variables,
+        prompt=request.prompt,
+        max_agent_depth=request.max_agent_depth,
+        git_branch=request.branch_name,
+        agent_run_id=request.agent_run_id,
+        task_id=request.task_id,
+        claimed_session_id=request.claimed_session_id,
+        title=request.title,
+        agent_name=request.agent_name,
+        model=request.model,
+        is_local=request.is_local,
+        timeout_seconds=request.timeout_seconds,
+        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        requested_reasoning_effort=request.requested_reasoning_effort,
+        effective_reasoning_effort=request.effective_reasoning_effort,
+        reasoning_required=request.reasoning_required,
+        reasoning_status=request.reasoning_status,
+        reasoning_message=request.reasoning_message,
+    )
+
+    gobby_session_id = spawn_context.session_id
+    cmd, _cmd_env = build_cli_command(
+        cli="droid",
+        prompt=request.prompt,
+        auto_approve=True,
+        working_directory=request.cwd,
+        model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+    )
+
+    env = spawn_context.env_vars.copy()
+    if request.api_token:
+        env["FACTORY_API_KEY"] = request.api_token
+    if request.api_base:
+        env["FACTORY_API_BASE_URL"] = request.api_base
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    pre_approve_directory("droid", request.cwd)
+
+    terminal_spawner = TmuxSpawner()
+    terminal_result = terminal_spawner.spawn(
+        command=cmd,
+        cwd=request.cwd,
+        env=env,
+    )
+
+    if not terminal_result.success:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=gobby_session_id,
+            status="failed",
+            error=terminal_result.error or terminal_result.message,
+        )
+
+    return SpawnResult(
+        success=True,
+        run_id=spawn_context.agent_run_id,
+        child_session_id=gobby_session_id,
+        status="pending",
+        pid=terminal_result.pid,
+        terminal_type=terminal_result.terminal_type,
+        tmux_session_name=terminal_result.tmux_session_name,
+        tmux_socket_name=terminal_result.tmux_socket_name,
+        tmux_socket_path=terminal_result.tmux_socket_path,
+        message=f"Droid agent spawned in terminal with session {gobby_session_id}",
     )

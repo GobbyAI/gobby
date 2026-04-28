@@ -87,6 +87,45 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
         assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
 
+    def test_droid_agent_command(self):
+        cmd, _env = build_cli_command(
+            "droid",
+            prompt="hello",
+            working_directory="/tmp/wt",
+            model="claude-opus-4-7",
+            reasoning_effort="high",
+            auto_approve=True,
+        )
+        assert cmd == [
+            "droid",
+            "exec",
+            "--input-format",
+            "stream-json",
+            "--cwd",
+            "/tmp/wt",
+            "--model",
+            "claude-opus-4-7",
+            "--reasoning-effort",
+            "high",
+            "--auto",
+            "high",
+            "hello",
+        ]
+        assert "--worktree" not in cmd
+        assert "--session-id" not in cmd
+
+    def test_droid_auto_approve_false_uses_low_autonomy(self):
+        cmd, _env = build_cli_command("droid", auto_approve=False, prompt="hello")
+        assert cmd == [
+            "droid",
+            "exec",
+            "--input-format",
+            "stream-json",
+            "--auto",
+            "low",
+            "hello",
+        ]
+
     def test_generic_sandbox_args(self):
         cmd, _env = build_cli_command("claude", prompt="hello", sandbox_args=["--sandbox"])
         # sandbox args come before prompt

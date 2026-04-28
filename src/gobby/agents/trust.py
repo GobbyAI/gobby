@@ -8,6 +8,7 @@ Each CLI has a different trust mechanism:
 - Claude Code: ~/.claude/projects/<encoded-path>/ (directory existence = trust)
 - Gemini/Qwen CLI: ~/.gemini|.qwen/trustedFolders.json + projects.json
 - Codex CLI: daemon-owned sandbox and approval flags, no trust database needed
+- Droid CLI: --auto high handles spawned-agent permissions, no trust database needed
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ def pre_approve_directory(cli: str, directory: str) -> None:
     and resolved paths to cover all cases.
 
     Args:
-        cli: CLI name (claude, gemini, qwen, codex)
+        cli: CLI name (claude, gemini, qwen, codex, droid)
         directory: Absolute path to the workspace directory
     """
     # Resolve symlinks — on macOS /tmp -> /private/tmp, and CLIs resolve
@@ -56,6 +57,12 @@ def pre_approve_directory(cli: str, directory: str) -> None:
         for path in paths:
             _pre_approve_gemini_compatible(cli, path)
     # Codex uses daemon-owned sandbox and approval flags; no trust pre-approval needed
+    elif cli == "droid":
+        logger.debug(
+            "Droid workspace trust pre-approval is a no-op for %s; spawned "
+            "agents use `droid exec --auto high` for permission handling.",
+            resolved,
+        )
 
 
 def _pre_approve_claude(directory: str) -> None:

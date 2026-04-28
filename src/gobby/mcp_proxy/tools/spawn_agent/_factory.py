@@ -174,7 +174,7 @@ def create_spawn_agent_registry(
             clone_id: Existing clone ID to reuse
             worktree_id: Existing worktree ID to reuse
             workflow: Workflow/pipeline to use
-            provider: AI provider (claude/gemini/qwen/codex)
+            provider: AI provider (claude/gemini/qwen/codex/droid)
             model: Model to use
             reasoning_effort: Optional reasoning override for supported providers/models
             reasoning_required: Fail instead of warning when the requested reasoning is unsupported
