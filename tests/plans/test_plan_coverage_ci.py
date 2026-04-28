@@ -93,7 +93,11 @@ def test_every_index_entry_has_plan_file() -> None:
 
 def test_indexed_plan_files_parse_with_declared_kind() -> None:
     for entry in _load_index().values():
-        parse_plan(entry.plan_path, plan_kind=_resolve_parser_kind(entry.plan_kind))
+        parse_plan(
+            entry.plan_path,
+            plan_kind=_resolve_parser_kind(entry.plan_kind),
+            parse_mode="draft",
+        )
 
 
 def test_parse_plan_dispatch_by_plan_kind() -> None:
@@ -117,7 +121,7 @@ def test_manifest_plan_hash_matches_on_disk() -> None:
     for entry in _implementation_entries().values():
         manifest = _read_required_manifest(entry)
         header = _manifest_header(manifest)
-        plan_hash = parse_plan(entry.plan_path).source_hash
+        plan_hash = parse_plan(entry.plan_path, parse_mode="draft").source_hash
 
         assert header.get("plan_hash") == plan_hash, (
             f"{entry.plan_id} manifest hash drift: "

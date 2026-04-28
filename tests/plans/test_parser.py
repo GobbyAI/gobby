@@ -5,6 +5,7 @@ import inspect
 import json
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,10 +20,19 @@ from gobby.plans.parser import (
     PlanKind,
     PlanParseError,
     PlanSection,
-    parse_plan,
 )
+from gobby.plans.parser import parse_plan as _real_parse_plan
 
 pytestmark = pytest.mark.unit
+
+
+def parse_plan(*args: Any, **kwargs: Any) -> PlanDocument:
+    """Test wrapper that defaults to draft mode (manifest validation opt-out).
+
+    Manifest behavior is exercised in tests/plans/test_parser_manifest.py.
+    """
+    kwargs.setdefault("parse_mode", "draft")
+    return _real_parse_plan(*args, **kwargs)
 
 
 def _write_plan(tmp_path: Path, text: str, name: str = "plan.md") -> Path:

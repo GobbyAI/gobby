@@ -556,7 +556,7 @@ def _find_acceptance_item(section: PlanSection, item_id: str) -> AcceptanceItem 
 def _load_plan(plan: PlanInput) -> PlanDocument:
     if isinstance(plan, PlanDocument):
         return plan
-    return parse_plan(Path(plan))
+    return parse_plan(Path(plan), parse_mode="draft")
 
 
 def _ensure_fresh_plan_hash(plan_doc: PlanDocument, plan_hash: str) -> None:

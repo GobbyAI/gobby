@@ -419,7 +419,7 @@ class ExpansionService:
         if not plan_path.exists():
             return {"valid": False, "errors": [f"Plan file not found: {plan_path}"]}
         try:
-            plan_doc = parse_plan(plan_path)
+            plan_doc = parse_plan(plan_path, parse_mode="draft")
         except (OSError, PlanParseError) as exc:
             return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
         deliverables = [
@@ -638,7 +638,7 @@ class ExpansionService:
             if repo_path is not None:
                 plan_path = repo_path / plan_path
         try:
-            return parse_plan(plan_path)
+            return parse_plan(plan_path, parse_mode="draft")
         except (OSError, PlanParseError) as exc:
             self.run_manager.append_log(
                 run.id,
