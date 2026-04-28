@@ -11,6 +11,7 @@ const CLI_LABELS: Record<string, string> = {
   gemini: "Gemini CLI",
   qwen: "Qwen CLI",
   codex: "Codex",
+  droid: "Droid CLI",
 };
 
 const CLI_FLAGS: Record<string, string> = {
@@ -18,6 +19,7 @@ const CLI_FLAGS: Record<string, string> = {
   gemini: "--gemini",
   qwen: "--qwen",
   codex: "--codex",
+  droid: "--droid",
 };
 
 export function CliHooks({ state, setState, onNext }: StepProps): React.ReactElement {

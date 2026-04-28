@@ -16,7 +16,7 @@ inputs:
   provider:
     type: string
     default: "claude"
-    description: "LLM provider (claude, gemini, etc.)"
+    description: "LLM provider (claude, gemini, qwen, codex, droid, etc.)"
   model:
     type: string
     default: ""

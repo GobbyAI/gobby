@@ -1,6 +1,6 @@
 name: default
 description: Baseline agent — loads default-tagged rules; skills load on demand via rules
-sources: [claude, gemini, qwen, codex]
+sources: [claude, gemini, qwen, codex, droid]
 surfaces: [spawn, persona]
 provider: inherit
 timeout: 0

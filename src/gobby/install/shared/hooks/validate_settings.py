@@ -2,7 +2,7 @@
 """Unified settings validator for all CLI integrations.
 
 Validates hook configuration files across Claude Code, Gemini CLI,
-Qwen CLI, and Codex.
+Qwen CLI, Codex, and Factory Droid.
 
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
 

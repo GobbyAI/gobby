@@ -228,7 +228,7 @@ instructions: |
 # Execution
 mode: interactive                # interactive | autonomous
 isolation: worktree             # none | worktree | clone
-provider: inherit               # inherit | claude | gemini | codex
+provider: inherit               # inherit | claude | gemini | qwen | codex | droid
 model: ""                       # Empty = inherit from parent
 base_branch: inherit            # inherit | main | specific-branch
 timeout: 0                      # Minutes (0 = unlimited)

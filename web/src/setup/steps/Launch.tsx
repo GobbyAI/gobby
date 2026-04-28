@@ -133,7 +133,7 @@ function writeInitialSetupMd(state: typeof import("../utils/state.js").loadState
 
   const allTools = [
     "python", "node", "uv", "claude", "tmux",
-    "git", "docker", "tailscale", "gemini", "qwen", "codex",
+    "git", "docker", "tailscale", "gemini", "qwen", "codex", "droid",
   ];
 
   const cliRows = allTools
