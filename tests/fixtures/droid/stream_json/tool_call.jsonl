@@ -1,0 +1,2 @@
+{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"gobby___list_mcp_servers","input":{}},{"type":"tool_result","tool_use_id":"tool-1","content":{"success":true},"is_error":false}]}}
+{"type":"result","usage":{"inputTokens":5,"outputTokens":6}}

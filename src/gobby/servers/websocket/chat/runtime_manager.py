@@ -18,6 +18,8 @@ from gobby.servers.websocket.chat.backends import (
     ClaudeWebChatBackend,
     CodexManagedChatSession,
     CodexWebChatBackend,
+    DroidManagedChatSession,
+    DroidWebChatBackend,
     GeminiManagedChatSession,
     GeminiWebChatBackend,
     ProviderBackendHealth,
@@ -54,6 +56,9 @@ class WebChatRuntimeManager:
             sandbox_config=self._sandbox_config.model_copy(deep=True),
         )
         self._qwen_backend = QwenWebChatBackend(
+            sandbox_config=self._sandbox_config.model_copy(deep=True)
+        )
+        self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
 
@@ -100,14 +105,17 @@ class WebChatRuntimeManager:
             await self._codex_backend.start(background=True)
             await self._gemini_backend.start(background=True)
             await self._qwen_backend.start(background=True)
+            await self._droid_backend.start(background=True)
             return
 
         await self._codex_backend.start()
         await self._gemini_backend.start()
         await self._qwen_backend.start()
+        await self._droid_backend.start()
 
     async def stop(self) -> None:
         """Stop daemon-owned provider backends."""
+        await self._droid_backend.stop()
         await self._qwen_backend.stop()
         await self._gemini_backend.stop()
         await self._codex_backend.stop()
@@ -120,6 +128,8 @@ class WebChatRuntimeManager:
             return self._gemini_backend.health()
         if provider == "qwen":
             return self._qwen_backend.health()
+        if provider == "droid":
+            return self._droid_backend.health()
         if provider == "claude":
             return self._claude_backend.health()
         return ProviderBackendHealth(provider=provider, available=False, startup_error="unknown")
@@ -131,6 +141,7 @@ class WebChatRuntimeManager:
             "gemini": self.health("gemini").to_dict(),
             "qwen": self.health("qwen").to_dict(),
             "codex": self.health("codex").to_dict(),
+            "droid": self.health("droid").to_dict(),
         }
 
     def create_session(
@@ -164,6 +175,13 @@ class WebChatRuntimeManager:
                 reasoning_effort=reasoning_effort,
                 _transcript_retry_attempts=self._codex_backend.transcript_retry_attempts,
                 _transcript_retry_delay_seconds=self._codex_backend.transcript_retry_delay_seconds,
+            )
+        if provider == "droid":
+            return DroidManagedChatSession(
+                conversation_id=conversation_id,
+                _backend=self._droid_backend,
+                _model=model,
+                reasoning_effort=reasoning_effort,
             )
 
         session: ChatSessionProtocol = self._claude_backend.create_session(conversation_id)

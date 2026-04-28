@@ -5,7 +5,9 @@ import {
   fetchProviderModelCatalog,
   getModelLabel,
   getModelsForProvider,
+  getOrderedProviders,
   getPreferredModelForProvider,
+  getProviderDisplayName,
   getPreferredReasoningEffort,
   getReasoningOptionsForModel,
   resolveProviderModelPair,
@@ -196,6 +198,15 @@ describe("providerModels", () => {
     expect(getModelLabel(catalog, "codex", "gpt-5.4-mini")).toBe(
       "GPT 5.4 Mini",
     );
+  });
+
+  it("labels and orders Droid as a known provider", () => {
+    expect(getProviderDisplayName("droid")).toBe("Droid");
+    expect(getOrderedProviders(["qwen", "droid", "claude"])).toEqual([
+      "claude",
+      "qwen",
+      "droid",
+    ]);
   });
 
   it("strips Qwen transport suffixes from live catalog labels", () => {

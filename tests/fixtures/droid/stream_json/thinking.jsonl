@@ -1,0 +1,2 @@
+{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Planning"},{"type":"text","text":"Done"}]}}
+{"type":"result","usage":{"inputTokens":2,"outputTokens":2}}

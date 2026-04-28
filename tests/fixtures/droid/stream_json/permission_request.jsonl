@@ -1,0 +1,2 @@
+{"type":"permission_request","id":"perm-1","tool_name":"Read","tool_input":{"file_path":"README.md"}}
+{"type":"result","usage":{"inputTokens":2,"outputTokens":1}}

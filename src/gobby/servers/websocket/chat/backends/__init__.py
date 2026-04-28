@@ -11,6 +11,10 @@ from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
     CodexWebChatBackend,
 )
+from gobby.servers.websocket.chat.backends.droid import (
+    DroidManagedChatSession,
+    DroidWebChatBackend,
+)
 from gobby.servers.websocket.chat.backends.gemini import (
     GeminiManagedChatSession,
     GeminiWebChatBackend,
@@ -24,6 +28,8 @@ __all__ = [
     "ClaudeWebChatBackend",
     "CodexManagedChatSession",
     "CodexWebChatBackend",
+    "DroidManagedChatSession",
+    "DroidWebChatBackend",
     "GeminiManagedChatSession",
     "GeminiWebChatBackend",
     "ManagedChatSessionBase",

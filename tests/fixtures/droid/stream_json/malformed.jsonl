@@ -1,0 +1,3 @@
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"before"}]}}
+not-json
+{"type":"result","usage":{"inputTokens":1,"outputTokens":1}}
