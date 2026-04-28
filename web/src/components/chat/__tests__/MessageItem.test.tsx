@@ -130,7 +130,7 @@ describe('MessageItem', () => {
     expect(screen.getByText('1 tools')).toBeTruthy()
   })
 
-  it('renders image blocks', () => {
+  it('renders base64 image blocks', () => {
     render(
       <MessageItem
         message={makeMessage({
@@ -138,7 +138,7 @@ describe('MessageItem', () => {
           contentBlocks: [
             {
               type: 'image',
-              source: { type: 'base64', media_type: 'image/png', data: 'abc' }
+              source: { type: 'base64', media_type: 'image/png', data: 'abc' },
             },
           ],
         })}

@@ -5,6 +5,8 @@ import { classifyTool } from '../../../types/chat'
 import { renderWithProviders, screen } from '../../../test/helpers'
 import { ToolCallCards, ToolChainGroup } from '../ToolCallCard'
 
+const DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
 function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string }): ToolCall {
   return {
     server_name: 'builtin',
@@ -87,6 +89,51 @@ describe('ToolCallCard rendering', () => {
     expect(code).toContain('"success": true')
     expect(code).toContain('"response_time_ms": 42')
     expect(code).not.toContain('"result":')
+  })
+
+  it('renders Codex image output tool results inline', () => {
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-image',
+            tool_name: 'mcp__image_gen__imagegen',
+            tool_type: 'mcp',
+            result: {
+              content: {
+                output: [{ type: 'input_image', image_url: DATA_URI }],
+              },
+              content_type: 'json',
+              truncated: false,
+            },
+          }),
+        ]}
+      />,
+    )
+
+    const previewButton = screen.getByRole('button', {
+      name: 'Open full-size tool result image',
+    })
+    const previewImage = screen.getByAltText('Tool result image')
+
+    expect(previewImage).toHaveAttribute('src', DATA_URI)
+    expect(previewButton.parentElement).toHaveClass('justify-center')
+
+    fireEvent.click(previewButton)
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByAltText('Full-size tool result image')).toHaveAttribute(
+      'src',
+      DATA_URI,
+    )
+    expect(screen.getByRole('link', { name: 'Open' })).toHaveAttribute(
+      'href',
+      DATA_URI,
+    )
+    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute(
+      'download',
+      'tool-result-image.png',
+    )
   })
 
   it('renders bash output envelopes as terminal text in the result panel', () => {

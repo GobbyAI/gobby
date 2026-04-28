@@ -4,18 +4,24 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ChatState, ConversationState, VoiceProps } from "../../../types/chat";
 import { ChatPage } from "../ChatPage";
 
+const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+
 const {
   clearArtifactsSpy,
+  createArtifactSpy,
   isPinnedState,
   scrollToBottomSpy,
   setIsPinnedSpy,
+  showTabSpy,
   togglePanelSpy,
   isMobileState,
 } = vi.hoisted(() => ({
   clearArtifactsSpy: vi.fn(),
+  createArtifactSpy: vi.fn(),
   isPinnedState: { value: false },
   scrollToBottomSpy: vi.fn(),
   setIsPinnedSpy: vi.fn(),
+  showTabSpy: vi.fn(),
   togglePanelSpy: vi.fn(),
   isMobileState: { value: false },
 }));
@@ -226,9 +232,9 @@ vi.mock("../../../hooks/useIsMobile", () => ({
 
 vi.mock("../../../hooks/useArtifacts", () => ({
   useArtifacts: () => ({
-    artifacts: [],
+    artifacts: new Map(),
     activeArtifact: null,
-    createArtifact: vi.fn(),
+    createArtifact: createArtifactSpy,
     updateArtifact: vi.fn(),
     openArtifact: vi.fn(),
     closePanel: vi.fn(),
@@ -246,7 +252,7 @@ vi.mock("../../activity/useActivityPanel", () => ({
     setActiveTab: vi.fn(),
     setIsPinned: setIsPinnedSpy,
     setPanelWidth: vi.fn(),
-    showTab: vi.fn(),
+    showTab: showTabSpy,
     togglePanel: togglePanelSpy,
   }),
 }));
@@ -488,6 +494,44 @@ describe("ChatPage", () => {
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
       expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
     });
+  });
+
+  it("opens the Artifacts tab when a show_file artifact event arrives", async () => {
+    let artifactEvent:
+      | ((
+          type: string,
+          content: string,
+          language?: string,
+          title?: string,
+        ) => void)
+      | null = null;
+    const setOnArtifactEvent = vi.fn((fn) => {
+      artifactEvent = fn;
+    });
+
+    render(
+      <ChatPage
+        chat={createChat({ setOnArtifactEvent })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(setOnArtifactEvent).toHaveBeenCalled();
+    });
+
+    act(() => {
+      artifactEvent?.("image", DATA_URI, "png", "Generated image");
+    });
+
+    expect(createArtifactSpy).toHaveBeenCalledWith(
+      "image",
+      DATA_URI,
+      "png",
+      "Generated image",
+    );
+    expect(showTabSpy).toHaveBeenCalledWith("artifacts");
   });
 
   it("locks CLI-owned footer controls while proxy-attached and shows attached session settings", async () => {

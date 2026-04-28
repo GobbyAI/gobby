@@ -42,6 +42,7 @@ import {
   MetadataStrip,
   ToolResultBody,
 } from './ToolResultBlocks'
+import { ToolResultImage } from './ToolResultImage'
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[]
@@ -250,13 +251,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
 
   // Base64 image — render inline
   if (imageSrc) {
-    return (
-      <img
-        src={imageSrc}
-        alt="Tool result image"
-        className="max-w-full max-h-96 rounded-lg border border-border"
-      />
-    )
+    return <ToolResultImage src={imageSrc} />
   }
 
   if (filePath) {

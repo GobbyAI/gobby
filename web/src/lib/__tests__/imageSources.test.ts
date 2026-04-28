@@ -2,25 +2,36 @@ import { describe, expect, it } from 'vitest'
 
 import { extractImageSrc, isSafeImageSrc } from '../imageSources'
 
+const DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
 describe('isSafeImageSrc', () => {
-  it('allows data, HTTPS, same-origin, and explicit relative image sources', () => {
-    expect(isSafeImageSrc('data:image/png;base64,abc')).toBe(true)
+  it('allows data, HTTPS, same-origin, and relative image sources', () => {
+    expect(isSafeImageSrc(DATA_URI)).toBe(true)
     expect(isSafeImageSrc('https://example.test/image.png')).toBe(true)
     expect(isSafeImageSrc('/api/files/image?id=1')).toBe(true)
     expect(isSafeImageSrc('./image.png')).toBe(true)
     expect(isSafeImageSrc('../image.png')).toBe(true)
+    expect(isSafeImageSrc('image.png')).toBe(true)
   })
 
   it('rejects unsafe or ambiguous image source strings', () => {
     expect(isSafeImageSrc('http://example.test/image.png')).toBe(false)
     expect(isSafeImageSrc('//example.test/image.png')).toBe(false)
     expect(isSafeImageSrc('javascript:alert(1)')).toBe(false)
-    expect(isSafeImageSrc('image.png')).toBe(false)
+    expect(isSafeImageSrc('plain-token')).toBe(false)
     expect(isSafeImageSrc('/image.png" onerror="alert(1)')).toBe(false)
   })
 })
 
 describe('extractImageSrc', () => {
+  it('extracts the actual Codex image-output shape', () => {
+    expect(
+      extractImageSrc({
+        output: [{ type: 'input_image', image_url: DATA_URI }],
+      }),
+    ).toBe(DATA_URI)
+  })
+
   it('extracts base64 content blocks with or without an explicit source type', () => {
     expect(
       extractImageSrc({
@@ -48,6 +59,18 @@ describe('extractImageSrc', () => {
     ).toBe('https://example.test/generated.png')
   })
 
+  it('extracts image_url source blocks', () => {
+    expect(
+      extractImageSrc({
+        type: 'image',
+        source: {
+          type: 'image_url',
+          url: 'https://example.test/generated',
+        },
+      }),
+    ).toBe('https://example.test/generated')
+  })
+
   it('extracts nested image blocks from arrays and JSON strings', () => {
     expect(
       extractImageSrc([
@@ -65,8 +88,24 @@ describe('extractImageSrc', () => {
     ).toBe('./generated.png')
   })
 
-  it('rejects malformed, unsafe, or cyclic image wrappers', () => {
+  it('extracts nested MCP/tool-result wrappers', () => {
+    expect(
+      extractImageSrc({
+        result: {
+          content: JSON.stringify({
+            output: [
+              { type: 'text', text: 'created image' },
+              { type: 'output_image', image_url: '/artifacts/generated.png' },
+            ],
+          }),
+        },
+      }),
+    ).toBe('/artifacts/generated.png')
+  })
+
+  it('rejects malformed, unsafe, non-image, or cyclic image wrappers', () => {
     expect(extractImageSrc('plain-token')).toBeNull()
+    expect(extractImageSrc('data:text/html;base64,PHNjcmlwdD4=')).toBeNull()
     expect(
       extractImageSrc({
         type: 'image',
@@ -77,6 +116,12 @@ describe('extractImageSrc', () => {
       extractImageSrc({
         type: 'output_image',
         image_url: 'http://example.test/generated.png',
+      }),
+    ).toBeNull()
+    expect(
+      extractImageSrc({
+        type: 'output_image',
+        image_url: 'javascript:alert(1)',
       }),
     ).toBeNull()
 

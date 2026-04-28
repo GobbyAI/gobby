@@ -4,6 +4,7 @@ const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 const UNSAFE_URL_CHARS_RE = /[\s<>"'\\]/
 const WRAPPER_KEYS = ['output', 'result', 'content'] as const
 const IMAGE_TYPES = new Set(['image', 'input_image', 'output_image', 'image_url'])
+const IMAGE_PATH_RE = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#]|$)/i
 const MAX_DEPTH = 12
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,7 +50,7 @@ export function isSafeImageSrc(src: string): boolean {
     return true
   }
 
-  return trimmed.startsWith('./') || trimmed.startsWith('../')
+  return trimmed.startsWith('./') || trimmed.startsWith('../') || IMAGE_PATH_RE.test(trimmed)
 }
 
 function safeImageSrc(value: unknown): string | null {
@@ -111,6 +112,9 @@ function extractImageSrcInner(
   if (typeof value.type === 'string' && IMAGE_TYPES.has(value.type)) {
     const sourceSrc = extractBase64Source(value.source)
     if (sourceSrc) return sourceSrc
+
+    const sourceUrlSrc = safeImageUrl(value.source)
+    if (sourceUrlSrc) return sourceUrlSrc
 
     const imageUrlSrc = safeImageUrl(value.image_url)
     if (imageUrlSrc) return imageUrlSrc
