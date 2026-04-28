@@ -27,14 +27,14 @@ def client() -> TestClient:
 class TestProviderRoutes:
     """Tests for GET /api/providers."""
 
-    def test_list_providers_returns_all_four(self, client: TestClient) -> None:
-        """Endpoint returns claude, gemini, qwen, and codex entries."""
+    def test_list_providers_returns_all_supported_providers(self, client: TestClient) -> None:
+        """Endpoint returns all supported provider entries."""
         response = client.get("/api/providers")
         assert response.status_code == 200
         data = response.json()
         assert "providers" in data
         names = [p["name"] for p in data["providers"]]
-        assert names == ["claude", "gemini", "qwen", "codex"]
+        assert names == ["claude", "gemini", "qwen", "codex", "droid"]
 
     def test_provider_available_when_binary_found(self, client: TestClient) -> None:
         """Provider is marked available when shutil.which finds the binary."""
@@ -51,6 +51,8 @@ class TestProviderRoutes:
             assert providers["qwen"]["path"] is None
             assert providers["codex"]["available"] is False
             assert providers["codex"]["path"] is None
+            assert providers["droid"]["available"] is False
+            assert providers["droid"]["path"] is None
 
     def test_all_providers_unavailable(self, client: TestClient) -> None:
         """All providers unavailable when no binaries found."""
@@ -68,6 +70,7 @@ class TestProviderRoutes:
             "gemini": "/usr/local/bin/gemini",
             "qwen": "/usr/local/bin/qwen",
             "codex": "/usr/local/bin/codex",
+            "droid": "/usr/local/bin/droid",
         }
         with patch(
             "gobby.servers.routes.providers.shutil.which",
@@ -109,13 +112,13 @@ class TestProviderModelsRoute:
     """Tests for GET /api/providers/models."""
 
     def test_returns_all_providers_with_models(self, client: TestClient) -> None:
-        """Endpoint returns claude, gemini, qwen, and codex with model lists."""
+        """Endpoint returns supported providers with model lists."""
         response = client.get("/api/providers/models")
         assert response.status_code == 200
         data = response.json()
         assert "providers" in data
         providers = {p["provider"]: p for p in data["providers"]}
-        assert set(providers.keys()) == {"claude", "gemini", "qwen", "codex"}
+        assert set(providers.keys()) == {"claude", "gemini", "qwen", "codex", "droid"}
 
         # Claude should have opus, sonnet, haiku
         claude_values = [m["value"] for m in providers["claude"]["models"]]
@@ -154,6 +157,13 @@ class TestProviderModelsRoute:
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
 
+        droid_values = [m["value"] for m in providers["droid"]["models"]]
+        assert len(droid_values) == 24
+        assert "claude-opus-4-7" in droid_values
+        assert "gpt-5.4" in droid_values
+        assert "gemini-3-flash-preview" in droid_values
+        assert "minimax-m2.7" in droid_values
+
         # Each entry should have source field
         for p in data["providers"]:
             assert p["source"] == "static"
@@ -170,6 +180,7 @@ class TestProviderModelsRoute:
             assert providers["gemini"]["available"] is False
             assert providers["qwen"]["available"] is False
             assert providers["codex"]["available"] is False
+            assert providers["droid"]["available"] is False
 
     def test_models_route_uses_runtime_health_for_backend_failures(self) -> None:
         app = FastAPI()
@@ -229,6 +240,7 @@ class TestProviderModelsRoute:
         assert providers["gemini"]["models"][0]["value"] == "gemini-model"
         assert providers["qwen"]["models"][0]["value"] == "qwen-model"
         assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
+        assert providers["droid"]["models"][0]["value"] == "droid-model"
         assert providers["codex"]["source"] == "live"
 
     def test_includes_local_claude_model_when_configured(self) -> None:

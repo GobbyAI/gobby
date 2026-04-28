@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
 
-_SUPPORTED_SESSION_SOURCES = ("claude", "gemini", "qwen", "codex")
+_SUPPORTED_SESSION_SOURCES = ("claude", "gemini", "qwen", "codex", "droid")
 
 
 def register_crud_tools(
@@ -78,7 +78,7 @@ def register_crud_tools(
         description="""Get YOUR current session ID - the CORRECT way to look up your session.
 
 Use this when session_id wasn't in your injected context. Pass your external_id
-(from transcript path or GOBBY_SESSION_ID env) and source (claude, gemini, qwen, codex).
+(from transcript path or GOBBY_SESSION_ID env) and source (claude, gemini, qwen, codex, droid).
 
 DO NOT use list_sessions to find your session - it won't work with multiple active sessions.""",
     )
@@ -90,12 +90,12 @@ DO NOT use list_sessions to find your session - it won't work with multiple acti
         Look up your internal session_id from external_id and source.
 
         The agent passes external_id (from injected context or GOBBY_SESSION_ID env var)
-        and source (claude, gemini, qwen, codex). project_id and machine_id are
+        and source (claude, gemini, qwen, codex, droid). project_id and machine_id are
         auto-resolved from config files.
 
         Args:
             external_id: Your CLI's session ID (from context or GOBBY_SESSION_ID env)
-            source: CLI source - "claude", "gemini", "qwen", or "codex"
+            source: CLI source - "claude", "gemini", "qwen", "codex", or "droid"
 
         Returns:
             session_id: Internal Gobby session ID (use for parent_session_id, etc.)
@@ -167,7 +167,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         Args:
             project_id: Filter by project ID
             status: Filter by status (active, paused, expired, archived, handoff_ready)
-            source: Filter by CLI source (claude, gemini, qwen, codex)
+            source: Filter by CLI source (claude, gemini, qwen, codex, droid)
             limit: Max results (default 20)
 
         Returns:

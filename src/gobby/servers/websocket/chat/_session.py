@@ -41,7 +41,7 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
     normalized = provider.strip().lower()
     if normalized in {"", "inherit"}:
         return None
-    if normalized in {"claude", "gemini", "qwen", "codex"}:
+    if normalized in {"claude", "gemini", "qwen", "codex", "droid"}:
         return normalized
     return None
 

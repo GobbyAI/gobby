@@ -25,7 +25,7 @@ const CONVERSATION_ID_KEY = "gobby-conversation-id";
 const DB_SESSION_ID_KEY = "gobby-db-session-id";
 const VIEWING_SESSION_ID_KEY = "gobby-viewing-session-id";
 const VIEWING_SESSION_MODE_KEY = "gobby-viewing-session-mode";
-const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex"]);
+const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex", "droid"]);
 
 export interface WebSocketMessage {
   type: string;

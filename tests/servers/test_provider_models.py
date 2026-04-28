@@ -102,7 +102,7 @@ class TestProviderModelCatalog:
             patch.object(
                 catalog,
                 "_get_cli_version",
-                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.14.3", "0.118.0"]),
+                new=AsyncMock(side_effect=["1.0.12", "0.37.1", "0.14.3", "0.118.0", "0.106.0"]),
             ),
         ):
             status = await catalog.refresh()

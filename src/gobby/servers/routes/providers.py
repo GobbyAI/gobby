@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+from gobby.servers.provider_models import DROID_MODEL_CATALOG
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
@@ -73,6 +75,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
         },
     ],
+    "droid": DROID_MODEL_CATALOG,
 }
 
 _PROVIDER_DEFS = [
@@ -80,6 +83,7 @@ _PROVIDER_DEFS = [
     ("gemini", "gemini"),
     ("qwen", "qwen"),
     ("codex", "codex"),
+    ("droid", "droid"),
 ]
 
 

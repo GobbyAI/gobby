@@ -213,7 +213,7 @@ class ChatMessagingMixin:
         project_id = data.get("project_id")
         provider = data.get("provider")
         reasoning_effort = data.get("reasoning_effort")
-        if provider is not None and provider not in {"claude", "codex", "gemini", "qwen"}:
+        if provider is not None and provider not in {"claude", "codex", "gemini", "qwen", "droid"}:
             await self._send_error(
                 websocket, f"Invalid provider '{provider}'", request_id=request_id
             )
