@@ -1,15 +1,6 @@
 generated_at: "2026-04-27T21:35:25Z"
 generator: "gobby plan legacy-classification-refresh"
 entries:
-  - plan_id: task-12068-skillsmp-install-rewrite
-    root_task_ref: "12068"
-    root_open: true
-    root_title: "SkillsMP: implement install-from-hub (get_skill_details + download_skill rewrite)"
-    legacy_reason: "Pre-contract plan retained as historical planning context; root work owns any future implementation coverage."
-    non_retrofit_acknowledgment: "#12068"
-    non_retrofit_acknowledgment_exists: true
-    non_retrofit_acknowledgment_open: true
-    non_retrofit_acknowledgment_title: "SkillsMP: implement install-from-hub (get_skill_details + download_skill rewrite)"
   - plan_id: task-12285-droid-cli
     root_task_ref: "12285"
     root_open: true

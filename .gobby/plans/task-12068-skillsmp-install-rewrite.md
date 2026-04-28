@@ -1,6 +1,7 @@
 # SkillsMP install-from-hub rewrite (get_skill_details + download_skill)
 
 ## Overview
+`kind: framing`
 
 `SkillsMPProvider.get_skill_details()` and `SkillsMPProvider.download_skill()` in
 `src/gobby/skills/hubs/skillsmp.py` call endpoints that don't exist on
@@ -15,6 +16,7 @@ API. Outcome: `install_skill(source="skillsmp:<slug>")` succeeds
 end-to-end via the existing `/hubs/install` route and `install_skill` MCP tool.
 
 ## Constraints
+`kind: framing`
 
 - Keep the `HubProvider.get_skill_details` / `download_skill` abstract
   signatures unchanged. The rewrite is internal to `SkillsMPProvider`; no route,
@@ -39,13 +41,15 @@ end-to-end via the existing `/hubs/install` route and `install_skill` MCP tool.
   after the rewrite (minus `test_download_no_url_returns_error` which targets
   the deleted endpoint-shaped path and is replaced with new-flow equivalents).
 
-## Phase 1: Data Model Thread-Through
+## P1 Phase 1: Data Model Thread-Through
+`kind: framing`
 
 **Goal**: Add a generic `source_url` field to `HubSkillInfo` so hubs that can
 resolve a skill to a fetchable URL can surface it without per-provider
 signature extensions.
 
 ### 1.1 Add source_url to HubSkillInfo [category: code]
+`kind: deliverable`
 
 Target: `src/gobby/skills/hubs/base.py`
 
@@ -123,7 +127,12 @@ description="x", hub_name="h", source_url="https://x.test/y")` constructs
 without error; `to_dict()["source_url"] == "https://x.test/y"`; default when
 unspecified is `None`.
 
-## Phase 2: SkillsMPProvider Rewrite
+**Acceptance:**
+
+- 1.1.1 — `HubSkillInfo` dataclass adds `source_url: str | None = None` and `to_dict()` includes the key. symbol: `gobby.skills.hubs.base.HubSkillInfo`.
+
+## P2 Phase 2: SkillsMPProvider Rewrite
+`kind: framing`
 
 **Goal**: Make `install_skill(source="skillsmp:<slug>")` succeed
 end-to-end. Route `get_skill_details` through `/skills/search`, replace the ZIP
@@ -131,6 +140,7 @@ download path with a GitHub Contents API fetch, thread `githubUrl` through
 `HubSkillDetails.source_url`.
 
 ### 2.1 Rewrite SkillsMPProvider.get_skill_details() and _skill_to_info [category: code] (depends: 1.1)
+`kind: deliverable`
 
 Target: `src/gobby/skills/hubs/skillsmp.py`
 
@@ -278,7 +288,13 @@ Test scenarios (auto-wrapped by TDD):
   fixtures, assert `HubSkillInfo.source_url` is set when `githubUrl` is in
   the record.
 
+**Acceptance:**
+
+- 2.1.1 — `SkillsMPProvider.get_skill_details` resolves skill detail via `/skills/search` (no `/skills/{slug}` 404 path). symbol: `gobby.skills.hubs.skillsmp.SkillsMPProvider.get_skill_details`.
+- 2.1.2 — `_skill_to_info` threads `githubUrl` from search results into `HubSkillInfo.source_url`. symbol: `gobby.skills.hubs.skillsmp.SkillsMPProvider._skill_to_info`.
+
 ### 2.2 Rewrite SkillsMPProvider.download_skill() with GitHub Contents API [category: code] (depends: 2.1)
+`kind: deliverable`
 
 Target: `src/gobby/skills/hubs/skillsmp.py`
 
@@ -1174,7 +1190,12 @@ Output coverage:
   files only) → clean failure, temp dir cleaned.
 - Zero-byte SKILL.md → clean failure, temp dir cleaned.
 
+**Acceptance:**
+
+- 2.2.1 — `SkillsMPProvider.download_skill` fetches skill contents via the GitHub Contents API using `source_url` (no ZIP-CDN call). symbol: `gobby.skills.hubs.skillsmp.SkillsMPProvider.download_skill`.
+
 ### 2.3 Remove dead ZIP path and stale test [category: refactor] (depends: 2.2)
+`kind: deliverable`
 
 Target: `src/gobby/skills/hubs/skillsmp.py`,
 `tests/skills/hubs/test_skillsmp.py`
@@ -1202,7 +1223,13 @@ After the delete, the `skillsmp.py` module must still pass
 `uv run ruff check src/gobby/skills/hubs/skillsmp.py` and
 `uv run mypy src/gobby/skills/hubs/skillsmp.py` with no new warnings.
 
+**Acceptance:**
+
+- 2.3.1 — Dead ZIP-download code path removed from `SkillsMPProvider`. file: `src/gobby/skills/hubs/skillsmp.py`.
+- 2.3.2 — Stale ZIP-path test removed in favor of GitHub-Contents-API coverage. file: `tests/skills/hubs/test_skillsmp.py`.
+
 ### 2.4 Wire consumer cleanup + hub provenance at hub install call sites [category: code] (depends: 2.2)
+`kind: deliverable`
 
 Targets: `src/gobby/mcp_proxy/tools/skills/install_skill.py`,
 `src/gobby/servers/routes/skills.py`,
@@ -1887,12 +1914,18 @@ unaffected. On the MCP side, the provenance kwargs are spread via
 `**hub_metadata`, so non-hub flows remain byte-for-byte identical at
 the `create_skill` call site.
 
-## Phase 3: Live Verification
+**Acceptance:**
+
+- 2.4.1 — Hub install call sites consume the rewritten provider and propagate hub provenance through to the installed skill record. file: `src/gobby/servers/routes/hubs.py`.
+
+## P3 Phase 3: Live Verification
+`kind: framing`
 
 **Goal**: Confirm the rewritten install flow works end-to-end against the
 real skillsmp.com API and a real GitHub-hosted skill.
 
 ### 3.1 Live MCP smoke-test install-from-hub via skillsmp [category: manual] (depends: Phase 2)
+`kind: deliverable`
 
 Target: no file — manual verification against the running daemon and the
 live skillsmp.com API.
@@ -2007,7 +2040,12 @@ Close this task with a `changes_summary` reporting:
 - Confirmation that `/tmp/skillsmp_*` returned to its pre-install
   state after every successful install (§2.4 cleanup).
 
+**Acceptance:**
+
+- 3.1.1 — `install_skill(source="skillsmp:<slug>")` succeeds end-to-end via the existing `/hubs/install` route and `install_skill` MCP tool against the live SkillsMP API. behavior: "install_skill source=skillsmp:<slug> succeeds end-to-end against the live SkillsMP API" in `src/gobby/skills/hubs/skillsmp.py`.
+
 ## Task Mapping
+`kind: framing`
 
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |

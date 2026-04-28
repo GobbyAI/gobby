@@ -17,8 +17,8 @@ entries:
   - plan_id: task-12068-skillsmp-install-rewrite
     project_id: d45545c5-ded5-4335-b115-0245752edacf
     root_task_ref: "12068"
-    plan_kind: legacy
-    status: archived
+    plan_kind: implementation
+    status: active
   - plan_id: task-12746-neo4j-falkordb-swap
     project_id: d45545c5-ded5-4335-b115-0245752edacf
     root_task_ref: "12746"
