@@ -167,21 +167,20 @@ class DaemonProxy:
         json: dict[str, Any] | None = None,
         timeout: float = 30.0,
         project_id: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
-        # Learn session_id from tool arguments (sticky — first one wins)
-        if self._session_id is None and isinstance(json, dict):
-            sid = json.get("session_id")
-            if isinstance(sid, str) and sid:
-                self._session_id = sid
+        if session_id:
+            self._session_id = session_id
 
         # Build context headers so the daemon resolves the correct project
         headers: dict[str, str] = {}
         effective_project_id = project_id or self._project_id
+        effective_session_id = session_id or self._session_id
         if effective_project_id:
             headers["X-Gobby-Project-Id"] = effective_project_id
-        if self._session_id:
-            headers["X-Gobby-Session-Id"] = self._session_id
+        if effective_session_id:
+            headers["X-Gobby-Session-Id"] = effective_session_id
 
         try:
             async with httpx.AsyncClient() as client:
@@ -204,22 +203,34 @@ class DaemonProxy:
             error_msg = str(e) or f"{type(e).__name__}: (no message)"
             return {"success": False, "error": error_msg}
 
-    async def get_status(self) -> dict[str, Any]:
+    async def get_status(self, session_id: str | None = None) -> dict[str, Any]:
         """Get daemon status."""
-        return await self._request("GET", "/api/admin/status")
+        return await self._request("GET", "/api/admin/status", session_id=session_id)
 
-    async def list_tools(self, server_name: str | None = None) -> dict[str, Any]:
+    async def list_tools(
+        self,
+        server_name: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """List tools from MCP servers."""
         if server_name:
-            return await self._request("GET", f"/api/mcp/{server_name}/tools")
+            return await self._request(
+                "GET",
+                f"/api/mcp/{server_name}/tools",
+                session_id=session_id,
+            )
         # List all - need to get server list first
-        status = await self.get_status()
+        status = await self.get_status(session_id=session_id)
         if status.get("success") is False:
             return status
         servers = status.get("mcp_servers", {})
         all_tools: dict[str, list[dict[str, Any]]] = {}
         for srv_name in servers:
-            result = await self._request("GET", f"/api/mcp/{srv_name}/tools")
+            result = await self._request(
+                "GET",
+                f"/api/mcp/{srv_name}/tools",
+                session_id=session_id,
+            )
             if result.get("success"):
                 all_tools[srv_name] = result.get("tools", [])
         return {
@@ -233,6 +244,7 @@ class DaemonProxy:
         tool_name: str,
         arguments: str | dict[str, Any] | None = None,
         project_id: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
@@ -263,18 +275,26 @@ class DaemonProxy:
         }
         if project_id:
             request_kwargs["project_id"] = project_id
+        if session_id:
+            request_kwargs["session_id"] = session_id
         return await self._request(
             "POST",
             f"/api/mcp/{server_name}/tools/{tool_name}",
             **request_kwargs,
         )
 
-    async def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
+    async def get_tool_schema(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Get schema for a specific tool."""
         result = await self._request(
             "POST",
             "/api/mcp/tools/schema",
             json={"server_name": server_name, "tool_name": tool_name},
+            session_id=session_id,
         )
         if "error" in result:
             return {"success": False, "error": result["error"]}
@@ -287,9 +307,9 @@ class DaemonProxy:
             },
         }
 
-    async def list_mcp_servers(self) -> dict[str, Any]:
+    async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
         """List configured MCP servers (includes internal gobby-* servers)."""
-        return await self._request("GET", "/api/mcp/servers")
+        return await self._request("GET", "/api/mcp/servers", session_id=session_id)
 
     async def recommend_tools(
         self,
@@ -398,6 +418,7 @@ class DaemonProxy:
             "POST",
             "/api/workflows/variables/set",
             json={"name": name, "value": value, "session_id": session_id},
+            session_id=session_id,
         )
 
     async def get_variable(
@@ -411,6 +432,7 @@ class DaemonProxy:
             "POST",
             "/api/workflows/variables/get",
             json={"name": name, "session_id": session_id},
+            session_id=session_id,
         )
 
     async def init_project(self, name: str, project_path: str | None = None) -> dict[str, Any]:
@@ -471,8 +493,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with servers list, total count, and connected count
         """
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
+        if session_id:
+            return await proxy.list_mcp_servers(session_id=session_id)
         return await proxy.list_mcp_servers()
 
     @mcp.tool()
@@ -489,8 +511,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool listings
         """
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
+        if session_id:
+            return await proxy.list_tools(server_name, session_id=session_id)
         return await proxy.list_tools(server_name)
 
     @mcp.tool()
@@ -512,8 +534,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
         Returns:
             Dict with tool name, description, and full inputSchema
         """
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
+        if session_id:
+            return await proxy.get_tool_schema(server_name, tool_name, session_id=session_id)
         return await proxy.get_tool_schema(server_name, tool_name)
 
     @mcp.tool()
@@ -571,28 +593,20 @@ def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
                 "error": "Missing required parameters: server_name, tool_name",
             }
 
-        # Set session_id on proxy directly so _request() sends it via
-        # X-Gobby-Session-Id header. Don't inject into tool arguments —
-        # that collides with tools that accept session_id as a parameter
-        # (get_session, get_handoff_context, etc.).
-        if session_id and not proxy._session_id:
-            proxy._session_id = session_id
-
         requested_timeout = None
         if tool_name in WAIT_TOOL_NAMES:
             raw_timeout = final_args.get("timeout") if isinstance(final_args, dict) else None
             if isinstance(raw_timeout, int | float):
                 requested_timeout = float(raw_timeout)
 
+        call_kwargs: dict[str, Any] = {}
         if project_id:
-            return await _call_with_wait_heartbeat(
-                proxy.call_tool(server_name, tool_name, final_args, project_id=project_id),
-                ctx=ctx,
-                tool_name=tool_name,
-                timeout=requested_timeout,
-            )
+            call_kwargs["project_id"] = project_id
+        if session_id:
+            call_kwargs["session_id"] = session_id
+
         return await _call_with_wait_heartbeat(
-            proxy.call_tool(server_name, tool_name, final_args),
+            proxy.call_tool(server_name, tool_name, final_args, **call_kwargs),
             ctx=ctx,
             tool_name=tool_name,
             timeout=requested_timeout,

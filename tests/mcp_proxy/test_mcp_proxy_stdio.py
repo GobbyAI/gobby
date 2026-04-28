@@ -769,8 +769,9 @@ class TestMCPToolsWrapper:
             "outer-tool",
             {"session_id": "inner-session", "value": "ok"},
             project_id="outer-project",
+            session_id="outer-session",
         )
-        assert mock_proxy._session_id == "outer-session"
+        assert mock_proxy._session_id is None
 
     @pytest.mark.asyncio
     async def test_call_tool_emits_progress_heartbeat_for_wait_tools(self) -> None:
