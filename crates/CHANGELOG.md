@@ -7,6 +7,21 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — gobby-hooks
+
+### Added
+
+#### gobby-hooks
+
+- **Factory droid hook route** — `ghook --gobby-owned --cli=droid --type=<PascalCaseHook>` now treats Factory's droid CLI as a first-class source. Droid hook stdin is passed through unchanged to the unified daemon endpoint as `{"hook_type": "<type>", "input_data": <stdin>, "source": "droid"}`, so the Gobby-side `DroidAdapter` owns the protocol translation.
+- **Droid diagnose support** — `ghook --diagnose --cli=droid --type=SessionStart` now reports `cli_recognized: true` and `source: "droid"` so installers can probe for droid-capable ghook binaries.
+
+### Changed
+
+#### gobby-hooks
+
+- **Droid blocking semantics** — droid daemon responses with `continue:false` now exit 2 with the daemon reason while preserving the response JSON on stdout. Other droid block JSON is forwarded on stdout with exit 0 for droid's hook protocol, and daemon transport failures surface as exit 1 stderr diagnostics.
+
 ## [0.3.1] — gobby-hooks
 
 ### Added

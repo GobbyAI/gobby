@@ -3,7 +3,7 @@
 Sandbox-tolerant hook dispatcher for Gobby.
 
 `ghook` is invoked by host AI CLIs (Claude Code, Codex, Gemini CLI, Qwen
-CLI) on lifecycle and tool-use events. It enqueues an envelope to
+CLI, Factory droid) on lifecycle and tool-use events. It enqueues an envelope to
 `~/.gobby/hooks/inbox/` *before* attempting to POST to the local Gobby
 daemon — so the daemon's drain worker replays any envelope whose POST
 was lost to a sandbox FS-read denial, a network blip, or daemon restart.

@@ -150,6 +150,16 @@ mod tests {
         assert!(d.terminal_context_enabled);
     }
 
+    #[test]
+    fn droid_session_start_is_recognized_noncritical_without_terminal_context() {
+        let d = diagnose("droid", "SessionStart");
+        assert!(d.cli_recognized);
+        assert_eq!(d.source.as_deref(), Some("droid"));
+        assert!(!d.critical);
+        assert!(!d.terminal_context_enabled);
+        assert!(d.terminal_context_preview.is_none());
+    }
+
     fn compile_v2_schema() -> jsonschema::JSONSchema {
         let schema_bytes = include_bytes!("../schemas/diagnose-output.v2.schema.json");
         let schema: serde_json::Value = serde_json::from_slice(schema_bytes).unwrap();

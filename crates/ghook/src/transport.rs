@@ -440,6 +440,51 @@ mod tests {
     }
 
     #[test]
+    fn post_and_cleanup_sends_droid_source_to_unified_hooks_endpoint() {
+        let dir = tempdir().unwrap();
+        let inbox = dir.path().join("inbox");
+        let envelope = Envelope::new(
+            false,
+            "PreToolUse".into(),
+            serde_json::json!({
+                "session_id": "droid-session",
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/main.rs"}
+            }),
+            "droid".into(),
+            BTreeMap::new(),
+        );
+        let path = enqueue_to(&envelope, &inbox).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
+            assert!(request.contains("\"hook_type\":\"PreToolUse\""));
+            assert!(request.contains("\"source\":\"droid\""));
+            assert!(request.contains("\"input_data\":{\"hook_event_name\":\"PreToolUse\""));
+            assert!(request.contains("\"tool_input\":{\"file_path\":\"src/main.rs\"}"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+                )
+                .unwrap();
+        });
+
+        let report = post_and_cleanup(&envelope, &path, &format!("http://{addr}"));
+        handle.join().unwrap();
+
+        assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+        assert_eq!(report.failure_kind, None);
+        assert_eq!(report.status_code, Some(200));
+        assert_eq!(report.response_body, Some("{}".to_string()));
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn post_and_cleanup_captures_http_error_body() {
         let dir = tempdir().unwrap();
         let inbox = dir.path().join("inbox");

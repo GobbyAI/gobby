@@ -60,7 +60,7 @@ struct Args {
     #[arg(long)]
     version: bool,
 
-    /// Host CLI name (claude, codex, gemini, qwen).
+    /// Host CLI name (claude, codex, gemini, qwen, droid).
     #[arg(long)]
     cli: Option<String>,
 
@@ -303,7 +303,7 @@ fn emit_action(action: HookAction) -> ExitCode {
 }
 
 fn action_from_success_response(
-    _canonical_source: &str,
+    canonical_source: &str,
     hook_type: &str,
     response_body: &str,
 ) -> Result<HookAction, String> {
@@ -318,6 +318,10 @@ fn action_from_success_response(
 
     let result: Value = serde_json::from_str(trimmed).map_err(|e| e.to_string())?;
     let serialized = serde_json::to_string(&result).map_err(|e| e.to_string())?;
+
+    if canonical_source == "droid" {
+        return Ok(action_from_droid_success(result, serialized));
+    }
 
     if is_blocked(&result) {
         if hook_type != "Stop" {
@@ -341,12 +345,47 @@ fn action_from_success_response(
     })
 }
 
+fn action_from_droid_success(result: Value, serialized: String) -> HookAction {
+    if result
+        .as_object()
+        .and_then(|map| map.get("continue"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return HookAction {
+            exit_code: 2,
+            stdout_json: Some(serialized),
+            stderr_message: Some(extract_reason(&result)),
+        };
+    }
+
+    HookAction {
+        exit_code: 0,
+        stdout_json: json_value_is_meaningful(&result).then_some(serialized),
+        stderr_message: None,
+    }
+}
+
 fn action_from_failure(
     hook_type: &str,
     cfg: &CliConfig,
     failure_kind: transport::DeliveryFailureKind,
     detail: &str,
 ) -> HookAction {
+    if cfg.source == "droid" {
+        let message = match failure_kind {
+            transport::DeliveryFailureKind::Http => format!("Daemon error: {detail}"),
+            transport::DeliveryFailureKind::Connect => "Daemon unreachable".to_string(),
+            transport::DeliveryFailureKind::Timeout => "Hook execution timeout".to_string(),
+            transport::DeliveryFailureKind::Other => detail.to_string(),
+        };
+        return HookAction {
+            exit_code: 1,
+            stdout_json: None,
+            stderr_message: Some(message),
+        };
+    }
+
     if cfg.is_critical_hook(hook_type) {
         let reason = match failure_kind {
             transport::DeliveryFailureKind::Http => format!(
@@ -606,6 +645,42 @@ mod tests {
     }
 
     #[test]
+    fn action_from_success_treats_droid_continue_false_as_exit_two_with_json() {
+        let action = action_from_success_response(
+            "droid",
+            "PreToolUse",
+            r#"{"continue":false,"stopReason":"Create a task first"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 2);
+        let stdout_json = action.stdout_json.unwrap();
+        let parsed: Value = serde_json::from_str(&stdout_json).unwrap();
+        assert_eq!(parsed["continue"], false);
+        assert_eq!(
+            action.stderr_message.as_deref(),
+            Some("Create a task first")
+        );
+    }
+
+    #[test]
+    fn action_from_success_preserves_droid_block_json_without_exit_two() {
+        let action = action_from_success_response(
+            "droid",
+            "Stop",
+            r#"{"decision":"block","reason":"Task still in progress"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 0);
+        let stdout_json = action.stdout_json.unwrap();
+        let parsed: Value = serde_json::from_str(&stdout_json).unwrap();
+        assert_eq!(parsed["decision"], "block");
+        assert_eq!(parsed["reason"], "Task still in progress");
+        assert_eq!(action.stderr_message, None);
+    }
+
+    #[test]
     fn action_from_failure_blocks_critical_hooks() {
         let action = action_from_failure(
             "SessionStart",
@@ -665,6 +740,22 @@ mod tests {
         assert_eq!(
             action.stderr_message.as_deref(),
             Some("Daemon connection failed on critical hook 'Stop' — blocking to fail safe.")
+        );
+    }
+
+    #[test]
+    fn action_from_failure_returns_stderr_for_droid_transport_errors() {
+        let action = action_from_failure(
+            "PreToolUse",
+            &CliConfig::for_dispatch("droid"),
+            DeliveryFailureKind::Http,
+            "Internal Server Error",
+        );
+        assert_eq!(action.exit_code, 1);
+        assert!(action.stdout_json.is_none());
+        assert_eq!(
+            action.stderr_message.as_deref(),
+            Some("Daemon error: Internal Server Error")
         );
     }
 

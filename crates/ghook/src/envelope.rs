@@ -84,6 +84,31 @@ mod tests {
     }
 
     #[test]
+    fn droid_envelope_preserves_pascal_hook_and_source() {
+        let env = Envelope::new(
+            false,
+            "PreToolUse".into(),
+            json!({
+                "session_id": "droid-session",
+                "transcript_path": "/tmp/droid.jsonl",
+                "cwd": "/tmp/project",
+                "permission_mode": "default",
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/main.rs"}
+            }),
+            "droid".into(),
+            BTreeMap::new(),
+        );
+        let v: Value = serde_json::to_value(&env).unwrap();
+
+        assert_eq!(v["hook_type"], "PreToolUse");
+        assert_eq!(v["source"], "droid");
+        assert_eq!(v["input_data"]["hook_event_name"], "PreToolUse");
+        assert_eq!(v["input_data"]["tool_input"]["file_path"], "src/main.rs");
+    }
+
+    #[test]
     fn empty_headers_serialize_as_empty_object() {
         let env = Envelope::new(
             false,

@@ -57,6 +57,12 @@ impl CliConfig {
                 .collect(),
                 json_error_exit_code: 2,
             }),
+            "droid" => Some(Self {
+                source: "droid",
+                critical_hooks: HashSet::new(),
+                terminal_context_hooks: HashSet::new(),
+                json_error_exit_code: 1,
+            }),
             _ => None,
         }
     }
@@ -112,6 +118,16 @@ mod tests {
     }
 
     #[test]
+    fn droid_recognized_with_no_terminal_context_or_critical_hooks() {
+        let c = CliConfig::for_cli("droid").unwrap();
+        assert_eq!(c.source, "droid");
+        assert!(c.critical_hooks.is_empty());
+        assert!(!c.wants_terminal_context("SessionStart"));
+        assert!(!c.wants_terminal_context("PreToolUse"));
+        assert_eq!(c.json_error_exit_code, 1);
+    }
+
+    #[test]
     fn unknown_cli_returns_none() {
         assert!(CliConfig::for_cli("cursor").is_none());
     }
@@ -120,6 +136,7 @@ mod tests {
     fn cli_name_is_case_insensitive() {
         assert!(CliConfig::for_cli("CLAUDE").is_some());
         assert!(CliConfig::for_cli("Codex").is_some());
+        assert!(CliConfig::for_cli("Droid").is_some());
     }
 
     #[test]
