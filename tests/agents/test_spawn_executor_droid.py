@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -166,3 +168,21 @@ class TestExecuteSpawnDroid:
         assert result.success is False
         assert result.child_session_id == "gobby-sess-123"
         assert result.error == "tmux failed"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("droid") is None, reason="droid CLI not installed")
+@pytest.mark.skipif(
+    os.environ.get("GOBBY_RUN_DROID_HOOK_INTEGRATION") != "1",
+    reason="set GOBBY_RUN_DROID_HOOK_INTEGRATION=1 to launch a live Droid/tmux hook test",
+)
+def test_droid_worktree_spawn_inherits_global_hooks() -> None:
+    """Live verification placeholder for Droid global hook inheritance.
+
+    The implementation intentionally does not copy hooks into isolation roots:
+    Droid reads user-global ``~/.factory/hooks/hooks.json`` independently of
+    ``--cwd``. This test is opt-in because it launches a real Droid session,
+    depends on a running Gobby daemon with Droid hooks installed, and may call
+    external model APIs.
+    """
+    pytest.skip("live Droid hook integration requires an explicit local harness run")
