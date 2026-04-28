@@ -27,6 +27,7 @@ from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     find_out_of_repo_write_path,
     get_global_approval_rules,
+    is_gcode_shell_command,
     is_safe_canvas_call,
     is_tool_auto_allowed,
     load_project_approval_rules,
@@ -228,7 +229,11 @@ class ChatSessionPermissionsMixin:
                         "Present your plan to the user for approval before making changes."
                     )
                 )
-            if is_shell_tool(tool_name) and self._is_write_bash(input_data):
+            if (
+                is_shell_tool(tool_name)
+                and self._is_write_bash(input_data)
+                and not is_gcode_shell_command(input_data)
+            ):
                 return PermissionResultDeny(
                     message=(
                         "Plan mode is active — write/destructive shell commands are blocked. "
@@ -568,7 +573,7 @@ class ChatSessionPermissionsMixin:
             '<plan-mode status="active">',
             "You are in PLAN MODE. Your role is to research and design, not execute.",
             "",
-            "ALLOWED: Read, Glob, Grep, read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .qwen/, .codex/)",
+            "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .qwen/, .codex/)",
             "BLOCKED: Edit, Write, NotebookEdit, write/destructive Bash (rm, mv, git add/commit/push, redirects)",
             "",
             "Present a structured plan with:",

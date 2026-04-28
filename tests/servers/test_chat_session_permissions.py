@@ -137,6 +137,30 @@ class TestCanUseTool:
         assert "Plan mode is active" in result.message
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ["exec_command", "run_shell_command"])
+    async def test_plan_mode_allows_gcode_shell_aliases(
+        self, session: ChatSession, tool_name: str
+    ) -> None:
+        session.set_chat_mode("plan")
+        result = await session._can_use_tool(
+            tool_name,
+            {"command": 'gcode search "ChatSessionPermissionsMixin"'},
+            ToolPermissionContext(),
+        )
+        assert isinstance(result, PermissionResultAllow)
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_blocks_gcode_shell_redirection(self, session: ChatSession) -> None:
+        session.set_chat_mode("plan")
+        result = await session._can_use_tool(
+            "run_shell_command",
+            {"command": 'gcode search "ChatSession" > notes.txt'},
+            ToolPermissionContext(),
+        )
+        assert isinstance(result, PermissionResultDeny)
+        assert "Plan mode is active" in result.message
+
+    @pytest.mark.asyncio
     async def test_pre_tool_hook_blocks(self, session: ChatSession) -> None:
         """Session lifecycle can block a tool."""
         mock_cb = AsyncMock()
@@ -231,6 +255,34 @@ class TestNeedsToolApproval:
             {
                 "command": "/Users/josh/.gobby/bin/gsqz -- 'printf %s ok > /tmp/gsqz-approval.txt'",
             },
+        )
+
+    def test_normal_mode_gcode_skips_approval(self, session: ChatSession) -> None:
+        session.chat_mode = "normal"
+
+        assert not session._needs_tool_approval(
+            "Bash",
+            {"command": 'gcode search "ChatSessionPermissionsMixin"'},
+        )
+
+    def test_normal_mode_gcode_with_redirection_requires_approval(
+        self, session: ChatSession
+    ) -> None:
+        session.chat_mode = "normal"
+
+        assert session._needs_tool_approval(
+            "Bash",
+            {"command": 'gcode search "ChatSession" > notes.txt'},
+        )
+
+    def test_normal_mode_gcode_with_shell_separator_requires_approval(
+        self, session: ChatSession
+    ) -> None:
+        session.chat_mode = "normal"
+
+        assert session._needs_tool_approval(
+            "Bash",
+            {"command": 'gcode search "ChatSession"; echo done'},
         )
 
     def test_normal_mode_safe_gsqz_input_skips_approval(self, session: ChatSession) -> None:
@@ -345,3 +397,10 @@ class TestConsumePlanModeContext:
         assert context is not None
         assert "Do it better" in context
         assert session._plan_feedback is None  # Should be cleared
+
+    def test_consume_plan_mode_context_mentions_gcode(self, session: ChatSession) -> None:
+        session.chat_mode = "plan"
+        context = session._consume_plan_mode_context()
+
+        assert context is not None
+        assert "gcode outline/search/symbol" in context

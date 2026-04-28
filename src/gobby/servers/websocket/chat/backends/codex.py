@@ -31,6 +31,7 @@ from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
     find_out_of_repo_write_path,
     get_global_approval_rules,
+    is_gcode_shell_command,
     is_tool_auto_allowed,
     load_project_approval_rules_async,
     normalize_approved_tool_keys,
@@ -535,8 +536,10 @@ class CodexWebChatBackend:
                     or not _PLAN_FILE_PATTERN.match(file_path)
                 ):
                     return self._decline_response(method)
-            elif tool_name == "Bash" and _BASH_WRITE_PATTERNS.search(
-                str(input_data.get("command", ""))
+            elif (
+                tool_name == "Bash"
+                and _BASH_WRITE_PATTERNS.search(str(input_data.get("command", "")))
+                and not is_gcode_shell_command(input_data)
             ):
                 return self._decline_response(method)
 

@@ -13,3 +13,6 @@ rules:
       - type: set_variable
         variable: plan_mode
         value: false
+      - type: set_variable
+        variable: gemini_qwen_gcode_plan_hint_shown
+        value: false

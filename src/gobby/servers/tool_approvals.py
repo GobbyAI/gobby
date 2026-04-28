@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.hooks.normalization import canonicalize_shell_tool_name
-from gobby.servers.chat_session_helpers import _PLAN_FILE_PATTERN
+from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS, _PLAN_FILE_PATTERN
 from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
@@ -202,6 +202,7 @@ def approval_key_for_tool(tool_name: str, input_data: dict[str, Any]) -> str:
 
 _SAFE_GSQZ_TOP_LEVEL_FLAGS = frozenset({"-h", "--help", "-V", "--version", "--dump-config"})
 _SAFE_GSQZ_SUBCOMMANDS = frozenset({"input"})
+_GCODE_SHELL_SEPARATORS = (";", "&&", "||", "|", "&", "\n")
 
 
 def _shell_command_tokens(command: str) -> list[str] | None:
@@ -219,6 +220,21 @@ def _shell_command_tokens(command: str) -> list[str] | None:
     if idx >= len(parts):
         return None
     return parts[idx:]
+
+
+def is_gcode_shell_command(input_data: dict[str, Any]) -> bool:
+    """Return True for a plain gcode shell invocation without shell write wrappers."""
+    command = input_data.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    if _BASH_WRITE_PATTERNS.search(command):
+        return False
+    if any(separator in command for separator in _GCODE_SHELL_SEPARATORS):
+        return False
+    parts = _shell_command_tokens(command)
+    if not parts:
+        return False
+    return os.path.basename(parts[0]) == "gcode"
 
 
 def _is_safe_gsqz_invocation(parts: list[str]) -> bool:
@@ -245,7 +261,7 @@ def is_auto_exempt_shell_command(input_data: dict[str, Any]) -> bool:
         return False
     first = os.path.basename(parts[0])
     if first == "gcode":
-        return True
+        return is_gcode_shell_command(input_data)
     if first == "gsqz":
         return _is_safe_gsqz_invocation(parts)
     return False

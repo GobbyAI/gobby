@@ -228,6 +228,16 @@ class TestGeminiBackend:
         assert PYTHON_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
         assert TASK_TRANSITIONS_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
 
+    def test_plan_mode_context_teaches_gcode(self) -> None:
+        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=MagicMock())
+        session.chat_mode = "plan"
+
+        context = session._pop_plan_mode_context()
+
+        assert context is not None
+        assert "gcode outline/search/symbol" in context
+        assert "Bash/exec_command" in context
+
 
 class TestQwenBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
@@ -240,6 +250,15 @@ class TestQwenBackend:
         assert kwargs["prompt_timeout_env"] == "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
+
+    def test_qwen_inherits_gemini_plan_mode_gcode_context(self) -> None:
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
+        session.chat_mode = "plan"
+
+        context = session._pop_plan_mode_context()
+
+        assert context is not None
+        assert "gcode outline/search/symbol" in context
 
     def test_managed_session_logs_upstream_error_context(
         self, caplog: pytest.LogCaptureFixture
@@ -548,6 +567,38 @@ class TestCodexBackend:
             }
         )
         assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_allows_gcode_in_plan_mode(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+
+        result = await backend.handle_approval_request(
+            "item/commandExecution/requestApproval",
+            {"threadId": "thread-1", "parsedCmd": 'gcode search "ChatSession"'},
+        )
+
+        assert result == backend._accept_response("item/commandExecution/requestApproval")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_blocks_gcode_redirection_in_plan_mode(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+
+        result = await backend.handle_approval_request(
+            "item/commandExecution/requestApproval",
+            {"threadId": "thread-1", "parsedCmd": 'gcode search "ChatSession" > notes.txt'},
+        )
+
+        assert result == backend._decline_response("item/commandExecution/requestApproval")
 
     @pytest.mark.asyncio
     async def test_send_message_replays_deferred_context_prefix(self) -> None:
