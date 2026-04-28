@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.voice.text_normalizer import normalize_tts_text
+
 logger = logging.getLogger(__name__)
 
 _WARMUP_IDLE = "idle"
@@ -140,8 +142,12 @@ class TTSPipeline:
 
     async def _synthesize_and_send(self, text: str) -> None:
         """Synthesize a sentence and send audio chunks to all conversation clients."""
+        spoken_text = normalize_tts_text(text)
+        if not spoken_text:
+            return
+
         try:
-            async for pcm_bytes, sample_rate in self.tts.synthesize_stream(text):
+            async for pcm_bytes, sample_rate in self.tts.synthesize_stream(spoken_text):
                 # Send metadata frame (JSON)
                 meta = json.dumps(
                     {
