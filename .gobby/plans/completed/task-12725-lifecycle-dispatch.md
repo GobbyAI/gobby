@@ -194,10 +194,254 @@ Three parallel Explore agents ran to verify APIs before this rewrite. Confirmed:
 
 **Goal**: Add the minimum task-model state to support dispatch, build the dispatcher module with its mutex primitive, register it as a cron handler, and wire the core stage rules.
 
-### 1.3 Extend task CRUD for new fields and helpers [category: code] (depends: 1.2)
+### 1.1 Add Lifecycle enum and automation fields to Task model [category: code]
 `kind: deliverable`
 
-> **Status: partial** — CRUD fields shipped via commit `614c5bbe` (`src/gobby/storage/tasks/_crud.py`). Remaining: shared helpers `list_automation_candidates`, `_is_yolo`, and the storage-level `_skipped_stages(task) -> set[str]` (currently only a local copy at `src/gobby/tasks/expansion_service.py::_skipped_stages` exists; §1.7 imports the shared symbol from `_crud`).
+Target: `src/gobby/storage/tasks/_models.py`
+
+Add a new enum and exactly six new columns on `tasks`. High-churn / sparse / append-only state goes into 1:1 adjacent tables (§1.1a, §1.1b, §1.1c) rather than being inlined here, to keep the hot-path row narrow.
+
+```python
+from enum import StrEnum
+
+class Lifecycle(StrEnum):
+    open              = "open"               # backlog; not yet in pipeline
+    plan_review       = "plan_review"        # adversary loop with planner
+    test_arch         = "test_arch"          # test-architect analysis
+    expanding         = "expanding"          # expansion run in flight
+    in_development    = "in_development"     # subtasks being worked
+    holistic_review   = "holistic_review"    # epic-level intent/diff review
+    pr                = "pr"                 # PR creation (today: merge.yaml stub)
+    merging           = "merging"            # merge in progress
+    merged            = "merged"             # terminal
+
+class Isolation(StrEnum):
+    none              = "none"               # work on current branch
+    worktree          = "worktree"           # dedicated worktree (default; shared .git)
+    clone             = "clone"              # full local clone (independent .git; portable)
+
+# Appended to the Task dataclass (six columns total):
+lifecycle: Lifecycle = Lifecycle.open
+allow_automation: bool = False
+yolo: bool = False                                 # never-escalate; worktree-sandboxed
+isolation: Isolation = Isolation.worktree
+assigned_agent: str | None = None                  # set at expansion/build time
+additional_skills: list[str] | None = None         # optional augmentation on top of the agent's baseline
+```
+
+Intentionally **not** on `tasks`:
+
+- **`profile`** — profiles are CLI sugar only (§3.2). Resolved state (`stage-:*` labels, `isolation` column, `yolo` bool) is what gets persisted.
+- **`stack`** — replaced by `assigned_agent` (§2.8).
+- **Mutex state** — see §1.1a (`task_dispatch_mutex`).
+- **`plan_file_path` / `worktree_path`** — see §1.1b (`task_artifacts`).
+- **Lifecycle history** — see §1.1c (`task_lifecycle_events`).
+
+Update `serialize_task_state`, `to_dict`, `to_brief` to surface the six new columns. Skippable-stage state is still carried as labels (`stage-:<name>`), already serialized by the existing label machinery.
+
+**Acceptance:**
+
+- 1.1.1 — Add Lifecycle enum and automation fields to Task model is implemented according to this section. file: `src/gobby/storage/tasks/_models.py`.
+
+### 1.1a `task_dispatch_mutex` table (new) [category: code]
+`kind: deliverable`
+
+Target: `src/gobby/storage/tasks/_models.py` + `src/gobby/storage/tasks/_dispatch_mutex.py` (new)
+
+High-churn mutex state for the dispatcher. Inlining these on `tasks` creates WAL pressure on every tick (every dispatch attempt rewrites the row, invalidating caches for unrelated readers). Separate 1:1 table with absent row = "no lease":
+
+```sql
+CREATE TABLE task_dispatch_mutex (
+    task_id      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    lease_until  TEXT,                                 -- ISO timestamp; NULL when free
+    lease_holder TEXT,                                 -- holder token (usually cron job name)
+    run_id       TEXT,                                 -- set only for spawn-kind mutations
+    action_kind  TEXT,                                 -- one of: spawn, expansion, worktree, lifecycle, field
+    updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_dispatch_mutex_scan
+    ON task_dispatch_mutex (lease_until, run_id);
+```
+
+Dataclass `DispatchMutex` mirrors the row. CRUD helpers: `get_mutex(task_id)`, `acquire_mutex(task_id, holder, kind, run_id, ttl_seconds)`, `release_mutex(task_id, holder)`, `clear_by_run_id(run_id)`, `sweep_expired(now)`. §1.4 operates on this table via those helpers (not on `tasks` columns).
+
+**Acceptance:**
+
+- 1.1a.1 — task_dispatch_mutex table (new) is implemented according to this section. file: `src/gobby/storage/tasks/_models.py`.
+
+### 1.1b `task_artifacts` table (new) [category: code]
+`kind: deliverable`
+
+Target: `src/gobby/storage/tasks/_models.py` + `src/gobby/storage/tasks/_artifacts.py` (new)
+
+Sparse pointers to filesystem / external resources. Most tasks have none; absent row = "no artifacts."
+
+```sql
+CREATE TABLE task_artifacts (
+    task_id            TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    plan_file_path     TEXT,
+    worktree_path      TEXT,                              -- populated when isolation=worktree; CreateWorktree action sets it
+    worktree_id        TEXT,                              -- R6.F3: storage-row id from worktrees table; passed to merge agent as session var
+    clone_path         TEXT,                              -- populated when isolation=clone; CreateClone action sets it (§1.6, §1.7)
+    clone_id           TEXT,                              -- R6.F3: LocalCloneManager row id; passed to merge agent as session var
+    target_branch      TEXT,                              -- R4.F6: base branch for worktree/merge; captured at gobby build time
+    expansion_run_id   TEXT,                              -- R4.F1: active expansion run; cleared on validation reject so rule_start_expansion can re-fire
+    expansion_attempts INTEGER NOT NULL DEFAULT 0,        -- R4.F1: retry counter; capped via MAX_EXPANSION_ATTEMPTS in §1.7
+    pr_url             TEXT,                              -- future: #12728 PR-creation agent
+    merge_commit_sha   TEXT,                              -- reserved for future write; capture deferred to #12728 per R7.F3
+    updated_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- R6.F2 / R7.F4: enforce pairwise co-presence within each isolation
+    -- family AND mutual exclusion across families. Three predicates:
+    --   1. (worktree_path IS NULL) iff (worktree_id IS NULL)  — pair invariant
+    --   2. (clone_path IS NULL) iff (clone_id IS NULL)        — pair invariant
+    --   3. worktree_path IS NULL OR clone_path IS NULL        — family XOR
+    -- This rules out partial states (e.g. worktree_path set with worktree_id
+    -- NULL) that would let path-presence checks see "artifact exists" while
+    -- the merge agent has no id to call merge tools with.
+    CHECK (
+        (worktree_path IS NULL) = (worktree_id IS NULL)
+        AND (clone_path IS NULL) = (clone_id IS NULL)
+        AND (worktree_path IS NULL OR clone_path IS NULL)
+    )
+);
+```
+
+`worktree_*` and `clone_*` columns are mutually exclusive (R6.F2 + R7.F4 — enforced at the SQL CHECK level: pairwise co-presence within each family AND family XOR). Only one set per epic, depending on `tasks.isolation`. Populated at the `lifecycle=in_development` boundary by `rule_create_worktree` / `rule_create_clone` (§1.7), each writing both `*_path` and `*_id` atomically (`set_artifacts_atomic`). On terminal `merged` lifecycle (§2.10), the merge agent clears the active family's pair atomically — worktree cleanup clears `(worktree_path, worktree_id)`; clone cleanup clears `(clone_path, clone_id)`. Plan path and target_branch populate at build time; expansion fields populate when an epic enters `expanding`; `pr_url` future.
+
+CRUD (Python helpers in `src/gobby/storage/tasks/_artifacts.py`): `get_artifacts(task_id)`, `set_artifact(task_id, field, value)`, `set_artifacts_atomic(task_id, **fields)` (multi-field atomic write — used to populate or clear `(worktree_path, worktree_id)` / `(clone_path, clone_id)` together; raises on CHECK constraint violation with a clear error mapping the failing predicate), `clear_artifact(task_id, field)`, `clear_artifacts(task_id)`, `clear_isolation_pair(task_id, family)` where `family ∈ {"worktree", "clone"}` (clears the matching pair atomically), `increment_expansion_attempts(task_id)`. The MCP-tool surface is added in §1.1d (R7.F3 — agents need `set_artifact` / `set_artifacts_atomic` / `clear_isolation_pair` / `append_description_section` exposed via gobby-tasks-ops to call them from tool-restricted workflow steps).
+
+**Acceptance:**
+
+- 1.1b.1 — task_artifacts table (new) is implemented according to this section. file: `src/gobby/storage/tasks/_models.py`.
+
+### 1.1c `task_lifecycle_events` table (new) [category: code]
+`kind: deliverable`
+
+Target: `src/gobby/storage/tasks/_models.py` + `src/gobby/storage/tasks/_lifecycle_events.py` (new)
+
+Append-only audit trail of lifecycle transitions. PG-ready from day one; the move to PostgreSQL (post-this-epic) leaves this schema unchanged.
+
+```sql
+CREATE TABLE task_lifecycle_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    from_state  TEXT,                                   -- NULL for initial seed event
+    to_state    TEXT NOT NULL,
+    reason      TEXT NOT NULL,                          -- mandatory; human- or agent-supplied
+    by_actor    TEXT NOT NULL,                          -- "cli", "dispatcher:<cron_id>", "<agent_name>"
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_lifecycle_events_task
+    ON task_lifecycle_events (task_id, created_at);
+```
+
+CRUD: `record_lifecycle_event(task_id, from_state, to_state, reason, by)`, `list_lifecycle_events(task_id, limit=None)`. `advance_lifecycle` in §1.8 is the sole writer; `record_lifecycle_event` is its INSERT step.
+
+**Acceptance:**
+
+- 1.1c.1 — task_lifecycle_events table (new) is implemented according to this section. file: `src/gobby/storage/tasks/_models.py`.
+
+### 1.1d MCP tool extensions on gobby-tasks-ops [category: code] (depends: 1.1b)
+`kind: deliverable`
+
+Target: `src/gobby/mcp_proxy/tools/tasks_ops.py` (or wherever `gobby-tasks-ops` tool registry lives)
+
+R7.F3 fix. The merge agent (§2.10), expansion-qa (§2.9), and other workflow steps need MCP-callable surfaces for the artifact-mutation and audit-marker helpers introduced in §1.1b. `gobby-tasks-ops` does not currently expose any of them — confirmed via `list_tools(server_name="gobby-tasks-ops")`: existing tools are expansion-run, affected-files, GitHub-sync, and front-half-tick; no artifact CRUD, no description-section append.
+
+Add these MCP tools (each is a thin wrapper over the §1.1b Python helper of the same name):
+
+- **`set_artifact(task_id: str, field: str, value: str | int | None)`** — single-field write. `field` is validated against the `task_artifacts` column allowlist (`plan_file_path`, `worktree_path`, `worktree_id`, `clone_path`, `clone_id`, `target_branch`, `expansion_run_id`, `expansion_attempts`, `pr_url`, `merge_commit_sha`). CHECK violation surfaces as a structured error including the failing predicate.
+- **`set_artifacts_atomic(task_id: str, fields: dict[str, str | int | None])`** — multi-field atomic write in a single transaction. Same allowlist + CHECK error surface. Used by §2.10 cleanup to clear `(worktree_path, worktree_id)` or `(clone_path, clone_id)` pairs atomically.
+- **`clear_isolation_pair(task_id: str, family: str)`** — convenience wrapper over `set_artifacts_atomic` that clears the named family's pair (`family ∈ {"worktree", "clone"}`). Single MCP call so the merge agent's cleanup step is one tool invocation.
+- **`append_description_section(task_id: str, heading: str, body: str)`** — append a `## {heading}\n{body}\n` block to `tasks.description`. Idempotent on `(task_id, heading, body)` signature within a single transaction (duplicate markers within the same call are deduped). Used by `AppendAuditMarker` (§1.6) and the merge agent's yolo-fallback path (§2.10).
+- **`get_artifacts(task_id: str) -> dict`** — read-only fetch of the `task_artifacts` row (or empty dict if absent). Used by prompt builders (§1.6 PROMPT_BUILDERS) when constructing initial_variables for the merge agent.
+
+All five tools follow the existing `gobby-tasks-ops` registration pattern (decorated registry function, schema generation, session-context resolution). The Python helpers in §1.1b's `_artifacts.py` are the single source of truth for the actual SQL; these MCP tools are stateless wrappers.
+
+Allowlist these tools in `merge.yaml` (§2.10), `expansion-qa.yaml` (§2.9 — for clearing `expansion_run_id` on rejection), and `holistic-reviewer.yaml` (§2.2 — for citing leaves and writing audit markers). Existing task-transitions skill gates do not apply (these are artifact mutations, not lifecycle status changes).
+
+**Acceptance:**
+
+- 1.1d.1 — MCP tool extensions on gobby-tasks-ops is implemented according to this section. file: `src/gobby/mcp_proxy/tools/tasks_ops.py`.
+
+### 1.2 DB migration for lifecycle + automation + adjacent tables [category: config] (depends: 1.1)
+`kind: deliverable`
+
+Target: `src/gobby/storage/migrations.py` and `src/gobby/storage/baseline_schema.sql`
+
+Add exactly **six columns** to `tasks`:
+
+```sql
+ALTER TABLE tasks ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'open';
+ALTER TABLE tasks ADD COLUMN allow_automation BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN yolo BOOLEAN NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN isolation TEXT NOT NULL DEFAULT 'worktree';
+ALTER TABLE tasks ADD COLUMN assigned_agent TEXT;
+ALTER TABLE tasks ADD COLUMN additional_skills TEXT;  -- JSON array
+```
+
+Index the scanner's hot path (note: no mutex columns here — those live in `task_dispatch_mutex`):
+
+```sql
+CREATE INDEX idx_tasks_dispatch_scan
+  ON tasks (allow_automation, lifecycle, status);
+```
+
+Create the three adjacent tables (defined in §1.1a, §1.1b, §1.1c):
+
+```sql
+CREATE TABLE task_dispatch_mutex (
+    task_id      TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    lease_until  TEXT,
+    lease_holder TEXT,
+    run_id       TEXT,
+    action_kind  TEXT,
+    updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_dispatch_mutex_scan
+    ON task_dispatch_mutex (lease_until, run_id);
+
+CREATE TABLE task_artifacts (
+    task_id            TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    plan_file_path     TEXT,
+    worktree_path      TEXT,
+    worktree_id        TEXT,
+    clone_path         TEXT,
+    clone_id           TEXT,
+    target_branch      TEXT,
+    expansion_run_id   TEXT,
+    expansion_attempts INTEGER NOT NULL DEFAULT 0,
+    pr_url             TEXT,
+    merge_commit_sha   TEXT,
+    updated_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+        (worktree_path IS NULL) = (worktree_id IS NULL)
+        AND (clone_path IS NULL) = (clone_id IS NULL)
+        AND (worktree_path IS NULL OR clone_path IS NULL)
+    )
+);
+
+CREATE TABLE task_lifecycle_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    from_state TEXT,
+    to_state   TEXT NOT NULL,
+    reason     TEXT NOT NULL,
+    by_actor   TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_lifecycle_events_task
+    ON task_lifecycle_events (task_id, created_at);
+```
+
+Update `baseline_schema.sql` so fresh installs ship the columns and tables directly.
+
+**Acceptance:**
+
+- 1.2.1 — DB migration for lifecycle + automation + adjacent tables is implemented according to this section. file: `src/gobby/storage/migrations.py`.
+
+### 1.3 Extend task CRUD for new fields and helpers [category: code] (depends: 1.2)
+`kind: deliverable`
 
 Target: `src/gobby/storage/tasks/_crud.py` and related modules
 
@@ -210,11 +454,7 @@ Target: `src/gobby/storage/tasks/_crud.py` and related modules
 
 **Acceptance:**
 
-- 1.3.1 — CRUD helpers read/write the six new task columns (`additional_skills` JSON-serialized; `lifecycle` and `isolation` deserialized as their StrEnum types). file: `src/gobby/storage/tasks/_crud.py`.
-- 1.3.2 — Adjacent-table CRUD modules expose helpers for `task_dispatch_mutex`, `task_artifacts`, and `task_lifecycle_events`. file: `src/gobby/storage/tasks/_dispatch_mutex.py`. file: `src/gobby/storage/tasks/_artifacts.py`. file: `src/gobby/storage/tasks/_lifecycle_events.py`.
-- 1.3.3 — `list_automation_candidates(db) -> list[Task]` returns opted-in, unclaimed, dependency-unblocked, non-leased tasks via LEFT JOIN on `task_dispatch_mutex`. symbol: `gobby.storage.tasks._crud.list_automation_candidates`.
-- 1.3.4 — Shared `_skipped_stages(task) -> set[str]` parses `stage-:<name>` labels and returns an empty set when none are present; the local helper at `src/gobby/tasks/expansion_service.py::_skipped_stages` is removed in favor of this canonical symbol. symbol: `gobby.storage.tasks._crud._skipped_stages`.
-- 1.3.5 — `_is_yolo(task) -> bool` returns `task.yolo`. symbol: `gobby.storage.tasks._crud._is_yolo`.
+- 1.3.1 — Extend task CRUD for new fields and helpers is implemented according to this section. file: `src/gobby/storage/tasks/_crud.py`.
 
 ### 1.3a `is_blocked_by_deps` predicate [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -1071,10 +1311,158 @@ The cron_jobs row:
 
 **Goal**: Fill in the agents and the skill the new rules reference, wire existing agents to close leaves themselves, and make expansion profile-aware.
 
-### 2.8 Expansion: Agent Selection + profile-appropriate subtasks [category: code]
+### 2.1 Holistic-review skill [category: docs]
 `kind: deliverable`
 
-> **Status: partial** — Per-acceptance-item state: `2.8.1` (stage-driven tree shape) and `2.8.2` (`assigned_agent` population on automated leaves) shipped via commit `36a48d3e` at `src/gobby/tasks/expansion_service.py`; the section's originally named `src/gobby/tasks/expansion.py` path was not used (path drift — see corrected acceptance items below). `2.8.3` (planning-leaf rejection + test-category-leaf infrastructure-only validation) is **pending** — those checks are missing from `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` and land via §2.9 wiring.
+Target: `src/gobby/install/shared/skills/holistic-review/SKILL.md` (new)
+
+Four-point intent-vs-diff methodology. Inputs: epic task, plan artifact at `epic.plan_file_path`, aggregate worktree diff, linked subtask validation_criteria. Checks: Scope (did PR do exactly what plan said), Reality (end-to-end behavior matches plan outcome), Testing (coverage adequate for changes), YAGNI (any drift / creep / scope bloat).
+
+Output: structured verdict block appended under `## Holistic Findings` on the epic:
+
+```markdown
+## Holistic Findings
+
+**Verdict**: approve | request_changes | needs_discussion
+
+### Scope Check      — OK | Drift | Gap : <citations>
+### Reality Check    — OK | Drift | Gap : <citations>
+### Testing Check    — OK | Drift | Gap : <citations>
+### YAGNI Check      — OK | Drift | Gap : <citations>
+
+### Blocking Findings
+<if any>
+```
+
+Decision mapping (R3.F4 + R4.F5 fixes — approval/rejection now atomic via §1.8):
+- `approve` → `mark_task_review_approved` on the epic. §1.8 advances `lifecycle: holistic_review → pr` (or next enabled stage) and resets status to `open`. `rule_pr` (or `rule_merging`, depending on skip set) picks up on the next tick.
+- `request_changes` (R4.F5 fix) → the holistic-reviewer skill MUST instruct the agent to identify which specific subtask(s) each finding implicates, then call `mark_task_review_rejected(epic_task_id, rejection_notes=findings, cited_subtasks=[<leaf refs>])`. The §1.8 tool atomically (single transaction): appends findings, reopens each cited subtask (`status: closed → open`), and rewinds lifecycle `holistic_review → in_development`. **At least one cited subtask is required** — passing `cited_subtasks=[]` or omitting it raises a validation error. Subtasks not cited stay closed, so the dev/qa loop only re-runs on what actually needs rework. Once the cited leaves close again, `rule_all_closed_advance_to_holistic` re-fires and holistic re-runs.
+- `needs_discussion` → `escalate_task` with `needs_human:` prefix. Yolo tasks never reach `needs_discussion` — under yolo, `holistic-reviewer` must choose `approve` or `request_changes`.
+
+The holistic-review SKILL.md prose explicitly walks through finding-to-leaf attribution: every blocking finding must be traceable to one or more `### N.N` plan sections, which map to expansion-generated subtasks. If a finding spans multiple leaves, cite all of them. If a finding is genuinely epic-level (e.g., scope drift across the whole change), cite the most representative leaf and explain the cross-leaf scope in the finding body.
+
+**Acceptance:**
+
+- 2.1.1 — Holistic-review skill documents scope, reality, testing, and YAGNI checks against the epic plan and linked subtask validation criteria. file: `src/gobby/install/shared/skills/holistic-review/SKILL.md`.
+- 2.1.2 — Holistic findings output includes verdict, check subsections, and blocking findings for downstream transition tools. behavior: `structured holistic findings block in task-12725-lifecycle-dispatch.md §2.1`.
+- 2.1.3 — Approval and request-changes mappings call the lifecycle review tools with cited subtasks where required. behavior: `holistic approval and rejection transition contract in §2.1`.
+
+### 2.2 Holistic-reviewer agent template [category: config] (depends: 2.1)
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/holistic-reviewer.yaml` (new)
+
+Mirrors `plan-adversary.yaml`'s shape: claim → load skill → review → terminate. Loads `holistic-review` skill via `get_skill` as first post-claim action. Allows filesystem reads (git diff, source files) in the `review` step; blocks `close_task`, `reopen_task`, `mark_task_needs_review`, spawning, killing. Terminates via `end_agent_run`.
+
+Model/provider choice: `codex` / `gpt-5.5` / `reasoning_effort: high` as the baseline (inherited from plan-adversary conventions). Tunable later.
+
+**Acceptance:**
+
+- 2.2.1 — Holistic-reviewer agent template is implemented according to this section. file: `src/gobby/install/shared/workflows/agents/holistic-reviewer.yaml`.
+
+### 2.3 Test-architect skill minimal wiring [category: config]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/test-architect.yaml`
+
+Current content is a stub. This plan does NOT port BMAD. Update the stub agent's instructions to produce **structured prose recommendations**, NOT new `### N.N` task sections (R4.F4 fix). The `plan-draft` methodology bans authored test tasks from plan artifacts and reserves `[category: test]` for test infrastructure (fixtures, helpers, harnesses) — not test cases. Authored test cases live in the TDD sandwich of each `[category: code]` leaf.
+
+The architect's job:
+
+1. Read the plan artifact at `epic.plan_file_path`.
+2. Decide whether the scope calls for non-unit test coverage (integration / e2e / regression / contract) beyond what the per-leaf TDD sandwich will produce.
+3. If additional coverage is needed, append a `## Test Architecture` section to the plan artifact with **structured prose** in the following shape:
+
+   ```markdown
+   ## Test Architecture
+
+   ### Integration
+   - **§<plan-section>**: <what to verify, e.g., "API → DB roundtrip via test client; assert <invariant>">
+   - **§<plan-section>**: <...>
+
+   ### E2E
+   - **§<plan-section>**: <full-flow scenario; what entry point, what assertions>
+
+   ### Regression
+   - **§<plan-section>**: <bug class to defend against; failure mode being prevented>
+
+   ### Contract / Cross-Surface
+   - **§<plan-section>**: <surfaces that must agree, e.g., "CLI/MCP/HTTP build all return identical BuildResult">
+
+   ### Test Infrastructure
+   - **<infra need>**: <new fixture, helper module, harness — becomes a [category: test] leaf>
+   ```
+
+   Expansion (§2.8) reads `## Test Architecture` and folds the **Integration / E2E / Regression / Contract** recommendations into the test-writing portion of the relevant `[category: code]` leaves' prompts (the TDD sandwich already includes test-writing steps; these recommendations augment those steps with the architect's specific scenarios). Only **Test Infrastructure** items become standalone `[category: test]` leaves — they are infrastructure, not test cases.
+
+4. If unit tests suffice: append `## Test Architecture\n\nUnit tests sufficient — no additional test types recommended.\n`
+5. Submit for review: `mark_task_review_approved` (the architect self-approves; no separate QA layer on test-arch per scope decision).
+
+The category boundary stays intact: `[category: code]` leaves carry their own tests via TDD; `[category: test]` leaves are test infrastructure only. Expansion-QA validates this boundary (§2.9 — any `[category: test]` leaf description must clearly identify infra, not authored test cases; ambiguous ones are rejected).
+
+**Acceptance:**
+
+- 2.3.1 — Test-architect agent emits structured prose recommendations instead of authored test-task sections. file: `src/gobby/install/shared/workflows/agents/test-architect.yaml`.
+- 2.3.2 — Only Test Infrastructure recommendations become standalone category test leaves; integration, e2e, regression, and contract recommendations fold into code-leaf TDD prompts. behavior: `test architecture category boundary in §2.3`.
+
+### 2.4 Add close_task permission to qa-reviewer [category: config]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml`
+
+After `mark_task_review_approved` on a leaf, QA proceeds to `close_task` with `reason="qa_approved"` and `commit_sha` from the dev's commit on the worktree. Remove `close_task` from the `blocked_mcp_tools` list (if present) for the QA review step. The existing task-transitions skill's gates still apply.
+
+**Acceptance:**
+
+- 2.4.1 — Add close_task permission to qa-reviewer is implemented according to this section. file: `src/gobby/install/shared/workflows/agents/qa-reviewer.yaml`.
+
+### 2.5 Frontend-developer agent template [category: config]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/frontend-developer.yaml` (new)
+
+New dev agent for FE-stack leaves. Tool allowlist tuned for the FE toolchain: npm / pnpm / yarn, playwright, vite/webpack dev servers, storybook, lighthouse, eslint. Model/provider choice can differ from backend (tunable).
+
+**Baseline skills** (always loaded by the agent at claim-time, defined in the YAML's `skills:` block): the agent's core FE competence — component authoring, routing, bundling, testing conventions. These are the skills the agent always has.
+
+**`additional_skills`** (R3.U5 rename from `required_skills`) — optional augmentation passed via the initial variable. For each entry in the prompt's `additional_skills`, the agent calls `get_skill(name=<skill>)` on gobby-skills as its first post-claim action. This is where finer-grained tech skills (`react`, `nextjs`, `tailwind`, etc.) land when the expander decides the leaf needs augmentation beyond the agent's baseline (§2.8). Usually empty.
+
+Unblock `close_task` so the agent can self-close when its subtree has no QA stage (e.g., `stage-:qa` or `--profile quick`). The agent branches on whether `qa` is in `_skipped_stages` of its parent: skipped → self-close after commit; present → `mark_task_needs_review` and wait for `rule_qa`.
+
+**Acceptance:**
+
+- 2.5.1 — Frontend-developer agent template is implemented according to this section. file: `src/gobby/install/shared/workflows/agents/frontend-developer.yaml`.
+
+### 2.6 Backend-developer agent template [category: config]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/backend-developer.yaml` (new)
+
+New dev agent for BE-stack leaves. Tool allowlist tuned for the BE toolchain: pytest, mypy, ruff, database client (`psql`, `sqlite3`), migration runners, `uv` / `pip` / `poetry`, container tools.
+
+Also serves as the **default-agent fallback** invoked by `rule_dispatch_leaf` (§1.7) when a leaf arrives with no `assigned_agent` — paired with an `AppendAuditMarker` so fallbacks are audit-visible. R4.F3 broadens the set of categories that hit this fallback path (any of `code`/`config`/`docs`/`test`).
+
+Same `additional_skills` loading contract as §2.5 — expander-assigned augmentations (`django`, `fastapi`, `sqlalchemy`, `postgres`, etc.) load first, then the agent works the task.
+
+Same `close_task` unblock and skip-stage branching as §2.5.
+
+**Acceptance:**
+
+- 2.6.1 — Backend-developer agent template is implemented according to this section. file: `src/gobby/install/shared/workflows/agents/backend-developer.yaml`.
+
+### 2.7 Planner clears rejection marker on resubmit [category: config] (depends: 1.8)
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/planner.yaml`
+
+In the planner's submit step (before `mark_task_needs_review`), explicitly remove the `planning-current-verdict:rejected` label if present. Addresses R2.F1 (rejection marker must be durable state, cleared by the planner on resubmit — not inferred from historical text).
+
+**Acceptance:**
+
+- 2.7.1 — Planner clears rejection marker on resubmit is implemented according to this section. file: `src/gobby/install/shared/workflows/agents/planner.yaml`.
+
+### 2.8 Expansion: Agent Selection + profile-appropriate subtasks [category: code]
+`kind: deliverable`
 
 Target: `src/gobby/tasks/expansion_service.py` and `src/gobby/tasks/expansion.py`
 
@@ -1105,14 +1493,44 @@ Expansion has two responsibilities: shaping the subtask tree based on which stag
 
 **Acceptance:**
 
-- 2.8.1 — Expansion emits stage-driven task trees from `_skipped_stages(epic)` state instead of stored profiles. file: `src/gobby/tasks/expansion_service.py`.
-- 2.8.2 — Every automated leaf in code, config, docs, or test categories receives an `assigned_agent` value (and optional `additional_skills`) selected via the `expansion-agent-selection` heuristic against `list_agent_definitions`; ambiguous leaves default to `backend-developer` and emit an `## Agent Selection` description marker. file: `src/gobby/tasks/expansion_service.py`.
-- 2.8.3 — Expansion-QA rejects any expansion run that emits a `category: planning` leaf and rejects any `[category: test]` leaf whose description does not clearly identify test infrastructure (fixtures, helpers, conftest, harness modules). file: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`. behavior: rejection cites the specific offending leaf in `rejection_notes`.
+- 2.8.1 — Expansion emits stage-driven task trees from skipped-stage state instead of stored profiles. file: `src/gobby/tasks/expansion_service.py`.
+- 2.8.2 — Every automated leaf in code, config, docs, or test categories receives an assigned_agent value and optional additional_skills. file: `src/gobby/tasks/expansion.py`.
+- 2.8.3 — Expansion rejects planning leaves and requires test-category leaves to describe infrastructure only. behavior: `expansion QA constraints in §2.8`.
+
+### 2.8a Expansion-agent-selection skill [category: docs]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md` (new)
+
+Documents the decision heuristics the expander uses for Agent Selection. Loaded as the first action of §2.8's Agent Selection step.
+
+Sections:
+
+1. **Standard label vocabulary** — common semantic tags the expander may see or set: `security`, `performance`, `accessibility`, `i18n`, `migration`, `deprecation`, `docs-api`, `docs-user`, `infra`, `dependency`. Short definitions; explicit note that this list is open.
+2. **Agent registry descriptions** — one-paragraph description of each shipped agent with the label/content patterns it typically matches. v1 ships `frontend-developer` and `backend-developer`; this section grows as new agents land.
+3. **Decision heuristics** — concrete guidance per automated category (R4.F3 — covers every category in `AUTOMATED_LEAF_CATEGORIES`):
+   - `category=code` + FE indicators (UI, React, styles, components, browser APIs) → `frontend-developer`.
+   - `category=code` + BE indicators (DB, migration, API, server, CLI) → `backend-developer`.
+   - `category=config` (YAML, Python config, agent/workflow definitions, build files) → `backend-developer`.
+   - `category=docs` (markdown, skill files, CLAUDE.md updates, API reference, user guides) → `backend-developer` (no docs-writer agent exists yet; tracked as a follow-up to author one once we audit how often docs leaves appear).
+   - `category=test` (test infrastructure: fixtures, helpers, conftest changes, harness modules — NOT authored test cases, which live in code-leaf TDD sandwiches) → `backend-developer`.
+   - Ambiguous → `backend-developer` (safer default; appends audit marker).
+   - **`category=planning`** → MUST NOT appear on a leaf. The expander must never emit planning leaves; expansion-qa rejects any that slip through (§2.9). If the planner needs sub-planning work, it belongs in a separate epic, not as a leaf of the current epic.
+4. **`additional_skills` guidance** — when to populate (dynamic libraries, cross-cutting concerns, unusual frameworks) and when not to (anything in the agent's baseline).
+5. **Failure modes** — what to do when no agent fits: default to `backend-developer` + log via `## Agent Selection` description marker. **Never escalate** from the agent-selection path.
+
+Skill will be audited and tuned as prompts mature; folded into this epic rather than deferred because the prompts for all new agents/workflows need auditing together before the happy path runs e2e (R3.U10).
+
+**Acceptance:**
+
+- 2.8a.1 — Skill section defines the standard label vocabulary used by expansion agent selection. file: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md`.
+- 2.8a.2 — Skill section documents shipped agent registry descriptions for frontend-developer and backend-developer. file: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md`.
+- 2.8a.3 — Skill section maps automated categories to concrete agent-selection heuristics. file: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md`.
+- 2.8a.4 — Skill section documents when additional_skills should augment baseline agent skills. file: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md`.
+- 2.8a.5 — Skill section documents ambiguity fallback to backend-developer with an audit marker. file: `src/gobby/install/shared/skills/expansion-agent-selection/SKILL.md`.
 
 ### 2.8b Expose `start_expansion_run_impl` for in-process dispatcher use [category: code] (depends: 1.1b)
 `kind: deliverable`
-
-> **Status: partial** — nested MCP handler `start_expansion_run` shipped via commit `4ee54dc5` at `src/gobby/mcp_proxy/tools/tasks/_expansion.py`; the importable `start_expansion_run_impl` symbol required by §1.9 is not exported.
 
 Target: `src/gobby/mcp_proxy/tools/tasks_ops.py` (or wherever the MCP tool's handler lives)
 
@@ -1128,8 +1546,6 @@ The dispatcher captures `run.id` and writes it into `task_artifacts.expansion_ru
 
 ### 2.9 Expansion-QA transition contract [category: config] (depends: 1.8, 1.1b)
 `kind: deliverable`
-
-> **Status: partial** — plan-coverage and review wiring shipped via commit `4ee54dc5` at `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`; the `assigned_agent`, `category: planning`, and test-infrastructure-only `[category: test]` checks named in the acceptance items are pending.
 
 Target: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`
 
@@ -1202,10 +1618,77 @@ Real PR-creation, merge-SHA capture, and AI-driven conflict resolution for clone
 
 **Goal**: Provide the "one-line starts the automation" surface. Config hierarchy with global / project / flag / task layers. A CLI command for the quick path and an interactive `/gobby build` skill for the wizard path.
 
-### 3.2 Build service — CLI + MCP + HTTP shared core [category: code] (depends: 3.1)
+### 3.1 Build config loader [category: code]
 `kind: deliverable`
 
-> **Status: partial** — CLI/MCP/HTTP shared core shipped via commit `614c5bbe` at `src/gobby/build/service.py`. `_kick_dispatcher_tick()` is an explicit placeholder returning 0 (intentional; gets wired in §1.9 once the dispatcher exists). `target_branch=None → current git HEAD` resolution before persisting artifacts is not yet implemented.
+Target: `src/gobby/config/build.py` (new)
+
+Merge order (later wins): built-in defaults → `~/.gobby/build.yaml` (global) → `<project_root>/.gobby/build.yaml` (project) → CLI/MCP/HTTP flags.
+
+```yaml
+# ~/.gobby/build.yaml (and project counterpart)
+default_skip_stages: []                    # e.g., ["plan_review", "holistic_review"]
+default_isolation: worktree                # none | worktree | clone
+default_yolo: false
+default_max_review_rounds: 3
+default_target_branch: null                # R4.F6: null = auto-detect from `git rev-parse --abbrev-ref HEAD` at build time
+clones_dir: ~/.gobby/clones                # R4.F2: where isolation=clone places clones
+cleanup_clones_on_merge: true              # R4.F2: delete the clone after a successful merge (§2.10); preserved on failure regardless
+max_active_agents: 10                      # global dispatcher slot cap
+dispatch_interval_seconds: 60              # cron tick interval
+
+# Profile presets — CLI-layer sugar, not stored on tasks.
+profiles:
+  quick:      { skip_stages: [plan_review, test_arch, expanding, qa, holistic_review, pr], isolation: none, yolo: false }
+  review:     { skip_stages: [plan_review, pr], isolation: worktree, yolo: false }
+  full:       { skip_stages: [], isolation: worktree, yolo: false }
+  full-yolo:  { skip_stages: [pr], isolation: worktree, yolo: true }
+  # "auto" is resolved at build time, not a stored entry.
+```
+
+Config model:
+
+```python
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+Isolation = Literal["none", "worktree", "clone"]   # R4.F2: all three implemented; see §1.6/§1.7/§2.10/§3.2 wiring.
+SKIPPABLE_STAGES = frozenset({"plan_review", "test_arch", "expanding",
+                               "qa", "holistic_review", "pr"})
+
+@dataclass(frozen=True)
+class BuildConfig:
+    default_skip_stages: tuple[str, ...] = ()
+    default_isolation: Isolation = "worktree"
+    default_yolo: bool = False
+    default_max_review_rounds: int = 3
+    default_target_branch: str | None = None       # R4.F6: None = resolve from git HEAD at build time
+    clones_dir: Path = Path.home() / ".gobby" / "clones"   # R4.F2
+    cleanup_clones_on_merge: bool = True           # R4.F2
+    max_active_agents: int = 10
+    dispatch_interval_seconds: int = 60
+    profiles: dict[str, dict] = field(default_factory=dict)   # sugar presets
+
+def load_build_config(project_root: str | None = None) -> BuildConfig:
+    """Merge global → project. CLI overrides apply on top in gobby.build.service.build()."""
+    ...
+
+def resolve_profile(cfg: BuildConfig, name: str, input_ref: str) -> dict:
+    """Resolve a profile name (or 'auto') to {skip_stages, isolation, yolo}.
+    'auto' picks based on input_ref shape: plan_file → review; leaf task → quick;
+    epic with plan → full; epic without plan → error."""
+    ...
+```
+
+Daemon uses `max_active_agents` and `dispatch_interval_seconds` at cron-registration time (§1.10). Build surfaces use the rest.
+
+**Acceptance:**
+
+- 3.1.1 — Build config loader is implemented according to this section. file: `src/gobby/config/build.py`.
+
+### 3.2 Build service — CLI + MCP + HTTP shared core [category: code] (depends: 3.1)
+`kind: deliverable`
 
 Target: shared core at `src/gobby/build/service.py` (new package); three thin surfaces.
 
@@ -1290,8 +1773,163 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 - 3.2.2 — CLI build surface delegates to the shared build service. file: `src/gobby/cli/build.py`.
 - 3.2.3 — MCP build surface delegates to the shared build service. file: `src/gobby/mcp_proxy/tools/build.py`.
 - 3.2.4 — HTTP build route delegates to the shared build service. file: `src/gobby/servers/routes/build.py`.
-- 3.2.5 — `_kick_dispatcher_tick()` triggers an immediate dispatcher heartbeat after build-state writes (replaces the current placeholder that returns `0`); the periodic cron continues to fire independently. symbol: `gobby.build.service._kick_dispatcher_tick`. behavior: returns the count of tasks dispatched by the kicked tick (the same shape `BuildResult.tick_dispatched` exposes).
-- 3.2.6 — `BuildOptions.target_branch=None` resolves to `git rev-parse --abbrev-ref HEAD` at service-call time before any `task_artifacts` write; explicit `--target-branch <name>` is preserved as-is. behavior: `task_artifacts.target_branch` is never persisted as `None` for plan-file or epic builds. file: `src/gobby/build/service.py`. test: `tests/build/test_target_branch.py` covers the default-resolve path and the explicit-override path.
+
+### 3.3 `/gobby build` interactive skill [category: docs] (depends: 3.2)
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/skills/build/SKILL.md` (new)
+
+Wizard-driven. Branches:
+
+- **Input classification**: plan file? task ref? just an idea (→ delegate to `/gobby plan`, then return)?
+- **Profile or manual**: "pick a preset (quick / review / full / full-yolo / auto) or customize (skip-stage + isolation + yolo)?"
+- **If manual**: multi-select of skippable stages; isolation; yolo y/n.
+- **Max review rounds** (only if `plan_review` is enabled): prompt; default from config.
+- **Confirm + assemble**: show the equivalent `gobby build ...` invocation, then run it via direct call into the shared build service.
+
+When input is "just an idea", skill invokes `/gobby plan` to write the plan, captures the resulting plan file path and any adversary rounds already run, then resumes with the plan-file branch.
+
+No separate yolo prompt inside a profile branch — `full-yolo` already carries yolo; other presets do not. Manual mode asks directly.
+
+**Acceptance:**
+
+- 3.3.1 — /gobby build interactive skill is implemented according to this section. file: `src/gobby/install/shared/skills/build/SKILL.md`.
+
+### 3.4 Cascade resolved state to subtree at build time [category: code]
+`kind: deliverable`
+
+Target: `src/gobby/build/service.py` (implementation) + `src/gobby/storage/tasks/_crud.py` (helpers)
+
+When `gobby build` primes an epic, copy the resolved state onto every descendant task in the subtree at build time. No runtime inheritance, no parent-lookup helper — snapshot-at-build keeps the model honest about what's actually being run.
+
+Cascaded fields:
+
+- `isolation` (column) — copied from epic to children.
+- `yolo` (column) — copied from epic to children.
+- `stage-:<name>` labels — copied from epic to children.
+- `allow_automation` (column) — set to `true` on the entire subtree.
+
+**Not cascaded:**
+
+- `assigned_agent` — per-leaf, set by expansion (§2.8) or `--agent` on single-leaf input. Never inherited from parent.
+- `additional_skills` — per-leaf, set by expansion. Never inherited.
+- `lifecycle` — per-task, driven by the dispatcher rule engine.
+
+Rules (§1.7) always read the task's own resolved state; they never walk the parent chain.
+
+**Acceptance:**
+
+- 3.4.1 — Cascade resolved state to subtree at build time is implemented according to this section. file: `src/gobby/build/service.py`.
+
+## P4 Phase 4: Retirement of Overlapping Dispatchers
+`kind: framing`
+
+**Goal**: Remove the three obsolete dispatchers. Use tombstone-with-`enabled: false` (sync-idempotent) rather than move-to-`deprecated/` (sync-breaking).
+
+### 4.1 Remove conductor package [category: refactor]
+`kind: deliverable`
+
+Target: `src/gobby/conductor/`
+
+Delete the entire package. Grep-verify no external imports (`from gobby.conductor`, `import gobby.conductor`). The cron registration previously performed by `conductor/manager.py` is replaced by the registration in §1.10.
+
+**Acceptance:**
+
+- 4.1.1 — Remove conductor package is implemented according to this section. file: `src/gobby/conductor/`.
+
+### 4.2 Tombstone obsolete pipelines [category: config]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/pipelines/`
+
+Replace contents of these files in place with minimal `enabled: false` tombstones carrying a `deprecated: true` advisory field and a `deprecated_reason` description:
+
+- `orchestrator.yaml`
+- `front-half-orchestrator.yaml`
+- `conductor.yaml`
+- `dev-orchestrator.yaml`
+- `delivery-orchestrator.yaml`
+
+Example shape:
+
+```yaml
+name: orchestrator
+version: "2.1"
+enabled: false
+deprecated: true
+deprecated_reason: |
+  Replaced by the state-driven dispatcher registered as a cron handler
+  (src/gobby/dispatch/). Kept as an in-place tombstone so bundled sync
+  preserves the installed DB row rather than soft-deleting as an orphan.
+description: |
+  [DEPRECATED] Original tick-based orchestrator pipeline.
+
+steps: []
+```
+
+If `deprecated` isn't a recognized field in `PipelineDefinition` today, add it as an advisory-only field (one-line addition to `src/gobby/workflows/definitions.py`). Sync behavior already preserves the DB `enabled` column across YAML content updates (confirmed in grounding).
+
+**Acceptance:**
+
+- 4.2.1 — Legacy front-half pipeline is tombstoned in place with enabled false and replacement notes. file: `src/gobby/install/shared/workflows/pipelines/front-half-orchestrator.yaml`.
+- 4.2.2 — Legacy orchestrator pipeline is tombstoned in place with enabled false and replacement notes. file: `src/gobby/install/shared/workflows/pipelines/orchestrator.yaml`.
+
+### 4.3 Tombstone obsolete agents [category: config]
+`kind: deliverable`
+
+Target: `src/gobby/install/shared/workflows/agents/`
+
+Same treatment for:
+- `conductor.yaml` — tombstone.
+- `pipeline-worker.yaml` — audit callers; if unused, tombstone. If any surviving pipeline still references it, retain.
+- `developer.yaml` — tombstone. Replaced by `frontend-developer.yaml` (§2.5) and `backend-developer.yaml` (§2.6); `rule_dispatch_leaf` (§1.7) dispatches whichever agent the expander assigned, with `backend-developer` as the default-when-missing. Keep the YAML as an `enabled: false` tombstone so the installed DB row is preserved across sync.
+
+Keep role agents (`planner`, `plan-adversary`, `frontend-developer`, `backend-developer`, `qa-reviewer`, `expansion-qa`, `test-architect`, `merge`, `holistic-reviewer`, nightly-*, and `requirements-analyst` — retained as a stub agent for interactive-only use cases even though no rule dispatches it).
+
+**Acceptance:**
+
+- 4.3.1 — Deprecated requirement/planning agents are tombstoned in place with enabled false and replacement notes. file: `src/gobby/install/shared/workflows/agents/`.
+- 4.3.2 — Lifecycle-owned agents remain enabled and load the required transition skills. file: `src/gobby/install/shared/workflows/agents/`.
+
+### 4.4 DB migration to disable retired workflow_definitions rows [category: config] (depends: 4.1, 4.2, 4.3)
+`kind: deliverable`
+
+Target: `src/gobby/storage/migrations.py`
+
+Flip `enabled = false` on installed rows for the tombstoned pipelines and agents. Do not delete rows — drift detection relies on hash/content comparison, and a later cleanup migration can drop them after stability is confirmed.
+
+**Acceptance:**
+
+- 4.4.1 — DB migration to disable retired workflow_definitions rows is implemented according to this section. file: `src/gobby/storage/migrations.py`.
+
+### 4.5 Update docs [category: docs] (depends: 4.1)
+`kind: deliverable`
+
+Target: `CLAUDE.md` (project root), `GUIDING_PRINCIPLES.md`, any `docs/` page referencing the old model
+
+- Remove references to the LLM-driven conductor tick.
+- Add a "Dispatch" section: rule location (`src/gobby/dispatch/rules.py`), how to add a new rule, `allow_automation` / `yolo` / `isolation` / stage-skip model, `gobby build` entry points (CLI + MCP + HTTP), agent-slot cap. Note that profiles are CLI-layer sugar only and resolved state (skip-stages, isolation, yolo) is what lives on tasks.
+- Document the `task_dispatch_mutex`, `task_artifacts`, and `task_lifecycle_events` adjacent tables and their access patterns.
+- Note retired pipelines and their tombstone status; link to #12728 for PR/merge work.
+
+**Acceptance:**
+
+- 4.5.1 — Update docs is implemented according to this section. file: `CLAUDE.md`.
+
+## T1 Task Mapping
+`kind: deliverable`
+
+<!-- Populated by /gobby expand -->
+| Plan Item | Task Ref | Status |
+|-----------|----------|--------|
+
+**Acceptance:**
+
+- T1.1 — Task Mapping row for §4.1 Remove conductor package is represented as a stable acceptance item. file: `src/gobby/conductor/`.
+- T1.2 — Task Mapping row for §4.2 Tombstone obsolete pipelines is represented as a stable acceptance item. file: `src/gobby/install/shared/workflows/pipelines/`.
+- T1.3 — Task Mapping row for §4.3 Tombstone obsolete agents is represented as a stable acceptance item. file: `src/gobby/install/shared/workflows/agents/`.
+- T1.4 — Task Mapping row for §4.4 DB migration to disable retired workflow_definitions rows is represented as a stable acceptance item. file: `src/gobby/storage/migrations.py`.
+- T1.5 — Task Mapping row for §4.5 Update docs is represented as a stable acceptance item. file: `CLAUDE.md`.
 
 ## V1 Verification
 `kind: verification`
