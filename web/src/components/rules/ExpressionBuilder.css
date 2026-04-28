@@ -60,8 +60,8 @@
 
 .expr-builder-row select:focus,
 .expr-builder-row input:focus {
-  border-color: var(--accent, #6366f1);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+  border-color: var(--accent, var(--color-agent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--color-agent)) 20%, transparent);
 }
 
 .expr-builder-row select {
@@ -94,8 +94,8 @@
 }
 
 .expr-builder .rule-edit-input:focus {
-  border-color: var(--accent, #6366f1);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+  border-color: var(--accent, var(--color-agent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--color-agent)) 20%, transparent);
 }
 
 .expr-builder .rule-edit-mono {

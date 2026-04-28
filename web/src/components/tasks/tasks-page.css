@@ -1,23 +1,23 @@
 /* Light theme overrides */
 [data-theme="light"] .tasks-badge--p0 {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
 }
 [data-theme="light"] .tasks-badge--p1 {
-  background: rgba(217, 119, 6, 0.1);
-  color: #b45309;
+  background: color-mix(in srgb, var(--color-warning-foreground) 10%, transparent);
+  color: var(--color-warning-foreground);
 }
 [data-theme="light"] .tasks-badge--p2 {
-  background: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  color: var(--color-info);
 }
 [data-theme="light"] .tasks-badge--p3 {
-  background: rgba(22, 163, 74, 0.1);
-  color: #16a34a;
+  background: color-mix(in srgb, var(--color-success-foreground) 10%, transparent);
+  color: var(--color-success-foreground);
 }
 [data-theme="light"] .tasks-badge--p4 {
-  background: rgba(115, 115, 115, 0.1);
-  color: #737373;
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  color: var(--text-muted);
 }
 
 /* ==========================================================================
@@ -321,29 +321,29 @@
 }
 
 .tasks-badge--type {
-  background: rgba(59, 130, 246, 0.12);
-  color: #60a5fa;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .tasks-badge--p0 {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 .tasks-badge--p1 {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 .tasks-badge--p2 {
-  background: rgba(59, 130, 246, 0.12);
-  color: #60a5fa;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 .tasks-badge--p3 {
-  background: rgba(34, 197, 94, 0.12);
-  color: #4ade80;
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
 }
 .tasks-badge--p4 {
-  background: rgba(115, 115, 115, 0.15);
-  color: #a3a3a3;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
 }
 
 .tasks-cell--status-text {
@@ -595,8 +595,8 @@
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
-  color: #f87171;
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   padding: 0.1rem 0.4rem;
   border-radius: 0.25rem;
   font-size: calc(var(--font-size-base) * 0.7);
@@ -605,89 +605,89 @@
 
 .chip--state-open,
 .chip--state-ready {
-  background: color-mix(in srgb, #60a5fa 15%, transparent);
-  color: #60a5fa;
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
 }
 
 .chip--state-in_progress,
 .chip--state-in-progress {
-  background: color-mix(in srgb, #fb923c 15%, transparent);
-  color: #fb923c;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .chip--state-closed,
 .chip--state-done {
-  background: color-mix(in srgb, #4ade80 15%, transparent);
-  color: #4ade80;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .chip--state-review,
 .chip--state-needs_review,
 .chip--state-needs-review,
 .chip--state-claimed {
-  background: color-mix(in srgb, #c084fc 15%, transparent);
-  color: #c084fc;
+  background: color-mix(in srgb, var(--color-agent) 15%, transparent);
+  color: var(--color-agent);
 }
 
 .chip--state-blocked,
 .chip--state-escalated {
-  background: color-mix(in srgb, #f87171 15%, transparent);
-  color: #f87171;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 
 .chip--state-merge_ready,
 .chip--state-merge-ready {
-  background: color-mix(in srgb, #2dd4bf 15%, transparent);
-  color: #2dd4bf;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .chip--priority-0 {
-  background: color-mix(in srgb, #ef4444 15%, transparent);
-  color: #f87171;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 
 .chip--priority-1 {
-  background: color-mix(in srgb, #f97316 15%, transparent);
-  color: #fb923c;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .chip--priority-2 {
-  background: color-mix(in srgb, #eab308 15%, transparent);
-  color: #facc15;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .chip--priority-3 {
-  background: color-mix(in srgb, #22c55e 15%, transparent);
-  color: #4ade80;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .chip--priority-4 {
-  background: color-mix(in srgb, #737373 15%, transparent);
-  color: #a3a3a3;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
 }
 
 .chip--type-task {
-  background: color-mix(in srgb, #3b82f6 14%, transparent);
-  color: #60a5fa;
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+  color: var(--color-info);
 }
 
 .chip--type-bug {
-  background: color-mix(in srgb, #ef4444 14%, transparent);
-  color: #f87171;
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  color: var(--color-error);
 }
 
 .chip--type-feature {
-  background: color-mix(in srgb, #22c55e 14%, transparent);
-  color: #4ade80;
+  background: color-mix(in srgb, var(--color-success-foreground) 14%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .chip--type-epic {
-  background: color-mix(in srgb, #8b5cf6 14%, transparent);
-  color: #a78bfa;
+  background: color-mix(in srgb, var(--color-agent) 14%, transparent);
+  color: var(--color-agent);
 }
 
 .chip--type-chore,
 .chip--type-refactor {
-  background: color-mix(in srgb, #737373 15%, transparent);
-  color: #a3a3a3;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
 }

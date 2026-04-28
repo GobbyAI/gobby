@@ -78,8 +78,8 @@
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  background: #2a1a3a;
-  color: #c084fc;
+  background: var(--color-agent-soft);
+  color: var(--color-agent);
 }
 
 .pipeline-editor-btn {

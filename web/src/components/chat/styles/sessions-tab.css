@@ -108,31 +108,31 @@
 }
 
 .session-source-dot.web-chat {
-  background: #4ade80;
+  background: var(--color-success-foreground);
 }
 
 .session-source-dot.status-paused {
-  background: #3b82f6;
+  background: var(--color-info);
 }
 
 .session-source-dot.claude {
-  background: #f97316;
+  background: var(--color-warning-foreground);
 }
 
 .session-source-dot.gemini {
-  background: #3b82f6;
+  background: var(--color-info);
 }
 
 .session-source-dot.qwen {
-  background: #0284c7;
+  background: var(--color-info);
 }
 
 .session-source-dot.codex {
-  background: #a855f7;
+  background: var(--color-agent);
 }
 
 .session-source-dot.droid {
-  background: #22d3ee;
+  background: var(--color-info);
 }
 
 /* Source badge */
@@ -226,17 +226,17 @@
   justify-content: center;
   width: 1.25rem;
   height: 1.25rem;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
   border-radius: 0.25rem;
   background: transparent;
-  color: #ef4444;
+  color: var(--color-error);
   font-size: var(--text-2xs);
   cursor: pointer;
   transition: all 0.1s;
 }
 
 .session-kill-btn:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 .session-expire-btn {
@@ -260,8 +260,8 @@
 }
 
 .session-expire-btn:hover {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 .session-mode-btn {
@@ -301,29 +301,15 @@
   letter-spacing: 0;
 }
 
-.chip--tmux {
-  background: color-mix(in srgb, #14b8a6 15%, transparent);
-  color: #14b8a6;
-}
-
-.chip--web {
-  background: color-mix(in srgb, #0284c7 15%, transparent);
-  color: #0284c7;
-}
-
-.chip--auto {
-  background: color-mix(in srgb, #f97316 15%, transparent);
-  color: #fb923c;
-}
-
-.chip--sandbox {
-  background: color-mix(in srgb, #d97706 18%, transparent);
-  color: #fbbf24;
-}
-
+.chip--tmux,
+.chip--web,
+.chip--auto,
+.chip--sandbox,
 .chip--local {
-  background: color-mix(in srgb, #8b5cf6 15%, transparent);
-  color: #8b5cf6;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
 }
 
 /* --- Session context menu --- */
@@ -366,11 +352,11 @@
 }
 
 .session-ctx-item--destructive {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .session-ctx-item--destructive:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 /* --- Session more button (mobile) --- */

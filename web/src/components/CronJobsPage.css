@@ -135,15 +135,15 @@
 }
 
 .cron-job-status-dot.active {
-  background: #4caf50;
+  background: var(--color-success-foreground);
 }
 
 .cron-job-status-dot.inactive {
-  background: #666;
+  background: var(--text-muted);
 }
 
 .cron-job-status-dot.failing {
-  background: #f44336;
+  background: var(--color-error);
 }
 
 .cron-job-item-meta {
@@ -163,18 +163,18 @@
 }
 
 .cron-action-badge.shell {
-  background: rgba(255, 167, 38, 0.15);
-  color: #ffa726;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .cron-action-badge.agent_spawn {
-  background: rgba(66, 165, 245, 0.15);
-  color: #42a5f5;
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
 }
 
 .cron-action-badge.pipeline {
-  background: rgba(171, 71, 188, 0.15);
-  color: #ab47bc;
+  background: color-mix(in srgb, var(--color-agent) 15%, transparent);
+  color: var(--color-agent);
 }
 
 /* Right panel: detail */
@@ -272,12 +272,12 @@
 }
 
 .cron-btn.danger {
-  color: #f44336;
-  border-color: #f44336;
+  color: var(--color-error);
+  border-color: var(--color-error);
 }
 
 .cron-btn.danger:not(:disabled):hover {
-  background: rgba(244, 67, 54, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 /* Info grid */
@@ -390,23 +390,23 @@
 }
 
 .cron-run-status.completed {
-  background: rgba(76, 175, 80, 0.15);
-  color: #4caf50;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .cron-run-status.running {
-  background: rgba(66, 165, 245, 0.15);
-  color: #42a5f5;
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
 }
 
 .cron-run-status.failed {
-  background: rgba(244, 67, 54, 0.15);
-  color: #f44336;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 
 .cron-run-status.pending {
-  background: rgba(255, 167, 38, 0.15);
-  color: #ffa726;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .cron-runs-empty {

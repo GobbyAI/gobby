@@ -86,9 +86,9 @@
 }
 
 .config-toolbar-btn.primary {
-  background: var(--accent-color, #3b82f6);
+  background: var(--accent-color, var(--color-info));
   color: #fff;
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--accent-color, var(--color-info));
 }
 
 .config-toolbar-btn.primary:hover {
@@ -96,13 +96,13 @@
 }
 
 .config-toolbar-btn.danger {
-  color: #ef4444;
-  border-color: #ef444433;
+  color: var(--color-error);
+  border-color: var(--color-error)33;
 }
 
 .config-toolbar-btn.danger:hover {
-  background: #ef444415;
-  border-color: #ef444466;
+  background: var(--color-error)15;
+  border-color: var(--color-error)66;
 }
 
 /* Content area */
@@ -118,16 +118,16 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: #f59e0b15;
-  border-bottom: 1px solid #f59e0b33;
-  color: #f59e0b;
+  background: var(--color-warning-foreground)15;
+  border-bottom: 1px solid var(--color-warning-foreground)33;
+  color: var(--color-warning-foreground);
   font-size: var(--text-md);
 }
 
 .config-restart-banner button {
   padding: 4px 12px;
-  background: #f59e0b;
-  color: #000;
+  background: var(--color-warning-foreground);
+  color: oklch(0% 0 0);
   border: none;
   border-radius: 4px;
   font-size: var(--text-sm);
@@ -223,7 +223,7 @@
 
 .config-input:focus {
   outline: none;
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--accent-color, var(--color-info));
 }
 
 .config-select {
@@ -246,7 +246,7 @@
   position: relative;
   width: 36px;
   height: 20px;
-  background: #333;
+  background: var(--bg-tertiary);
   border-radius: 10px;
   cursor: pointer;
   border: none;
@@ -255,7 +255,7 @@
 }
 
 .config-toggle.on {
-  background: var(--accent-color, #3b82f6);
+  background: var(--accent-color, var(--color-info));
 }
 
 .config-toggle::after {
@@ -370,8 +370,8 @@
 }
 
 .config-secret-actions button.delete:hover {
-  color: #ef4444;
-  border-color: #ef444466;
+  color: var(--color-error);
+  border-color: var(--color-error)66;
 }
 
 .config-secret-hint {
@@ -513,7 +513,7 @@
 }
 
 .config-prompt-card.active {
-  border-color: var(--accent-color, #3b82f6);
+  border-color: var(--accent-color, var(--color-info));
   background: var(--bg-secondary);
 }
 
@@ -540,13 +540,13 @@
 }
 
 .config-prompt-badge.bundled {
-  background: #22c55e15;
-  color: #22c55e;
+  background: var(--color-success-foreground)15;
+  color: var(--color-success-foreground);
 }
 
 .config-prompt-badge.overridden {
-  background: #f59e0b15;
-  color: #f59e0b;
+  background: var(--color-warning-foreground)15;
+  color: var(--color-warning-foreground);
 }
 
 /* Prompt detail / editor */
@@ -624,7 +624,7 @@
 }
 
 .config-yaml-errors {
-  color: #ef4444;
+  color: var(--color-error);
   font-size: var(--text-sm);
 }
 

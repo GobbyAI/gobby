@@ -16,7 +16,7 @@
 
 .task-detail-progress-fill {
   height: 100%;
-  background: #22c55e;
+  background: var(--color-success-foreground);
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -163,7 +163,7 @@
 }
 
 .task-create-required {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .task-create-input,
@@ -376,7 +376,7 @@
 }
 
 .kanban-card-action--close:hover {
-  background: #22c55e;
+  background: var(--color-success-foreground);
   color: #fff;
 }
 
@@ -400,7 +400,7 @@
 }
 
 .kanban-column--drag-over {
-  background: rgba(59, 130, 246, 0.06);
+  background: color-mix(in srgb, var(--color-info) 6%, transparent);
   border-color: var(--accent);
 }
 
@@ -489,7 +489,7 @@
 }
 
 .kanban-swimlane-header:hover {
-  background: rgba(59, 130, 246, 0.06);
+  background: color-mix(in srgb, var(--color-info) 6%, transparent);
 }
 
 .kanban-swimlane-chevron {
@@ -726,9 +726,9 @@
 }
 
 .gantt-zoom-btn.active {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
-  border-color: rgba(59, 130, 246, 0.3);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
 }
 
 .gantt-task-count {
@@ -766,12 +766,12 @@
 }
 
 .gantt-grid-line--today {
-  stroke: #3b82f6;
+  stroke: var(--color-info);
   stroke-width: 1.5;
 }
 
 .gantt-today-bg {
-  fill: rgba(59, 130, 246, 0.04);
+  fill: color-mix(in srgb, var(--color-info) 4%, transparent);
 }
 
 .gantt-row-stripe {
@@ -823,7 +823,7 @@
 }
 
 .gantt-snap-guide {
-  stroke: rgba(59, 130, 246, 0.4);
+  stroke: color-mix(in srgb, var(--color-info) 40%, transparent);
   stroke-width: 1;
   stroke-dasharray: 4 3;
 }
@@ -867,9 +867,9 @@
 }
 
 .digest-period-btn.active {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
-  border-color: rgba(59, 130, 246, 0.3);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 30%, transparent);
 }
 
 .digest-summary {

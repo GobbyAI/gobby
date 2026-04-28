@@ -42,12 +42,12 @@
 
 .agent-defs-btn--danger {
   background: transparent;
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
 
 .agent-defs-btn--danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 /* YAML view inside sidebar */
@@ -115,9 +115,9 @@
 }
 
 .agent-edit-input:focus {
-  border-color: var(--accent, #6366f1);
+  border-color: var(--accent, var(--color-agent));
   box-shadow: 0 0 0 2px
-    color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+    color-mix(in srgb, var(--accent, var(--color-agent)) 20%, transparent);
 }
 
 .agent-edit-textarea {
@@ -238,7 +238,7 @@
 }
 
 .agent-rules-chip-remove:hover {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .agent-rules-empty {
@@ -294,13 +294,13 @@
 }
 
 .agent-rules-chip--include {
-  border-color: #3b82f6;
-  color: #93c5fd;
+  border-color: var(--color-info);
+  color: var(--color-info);
 }
 
 .agent-rules-chip--exclude {
-  border-color: #ef4444;
-  color: #fca5a5;
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
 
 .agent-rule-selector-input-row {
@@ -397,7 +397,7 @@
   transition: border-color 0.15s;
 }
 .agent-def-card:hover {
-  border-color: #333;
+  border-color: var(--bg-tertiary);
 }
 .agent-def-card--expanded {
   border-color: var(--accent);
@@ -508,8 +508,8 @@
 }
 
 .agent-def-badge.chip--local {
-  background: color-mix(in srgb, #8b5cf6 15%, transparent);
-  color: #8b5cf6;
+  background: color-mix(in srgb, var(--color-agent) 15%, transparent);
+  color: var(--color-agent);
 }
 
 
@@ -628,8 +628,8 @@
   font-weight: 500;
 }
 .agent-def-import-result--ok {
-  color: #10b981;
+  color: var(--color-success-foreground);
 }
 .agent-def-import-result--err {
-  color: #ef4444;
+  color: var(--color-error);
 }

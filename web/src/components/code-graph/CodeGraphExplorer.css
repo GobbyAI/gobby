@@ -4,7 +4,7 @@
   height: 100%;
   overflow: hidden;
   background: var(--bg-primary);
-  background-image: radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.02), transparent 70%);
+  background-image: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--color-info) 2%, transparent), transparent 70%);
 }
 
 .code-graph-empty {
@@ -44,9 +44,9 @@
 }
 
 .code-graph-btn.active {
-  background: color-mix(in srgb, var(--destructive, #ef4444) 15%, transparent);
-  border-color: var(--destructive, #ef4444);
-  color: var(--destructive, #ef4444);
+  background: color-mix(in srgb, var(--destructive, var(--color-error)) 15%, transparent);
+  border-color: var(--destructive, var(--color-error));
+  color: var(--destructive, var(--color-error));
 }
 
 /* Search - top left */
@@ -136,7 +136,7 @@
   z-index: 10;
   padding: 4px 8px;
   border-radius: 4px;
-  background: rgba(10, 10, 10, 0.8);
+  background: color-mix(in srgb, black 80%, transparent);
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
@@ -150,7 +150,7 @@
   z-index: 10;
   padding: 8px 10px;
   border-radius: 4px;
-  background: rgba(10, 10, 10, 0.85);
+  background: color-mix(in srgb, black 85%, transparent);
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -238,7 +238,7 @@
 
 .code-graph-detail-sig {
   font-size: var(--text-xs);
-  color: #e6b450;
+  color: var(--color-warning-foreground);
   font-family: var(--font-mono);
   background: rgba(0, 0, 0, 0.3);
   padding: 4px 6px;

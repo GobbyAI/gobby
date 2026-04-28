@@ -182,7 +182,7 @@
 
 .workflows-overview-card--active {
   border-color: var(--accent);
-  background: var(--bg-active, #1a2332);
+  background: var(--bg-active, var(--color-info-soft));
 }
 
 .workflows-overview-value {
@@ -338,28 +338,28 @@
 }
 
 .workflows-card-type--workflow {
-  background: #1a3a2a;
-  color: #4ade80;
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
 }
 
 .workflows-card-type--pipeline {
-  background: #2a1a3a;
-  color: #c084fc;
+  background: var(--color-agent-soft);
+  color: var(--color-agent);
 }
 
 .workflows-card-type--rule {
-  background: #2a1a2a;
-  color: #f472b6;
+  background: var(--color-error-soft);
+  color: var(--color-error);
 }
 
 .workflows-card-type--agent {
-  background: #1a2a2a;
-  color: #2dd4bf;
+  background: var(--color-info-soft);
+  color: var(--color-success-foreground);
 }
 
 .workflows-card-type--skill {
-  background: #1a2a3a;
-  color: #38bdf8;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .workflows-card-desc {
@@ -390,29 +390,29 @@
 }
 
 .workflows-card-badge--source {
-  background: #1a2a3a;
-  color: #60a5fa;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .workflows-card-badge--priority {
-  background: #2a2a1a;
-  color: #facc15;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 
 .workflows-card-badge--drift {
-  background: #2a2010;
-  color: #f59e0b;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
   font-weight: 500;
 }
 
 .workflows-action-btn--drift {
-  color: #f59e0b;
+  color: var(--color-warning-foreground);
   font-weight: 500;
 }
 
 .workflows-action-btn--drift:hover {
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.1);
+  color: var(--color-warning-foreground);
+  background: color-mix(in srgb, var(--color-warning-foreground) 10%, transparent);
 }
 
 /* Card footer: toggle + actions */
@@ -483,14 +483,14 @@
 }
 
 .workflows-action-btn--restore {
-  color: #4ade80;
-  border-color: #166534;
+  color: var(--color-success-foreground);
+  border-color: var(--color-success-foreground);
 }
 
 .workflows-action-btn--restore:hover {
-  background: #1a3a2a;
-  color: #4ade80;
-  border-color: #22c55e;
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
+  border-color: var(--color-success-foreground);
 }
 
 /* Filter button + popover */
@@ -584,9 +584,9 @@
 }
 
 .workflows-action-btn--danger:hover {
-  background: #3a1a1a;
-  color: #f87171;
-  border-color: #7f1d1d;
+  background: var(--color-error-soft);
+  color: var(--color-error);
+  border-color: var(--color-error);
 }
 
 /* Icon action buttons */
@@ -610,9 +610,9 @@
 }
 
 .workflows-action-icon--danger:hover {
-  background: #3a1a1a;
-  color: #f87171;
-  border-color: #7f1d1d;
+  background: var(--color-error-soft);
+  color: var(--color-error);
+  border-color: var(--color-error);
 }
 
 /* Create modal */
@@ -894,16 +894,16 @@
   padding: 2px 8px;
   border-radius: 10px;
   font-weight: 500;
-  background: #1a2a3a;
-  color: #60a5fa;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .rules-card-priority {
   font-size: calc(var(--font-size-base) * 0.625);
   padding: 2px 6px;
   border-radius: 4px;
-  background: #2a2a1a;
-  color: #facc15;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 
 .rules-card-source {
@@ -957,23 +957,23 @@
 }
 
 .rules-card-effect--block {
-  background: #3a1a1a;
-  color: #f87171;
+  background: var(--color-error-soft);
+  color: var(--color-error);
 }
 
 .rules-card-effect--set_variable {
-  background: #2a2a1a;
-  color: #facc15;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 
 .rules-card-effect--inject_context {
-  background: #1a3a2a;
-  color: #4ade80;
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
 }
 
 .rules-card-effect--mcp_call {
-  background: #1a2a3a;
-  color: #60a5fa;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .rules-card-footer {

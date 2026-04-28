@@ -1,8 +1,8 @@
 /* Light theme overrides */
 [data-theme="light"] .files-diff-btn.active {
-  background: rgba(217, 119, 6, 0.12);
-  border-color: #d97706;
-  color: #b45309;
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning-foreground);
+  color: var(--color-warning-foreground);
 }
 
 /* Files page layout */
@@ -276,7 +276,7 @@
 }
 
 .files-viewer-error {
-  color: #f87171;
+  color: var(--color-error);
 }
 
 .files-viewer-muted {
@@ -301,7 +301,7 @@
   max-height: calc(100% - 3rem);
   object-fit: contain;
   border-radius: 0.5rem;
-  background: repeating-conic-gradient(#1a1a1a 0% 25%, #262626 0% 50%) 50% /
+  background: repeating-conic-gradient(var(--bg-primary) 0% 25%, var(--bg-secondary) 0% 50%) 50% /
     20px 20px;
 }
 
@@ -367,7 +367,7 @@
 
 .files-save-btn {
   padding: 0.2rem 0.625rem;
-  background: #16a34a;
+  background: var(--color-success-foreground);
   border: none;
   border-radius: 0.25rem;
   color: #fff;
@@ -378,7 +378,7 @@
 }
 
 .files-save-btn:hover {
-  background: #15803d;
+  background: var(--color-success-foreground);
 }
 
 .files-save-btn:disabled {
@@ -403,9 +403,9 @@
 }
 
 .files-diff-btn.active {
-  background: #854d0e;
-  border-color: #a16207;
-  color: #facc15;
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning-foreground);
+  color: var(--color-warning-foreground);
 }
 
 .files-cancel-btn {
@@ -501,7 +501,7 @@
 
 .files-confirm-discard {
   padding: 0.3rem 0.75rem;
-  background: #dc2626;
+  background: var(--color-error);
   border: none;
   border-radius: 0.25rem;
   color: #fff;
@@ -512,7 +512,7 @@
 }
 
 .files-confirm-discard:hover {
-  background: #b91c1c;
+  background: var(--color-error);
 }
 
 /* CodeMirror container */

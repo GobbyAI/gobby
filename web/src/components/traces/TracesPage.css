@@ -85,7 +85,7 @@
 }
 
 .trace-item.selected {
-  background: var(--bg-selected, rgba(0, 120, 255, 0.1));
+  background: var(--bg-selected, color-mix(in srgb, var(--color-info) 10%, transparent));
   border-left: 3px solid var(--accent);
   padding-left: 13px;
 }
@@ -104,9 +104,9 @@
   flex-shrink: 0;
 }
 
-.trace-status--ok { background: #16a34a; }
-.trace-status--error { background: #dc2626; }
-.trace-status--unset { background: #737373; }
+.trace-status--ok { background: var(--color-success-foreground); }
+.trace-status--error { background: var(--color-error); }
+.trace-status--unset { background: var(--text-muted); }
 
 .trace-name {
   font-weight: 500;
@@ -213,11 +213,11 @@
   stroke-width: 2px;
 }
 
-.trace-waterfall-bar--ok { fill: #16a34a; }
-.trace-waterfall-bar--error { fill: #dc2626; }
-.trace-waterfall-bar--unset { fill: #737373; }
-.trace-waterfall-bar--llm { fill: #d97706; }
-.trace-waterfall-bar--llm:hover { fill: #b45309; }
+.trace-waterfall-bar--ok { fill: var(--color-success-foreground); }
+.trace-waterfall-bar--error { fill: var(--color-error); }
+.trace-waterfall-bar--unset { fill: var(--text-muted); }
+.trace-waterfall-bar--llm { fill: var(--color-warning-foreground); }
+.trace-waterfall-bar--llm:hover { fill: var(--color-warning-foreground); }
 
 /* Token badge on waterfall bars */
 .trace-waterfall-token-badge {
@@ -329,7 +329,7 @@
 .llm-token-bar-fill {
   height: 100%;
   border-radius: 3px;
-  background: #d97706;
+  background: var(--color-warning-foreground);
 }
 
 .llm-content-block {
@@ -345,11 +345,11 @@
 }
 
 .llm-content-block--prompt {
-  border-left: 3px solid var(--accent, #3b82f6);
+  border-left: 3px solid var(--accent, var(--color-info));
 }
 
 .llm-content-block--completion {
-  border-left: 3px solid #d97706;
+  border-left: 3px solid var(--color-warning-foreground);
 }
 
 .llm-toggle-raw {
@@ -372,8 +372,8 @@
   font-size: var(--text-2xs);
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(217, 119, 6, 0.15);
-  color: #d97706;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
   font-weight: 600;
   letter-spacing: 0.03em;
   flex-shrink: 0;

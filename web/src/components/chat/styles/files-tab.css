@@ -104,7 +104,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: #0a0a0a;
+  background: var(--bg-primary);
 }
 
 .files-code-viewer > div {
@@ -162,20 +162,20 @@
 
 .files-tree-name--modified,
 .files-tree-name--M {
-  color: #e5c07b;
+  color: var(--color-warning-foreground);
 }
 
 .files-tree-name--A {
-  color: #4ade80;
+  color: var(--color-success-foreground);
 }
 
 .files-tree-name--D {
-  color: #f87171;
+  color: var(--color-error);
   text-decoration: line-through;
 }
 
 .files-tree-name--untracked {
-  color: #737373;
+  color: var(--text-muted);
 }
 
 /* Markdown viewer */
@@ -223,11 +223,11 @@
 }
 
 .file-ctx-item--danger {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .file-ctx-item--danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 /* ── File Changes Tab ── */
@@ -245,23 +245,23 @@
 }
 
 .file-status-modified {
-  background: color-mix(in srgb, #eab308 20%, transparent);
-  color: #eab308;
+  background: color-mix(in srgb, var(--color-warning-foreground) 20%, transparent);
+  color: var(--color-warning-foreground);
 }
 
 .file-status-added {
-  background: color-mix(in srgb, #22c55e 20%, transparent);
-  color: #22c55e;
+  background: color-mix(in srgb, var(--color-success-foreground) 20%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .file-status-deleted {
-  background: color-mix(in srgb, #ef4444 20%, transparent);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
 }
 
 .file-status-renamed {
-  background: color-mix(in srgb, #3b82f6 20%, transparent);
-  color: #3b82f6;
+  background: color-mix(in srgb, var(--color-info) 20%, transparent);
+  color: var(--color-info);
 }
 
 .file-status-untracked {
@@ -277,18 +277,18 @@
 }
 
 .diff-add {
-  background: color-mix(in srgb, #22c55e 12%, transparent);
-  color: #4ade80;
+  background: color-mix(in srgb, var(--color-success-foreground) 12%, transparent);
+  color: var(--color-success-foreground);
 }
 
 .diff-remove {
-  background: color-mix(in srgb, #ef4444 12%, transparent);
-  color: #f87171;
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  color: var(--color-error);
 }
 
 .diff-hunk {
-  background: color-mix(in srgb, #3b82f6 8%, transparent);
-  color: #60a5fa;
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  color: var(--color-info);
 }
 
 .diff-meta {
@@ -297,14 +297,14 @@
 }
 
 [data-theme="light"] .diff-add {
-  background: color-mix(in srgb, #16a34a 10%, transparent);
-  color: #15803d;
+  background: color-mix(in srgb, var(--color-success-foreground) 10%, transparent);
+  color: var(--color-success-foreground);
 }
 [data-theme="light"] .diff-remove {
-  background: color-mix(in srgb, #dc2626 10%, transparent);
-  color: #b91c1c;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
 }
 [data-theme="light"] .diff-hunk {
-  background: color-mix(in srgb, #2563eb 8%, transparent);
-  color: #1d4ed8;
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  color: var(--color-info);
 }

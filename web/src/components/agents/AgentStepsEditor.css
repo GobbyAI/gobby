@@ -14,7 +14,7 @@
 }
 
 .step-card--expanded {
-  border-color: var(--accent, #6366f1);
+  border-color: var(--accent, var(--color-agent));
 }
 
 .step-card-header {
@@ -34,8 +34,8 @@
   font-family: inherit;
   font-size: calc(var(--font-size-base) * 0.75);
   font-weight: 600;
-  color: var(--accent, #6366f1);
-  background: color-mix(in srgb, var(--accent, #6366f1) 10%, transparent);
+  color: var(--accent, var(--color-agent));
+  background: color-mix(in srgb, var(--accent, var(--color-agent)) 10%, transparent);
   padding: 1px 8px;
   border-radius: 10px;
   white-space: nowrap;
@@ -151,7 +151,7 @@
 }
 
 .step-chip-remove:hover {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .step-chip-add-row {

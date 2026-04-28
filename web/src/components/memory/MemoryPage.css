@@ -222,7 +222,7 @@
 
 .memory-type-chip.active {
   border-color: var(--accent);
-  background: rgba(99, 102, 241, 0.08);
+  background: color-mix(in srgb, var(--color-agent) 8%, transparent);
   color: var(--text-primary);
 }
 
@@ -251,8 +251,8 @@
 }
 
 .memory-filter-clear:hover {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
 
 /* Content area */
@@ -341,10 +341,10 @@
 }
 
 .importance-critical .memory-importance-fill {
-  background: #ef4444;
+  background: var(--color-error);
 }
 .importance-high .memory-importance-fill {
-  background: #f59e0b;
+  background: var(--color-warning-foreground);
 }
 .importance-medium .memory-importance-fill {
   background: var(--accent);
@@ -420,16 +420,16 @@
 .memory-delete-btn {
   padding: 0.125rem 0.5rem;
   background: transparent;
-  border: 1px solid #ef4444;
+  border: 1px solid var(--color-error);
   border-radius: 0.25rem;
-  color: #ef4444;
+  color: var(--color-error);
   font-size: calc(var(--font-size-base) * 0.7);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .memory-delete-btn:hover {
-  background: rgba(239, 68, 68, 0.15);
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 /* Detail slide-out panel */
@@ -606,10 +606,10 @@
 
 .memory-form-error {
   padding: 0.375rem 0.5rem;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid #ef4444;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid var(--color-error);
   border-radius: 0.375rem;
-  color: #ef4444;
+  color: var(--color-error);
   font-size: calc(var(--font-size-base) * 0.8);
 }
 
@@ -702,7 +702,7 @@
 }
 
 .memory-form-tag-remove:hover {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .memory-form-tag-input {
@@ -1078,7 +1078,7 @@
   top: 60px;
   right: 20px;
   z-index: 1000;
-  background: #dc2626;
+  background: var(--color-error);
   color: #fff;
   padding: 0.5rem 1rem;
   border-radius: 6px;

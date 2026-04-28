@@ -1,18 +1,18 @@
 [data-theme="light"] .ptt-button.recording {
-  background: rgba(220, 38, 38, 0.1);
-  border-color: #dc2626;
-  color: #dc2626;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
 [data-theme="light"] .listening-indicator.speech-detected .speaking-bar {
-  background: #16a34a;
+  background: var(--color-success-foreground);
 }
 [data-theme="light"] .voice-error {
-  color: #dc2626;
+  color: var(--color-error);
 }
 [data-theme="light"] .stop-button {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
-  border-color: #dc2626;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+  border-color: var(--color-error);
 }
 
 /* Chat input */
@@ -354,13 +354,13 @@
 }
 
 .stop-button {
-  background: #7f1d1d;
-  color: #f87171;
-  border: 1px solid #dc2626;
+  background: var(--color-error);
+  color: var(--color-error);
+  border: 1px solid var(--color-error);
 }
 
 .stop-button:hover {
-  background: #991b1b;
+  background: var(--color-error);
 }
 
 .chat-actions {
@@ -370,12 +370,12 @@
 
 /* Voice Mode */
 .chat-toolbar-btn.voice-active {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .chat-toolbar-btn.voice-active:hover {
-  background: rgba(239, 68, 68, 0.25);
+  background: color-mix(in srgb, var(--color-error) 25%, transparent);
 }
 
 .ptt-button {
@@ -404,9 +404,9 @@
 }
 
 .ptt-button.recording {
-  background: rgba(239, 68, 68, 0.2);
-  border-color: #ef4444;
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  border-color: var(--color-error);
+  color: var(--color-error);
   animation: pulse-recording 1.5s ease-in-out infinite;
 }
 
@@ -425,10 +425,10 @@
 @keyframes pulse-recording {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-error) 40%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-error) 0%, transparent);
   }
 }
 
@@ -437,15 +437,15 @@
   align-items: center;
   gap: 3px;
   padding: 0.375rem 0.75rem;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info) 20%, transparent);
   border-radius: 0.5rem;
   cursor: pointer;
   margin-bottom: 0.25rem;
 }
 
 .speaking-indicator:hover {
-  background: rgba(59, 130, 246, 0.15);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
 }
 
 .speaking-bar {
@@ -488,14 +488,14 @@
   align-items: center;
   gap: 3px;
   padding: 0.375rem 0.75rem;
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info) 20%, transparent);
   border-radius: 0.5rem;
   margin-bottom: 0.25rem;
 }
 
 .listening-indicator.speech-detected .speaking-bar {
-  background: #4ade80;
+  background: var(--color-success-foreground);
 }
 
 .listening-indicator.transcribing {
@@ -525,9 +525,9 @@
 
 .voice-error {
   font-size: calc(var(--font-size-base) * 0.75);
-  color: #ef4444;
+  color: var(--color-error);
   padding: 0.25rem 0.5rem;
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-radius: 0.25rem;
   margin-bottom: 0.25rem;
 }

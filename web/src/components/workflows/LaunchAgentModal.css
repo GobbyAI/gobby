@@ -4,8 +4,8 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  background: rgba(59, 130, 246, 0.08);
-  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-info) 20%, transparent);
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
@@ -14,7 +14,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3b82f6;
+  background: var(--color-info);
   animation: observation-pulse 2s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -207,7 +207,7 @@
 
 .launch-agent-radio.active {
   border-color: var(--accent);
-  background: rgba(59, 130, 246, 0.1);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
   color: var(--accent);
   font-weight: 500;
 }
@@ -257,7 +257,7 @@
 
 /* Error */
 .launch-agent-error {
-  color: #ef4444;
+  color: var(--color-error);
   font-size: calc(var(--font-size-base) * 0.8);
   padding: 0.375rem 0;
 }
@@ -321,7 +321,7 @@
 
 .launch-agent-success-icon {
   font-size: var(--text-4xl);
-  color: var(--color-success-foreground, #22c55e);
+  color: var(--color-success-foreground, var(--color-success-foreground));
 }
 
 .launch-agent-success p {
@@ -458,7 +458,7 @@
 }
 
 .tasks-row--selected {
-  background: rgba(59, 130, 246, 0.08) !important;
+  background: color-mix(in srgb, var(--color-info) 8%, transparent) !important;
 }
 
 /* =============================================================================

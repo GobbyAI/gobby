@@ -2,10 +2,10 @@
 [data-theme="light"]
   .projects-overview-card--sessions
   .projects-overview-count {
-  color: #16a34a;
+  color: var(--color-success-foreground);
 }
 [data-theme="light"] .projects-overview-card--tasks .projects-overview-count {
-  color: #b45309;
+  color: var(--color-warning-foreground);
 }
 
 /* =============================================================================
@@ -211,7 +211,7 @@
 
 .projects-overview-card--active {
   border-color: var(--accent);
-  background: rgba(99, 102, 241, 0.08);
+  background: color-mix(in srgb, var(--color-agent) 8%, transparent);
 }
 
 .projects-overview-count {
@@ -224,10 +224,10 @@
   color: var(--accent);
 }
 .projects-overview-card--sessions .projects-overview-count {
-  color: #22c55e;
+  color: var(--color-success-foreground);
 }
 .projects-overview-card--tasks .projects-overview-count {
-  color: #f59e0b;
+  color: var(--color-warning-foreground);
 }
 
 .projects-overview-label {
@@ -668,7 +668,7 @@
 }
 
 .projects-settings-danger {
-  border-color: #991b1b;
+  border-color: var(--color-error);
 }
 
 .projects-settings-heading {
@@ -734,11 +734,11 @@
 }
 
 .projects-settings-message--success {
-  color: #22c55e;
+  color: var(--color-success-foreground);
 }
 
 .projects-settings-message--error {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .projects-settings-desc {
@@ -749,22 +749,22 @@
 
 .projects-settings-delete {
   padding: 0.375rem 0.75rem;
-  border: 1px solid #991b1b;
+  border: 1px solid var(--color-error);
   border-radius: 6px;
   background: transparent;
-  color: #ef4444;
+  color: var(--color-error);
   font-size: calc(var(--font-size-base) * 0.85);
   cursor: pointer;
 }
 
 .projects-settings-delete:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 .projects-settings-delete--confirm {
-  background: #991b1b;
+  background: var(--color-error);
   color: white;
-  border-color: #991b1b;
+  border-color: var(--color-error);
 }
 
 .projects-settings-rules {

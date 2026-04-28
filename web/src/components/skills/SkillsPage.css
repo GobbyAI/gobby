@@ -16,7 +16,7 @@
   top: 60px;
   right: 20px;
   z-index: 1000;
-  background: #dc2626;
+  background: var(--color-error);
   color: #fff;
   padding: 0.5rem 1rem;
   border-radius: 6px;
@@ -30,7 +30,7 @@
   top: 60px;
   right: 20px;
   z-index: 1000;
-  background: #dc2626;
+  background: var(--color-error);
   color: #fff;
   padding: 0.5rem 1rem;
   border-radius: 6px;
@@ -40,7 +40,7 @@
 }
 
 .agent-defs-toast--success {
-  background: #10b981;
+  background: var(--color-success-foreground);
 }
 
 /* App-level toast */
@@ -49,7 +49,7 @@
   top: 60px;
   right: 20px;
   z-index: 1000;
-  background: #525252;
+  background: var(--text-muted);
   color: #fff;
   padding: 0.5rem 1rem;
   border-radius: 6px;
@@ -235,7 +235,7 @@
 
 .skills-category-chip--active {
   border-color: var(--accent);
-  background: rgba(99, 102, 241, 0.1);
+  background: color-mix(in srgb, var(--color-agent) 10%, transparent);
   color: var(--accent);
 }
 
@@ -299,31 +299,31 @@
 }
 
 .skills-source-badge--filesystem {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 .skills-source-badge--github {
-  background: rgba(139, 92, 246, 0.15);
-  color: #a78bfa;
+  background: color-mix(in srgb, var(--color-agent) 15%, transparent);
+  color: var(--color-agent);
 }
 .skills-source-badge--hub {
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
 }
 .skills-source-badge--zip {
-  background: rgba(245, 158, 11, 0.15);
-  color: #fbbf24;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 .skills-source-badge--local {
-  background: rgba(107, 114, 128, 0.15);
-  color: #9ca3af;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
 }
 .skills-source-badge--url {
-  background: rgba(236, 72, 153, 0.15);
-  color: #f472b6;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 .skills-source-badge--unknown {
-  background: rgba(107, 114, 128, 0.1);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-muted);
 }
 
@@ -409,11 +409,11 @@
 }
 
 .skills-detail-status--enabled {
-  color: #10b981;
+  color: var(--color-success-foreground);
   font-weight: 500;
 }
 .skills-detail-status--disabled {
-  color: #ef4444;
+  color: var(--color-error);
   font-weight: 500;
 }
 
@@ -448,7 +448,7 @@
 }
 
 .skills-detail-action-btn--scan {
-  border-color: rgba(99, 102, 241, 0.3);
+  border-color: color-mix(in srgb, var(--color-agent) 30%, transparent);
   color: var(--accent);
 }
 
@@ -459,7 +459,7 @@
 
 .skills-detail-scan-error {
   padding: 0.5rem 1.25rem;
-  color: #ef4444;
+  color: var(--color-error);
   font-size: calc(var(--font-size-base) * 0.82);
 }
 
@@ -495,12 +495,12 @@
 }
 
 .skill-scan-badge--safe {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 .skill-scan-badge--unsafe {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 
 .skill-scan-meta {
@@ -538,23 +538,23 @@
 }
 
 .skill-scan-severity--critical {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
 }
 .skill-scan-severity--high {
-  background: rgba(249, 115, 22, 0.15);
-  color: #f97316;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 .skill-scan-severity--medium {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  color: var(--color-warning-foreground);
 }
 .skill-scan-severity--low {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
+  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
+  color: var(--color-success-foreground);
 }
 .skill-scan-severity--info {
-  background: rgba(107, 114, 128, 0.1);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
   color: var(--text-muted);
 }
 
@@ -876,7 +876,7 @@
 }
 
 .skill-import-error {
-  color: #ef4444;
+  color: var(--color-error);
   font-size: calc(var(--font-size-base) * 0.82);
 }
 
@@ -976,15 +976,15 @@
 .skill-hub-error {
   padding: 6px 10px;
   margin-bottom: 6px;
-  background: rgba(217, 158, 46, 0.12);
-  border: 1px solid rgba(217, 158, 46, 0.3);
+  background: var(--color-warning-soft);
+  border: 1px solid color-mix(in srgb, var(--color-warning-foreground) 30%, transparent);
   border-radius: 6px;
   color: var(--text-primary);
   font-size: calc(var(--font-size-base) * 0.85);
 }
 
 .skill-hub-error strong {
-  color: rgb(217, 158, 46);
+  color: var(--color-warning-foreground);
 }
 
 .skill-hub-empty {

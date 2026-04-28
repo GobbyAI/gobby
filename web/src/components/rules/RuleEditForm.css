@@ -72,8 +72,8 @@
 }
 
 .rule-edit-input:focus {
-  border-color: var(--accent, #6366f1);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+  border-color: var(--accent, var(--color-agent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--color-agent)) 20%, transparent);
 }
 
 .rule-edit-textarea {
@@ -91,8 +91,8 @@
 }
 
 .rule-edit-textarea:focus {
-  border-color: var(--accent, #6366f1);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+  border-color: var(--accent, var(--color-agent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--color-agent)) 20%, transparent);
 }
 
 .rule-edit-mono {
@@ -119,8 +119,8 @@
 }
 
 .rule-edit-toggle-track--on {
-  background: var(--accent, #6366f1);
-  border-color: var(--accent, #6366f1);
+  background: var(--accent, var(--color-agent));
+  border-color: var(--accent, var(--color-agent));
 }
 
 .rule-edit-toggle-knob {
@@ -170,7 +170,7 @@
 }
 
 .rule-edit-chip-remove:hover {
-  color: var(--color-destructive, #ef4444);
+  color: var(--color-destructive, var(--color-error));
 }
 
 .rule-edit-chip-add {
@@ -215,7 +215,7 @@
 }
 
 .rule-edit-kv-remove:hover {
-  color: var(--color-destructive, #ef4444);
+  color: var(--color-destructive, var(--color-error));
 }
 
 .rule-edit-kv-add {
@@ -238,9 +238,9 @@
 /* Conflict warning */
 .rule-edit-conflict-warning {
   font-size: calc(var(--font-size-base) * 0.75);
-  color: var(--color-warning-foreground, #92400e);
-  background: color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-warning, #f59e0b) 40%, transparent);
+  color: var(--color-warning-foreground, var(--color-warning-foreground));
+  background: color-mix(in srgb, var(--color-warning, var(--color-warning-foreground)) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, var(--color-warning-foreground)) 40%, transparent);
   border-radius: 6px;
   padding: 6px 10px;
   margin: 4px 0;
@@ -341,7 +341,7 @@
 }
 
 .rule-edit-required {
-  color: var(--color-destructive, #ef4444);
+  color: var(--color-destructive, var(--color-error));
   margin-left: 2px;
 }
 

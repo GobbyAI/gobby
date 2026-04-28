@@ -1,16 +1,16 @@
 /* Light theme overrides */
 [data-theme="light"] .agent-badge {
-  background: rgba(139, 92, 246, 0.12);
-  color: #7c3aed;
+  background: var(--color-agent-soft);
+  color: var(--color-agent);
 }
 [data-theme="light"] .dead-badge {
   background: rgba(0, 0, 0, 0.06);
-  color: #737373;
+  color: var(--text-muted);
 }
 [data-theme="light"] .session-kill-btn:hover,
 [data-theme="light"] .session-delete-btn:hover {
-  color: #dc2626;
-  background: rgba(220, 38, 38, 0.08);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
 }
 
 /* Mode badges (VIEW / EDIT) */
@@ -23,20 +23,20 @@
   font-weight: 500;
 }
 .mode-view {
-  background: #422006;
-  color: #fbbf24;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 .mode-edit {
-  background: #052e16;
-  color: #4ade80;
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
 }
 [data-theme="light"] .mode-view {
-  background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
+  background: var(--color-warning-soft);
+  color: var(--color-warning-foreground);
 }
 [data-theme="light"] .mode-edit {
-  background: rgba(34, 197, 94, 0.12);
-  color: #15803d;
+  background: var(--color-success-soft);
+  color: var(--color-success-foreground);
 }
 
 /* ============================================
@@ -433,7 +433,7 @@
     flex-shrink: 0;
   }
   .mobile-drawer-kill-btn:hover {
-    color: #f87171;
-    border-color: #f87171;
+    color: var(--color-error);
+    border-color: var(--color-error);
   }
 }

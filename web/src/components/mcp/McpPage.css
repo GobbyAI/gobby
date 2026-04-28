@@ -16,7 +16,7 @@
   top: 60px;
   left: 50%;
   transform: translateX(-50%);
-  background: #ef4444;
+  background: var(--color-error);
   color: #fff;
   padding: 10px 20px;
   border-radius: 8px;
@@ -195,10 +195,10 @@
   flex-shrink: 0;
 }
 
-.mcp-health-dot--healthy { background: #22c55e; }
-.mcp-health-dot--degraded { background: #f59e0b; }
-.mcp-health-dot--unhealthy { background: #ef4444; }
-.mcp-health-dot--unknown { background: #737373; }
+.mcp-health-dot--healthy { background: var(--color-success-foreground); }
+.mcp-health-dot--degraded { background: var(--color-warning-foreground); }
+.mcp-health-dot--unhealthy { background: var(--color-error); }
+.mcp-health-dot--unknown { background: var(--text-muted); }
 
 .mcp-server-name {
   font-weight: 500;
@@ -216,11 +216,11 @@
   letter-spacing: 0.3px;
 }
 
-.mcp-transport-badge--internal { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
-.mcp-transport-badge--http { background: rgba(59, 130, 246, 0.12); color: #60a5fa; }
-.mcp-transport-badge--stdio { background: rgba(245, 158, 11, 0.12); color: #fbbf24; }
-.mcp-transport-badge--websocket { background: rgba(139, 92, 246, 0.12); color: #a78bfa; }
-.mcp-transport-badge--sse { background: rgba(236, 72, 153, 0.12); color: #f472b6; }
+.mcp-transport-badge--internal { background: var(--color-success-soft); color: var(--color-success-foreground); }
+.mcp-transport-badge--http { background: var(--color-info-soft); color: var(--color-info); }
+.mcp-transport-badge--stdio { background: var(--color-warning-soft); color: var(--color-warning-foreground); }
+.mcp-transport-badge--websocket { background: var(--color-agent-soft); color: var(--color-agent); }
+.mcp-transport-badge--sse { background: var(--color-error-soft); color: var(--color-error); }
 
 /* State badges */
 .mcp-state-badge {
@@ -230,11 +230,11 @@
   font-weight: 500;
 }
 
-.mcp-state-badge--connected { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
-.mcp-state-badge--pending { background: rgba(245, 158, 11, 0.12); color: #fbbf24; }
-.mcp-state-badge--configured { background: rgba(59, 130, 246, 0.12); color: #60a5fa; }
-.mcp-state-badge--failed { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
-.mcp-state-badge--unknown { background: rgba(115, 115, 115, 0.12); color: #a3a3a3; }
+.mcp-state-badge--connected { background: var(--color-success-soft); color: var(--color-success-foreground); }
+.mcp-state-badge--pending { background: var(--color-warning-soft); color: var(--color-warning-foreground); }
+.mcp-state-badge--configured { background: var(--color-info-soft); color: var(--color-info); }
+.mcp-state-badge--failed { background: var(--color-error-soft); color: var(--color-error); }
+.mcp-state-badge--unknown { background: color-mix(in srgb, var(--text-muted) 12%, transparent); color: var(--text-muted); }
 
 .mcp-server-tool-count {
   font-size: calc(var(--font-size-base) * 0.75);
@@ -260,8 +260,8 @@
 }
 
 .mcp-remove-btn:hover {
-  color: #ef4444;
-  border-color: #ef4444;
+  color: var(--color-error);
+  border-color: var(--color-error);
 }
 
 .mcp-server-chevron {
@@ -487,8 +487,8 @@
 }
 
 .mcp-detail-result--error {
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #ef4444;
+  border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
+  color: var(--color-error);
 }
 
 /* Modal overlay (Add Server / Import) */
@@ -627,7 +627,7 @@
 }
 
 .mcp-form-error {
-  color: #ef4444;
+  color: var(--color-error);
   font-size: var(--text-sm);
   margin-top: 4px;
 }

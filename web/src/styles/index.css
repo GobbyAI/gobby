@@ -516,8 +516,7 @@ body {
 }
 
 .session-item.attached {
-  background: var(--accent-tint);
-  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
 }
 
 .session-item-main {
