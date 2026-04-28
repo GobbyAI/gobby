@@ -38,7 +38,9 @@ instructions: |
 
   PLAN-COVERAGE CONTRACT GATE:
   Before qualitative review, load and call the A2 parser callable
-  `gobby.plans.parser.parse_plan` for typed implementation plans. Treat
+  `gobby.plans.parser.parse_plan` for typed implementation plans. Use
+  `parse_mode="draft"` on the pre-verdict pass so the loop does not deadlock
+  on a not-yet-written manifest (§2.21.3). Treat
   `gobby.plans.parser.PlanParseError` as a mechanical rejection and format the
   finding using the rejection messages documented in plan-review. This parser
   gate checks the canonical heading regex, kind enum, acceptance-item shape,
@@ -46,6 +48,15 @@ instructions: |
   malformed item IDs. The qualitative pass must also enforce the table-row
   decomposition rule: any deliverable table enumerating work items needs one
   acceptance item per data row with stable IDs.
+
+  PLAN-FILE WRITE SCOPE:
+  Edit and Write are permitted ONLY for the plan file at
+  `task_artifacts.plan_file_path`. Writing to any other path violates the
+  agent contract. The only legitimate plan-file write is appending the
+  `## M1 Task Manifest` section on approval (see MANIFEST EMISSION below).
+  Findings rounds (rejection) MUST NOT edit the plan file — planner handles
+  edits between rounds (§2.23). When emitting findings, route them through
+  `mark_task_review_rejected(rejection_notes=...)` only.
 
   WORKFLOW:
   - Review the plan artifact referenced in your prompt against the parent task
@@ -56,13 +67,54 @@ instructions: |
     your prompt; do NOT overwrite prior rounds).
   - If blocking findings remain, call `mark_task_review_rejected` with the
     rejection notes, the display round from your prompt, AND a
-    `signoff_summary` (see SIGNOFF SUMMARY below).
+    `signoff_summary` (see SIGNOFF SUMMARY below). Do NOT edit the plan file
+    on rejection — planner owns plan edits between rounds (§2.23).
   - If context is insufficient, escalate with `needs_requirements:` plus the
     specific questions you cannot answer.
-  - If the plan is sound and only nits remain (or no findings), approve with
-    `mark_task_review_approved` AND pass a `signoff_summary`.
+  - If the plan is sound and only nits remain (or no findings), follow
+    MANIFEST EMISSION below — the manifest write happens BEFORE
+    `mark_task_review_approved`.
   - The review step has `allowed_tools: all`; the allowed parser callable is
     `gobby.plans.parser.parse_plan`. Do not replace that with ad hoc parsing.
+
+  MANIFEST EMISSION (§2.22.1, §2.22.4):
+  On clean review (no blocking findings), the act of writing the manifest is
+  what forces you to confront ambiguity you might otherwise wave through. If
+  you cannot write a manifest entry for a deliverable, the plan is not ready.
+
+  Sequence:
+  1. Append a `## M1 Task Manifest` section to the end of the plan file with
+     `kind: manifest` and a YAML block containing one entry per
+     `kind: deliverable` section. The M1 ID is required by the canonical
+     heading regex (§2.21).
+  2. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
+     parse_mode="expansion")`. Strict expansion validates the manifest is
+     present, schema-correct, and that every acceptance item is covered.
+  3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+     3 retries.
+  4. After the cap, behavior splits by yolo state on the planning task:
+
+     - non-yolo: call `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
+       with the parser error details. Do NOT approve.
+     - yolo: do NOT call `escalate_task` (top-level yolo invariant — yolo
+       NEVER escalates on this path). Instead:
+       a. Append a `## Yolo Fallbacks` audit section to the planning anchor's
+          description (NOT the plan file) documenting the failure mode.
+       b. Fall back to the deterministic stub-manifest path by calling
+          `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)` from
+          §2.21a. Re-run `parse_plan(plan_path, parse_mode="expansion")`.
+       c. If the stub also fails (deliverable schema in the plan itself is
+          malformed beyond the emitter's reach), append a second
+          `## Yolo Fallbacks` audit marker and force-approve the plan with
+          `mark_task_review_approved(approval_notes="yolo: manifest emission
+          exhausted; stub fallback also failed; force-approved with no
+          manifest — downstream gobby expand will reject this plan, requiring
+          human intervention at expansion time")`.
+
+  5. On success (any path that yields a parser-clean manifest, or the yolo
+     force-approve path), call `mark_task_review_approved` with
+     `approval_notes` that document the manifest outcome (e.g., "approved
+     with N manifest entries" or the force-approve note above).
 
   SIGNOFF SUMMARY:
   Both `mark_task_review_rejected` and `mark_task_review_approved` accept an
