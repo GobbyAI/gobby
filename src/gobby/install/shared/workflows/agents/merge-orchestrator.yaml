@@ -1,0 +1,259 @@
+name: merge-orchestrator
+description: |
+  Bounded merge campaign coordinator. Surveys unmerged worktrees, plans an
+  order, dispatches one merge-worker per step, verifies, and reports.
+  Operates within a single coordinating task — does not spawn cross-task
+  campaigns. Loads the merge-expert skill on start.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.5
+reasoning_effort: high
+isolation: none
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until the campaign report is written.
+  - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
+
+  You are the merge orchestrator. Your assigned campaign task is in your
+  session variables as assigned_task_id. The campaign task description lists
+  the worktrees (or selection criteria) and the target branch.
+
+  METHODOLOGY:
+  After claiming the task, your first action MUST be to load the
+  `merge-expert` skill. Call get_skill(name="merge-expert") on gobby-skills,
+  then continue. Follow that skill exactly: Survey -> Plan -> Execute ->
+  Recover -> Verify -> Output (campaign report).
+
+  WORKFLOW:
+  - Claim the assigned campaign task and read its description.
+  - Load the merge-expert skill before doing anything else.
+  - Survey: call analyze_merge_landscape, predict_conflicts, and
+    inspect_merge_state for any worktree with non-null merge_state.
+  - Plan: emit an ordered merge_plan into your session (variable
+    merge_plan). Each step picks an action: merge | cherry-pick |
+    merge_subset | abort.
+  - Execute: for each step, dispatch merge-worker via spawn_agent (or
+    dispatch_batch for parallel-safe steps), wait, then run
+    verify_in_worktree as the gate. Append a lifecycle event per step.
+  - Recover orphaned merge state with merge_abort or merge_resolve before
+    scheduling fresh work in the same worktree.
+  - Report: write the campaign JSON into task_artifacts.merge_campaign_report
+    via update_task_artifacts.
+  - Approve, escalate, or (under yolo) advance_lifecycle. Terminate only by
+    calling end_agent_run.
+
+  CRITICAL RULES:
+  - Do NOT call merge_resolve directly. Workers handle resolution; the
+    orchestrator only routes.
+  - Do NOT close_task on the campaign task. Use the review flow.
+  - Do NOT edit code. Survey + dispatch + verify only.
+  - Do NOT call kill_agent on yourself; use end_agent_run in terminate.
+  - Workers cannot spawn workers — the depth-5 cap is enforced by the
+    runtime. Plan accordingly.
+  - Always use `uv run` for any Python invocation that ends up inside
+    verify_in_worktree commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools ->
+    get_tool_schema -> call_tool.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+      - "tag:task-skill-injection"
+
+step_variables:
+  task_claimed: false
+  skill_loaded: false
+  survey_complete: false
+  plan_complete: false
+  execution_complete: false
+  report_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned campaign task"
+    status_message: |
+      Claim the assigned campaign task with claim_task(task_id=assigned_task_id),
+      then read it with get_task to load worktree IDs and target branch.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: load_skill
+        when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load the merge-expert methodology skill"
+    status_message: |
+      Call get_skill(name="merge-expert") on gobby-skills, then continue.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'merge-expert'"
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: survey
+        when: "vars.skill_loaded"
+
+  - name: survey
+    description: "Survey unmerged worktrees and predict conflicts"
+    status_message: |
+      Run analyze_merge_landscape, predict_conflicts, and inspect_merge_state
+      to build a complete picture. Refuse to plan if the landscape is empty —
+      close the campaign task with reason=already_implemented instead.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+      - mcp__gobby__set_variable
+      - mcp__gobby__get_variable
+    allowed_mcp_tools:
+      - "gobby-merge:analyze_merge_landscape"
+      - "gobby-merge:predict_conflicts"
+      - "gobby-merge:inspect_merge_state"
+      - "gobby-worktrees:list_worktrees"
+      - "gobby-worktrees:get_worktree"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-merge
+        tool: predict_conflicts
+        action: set_variable
+        variable: survey_complete
+        value: true
+    transitions:
+      - to: plan
+        when: "vars.survey_complete"
+
+  - name: plan
+    description: "Emit an ordered merge_plan based on the survey"
+    status_message: |
+      Apply the merge-expert ordering rubric (recover orphans -> toposort by
+      task deps -> fewest predicted conflicts -> smallest diff -> freshness).
+      Pick an action per step (merge | cherry-pick | merge_subset | abort).
+      Store the plan as session variable merge_plan, then transition.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+      - mcp__gobby__set_variable
+      - mcp__gobby__get_variable
+    allowed_mcp_tools:
+      - "gobby-tasks:get_task"
+      - "gobby-tasks:list_tasks"
+    on_set_variable:
+      - variable: merge_plan
+        action: set_variable
+        variable: plan_complete
+        value: true
+    transitions:
+      - to: execute
+        when: "vars.plan_complete"
+
+  - name: execute
+    description: "Dispatch merge-worker per step, verify, and record outcomes"
+    status_message: |
+      For each step in merge_plan: pre-flight inspect_merge_state, dispatch
+      merge-worker via spawn_agent (or dispatch_batch for parallel-safe
+      steps), wait, then run verify_in_worktree as the gate. Recover
+      orphaned state via merge_abort before fresh dispatches. Append a
+      task_lifecycle_event per step.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:reopen_task"
+      - "gobby-tasks:mark_task_needs_review"
+      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
+      - "gobby-merge:merge_resolve"
+    on_mcp_success:
+      - server: gobby-merge
+        tool: verify_in_worktree
+        action: set_variable
+        variable: execution_complete
+        value: true
+    transitions:
+      - to: report
+        when: "vars.execution_complete"
+
+  - name: report
+    description: "Write the campaign report and transition the campaign task"
+    status_message: |
+      Write the campaign JSON to task_artifacts.merge_campaign_report via
+      update_task_artifacts. Then transition: mark_task_review_approved on
+      clean success, escalate_task on needs_human, or advance_lifecycle to
+      merged under yolo with the failure list preserved.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:update_task_artifacts"
+      - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:escalate_task"
+      - "gobby-tasks:advance_lifecycle"
+      - "gobby-tasks:append_description_section"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: report_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: report_complete
+        value: true
+      - server: gobby-tasks
+        tool: advance_lifecycle
+        action: set_variable
+        variable: report_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.report_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Call end_agent_run with no arguments to finish the run."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+
+exit_condition: "current_step == 'terminate'"
