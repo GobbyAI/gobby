@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,23 @@ def _fixture_lines(name: str) -> list[str]:
     return FIXTURE_DIR.joinpath(name).read_text(encoding="utf-8").splitlines()
 
 
+def _session_init_line(model: str = "gpt-5.4") -> str:
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "type": "response",
+            "factoryApiVersion": "1.0.0",
+            "factoryProtocolVersion": "1.25.0",
+            "id": "gobby-init-1",
+            "result": {
+                "sessionId": "droid-session-1",
+                "session": {"messages": []},
+                "settings": {"modelId": model, "reasoningEffort": "high"},
+            },
+        }
+    )
+
+
 def test_droid_tool_name_adapter() -> None:
     assert _droid_tool_name_adapter("gobby___list_mcp_servers") == ("mcp__gobby__list_mcp_servers")
     assert _droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
@@ -134,9 +152,21 @@ async def test_send_message_streams_fixture_and_writes_prompt() -> None:
 
     create_process.assert_called_once()
     command = create_process.call_args.args
-    assert command[:4] == ("/bin/droid", "exec", "--input-format", "stream-json")
+    assert command[:6] == (
+        "/bin/droid",
+        "exec",
+        "--input-format",
+        "stream-jsonrpc",
+        "--output-format",
+        "stream-jsonrpc",
+    )
     assert "--model" in command
     assert process.stdin.writes
+    writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
+    assert writes[0]["method"] == "droid.initialize_session"
+    assert writes[0]["params"]["cwd"] == "/tmp/project"
+    assert writes[1]["method"] == "droid.add_user_message"
+    assert writes[1]["params"]["text"].endswith("hello")
     assert [event.content for event in events if isinstance(event, TextChunk)] == [
         "Hello from Droid"
     ]
@@ -145,7 +175,7 @@ async def test_send_message_streams_fixture_and_writes_prompt() -> None:
 
 @pytest.mark.asyncio
 async def test_eof_before_result_yields_error_event() -> None:
-    process = _FakeProcess(_fixture_lines("eof.jsonl"))
+    process = _FakeProcess(_fixture_lines("session_init.jsonl") + _fixture_lines("eof.jsonl"))
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
 
@@ -169,7 +199,7 @@ async def test_eof_before_result_yields_error_event() -> None:
 async def test_switch_model_respawns_session_object_first() -> None:
     processes = [
         _FakeProcess(_fixture_lines("session_init.jsonl")),
-        _FakeProcess(_fixture_lines("session_init.jsonl")),
+        _FakeProcess([_session_init_line("gpt-5.4-mini")]),
     ]
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)

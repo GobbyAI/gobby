@@ -1,2 +1,1 @@
-{"type":"session_start","session_id":"droid-session-1","model":"gpt-5.4"}
-{"type":"result","usage":{"inputTokens":1,"outputTokens":0}}
+{"jsonrpc":"2.0","type":"response","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","id":"gobby-init-1","result":{"sessionId":"droid-session-1","session":{"messages":[]},"settings":{"modelId":"gpt-5.4","reasoningEffort":"high"}}}

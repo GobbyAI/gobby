@@ -1,2 +1,3 @@
-{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"gobby___list_mcp_servers","input":{}},{"type":"tool_result","tool_use_id":"tool-1","content":{"success":true},"is_error":false}]}}
-{"type":"result","usage":{"inputTokens":5,"outputTokens":6}}
+{"jsonrpc":"2.0","type":"notification","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","method":"droid.session_notification","params":{"notification":{"type":"tool_call","toolUse":{"type":"tool_use","id":"tool-1","name":"gobby___list_mcp_servers","input":{}}}}}
+{"jsonrpc":"2.0","type":"notification","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","method":"droid.session_notification","params":{"notification":{"type":"tool_result","messageId":"msg-1","toolUseId":"tool-1","content":{"success":true},"isError":false}}}
+{"jsonrpc":"2.0","type":"notification","factoryApiVersion":"1.0.0","factoryProtocolVersion":"1.25.0","method":"droid.session_notification","params":{"notification":{"type":"droid_working_state_changed","newState":"idle"}}}

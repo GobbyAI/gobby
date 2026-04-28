@@ -36,10 +36,16 @@ from gobby.servers.websocket.chat.backends.droid_stream import _parse_droid_stre
 
 logger = logging.getLogger(__name__)
 
+DROID_JSONRPC_VERSION = "2.0"
+DROID_FACTORY_API_VERSION = "1.0.0"
+DROID_FACTORY_PROTOCOL_VERSION = "1.25.0"
+DROID_MACHINE_ID = "gobby-web-chat"
+
 
 @dataclass(slots=True)
 class _DroidProcessHandle:
     process: asyncio.subprocess.Process
+    request_counter: int = 0
 
 
 def _droid_tool_name_adapter(raw_tool_name: str) -> str:
@@ -51,7 +57,7 @@ def _droid_tool_name_adapter(raw_tool_name: str) -> str:
 
 @dataclass
 class DroidManagedChatSession(GeminiWebChatPermissionsMixin, ManagedChatSessionBase):
-    """Web-chat session backed by a per-session Droid stream-json process."""
+    """Web-chat session backed by a per-session Droid stream-jsonrpc process."""
 
     provider: str = field(default="droid", init=False)
     chat_mode: str = field(default="plan")
@@ -240,7 +246,7 @@ class DroidManagedChatSession(GeminiWebChatPermissionsMixin, ManagedChatSessionB
 
 
 class DroidWebChatBackend:
-    """Per-session Droid stream-json backend."""
+    """Per-session Droid stream-jsonrpc backend."""
 
     provider = "droid"
 
@@ -304,7 +310,9 @@ class DroidWebChatBackend:
             droid_path,
             "exec",
             "--input-format",
-            "stream-json",
+            "stream-jsonrpc",
+            "--output-format",
+            "stream-jsonrpc",
             "--auto",
             "low",
             "--cwd",
@@ -327,7 +335,19 @@ class DroidWebChatBackend:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        self._handles[session.conversation_id] = _DroidProcessHandle(process)
+        handle = _DroidProcessHandle(process)
+        self._handles[session.conversation_id] = handle
+        try:
+            init_event = await self._initialize_session(handle, session, cwd)
+        except Exception:
+            self._handles.pop(session.conversation_id, None)
+            await self._terminate_handle(handle)
+            raise
+
+        session.sdk_session_id = str(init_event.data.get("session_id") or "")
+        model = init_event.data.get("model")
+        if isinstance(model, str) and model:
+            session._model = model
         session._connected = True
         session.last_activity = datetime.now(UTC)
 
@@ -349,15 +369,12 @@ class DroidWebChatBackend:
         if handle.process.stdin is None or handle.process.stdout is None:
             raise RuntimeError("Droid process streams unavailable")
 
-        payload = {
-            "type": "message",
-            "message": {
-                "role": "user",
-                "content": [{"type": "text", "text": prompt}],
-            },
-        }
-        handle.process.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
-        await handle.process.stdin.drain()
+        await self._send_jsonrpc_request(
+            handle,
+            "message",
+            "droid.add_user_message",
+            {"text": prompt},
+        )
 
         async for event in self._read_until_terminal(handle):
             yield event
@@ -372,6 +389,94 @@ class DroidWebChatBackend:
         session._model = new_model
         await self.detach_session(session)
         await self.attach_session(session, model=new_model)
+
+    async def _initialize_session(
+        self,
+        handle: _DroidProcessHandle,
+        session: DroidManagedChatSession,
+        cwd: str,
+    ) -> StreamEvent:
+        params: dict[str, Any] = {
+            "machineId": DROID_MACHINE_ID,
+            "cwd": cwd,
+        }
+        if session.sdk_session_id:
+            params["sessionId"] = session.sdk_session_id
+        if session._model:
+            params["modelId"] = session._model
+        if session.reasoning_effort and session.reasoning_effort != "auto":
+            params["reasoningEffort"] = session.reasoning_effort
+
+        request_id = await self._send_jsonrpc_request(
+            handle,
+            "init",
+            "droid.initialize_session",
+            params,
+        )
+        async for event in self._read_until_init(handle, request_id):
+            if event.event_type == "error":
+                message = event.data.get("message") or "Droid initialize_session failed"
+                raise RuntimeError(str(message))
+            return event
+        raise RuntimeError("Droid initialize_session completed without a session id")
+
+    async def _send_jsonrpc_request(
+        self,
+        handle: _DroidProcessHandle,
+        prefix: str,
+        method: str,
+        params: dict[str, Any],
+    ) -> str:
+        if handle.process.stdin is None:
+            raise RuntimeError("Droid stdin stream unavailable")
+
+        handle.request_counter += 1
+        request_id = f"gobby-{prefix}-{handle.request_counter}"
+        payload = {
+            "factoryApiVersion": DROID_FACTORY_API_VERSION,
+            "factoryProtocolVersion": DROID_FACTORY_PROTOCOL_VERSION,
+            "type": "request",
+            "jsonrpc": DROID_JSONRPC_VERSION,
+            "id": request_id,
+            "method": method,
+            "params": params,
+        }
+        handle.process.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
+        await handle.process.stdin.drain()
+        return request_id
+
+    async def _read_until_init(
+        self,
+        handle: _DroidProcessHandle,
+        request_id: str,
+    ) -> AsyncIterator[StreamEvent]:
+        stdout = handle.process.stdout
+        if stdout is None:
+            yield StreamEvent(
+                event_type="error",
+                data={"code": "stdout", "message": "Droid stdout stream unavailable"},
+            )
+            return
+
+        while True:
+            line = await stdout.readline()
+            if not line:
+                yield StreamEvent(
+                    event_type="error",
+                    data={
+                        "code": "eof",
+                        "message": "Droid stream ended before initialize_session completed",
+                    },
+                )
+                return
+            for event in _parse_droid_stream_line(line):
+                event_request_id = event.data.get("request_id")
+                if event.event_type == "init" and event_request_id == request_id:
+                    yield event
+                    return
+                if event.event_type == "error" and event_request_id in {None, request_id}:
+                    yield event
+                    return
 
     async def _read_until_terminal(
         self,
