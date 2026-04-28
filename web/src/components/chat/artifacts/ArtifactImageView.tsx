@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isSafeImageSrc } from '../../../lib/imageSources'
 import { Button } from '../ui/Button'
 
 interface ArtifactImageViewProps {
@@ -17,7 +18,7 @@ export function ArtifactImageView({ content }: ArtifactImageViewProps) {
         <Button size="sm" variant="ghost" onClick={() => setZoom(100)} className="text-xs" aria-label="Reset zoom">Reset</Button>
       </div>
       <div className="flex-1 min-h-0 overflow-auto flex items-center justify-center p-4">
-        {/^(https?:|data:image\/|\/|\.\/)/.test(content) ? (
+        {isSafeImageSrc(content) ? (
           <img
             src={content}
             alt="Artifact"

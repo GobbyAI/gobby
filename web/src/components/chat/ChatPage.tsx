@@ -545,15 +545,17 @@ export function ChatPage({
   const openCodeAsArtifact = useCallback(
     (language: string, content: string, title?: string) => {
       createArtifact("code", content, language, title);
+      showTab("artifacts");
     },
-    [createArtifact],
+    [createArtifact, showTab],
   );
 
   const openFileAsArtifact = useCallback(
     (type: ArtifactType, language: string, content: string, title?: string) => {
       createArtifact(type, content, language, title);
+      showTab("artifacts");
     },
-    [createArtifact],
+    [createArtifact, showTab],
   );
 
   // Wire plan content to artifact panel when plan_pending_approval arrives.
@@ -590,9 +592,10 @@ export function ChatPage({
     (type: string, content: string, language?: string, title?: string) => {
       if (VALID_ARTIFACT_TYPES.has(type)) {
         createArtifact(type as ArtifactType, content, language, title);
+        showTab("artifacts");
       }
     },
-    [createArtifact],
+    [createArtifact, showTab],
   );
 
   useEffect(() => {

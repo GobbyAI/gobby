@@ -6,6 +6,7 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { PlansTab } from "./PlansTab";
+import { ArtifactsTab } from "./ArtifactsTab";
 import { FileChangesTab } from "./FileChangesTab";
 import { CanvasTab } from "./CanvasTab";
 import { SessionsTab } from "./SessionsTab";
@@ -23,6 +24,7 @@ export type ActivityTab =
   | "files"
   | "plans"
   | "artifacts"
+  | "changes"
   | "canvas";
 
 const iconProps = {
@@ -73,6 +75,17 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
   },
   {
     id: "artifacts",
+    label: "Artifacts",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+        <line x1="12" y1="22.08" x2="12" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: "changes",
     label: "Changes",
     icon: (
       <svg {...iconProps}>
@@ -364,6 +377,20 @@ export function ActivityPanel({
           />
         );
       case "artifacts":
+        return (
+          <ArtifactsTab
+            artifacts={artifacts}
+            artifact={activeArtifact}
+            onOpenArtifact={onOpenArtifact}
+            onClose={onCloseArtifact}
+            onUpdateContent={onUpdateArtifactContent}
+            onSetVersion={onSetArtifactVersion}
+            planPendingApproval={planPendingApproval}
+            onApprovePlan={onApprovePlan}
+            onRequestPlanChanges={onRequestPlanChanges}
+          />
+        );
+      case "changes":
         return (
           <FileChangesTab
             changedFiles={changedFiles}

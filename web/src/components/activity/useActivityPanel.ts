@@ -3,16 +3,40 @@ import type { ActivityTab } from './ActivityPanel'
 
 const STORAGE_KEY_PINNED = 'gobby-activity-panel-pinned'
 const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
-const STORAGE_KEY_TAB = 'gobby-activity-panel-tab'
+const LEGACY_STORAGE_KEY_TAB = 'gobby-activity-panel-tab'
+const STORAGE_KEY_TAB = 'gobby-activity-panel-tab-v2'
 const VALID_TABS: ActivityTab[] = [
   'sessions',
   'tasks',
   'plans',
   'artifacts',
+  'changes',
   'files',
   'canvas',
   'pipelines',
 ]
+
+function normalizeStoredTab(value: string | null, legacy = false): ActivityTab | null {
+  if (legacy && value === 'artifacts') return 'changes'
+  if (value && VALID_TABS.includes(value as ActivityTab)) return value as ActivityTab
+  return null
+}
+
+function loadActiveTab(): ActivityTab {
+  try {
+    const stored = normalizeStoredTab(localStorage.getItem(STORAGE_KEY_TAB))
+    if (stored) return stored
+
+    const legacy = normalizeStoredTab(localStorage.getItem(LEGACY_STORAGE_KEY_TAB), true)
+    if (legacy) {
+      localStorage.removeItem(LEGACY_STORAGE_KEY_TAB)
+      return legacy
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'tasks'
+}
 
 export function useActivityPanel() {
   const [isPinned, setIsPinned] = useState(() => {
@@ -38,15 +62,7 @@ export function useActivityPanel() {
     return 360
   })
 
-  const [activeTab, setActiveTab] = useState<ActivityTab>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_TAB) as ActivityTab | null
-      if (stored && VALID_TABS.includes(stored)) return stored
-    } catch {
-      /* ignore */
-    }
-    return 'tasks'
-  })
+  const [activeTab, setActiveTab] = useState<ActivityTab>(loadActiveTab)
 
   useEffect(() => {
     try {

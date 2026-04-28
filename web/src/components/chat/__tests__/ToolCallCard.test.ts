@@ -265,6 +265,24 @@ describe('extractBase64Image', () => {
     expect(extractBase64Image(result)).toBe('data:image/jpeg;base64,/9j/4AAQ==')
   })
 
+  it('detects Codex image URL wrappers', () => {
+    const result = {
+      content: {
+        type: 'output_image',
+        image_url: { url: 'https://example.test/generated.png' },
+      },
+    }
+    expect(extractBase64Image(result)).toBe('https://example.test/generated.png')
+  })
+
+  it('rejects unsafe image URL wrappers', () => {
+    const result = {
+      type: 'output_image',
+      image_url: 'http://example.test/generated.png',
+    }
+    expect(extractBase64Image(result)).toBeNull()
+  })
+
   it('returns null for malformed image objects', () => {
     expect(extractBase64Image({ type: 'image' })).toBeNull()
     expect(extractBase64Image({ type: 'image', source: null })).toBeNull()

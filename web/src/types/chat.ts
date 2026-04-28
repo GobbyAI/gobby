@@ -106,7 +106,9 @@ export type ContentBlock =
   | { type: "tool_reference"; tool_name: string; server_name: string }
   | {
       type: "image";
-      source: { media_type: string; data: string; [key: string]: unknown };
+      source?: { media_type?: string; data?: string; [key: string]: unknown };
+      image_url?: string | { url?: string };
+      url?: string;
     }
   | { type: "document"; source: { name?: string } & Record<string, unknown> }
   | { type: "web_search_result"; content: Record<string, unknown> }

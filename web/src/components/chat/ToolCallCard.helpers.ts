@@ -1,5 +1,6 @@
 import type { ToolCall, ToolResult } from '../../types/chat'
 import { classifyTool } from '../../types/chat'
+import { extractImageSrc } from '../../lib/imageSources'
 
 const FILE_TOOL_TYPES = new Set(['read', 'edit'])
 const COMPACT_HEADER_TOOL_TYPES = new Set(['read', 'bash', 'grep', 'glob', 'protocol'])
@@ -22,8 +23,6 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
   rs: 'rust', go: 'go', rb: 'ruby', java: 'java', c: 'c', cpp: 'cpp',
   h: 'c', hpp: 'cpp', toml: 'toml', xml: 'xml', svg: 'xml',
 }
-const DATA_URI_RE = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/
-
 export function formatToolName(fullName: string): string {
   const parts = fullName.split('__')
   return parts[parts.length - 1] || fullName
@@ -423,29 +422,7 @@ export function computeLineDiff(
 }
 
 export function extractBase64Image(result: unknown): string | null {
-  if (typeof result === 'string' && DATA_URI_RE.test(result)) return result
-  if (typeof result !== 'object' || result === null) return null
-
-  const obj = result as Record<string, unknown>
-  if (obj.type === 'image' && typeof obj.source === 'object' && obj.source !== null) {
-    const src = obj.source as Record<string, unknown>
-    if (
-      src.type === 'base64' &&
-      typeof src.data === 'string' &&
-      typeof src.media_type === 'string'
-    ) {
-      return `data:${src.media_type};base64,${src.data}`
-    }
-  }
-
-  if (Array.isArray(result)) {
-    for (const item of result) {
-      const found = extractBase64Image(item)
-      if (found) return found
-    }
-  }
-
-  return null
+  return extractImageSrc(result)
 }
 
 export function buildChainSummary(toolCalls: ToolCall[]): string {

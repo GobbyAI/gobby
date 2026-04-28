@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import type { ChatMessage } from '../../types/chat'
 import { cn } from '../../lib/utils'
+import { extractImageSrc } from '../../lib/imageSources'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallCards, ToolChainGroup } from './ToolCallCard'
@@ -181,8 +182,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                 )
               }
               if (block.type === 'image') {
-                const { source } = block
-                const src = source?.data ? `data:${source.media_type};base64,${source.data}` : ''
+                const src = extractImageSrc(block)
                 if (!src) return null
                 return (
                   <div key={`${message.id}-b${i}`} className="my-2">

@@ -150,6 +150,26 @@ describe('MessageItem', () => {
     expect(img.getAttribute('src')).toBe('data:image/png;base64,abc')
   })
 
+  it('renders image blocks with image_url sources', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'image',
+              image_url: { url: 'https://example.test/generated.png' },
+            },
+          ],
+        })}
+      />,
+    )
+
+    const img = screen.getByAltText('Image content')
+    expect(img).toBeTruthy()
+    expect(img.getAttribute('src')).toBe('https://example.test/generated.png')
+  })
+
   it('shows streaming cursor when isStreaming', () => {
     const { container } = render(
       <MessageItem message={makeMessage()} isStreaming={true} />,
