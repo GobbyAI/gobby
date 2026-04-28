@@ -74,12 +74,22 @@ const RECENT_CLOSED_TASK_LIMIT = 20;
 
 const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
 
+// Priority is encoded as lightness + weight, never as hue alone (deutan-safe).
+// Bucket state colour lives in the status dot; this just tints the title text.
 const PRIORITY_TEXT_COLORS: Record<number, string> = {
-  0: "var(--status-escalated, #ef4444)",
-  1: "var(--status-escalated, #ef4444)",
-  2: "var(--status-progress, #f59e0b)",
-  3: "var(--text-secondary, #a3a3a3)",
-  4: "var(--text-muted, #737373)",
+  0: "var(--text-primary)",
+  1: "var(--text-primary)",
+  2: "var(--text-primary)",
+  3: "var(--text-secondary)",
+  4: "var(--text-muted)",
+};
+
+const PRIORITY_TEXT_WEIGHTS: Record<number, string> = {
+  0: "var(--font-weight-semibold)",
+  1: "var(--font-weight-semibold)",
+  2: "var(--font-weight-normal)",
+  3: "var(--font-weight-normal)",
+  4: "var(--font-weight-normal)",
 };
 
 function getBaseUrl(): string {
@@ -675,6 +685,8 @@ export const TasksTab = memo(function TasksTab({
         : STATUS_DOT_COLORS[getTaskBucket(task)] ?? "#737373";
       const textColor =
         PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
+      const textWeight =
+        PRIORITY_TEXT_WEIGHTS[task.priority ?? 3] ?? "var(--font-weight-normal)";
       const ref = task.seq_num != null ? `#${task.seq_num}` : null;
       const isAssigning = assigningTaskId === task.id;
       const isSelected = selectedTaskId === task.id;
@@ -742,7 +754,7 @@ export const TasksTab = memo(function TasksTab({
           )}
           <span
             className="activity-task-row-title"
-            style={{ color: textColor }}
+            style={{ color: textColor, fontWeight: textWeight }}
           >
             {task.title}
           </span>

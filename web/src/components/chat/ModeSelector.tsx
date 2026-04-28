@@ -27,7 +27,7 @@ export function ModeSelector({
             i === 0 && 'rounded-l-md',
             i === modes.length - 1 && 'rounded-r-md',
             m.id === mode
-              ? 'bg-accent text-accent-foreground'
+              ? 'bg-accent/15 text-accent'
               : 'text-muted-foreground hover:bg-muted'
           )}
           onClick={() => onModeChange(m.id)}

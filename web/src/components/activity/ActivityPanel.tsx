@@ -207,7 +207,7 @@ function ActivityDropdown({
     <div className="activity-panel-mobile-select-wrap" ref={wrapperRef}>
       <button
         type="button"
-        className="activity-panel-mobile-trigger bg-accent text-accent-foreground"
+        className="activity-panel-mobile-trigger"
         onClick={onToggle}
         aria-haspopup="menu"
         aria-expanded={isOpen}

@@ -100,7 +100,7 @@ export function ProjectSelector({
           className={cn(
             "px-2 py-1 rounded-l-md transition-colors",
             isPersonal
-              ? "bg-accent text-accent-foreground"
+              ? "bg-accent/15 text-accent"
               : "text-muted-foreground hover:bg-muted",
           )}
           onClick={() => {
@@ -115,7 +115,7 @@ export function ProjectSelector({
           className={cn(
             "px-2 py-1 rounded-r-md transition-colors",
             !isPersonal
-              ? "bg-accent text-accent-foreground"
+              ? "bg-accent/15 text-accent"
               : "text-muted-foreground hover:bg-muted",
           )}
           onClick={() => {
