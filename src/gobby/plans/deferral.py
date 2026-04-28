@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans.parser import Deferral
@@ -31,7 +31,7 @@ class DeferralValidationResult:
 
 
 class TaskStoreProtocol(Protocol):
-    def get_task(self, task_ref: str) -> dict | None: ...
+    def get_task(self, task_ref: str) -> dict[str, Any] | None: ...
     def get_task_labels(self, task_ref: str) -> list[str]: ...
     def get_task_dependencies(self, task_ref: str) -> list[str]: ...
 
@@ -123,11 +123,11 @@ def _result(
     )
 
 
-def _task_status(task: dict) -> str:
+def _task_status(task: dict[str, Any]) -> str:
     return str(task.get("status", "")).strip()
 
 
-def _task_validation_criteria(task: dict) -> str:
+def _task_validation_criteria(task: dict[str, Any]) -> str:
     value = task.get("validation_criteria", "")
     if isinstance(value, str):
         return value
