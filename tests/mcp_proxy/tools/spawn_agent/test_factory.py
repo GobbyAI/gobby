@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.isolation import IsolationContext
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
+from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
 
 pytestmark = pytest.mark.unit
 
@@ -373,3 +377,51 @@ class TestSpawnAgentPromptPreamble:
             # Prompt is passed through as-is; preamble injected via hooks
             spawn_request = mock_execute.call_args[0][0]
             assert spawn_request.prompt == "Fix the bug"
+
+
+class TestRegisterAgentStepWorkflow:
+    """Regression tests for _register_agent_step_workflow self-healing behavior."""
+
+    @pytest.fixture
+    def db(self, tmp_path) -> LocalDatabase:
+        database = LocalDatabase(tmp_path / "factory_test.db")
+        run_migrations(database)
+        return database
+
+    def test_self_heals_workflow_type_when_existing_row_is_corrupted(
+        self, db: LocalDatabase
+    ) -> None:
+        """A pre-existing `<agent>-steps` row with workflow_type='pipeline' must be
+        repaired to 'workflow' on the next spawn. Without this, a single corrupted
+        row stays corrupted forever and breaks the loader on every restart.
+        """
+        from gobby.mcp_proxy.tools.spawn_agent._factory import (
+            _register_agent_step_workflow,
+        )
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        # Seed a corrupted row exactly matching the live failure mode:
+        # workflow_type='pipeline' but JSON body is a step workflow.
+        mgr.create(
+            name="rogue-agent-steps",
+            definition_json=json.dumps({"name": "rogue-agent-steps", "type": "step"}),
+            workflow_type="pipeline",
+            source="agent",
+            enabled=False,
+        )
+
+        body = AgentDefinitionBody(
+            name="rogue-agent",
+            steps=[WorkflowStep(name="claim")],
+        )
+        returned_name = _register_agent_step_workflow(body, db)
+
+        assert returned_name == "rogue-agent-steps"
+        repaired = mgr.get_by_name("rogue-agent-steps")
+        assert repaired is not None
+        assert repaired.workflow_type == "workflow"
+        assert repaired.source == "agent"
+        # Body now matches what the factory writes, not the seeded stub.
+        body_json = json.loads(repaired.definition_json)
+        assert body_json["type"] == "step"
+        assert body_json["steps"][0]["name"] == "claim"

@@ -21,10 +21,10 @@ VALID_WORKFLOW_YAML = """\
 name: test-workflow
 description: A test workflow
 version: "1.0"
-type: step
+type: pipeline
 steps:
-  - name: work
-    description: Do work
+  - id: work
+    exec: echo work
 """
 
 VALID_PIPELINE_YAML = """\
@@ -39,9 +39,10 @@ steps:
 
 INVALID_YAML_NO_NAME = """\
 description: Missing name field
-type: step
+type: pipeline
 steps:
-  - name: work
+  - id: work
+    exec: echo work
 """
 
 INVALID_YAML_BAD_PIPELINE = """\
@@ -218,10 +219,10 @@ class TestUpdateWorkflow:
 name: test-workflow
 description: Replaced definition
 version: "3.0"
-type: step
+type: pipeline
 steps:
-  - name: new-step
-    description: New step
+  - id: new-step
+    exec: echo new
 """
         result = update_workflow_definition(
             def_manager, loader, name="test-workflow", yaml_content=new_yaml
@@ -270,6 +271,25 @@ steps:
 
         assert result["success"] is False
         assert "required" in result["error"]
+
+    def test_update_yaml_replacement_rejects_step_type(
+        self, def_manager: LocalWorkflowDefinitionManager, loader: WorkflowLoader
+    ) -> None:
+        """Regression: `type: step` used to silently rewrite workflow_type to
+        'pipeline' via _LEGACY_TYPE_MAP. Now it must error."""
+        create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
+
+        rogue_yaml = (
+            "name: test-workflow\n"
+            "type: step\n"
+            "steps:\n"
+            "  - name: claim\n"
+        )
+        result = update_workflow_definition(
+            def_manager, loader, name="test-workflow", yaml_content=rogue_yaml
+        )
+        assert result["success"] is False
+        assert "Invalid type" in result["error"]
 
 
 # =============================================================================

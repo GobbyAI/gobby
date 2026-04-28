@@ -77,7 +77,12 @@ def _register_agent_step_workflow(
 
     existing = def_manager.get_by_name(step_workflow_name)
     if existing:
-        def_manager.update(existing.id, definition_json=definition_json)
+        def_manager.update(
+            existing.id,
+            definition_json=definition_json,
+            workflow_type="workflow",
+            source="agent",
+        )
     else:
         def_manager.create(
             name=step_workflow_name,
