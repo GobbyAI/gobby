@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.plans.parser import Kind, parse_plan
+from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
 
@@ -31,7 +31,7 @@ def _regression_plan_path() -> Path:
     return Path(__file__).resolve().parents[1] / "fixtures/plans/expansion-compile-regression.md"
 
 
-def _regression_plan_doc():
+def _regression_plan_doc() -> PlanDocument:
     return parse_plan(_regression_plan_path(), parse_mode="draft")
 
 

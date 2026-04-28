@@ -16,6 +16,7 @@ deadlock on a not-yet-written manifest (§2.21.3).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,10 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-ADVERSARY_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+ADVERSARY_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+)
 
 
 @pytest.fixture(scope="module")
@@ -53,9 +57,11 @@ class TestSelfCheckGate:
 class TestRetryAndCap:
     def test_retry_capped_at_three(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        assert "3" in instructions
-        lowered = instructions.lower()
-        assert "retry" in lowered or "retries" in lowered
+        assert re.search(
+            r"\b3\s+retr(?:y|ies)\b|retr(?:y|ies)\D{0,15}\b3\b",
+            instructions,
+            re.IGNORECASE,
+        ), "expected explicit '3 retries' cap in adversary instructions"
 
 
 class TestNonYoloEscalates:

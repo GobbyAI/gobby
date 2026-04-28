@@ -17,7 +17,10 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-ADVERSARY_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+ADVERSARY_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+)
 
 
 @pytest.fixture(scope="module")

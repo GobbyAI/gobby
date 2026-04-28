@@ -475,10 +475,10 @@ def get_validation_context_smart(
             )
             remaining_chars -= len(multi_diff) + len(commit_summary)
 
+    search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
+
     # Strategy 3: File-based analysis
     if remaining_chars > 2000:
-        # Extract file patterns from task info
-        search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
         patterns = extract_file_patterns_from_text(search_text)
 
         if patterns:
@@ -491,7 +491,6 @@ def get_validation_context_smart(
 
     # Strategy 4: Related test files from task terms
     if remaining_chars > 1000:
-        search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
         related_terms = derive_related_test_terms(
             task_title,
             validation_criteria=validation_criteria,
