@@ -200,6 +200,184 @@ class TestSessionManagerMetadata:
         assert updated is not None
         assert calls == []
 
+    def test_session_change_listener_fires_for_register(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Session creation notifies generic session change listeners."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        session = session_manager.register(
+            external_id="change-register-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        assert calls == [("session_created", session.id)]
+
+    def test_session_change_listener_fires_for_web_chat_create(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Web chat creation uses the shared creation notification path."""
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        session = session_manager.create_web_chat_session(
+            machine_id="machine",
+            project_id=sample_project["id"],
+            source="claude",
+            title="Web Chat",
+            model="sonnet",
+            chat_mode="plan",
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy",
+        )
+
+        assert calls == [("session_created", session.id)]
+
+    def test_session_change_listener_fires_for_existing_session_reactivation(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Re-registering an existing session notifies as an update."""
+        session = session_manager.register(
+            external_id="change-reactivation-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+        session_manager.update_status(session.id, "paused")
+        calls.clear()
+
+        updated = session_manager.register(
+            external_id="change-reactivation-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        assert updated.id == session.id
+        assert updated.status == "active"
+        assert calls == [("session_updated", session.id)]
+
+    def test_session_change_listener_fires_for_status_updates(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Status changes emit update or expired events."""
+        session = session_manager.register(
+            external_id="change-status-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        session_manager.update_status(session.id, "paused")
+        session_manager.update_status(session.id, "expired")
+
+        assert calls == [
+            ("session_updated", session.id),
+            ("session_expired", session.id),
+        ]
+
+    def test_session_change_listener_fires_for_metadata_updates(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Title, model, summary, and bulk updates notify catalog listeners."""
+        session = session_manager.register(
+            external_id="change-metadata-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        session_manager.update_title(session.id, "Changed Title")
+        session_manager.update_model(session.id, "sonnet")
+        session_manager.update_summary(session.id, summary_markdown="# Summary")
+        session_manager.update(session.id, git_branch="feature/session-events")
+
+        assert calls == [
+            ("session_updated", session.id),
+            ("session_updated", session.id),
+            ("session_updated", session.id),
+            ("session_updated", session.id),
+        ]
+
+    def test_session_change_listener_fires_for_delete(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Deleting a session notifies catalog listeners."""
+        session = session_manager.register(
+            external_id="change-delete-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        deleted = session_manager.delete(session.id)
+
+        assert deleted is True
+        assert calls == [("session_deleted", session.id)]
+
+    def test_session_change_listener_failure_does_not_break_mutation(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """One broken generic listener cannot block the mutation or later listeners."""
+        session = session_manager.register(
+            external_id="change-failure-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        calls: list[tuple[str, str]] = []
+
+        def _broken_listener(event: str, session_id: str) -> None:
+            raise RuntimeError("listener failed")
+
+        session_manager.register_session_change_listener(_broken_listener)
+        session_manager.register_session_change_listener(
+            lambda event, session_id: calls.append((event, session_id))
+        )
+
+        updated = session_manager.update_title(session.id, "Recovered Title")
+
+        assert updated is not None
+        assert updated.title == "Recovered Title"
+        assert calls == [("session_updated", session.id)]
+
     def test_update_stats(
         self,
         session_manager: SessionManager,

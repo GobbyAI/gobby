@@ -163,20 +163,18 @@ def create_app(server: "HTTPServer") -> FastAPI:
         if server.session_manager is not None:
             listener_loop = asyncio.get_running_loop()
 
-            def _broadcast_title_update(session_id: str, _title: str) -> None:
+            def _broadcast_session_change(event: str, session_id: str) -> None:
                 if not ws_server or listener_loop.is_closed():
                     return
 
                 def _schedule() -> None:
-                    listener_loop.create_task(
-                        ws_server.broadcast_session_event("session_updated", session_id)
-                    )
+                    listener_loop.create_task(ws_server.broadcast_session_event(event, session_id))
 
                 listener_loop.call_soon_threadsafe(_schedule)
 
-            server.session_manager.register_title_listener(_broadcast_title_update)
-            app.state.title_update_listener = _broadcast_title_update
-            logger.debug("Title update listener connected to session manager")
+            server.session_manager.register_session_change_listener(_broadcast_session_change)
+            app.state.session_change_listener = _broadcast_session_change
+            logger.debug("Session change listener connected to session manager")
 
         # Wire inter-session message manager for message piggyback delivery
         if (
@@ -333,10 +331,12 @@ def create_app(server: "HTTPServer") -> FastAPI:
         # Shutdown operations
         logger.debug("Shutting down Gobby HTTP server")
 
-        if hasattr(app.state, "title_update_listener") and server.session_manager is not None:
-            server.session_manager.unregister_title_listener(app.state.title_update_listener)
-            del app.state.title_update_listener
-            logger.debug("Title update listener disconnected from session manager")
+        if hasattr(app.state, "session_change_listener") and server.session_manager is not None:
+            server.session_manager.unregister_session_change_listener(
+                app.state.session_change_listener
+            )
+            del app.state.session_change_listener
+            logger.debug("Session change listener disconnected from session manager")
 
         voice_cleanup = getattr(ws_server, "cleanup_voice", None) if ws_server else None
         if voice_cleanup:

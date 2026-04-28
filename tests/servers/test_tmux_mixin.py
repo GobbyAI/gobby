@@ -328,7 +328,7 @@ class TestTmuxKillSession:
             )
 
         mock_session_mgr.update_status.assert_called_once_with("sess-1", "expired")
-        server.broadcast_session_event.assert_awaited_once_with("session_expired", "sess-1")
+        server.broadcast_session_event.assert_not_awaited()
         results = ws.messages_of_type("tmux_kill_result")
         assert results[0]["success"] is True
         assert results[0]["expired_session_ids"] == ["sess-1"]

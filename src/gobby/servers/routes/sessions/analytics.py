@@ -48,8 +48,6 @@ def register_analytics_routes(
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
-            await broadcast_session("session_updated", session_id)
-
             return {"session": session.to_dict()}
 
         except HTTPException:
@@ -101,8 +99,6 @@ def register_analytics_routes(
 
             # Refetch session to get updated summary_markdown
             updated_session = server.session_manager.get(session_id)
-
-            await broadcast_session("session_updated", session_id)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 

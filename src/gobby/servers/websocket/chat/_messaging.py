@@ -516,7 +516,6 @@ class ChatMessagingMixin:
                 if _sm:
                     try:
                         await asyncio.to_thread(_sm.update, db_sid, status="active")
-                        await self.broadcast_session_event("updated", db_sid)
                     except Exception:
                         logger.debug("Failed to set session status to active", exc_info=True)
 
@@ -779,7 +778,6 @@ class ChatMessagingMixin:
                     if db_sid and session_manager:
                         try:
                             await asyncio.to_thread(session_manager.update, db_sid, status="paused")
-                            await self.broadcast_session_event("updated", db_sid)
                         except Exception:
                             logger.debug("Failed to set session status to paused", exc_info=True)
 

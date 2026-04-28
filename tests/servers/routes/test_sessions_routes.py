@@ -6,6 +6,7 @@ using mock-based TestClient approach.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.app_context import ServiceContainer
+from gobby.servers.http import HTTPServer
 from gobby.servers.routes.sessions import (
     _get_commit_count,
     _get_session_stats,
@@ -103,6 +106,42 @@ def client(mock_server, mock_hook_manager):
     app.include_router(router)
     app.state.hook_manager = mock_hook_manager
     return TestClient(app)
+
+
+def test_app_wires_session_change_listener_to_websocket(session_storage, sample_project) -> None:
+    """SessionManager changes are bridged to websocket session_event broadcasts."""
+    ws_server = MagicMock()
+    ws_server.broadcast_session_event = AsyncMock()
+    ws_server.cleanup_voice = None
+    services = ServiceContainer(
+        config=None,
+        database=session_storage.db,
+        session_manager=session_storage,
+        task_manager=MagicMock(),
+        websocket_server=ws_server,
+    )
+    server = HTTPServer(
+        services=services,
+        port=60887,
+        test_mode=True,
+    )
+
+    with TestClient(server.app):
+        session = session_storage.register(
+            external_id="app-session-change-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        deadline = time.monotonic() + 1
+        while ws_server.broadcast_session_event.await_count == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        ws_server.broadcast_session_event.assert_awaited_once_with(
+            "session_created",
+            session.id,
+        )
 
 
 # =============================================================================

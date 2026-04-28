@@ -14,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   mockWs.restore()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -202,5 +203,79 @@ describe('useWebSocketEvent', () => {
     // New event should
     act(() => ws.simulateMessage({ type: 'session_event', id: '2' }))
     expect(handler).toHaveBeenCalledWith({ type: 'session_event', id: '2' })
+  })
+
+  it('useSessionCatalog refetches after session_event messages', async () => {
+    await loadModule()
+    const { useSessionCatalog } = await import('../useSessionCatalog')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessions: [
+            {
+              id: 'session-1',
+              title: 'First session',
+              status: 'active',
+              updated_at: '2026-04-28T10:00:00Z',
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          sessions: [
+            {
+              id: 'session-1',
+              title: 'First session',
+              status: 'active',
+              updated_at: '2026-04-28T10:00:00Z',
+            },
+            {
+              id: 'session-2',
+              title: 'Second session',
+              status: 'active',
+              updated_at: '2026-04-28T10:05:00Z',
+            },
+          ],
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useSessionCatalog('proj-1'))
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(result.current.sessions.map((session) => session.id)).toEqual(['session-1'])
+
+    const ws = mockWs.instances[0]
+    act(() => ws.simulateOpen())
+    act(() =>
+      ws.simulateMessage({
+        type: 'session_event',
+        event: 'session_created',
+        session_id: 'session-2',
+      }),
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(499)
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.current.sessions.map((session) => session.id)).toEqual([
+      'session-2',
+      'session-1',
+    ])
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/sessions?limit=200&project_id=proj-1')
   })
 })

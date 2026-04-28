@@ -182,17 +182,6 @@ class TmuxMixin:
                 )
                 continue
 
-            broadcast_session_event = getattr(self, "broadcast_session_event", None)
-            if broadcast_session_event:
-                try:
-                    await broadcast_session_event("session_expired", session_id)
-                except Exception:
-                    logger.debug(
-                        "Failed to broadcast session_expired for %s",
-                        session_id,
-                        exc_info=True,
-                    )
-
         return expired_session_ids
 
     # ------------------------------------------------------------------

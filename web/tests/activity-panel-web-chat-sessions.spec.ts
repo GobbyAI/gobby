@@ -194,12 +194,26 @@ test("activity panel shows non-current web chats with a web badge", async ({
       return;
     }
 
-    if (path === "/api/files/projects") {
+    if (path === "/api/projects" || path === "/api/files/projects") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: "proj-1", name: "Project One", repo_path: "/tmp/project-one" },
+          {
+            id: "proj-1",
+            name: "project-one",
+            display_name: "Project One",
+            repo_path: "/tmp/project-one",
+            github_url: null,
+            github_repo: null,
+            linear_team_id: null,
+            approval_rules: [],
+            created_at: "2026-04-08T12:00:00Z",
+            updated_at: "2026-04-08T12:00:00Z",
+            session_count: 0,
+            open_task_count: 0,
+            last_activity_at: null,
+          },
         ]),
       });
       return;
@@ -257,17 +271,241 @@ test("activity panel shows non-current web chats with a web badge", async ({
 
   await page.goto("/");
 
-  await expect(page.getByRole("tab", { name: "Sessions" })).toBeVisible();
+  await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Sessions");
   await expect(page.locator(".session-entry")).toHaveCount(2);
-  await expect(page.locator(".session-entry")).toContainText([
+  await expect(page.locator(".activity-panel-content")).toContainText(
     "#201: Terminal Session",
+  );
+  await expect(page.locator(".activity-panel-content")).toContainText(
     "#203: Other Web Chat",
-  ]);
+  );
 
   await expect(page.locator(".activity-panel-content")).not.toContainText(
     "Current Web Chat",
   );
-  await expect(page.locator(".session-kind-badge--tmux")).toHaveText("tmux");
-  await expect(page.locator(".session-kind-badge--web")).toHaveText("web");
-  await expect(page.locator(".session-kind-badge--sandbox")).toHaveText("SB");
+  await expect(page.locator(".activity-panel-content")).toContainText("tmux");
+  await expect(page.locator(".activity-panel-content")).toContainText("web");
+  await expect(page.locator(".activity-panel-content")).toContainText("SB");
+});
+
+test("activity panel refreshes sessions after a session_event websocket message", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    ({
+      conversationId,
+      dbSessionId,
+    }: {
+      conversationId: string;
+      dbSessionId: string;
+    }) => {
+      localStorage.setItem("gobby-conversation-id", conversationId);
+      localStorage.setItem("gobby-db-session-id", dbSessionId);
+      localStorage.setItem("gobby-activity-panel-pinned", "true");
+      localStorage.setItem("gobby-activity-panel-tab", "sessions");
+      localStorage.setItem(
+        "gobby-settings",
+        JSON.stringify({
+          model: "opus",
+          fontSize: 16,
+          theme: "dark",
+          defaultChatMode: "plan",
+        }),
+      );
+    },
+    {
+      conversationId: CURRENT_CONVERSATION_ID,
+      dbSessionId: CURRENT_DB_SESSION_ID,
+    },
+  );
+
+  const sessionEventSenders: Array<() => void> = [];
+  await page.routeWebSocket("**/ws", (ws) => {
+    sessionEventSenders.push(() => {
+      ws.send(
+        JSON.stringify({
+          type: "session_event",
+          event: "session_created",
+          session_id: "web-other",
+          timestamp: "2026-04-08T12:26:00Z",
+        }),
+      );
+    });
+
+    ws.onMessage((raw) => {
+      let message: Record<string, unknown> | null = null;
+      try {
+        message = JSON.parse(String(raw));
+      } catch {
+        message = null;
+      }
+
+      const type = message?.type;
+      if (type === "subscribe") {
+        ws.send(
+          JSON.stringify({
+            type: "connection_established",
+            conversation_ids: [CURRENT_CONVERSATION_ID],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "subscribe_success",
+            events: message?.events ?? [],
+          }),
+        );
+      }
+    });
+  });
+
+  let catalogSessions = [sessions[1], sessions[0]];
+  await page.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    const method = route.request().method();
+
+    if (path === "/api/auth/status") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ auth_required: false, authenticated: true }),
+      });
+      return;
+    }
+
+    if (path === "/api/config/ui-settings") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body:
+          method === "PUT"
+            ? JSON.stringify({ ok: true })
+            : JSON.stringify({
+                selectedProjectId: "proj-1",
+                model: "opus",
+                theme: "dark",
+                defaultChatMode: "plan",
+                fontSize: 16,
+              }),
+      });
+      return;
+    }
+
+    if (path === "/api/providers") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          providers: [{ name: "claude", available: true }],
+        }),
+      });
+      return;
+    }
+
+    if (path === "/api/voice/status") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ enabled: false, stt_available: false }),
+      });
+      return;
+    }
+
+    if (path === "/api/projects" || path === "/api/files/projects") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "proj-1",
+            name: "project-one",
+            display_name: "Project One",
+            repo_path: "/tmp/project-one",
+            github_url: null,
+            github_repo: null,
+            linear_team_id: null,
+            approval_rules: [],
+            created_at: "2026-04-08T12:00:00Z",
+            updated_at: "2026-04-08T12:00:00Z",
+            session_count: 0,
+            open_task_count: 0,
+            last_activity_at: null,
+          },
+        ]),
+      });
+      return;
+    }
+
+    if (path === "/api/agents/running") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ agents: [] }),
+      });
+      return;
+    }
+
+    if (path === "/api/sessions") {
+      const status = url.searchParams.get("status");
+      const body =
+        status === "paused" || status === "handoff_ready"
+          ? { sessions: [] }
+          : { sessions: catalogSessions, total: catalogSessions.length };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+      return;
+    }
+
+    if (path === `/api/chat/${CURRENT_CONVERSATION_ID}/messages`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ messages: [] }),
+      });
+      return;
+    }
+
+    if (path === `/api/sessions/${CURRENT_DB_SESSION_ID}`) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: sessions.find((session) => session.id === CURRENT_DB_SESSION_ID),
+        }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({}),
+    });
+  });
+
+  await page.goto("/");
+
+  await expect(page.locator(".activity-panel-mobile-trigger")).toContainText("Sessions");
+  await expect(page.locator(".session-entry")).toHaveCount(1);
+  await expect(page.locator(".session-entry")).toContainText(["#201: Terminal Session"]);
+  await expect(page.locator(".activity-panel-content")).not.toContainText("Other Web Chat");
+
+  catalogSessions = [sessions[1], sessions[0], sessions[2]];
+  if (sessionEventSenders.length === 0) {
+    throw new Error("WebSocket route was not opened");
+  }
+  for (const sendSessionEvent of sessionEventSenders) {
+    sendSessionEvent();
+  }
+
+  await expect(page.locator(".session-entry")).toHaveCount(2);
+  await expect(page.locator(".activity-panel-content")).toContainText(
+    "#201: Terminal Session",
+  );
+  await expect(page.locator(".activity-panel-content")).toContainText(
+    "#203: Other Web Chat",
+  );
 });

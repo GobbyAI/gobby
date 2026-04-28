@@ -22,6 +22,8 @@ class _ManagerState(Protocol):
 
     def get(self, session_id: str) -> Session | None: ...
 
+    def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
 
 class _FieldUpdateMixin:
     def update_status(self: _ManagerState, session_id: str, status: str) -> Session | None:
@@ -37,7 +39,11 @@ class _FieldUpdateMixin:
                 "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
                 (status, now, session_id),
             )
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            event = "session_expired" if status == "expired" else "session_updated"
+            self._notify_session_change(event, session_id)
+        return updated
 
     def mark_had_edits(self: _ManagerState, session_id: str) -> Session | None:
         """Mark session as having edits."""
@@ -116,6 +122,8 @@ class _FieldUpdateMixin:
         if updated is None:
             return None
 
+        self._notify_session_change("session_updated", session_id)
+
         if title_changed:
             try:
                 from gobby.workflows.summary_actions import schedule_tmux_window_rename
@@ -147,7 +155,10 @@ class _FieldUpdateMixin:
                 "UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?",
                 (model, now, session_id),
             )
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_session_change("session_updated", session_id)
+        return updated
 
     def update_summary(
         self: _ManagerState,
@@ -168,7 +179,10 @@ class _FieldUpdateMixin:
                 """,
                 (summary_path, summary_markdown, now, session_id),
             )
-        return self.get(session_id)
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_session_change("session_updated", session_id)
+        return updated
 
     def update_digest_markdown(
         self: _ManagerState, session_id: str, digest_markdown: str

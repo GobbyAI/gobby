@@ -244,7 +244,6 @@ def register_core_routes(
             )
 
             inc_counter("session_registrations_total")
-            await broadcast_session("session_created", session.id)
 
             return {
                 "status": "created",
@@ -313,7 +312,6 @@ def register_core_routes(
             )
 
             inc_counter("session_registrations_total")
-            await broadcast_session("session_created", session.id)
 
             return {
                 "status": "registered",
