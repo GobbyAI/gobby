@@ -1419,7 +1419,7 @@ Several rules currently fire on the default agent surface — most notably `requ
 
 **Acceptance:**
 
-- 2.14a.1 — `BUILD_AGENT_NAMES` constant defined in `src/gobby/agents/roles.py` enumerating every autonomous build agent: `{"qa-reviewer", "holistic-reviewer", "expansion-qa", "merge", "test-architect", "plan-adversary", "plan-author", "backend-developer", "frontend-developer", ...}` (full list per the audit). file: `src/gobby/agents/roles.py`. test: `tests/agents/test_roles.py` covers the contents and freezing.
+- 2.14a.1 — `BUILD_AGENT_NAMES` constant defined in `src/gobby/agents/roles.py` enumerating every autonomous build agent: `{"qa-reviewer", "holistic-reviewer", "expansion-qa", "merge", "test-architect", "plan-adversary", "planner", "backend-developer", "frontend-developer", ...}` (full list per the audit). file: `src/gobby/agents/roles.py`. test: `tests/agents/test_roles.py` covers the contents and freezing.
 - 2.14a.2 — Audit document classifies every rule that fires on agent edit/stop/transition events per the table above. file: `src/gobby/install/shared/rules/AGENT_SCOPE_AUDIT.md`.
 - 2.14a.3 — `require-task-close`, `require-clean-tree-before-status`, and other interactive-only rules carry a session-role / agent-name predicate so they no longer block build agents. test: `tests/rules/test_build_agent_scope.py` asserts each interactive-only rule does NOT fire when the active session belongs to a `BUILD_AGENT_NAMES` agent.
 - 2.14a.4 — Replacement rule `require-mark-task-terminal` blocks autonomous-build-agent stop when no `mark_task_*` or `escalate_task` has been called for the agent's claimed task. file: `src/gobby/install/shared/rules/require_mark_task_terminal.yaml`. test: `tests/rules/test_require_mark_task_terminal.py` covers each build agent and asserts stop is blocked until the terminal call lands.
@@ -1607,7 +1607,7 @@ The plan-adversary `max_review_rounds` flag already exists (per the existing §3
 
 Target: `docs/contracts/plan-coverage.md` (extend); `src/gobby/install/shared/skills/plan-draft/SKILL.md` (extend); `src/gobby/plans/parser.py` (parser updates); `CLAUDE.md` (Plan-Coverage Contract section update).
 
-**Why**: Today, expansion infers the task list from `kind: deliverable` sections. That's section-driven and implicit — the plan author writes prose; the system interprets. The contract makes the task list **explicit** via a `## Task Manifest` section at the end of every implementation plan. The manifest is the single source of truth for what tasks expansion creates; sections become human-readable narrative documenting why each task exists. The manifest is **written by plan-adversary on approval** (§2.22), not by the plan-author — the same agent that just verified the plan is the one writing the canonical task list. Manifest drift is impossible by construction.
+**Why**: Today, expansion infers the task list from `kind: deliverable` sections. That's section-driven and implicit — the plan author writes prose; the system interprets. The contract makes the task list **explicit** via a `## Task Manifest` section at the end of every implementation plan. The manifest is the single source of truth for what tasks expansion creates; sections become human-readable narrative documenting why each task exists. The manifest is **written by plan-adversary on approval** (§2.22), not by the planner — the same agent that just verified the plan is the one writing the canonical task list. Manifest drift is impossible by construction.
 
 **Section shape** (added to the contract):
 
@@ -1638,7 +1638,7 @@ Target: `docs/contracts/plan-coverage.md` (extend); `src/gobby/install/shared/sk
 **Acceptance:**
 
 - 2.21.1 — `docs/contracts/plan-coverage.md` documents the `## Task Manifest` section, the entry schema, the parser-enforced invariants, and the adversary-writes-on-approval contract. file: `docs/contracts/plan-coverage.md`.
-- 2.21.2 — `plan-draft` SKILL.md is updated: plan-author authors narrative sections only, never the manifest. file: `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
+- 2.21.2 — `plan-draft` SKILL.md is updated: planner authors narrative sections only, never the manifest. file: `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
 - 2.21.3 — Parser (`src/gobby/plans/parser.py`) validates the manifest section: schema-checks each entry, enforces the deliverable→manifest-entry 1:1 invariant, resolves every `covers:` label against acceptance items, raises `PlanParseError` on violations. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py`.
 - 2.21.4 — `CLAUDE.md` Plan-Coverage Contract section updated to mention the manifest. file: `CLAUDE.md`.
 
@@ -1651,9 +1651,9 @@ Target: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`; `src/go
 
 **Updated workflow per round**:
 
-1. Read plan file + cumulative `## Plan Changelog` (per §2.23 plan-author additions).
+1. Read plan file + cumulative `## Plan Changelog` (per §2.23 planner additions).
 2. Review against contract + intent.
-3. **If findings**: emit `## Adversary Findings — Round N` to the planning task description; call `mark_task_review_rejected(round_number=N, rejection_notes=...)`. Do NOT edit the plan file. Plan-author handles edits between rounds (§2.23).
+3. **If findings**: emit `## Adversary Findings — Round N` to the planning task description; call `mark_task_review_rejected(round_number=N, rejection_notes=...)`. Do NOT edit the plan file. Planner handles edits between rounds (§2.23).
 4. **If clean**: append `## Task Manifest` YAML to the plan file (per §2.21 schema). Run parser self-check on the manifest. If parser fails, fix the manifest in-place and re-self-check; up to 3 retries before escalating with `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`. On success: `mark_task_review_approved(approval_notes="...; manifest emitted with N entries")`.
 5. Always exit fresh — no carryover context to next round (next round gets a new instance per §2.23 fresh-context-per-round contract).
 
@@ -1670,15 +1670,15 @@ Target: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`; `src/go
 - 2.22.4 — Adversary self-check: after writing the manifest, invokes parser validation; on failure, retries up to 3 times before escalating with `escalate_task(reason="needs_human:manifest_emission_failure:...")`. test: `tests/agents/test_plan_adversary_self_check.py` covers the parser-failure retry path.
 - 2.22.5 — Adversary never edits the plan file when emitting findings (rejection rounds are review-only). test: `tests/agents/test_plan_adversary_no_edits_on_reject.py` confirms no plan-file diff is produced by a rejection round.
 
-### 2.23 plan-author agent / plan-draft skill: fresh context + tighter mandate [category: config] (depends: 2.21, 2.22)
+### 2.23 planner agent / plan-draft skill: fresh context + tighter mandate [category: config] (depends: 2.21, 2.22)
 `kind: deliverable`
 
-Target: `src/gobby/install/shared/skills/plan-draft/SKILL.md`; `src/gobby/install/shared/workflows/agents/plan-author.yaml` (if separate yaml exists; if not, document on the spawn-config path that wires plan-draft).
+Target: `src/gobby/install/shared/skills/plan-draft/SKILL.md`; `src/gobby/install/shared/workflows/agents/planner.yaml` (if separate yaml exists; if not, document on the spawn-config path that wires plan-draft).
 
-**Why**: Long-context drift across plan-author rounds caused the 26-round case where the agent re-interpreted findings each round and introduced new issues. Two fixes:
+**Why**: Long-context drift across planner rounds caused the 26-round case where the agent re-interpreted findings each round and introduced new issues. Two fixes:
 
-1. **Fresh context per round** — every plan-author revision spawns a new agent instance with no carryover from prior author rounds. Input: plan file + the round's adversary findings + a `## Plan Changelog` of prior round summaries. No accumulated session context drifting across rounds.
-2. **Tighter mandate** — plan-author's job is "fill holes where the plan is incomplete or inconsistent with the codebase" and "escalate if premise is wrong." It is NOT to redesign or re-engineer in response to adversary findings. Re-engineering belongs in escalation, not in revision.
+1. **Fresh context per round** — every planner revision spawns a new agent instance with no carryover from prior author rounds. Input: plan file + the round's adversary findings + a `## Plan Changelog` of prior round summaries. No accumulated session context drifting across rounds.
+2. **Tighter mandate** — planner's job is "fill holes where the plan is incomplete or inconsistent with the codebase" and "escalate if premise is wrong." It is NOT to redesign or re-engineer in response to adversary findings. Re-engineering belongs in escalation, not in revision.
 
 **Workflow per revision round**:
 
@@ -1687,27 +1687,27 @@ Target: `src/gobby/install/shared/skills/plan-draft/SKILL.md`; `src/gobby/instal
 3. Append summary to `## Plan Changelog`: "Round N+1 author: §X.Y — added missing test reference; §A.B — clarified depends_on annotation; ..." (one bullet per surgical fix).
 4. Re-route the revised plan through `ExitPlanMode` for user re-approval (interactive mode) or trigger next adversary round automatically (delegated mode).
 
-**Escalation path**: if a finding cannot be addressed by filling a hole — i.e., it requires redesigning a section or rejecting the premise — plan-author calls `escalate_task(reason="needs_human:premise_disagreement:<section_id>:<details>")`. User picks up the plan and decides: revise the requirements, accept the adversary finding, or override.
+**Escalation path**: if a finding cannot be addressed by filling a hole — i.e., it requires redesigning a section or rejecting the premise — planner calls `escalate_task(reason="needs_human:premise_disagreement:<section_id>:<details>")`. User picks up the plan and decides: revise the requirements, accept the adversary finding, or override.
 
 **Acceptance:**
 
 - 2.23.1 — `plan-draft` SKILL.md updated with the "fresh context per round" requirement and the "fill holes, don't re-engineer; escalate if premise wrong" mandate. file: `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
-- 2.23.2 — `plan-author` agent (if separate yaml) is spawned with `clean_session=true` (or equivalent fresh-context flag) for every revision round; carries no context from prior rounds. file: `src/gobby/install/shared/workflows/agents/plan-author.yaml` (or the spawn-config path that wires plan-draft).
-- 2.23.3 — `## Plan Changelog` section is required on every revised plan post-Round-1; plan-author appends a one-bullet summary per round. behavior: parser tolerates this section under existing `kind: framing`.
-- 2.23.4 — Plan-author escalates on premise disagreement instead of re-engineering. test: `tests/agents/test_plan_author_escalation.py` covers a contrived "adversary suggests redesign" case; plan-author escalates rather than complies.
+- 2.23.2 — `planner` agent (if separate yaml) is spawned with `clean_session=true` (or equivalent fresh-context flag) for every revision round; carries no context from prior rounds. file: `src/gobby/install/shared/workflows/agents/planner.yaml` (or the spawn-config path that wires plan-draft).
+- 2.23.3 — `## Plan Changelog` section is required on every revised plan post-Round-1; planner appends a one-bullet summary per round. behavior: parser tolerates this section under existing `kind: framing`.
+- 2.23.4 — Planner escalates on premise disagreement instead of re-engineering. test: `tests/agents/test_plan_author_escalation.py` covers a contrived "adversary suggests redesign" case; planner escalates rather than complies.
 
 ### 2.24 `/gobby plan` skill: end-to-end coordinator flow [category: config] (depends: 2.21, 2.22, 2.23)
 `kind: deliverable`
 
 Target: `src/gobby/install/shared/skills/plan/SKILL.md` — substantial rewrite.
 
-**Why**: The current `/gobby plan` skill has the right shape (opt-in mode, adversarial loop, terminal cleanup) but is wired around the old design (combined plan-author/adversary, no manifest emission, no fresh-context-per-round, no delegated-flow handoff to build). This rewrite encodes the canonical end-to-end flow. **If anything below surprises the user when they read it, alignment is broken and the surprise is itself a finding.**
+**Why**: The current `/gobby plan` skill has the right shape (opt-in mode, adversarial loop, terminal cleanup) but is wired around the old design (combined planner/adversary, no manifest emission, no fresh-context-per-round, no delegated-flow handoff to build). This rewrite encodes the canonical end-to-end flow. **If anything below surprises the user when they read it, alignment is broken and the surprise is itself a finding.**
 
 **Anchor-task contract (load-bearing)**:
 
 The parent session (Claude in chat, this skill) **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (per `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so no task is needed for plan authoring. The parent's role is pure orchestration — spawn agents, read verdict states, decide.
 
-Each adversary round spawns against a **freshly-created anchor task** (child of the planning epic, `category: planning`). The anchor exists **only for verdict capture**: the adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `mark_task_review_approved` (clean) or `mark_task_review_rejected` (with findings) on the anchor. Plan-author rounds (Round N > 1) get their own anchor task too — same pattern, different agent.
+Each adversary round spawns against a **freshly-created anchor task** (child of the planning epic, `category: planning`). The anchor exists **only for verdict capture**: the adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `mark_task_review_approved` (clean) or `mark_task_review_rejected` (with findings) on the anchor. Planner rounds (Round N > 1) get their own anchor task too — same pattern, different agent.
 
 The parent **fires-and-forgets**: spawn the agent, end the turn cleanly. The parent has no claimed task, so the stop-hook (`require-task-close`) does not block end-of-turn. The daemon's task-completion notification (P2P signoff message from the agent's session) wakes the parent when the agent terminates. The parent's next turn reads the anchor's terminal state via `get_task` and routes to the next step:
 
@@ -1725,7 +1725,7 @@ This pattern eliminates the parent-claim / parent-release dance and removes any 
 
 1. User invokes `/gobby plan` in chat (or `/gobby plan <topic>`).
 2. Skill loads `plan-draft` (and any related skills) via `gobby-skills:get_skill`.
-3. Claude collaborates with the user to draft the plan: requirements gathering, structure, contract-formatting per `plan-draft`. No spawned agents yet — Claude IS the plan-author for the first draft.
+3. Claude collaborates with the user to draft the plan: requirements gathering, structure, contract-formatting per `plan-draft`. No spawned agents yet — Claude IS the planner for the first draft.
 4. Claude presents the draft via native `ExitPlanMode`.
 5. User approves the first draft. Rejections at this stage loop back to step 3 with the user driving revisions; no adversary involvement yet.
 
@@ -1738,7 +1738,7 @@ This pattern eliminates the parent-claim / parent-release dance and removes any 
 After Phase 1 the parent's role pivots from "plan writer" to "plan coordinator" — same session, different mode. The coordinator never stays alive across rounds. Each round is a single spawn-then-end-turn cycle, with the daemon's task-completion notification as the wake signal for the next turn. The fire-and-forget pattern applies in BOTH interactive and delegated modes; the only difference is whether the coordinator inserts a user-confirmation gate between rounds (interactive) or routes straight to the next spawn (delegated). Round numbering: user-facing 1-indexed; internally 0-indexed per existing convention.
 
 7. **Round 1 spawn**: parent creates a fresh anchor task `Plan-adversary review — round 1` (child of the planning epic, `category: planning`). Parent spawns `plan-adversary` (LLM B, fresh context, no isolation) against the anchor with the current plan file. Parent ends the turn. No claim, no `ScheduleWakeup`.
-8. **Round N spawn (N > 1)**: parent creates a fresh anchor `Plan-author revision — round N` and spawns `plan-author` (LLM A, fresh context per §2.23) with the plan file + cumulative `## Plan Changelog` + `## Adversary Findings — Round N-1` from the prior anchor. Parent ends the turn. On plan-author wake (anchor terminal), parent creates `Plan-adversary review — round N`, spawns adversary, ends the turn.
+8. **Round N spawn (N > 1)**: parent creates a fresh anchor `Planner revision — round N` and spawns `planner` (LLM A, fresh context per §2.23) with the plan file + cumulative `## Plan Changelog` + `## Adversary Findings — Round N-1` from the prior anchor. Parent ends the turn. On planner wake (anchor terminal), parent creates `Plan-adversary review — round N`, spawns adversary, ends the turn.
 9. **Wake-and-route**: when the daemon wakes the parent (task-completion notification on the active anchor), parent reads anchor terminal state via `get_task` and branches by mode:
    - `status=review_approved` (adversary clean) → adversary already appended the `## Task Manifest` YAML to the plan file (per §2.22). Parent advances to **Phase 4** (or Phase 3b for delegated mode). Same in both modes.
    - `status=open` after `mark_task_review_rejected` (adversary findings on anchor description):
@@ -1775,8 +1775,8 @@ This phase fires after the interactive review loop terminates (approval or exhau
 **Acceptance:**
 
 - 2.24.1 — `plan/SKILL.md` rewritten to encode the canonical flow above. Phases, step numbering, agent spawn shapes, and terminal cleanup paths match this document. file: `src/gobby/install/shared/skills/plan/SKILL.md`. test: `tests/skills/test_plan_skill_flow.py` exercises each phase via mocked spawn / completion notifications.
-- 2.24.2 — Round-1 adversary spawn is against the user-approved first draft, no plan-author involvement. test: `tests/skills/test_plan_skill_flow.py::test_round_1_no_plan_author`.
-- 2.24.3 — Round-N (N > 1) spawns plan-author with fresh context first, then plan-adversary against the revised plan. Plan-author input includes cumulative `## Plan Changelog` + latest `## Adversary Findings`. test: `tests/skills/test_plan_skill_flow.py::test_round_n_spawns_author_then_adversary`.
+- 2.24.2 — Round-1 adversary spawn is against the user-approved first draft, no planner involvement. test: `tests/skills/test_plan_skill_flow.py::test_round_1_no_plan_author`.
+- 2.24.3 — Round-N (N > 1) spawns planner with fresh context first, then plan-adversary against the revised plan. Planner input includes cumulative `## Plan Changelog` + latest `## Adversary Findings`. test: `tests/skills/test_plan_skill_flow.py::test_round_n_spawns_author_then_adversary`.
 - 2.24.4 — On adversary approval, manifest emission is the trigger for expansion handoff. behavior: skill calls `start_expansion_run` only after manifest YAML is present in plan file. test: `tests/skills/test_plan_skill_flow.py::test_expansion_after_manifest`.
 - 2.24.5 — Delegated build handoff (Phase 3b) loads `build` skill, prompts for scope, dispatches or hands back CLI. file: `src/gobby/install/shared/skills/plan/SKILL.md`. test: `tests/skills/test_plan_skill_flow.py::test_delegated_build_handoff`.
 - 2.24.6 — Coordinator role enforced: skill does NOT edit the plan file during Phase 3. test: `tests/skills/test_plan_skill_flow.py::test_no_edits_during_review_loop` asserts no Edit/Write tool calls fire from this skill's session during Phase 3 rounds.

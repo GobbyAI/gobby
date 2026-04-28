@@ -336,7 +336,7 @@ Then proceed to Step 7.
 
 The parent session **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (see `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so plan-mode + plan-file editing alone do not require a claim. The parent's role from Step 7 onward is pure orchestration.
 
-Each adversary (and plan-author, when present) round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned agent appends `## Adversary Findings — Round N` (or `## Plan-Author Revision — Round N` for plan-author rounds) to the anchor's description and calls `mark_task_review_approved` (clean) / `mark_task_review_rejected` (with findings) / `escalate_task` on the anchor.
+Each adversary (and `planner`, when present) round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned agent appends `## Adversary Findings — Round N` (or `## Planner Revision — Round N` for planner rounds) to the anchor's description and calls `mark_task_review_approved` (clean) / `mark_task_review_rejected` (with findings) / `escalate_task` on the anchor.
 
 The parent **fires-and-forgets**: spawn the agent, end the turn cleanly. No claim, no `ScheduleWakeup`, no `Monitor`. The daemon's task-completion notification (P2P signoff message from the agent's session) wakes the parent when the agent terminates. On wake, the parent reads the anchor's terminal state via `get_task` and routes per Step 7.6.
 
