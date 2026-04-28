@@ -27,10 +27,12 @@ def _parent(service: ExpansionService, sample_project):
     )
 
 
-def _canonical_plan_path() -> Path:
-    # This fixture intentionally tracks the canonical lifecycle-dispatch plan
-    # because these tests verify the parser-driven expansion shape for that plan.
-    return Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch.md"
+def _regression_plan_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "fixtures/plans/expansion-compile-regression.md"
+
+
+def _regression_plan_doc():
+    return parse_plan(_regression_plan_path(), parse_mode="draft")
 
 
 def _deps_for(spec: dict, task_id: str) -> set[str]:
@@ -42,16 +44,16 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
     sample_project,
 ) -> None:
     parent = _parent(service, sample_project)
-    plan_doc = parse_plan(_canonical_plan_path())
+    plan_doc = _regression_plan_doc()
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
     assert spec["contract_plan"] is True
-    assert spec["deliverable_count"] == 14
-    assert len(spec["tasks"]) == 42
+    assert spec["deliverable_count"] == 6
+    assert len(spec["tasks"]) == 18
     assert {phase["id"]: len(phase["task_ids"]) for phase in spec["phases"]} == {
-        "phase-p1": 27,
-        "phase-p2": 12,
+        "phase-p1": 9,
+        "phase-p2": 6,
         "phase-p3": 3,
     }
     assert all(phase["tdd_sandwich_emitted"] is True for phase in spec["phases"])
@@ -62,8 +64,8 @@ def test_compile_contract_plan_emits_covers_labels_for_each_tdd_leaf(
     sample_project,
 ) -> None:
     parent = _parent(service, sample_project)
-    plan_doc = parse_plan(_canonical_plan_path())
-    plan_id = _canonical_plan_path().stem
+    plan_doc = _regression_plan_doc()
+    plan_id = _regression_plan_path().stem
     expected_labels = {
         section.section_id: {
             f"covers:{plan_id}:{section.section_id}:{item.item_id}"
@@ -86,18 +88,15 @@ def test_compile_contract_plan_translates_section_dependencies(
     sample_project,
 ) -> None:
     parent = _parent(service, sample_project)
-    spec = service.compile_plan_to_spec(parse_plan(_canonical_plan_path()), parent)
+    spec = service.compile_plan_to_spec(_regression_plan_doc(), parent)
 
-    assert _deps_for(spec, "1.3a::test") == {"1.3::ref"}
-    assert _deps_for(spec, "1.3a::impl") == {"1.3a::test"}
-    assert _deps_for(spec, "1.3a::ref") == {"1.3a::impl"}
-    assert _deps_for(spec, "1.9::test") == {
-        "1.4::ref",
-        "1.6::ref",
-        "1.7::ref",
-        "1.8::ref",
-    }
-    assert _deps_for(spec, "2.10::test") == {"1.8::ref"}
+    assert _deps_for(spec, "1.2::test") == {"1.1::ref"}
+    assert _deps_for(spec, "1.2::impl") == {"1.2::test"}
+    assert _deps_for(spec, "1.2::ref") == {"1.2::impl"}
+    assert _deps_for(spec, "1.3a::test") == {"1.2::ref"}
+    assert _deps_for(spec, "2.1::test") == {"1.3a::ref"}
+    assert _deps_for(spec, "2.2::test") == {"1.2::ref"}
+    assert _deps_for(spec, "3.1::test") == {"2.1::ref", "2.2::ref"}
 
 
 def test_compile_contract_plan_uses_deterministic_agent_assignment(
@@ -105,14 +104,14 @@ def test_compile_contract_plan_uses_deterministic_agent_assignment(
     sample_project,
 ) -> None:
     parent = _parent(service, sample_project)
-    spec = service.compile_plan_to_spec(parse_plan(_canonical_plan_path()), parent)
+    spec = service.compile_plan_to_spec(_regression_plan_doc(), parent)
 
     frontend_sections = {
         task["source_section_id"]
         for task in spec["tasks"]
         if task["assigned_agent"] == "frontend-developer"
     }
-    assert frontend_sections == {"2.8", "3.2"}
+    assert frontend_sections == {"2.1"}
     assert {
         task["assigned_agent"]
         for task in spec["tasks"]

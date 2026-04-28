@@ -1613,41 +1613,24 @@ class TestEdgeCases:
     ) -> None:
         """Test list handles prompts with newlines."""
         mock_manager = MagicMock()
+        run = MagicMock()
+        run.id = "ar-multiline"
+        run.status = "running"
+        run.provider = "claude"
+        run.prompt = "Line 1\nLine 2\nLine 3"
+        mock_manager.list_by_status.return_value = [run]
         mock_get_manager.return_value = mock_manager
 
-        with patch("gobby.cli.agents.LocalDatabase") as mock_db_cls:
-            mock_db = MagicMock()
-            mock_db.fetchall.return_value = [
-                {
-                    "id": "ar-multiline",
-                    "parent_session_id": "sess-123",
-                    "child_session_id": None,
-                    "workflow_name": None,
-                    "provider": "claude",
-                    "model": None,
-                    "status": "running",
-                    "prompt": "Line 1\nLine 2\nLine 3",
-                    "result": None,
-                    "error": None,
-                    "tool_calls_count": 0,
-                    "turns_used": 0,
-                    "started_at": None,
-                    "completed_at": None,
-                    "created_at": "2024-01-01",
-                    "updated_at": "2024-01-01",
-                }
-            ]
-            mock_db_cls.return_value = mock_db
+        result = runner.invoke(cli, ["agents", "runs", "list"])
 
-            result = runner.invoke(cli, ["agents", "runs", "list"])
-
-            assert result.exit_code == 0
-            # Prompt in the list output should not contain raw newlines (they are replaced)
-            # The output should have "Line 1 Line 2 Line 3" on a single row, not multiple lines
-            lines = result.output.strip().split("\n")
-            # Find the line with the agent run info
-            run_lines = [line for line in lines if "ar-multiline" in line]
-            assert len(run_lines) == 1  # Should be on a single line
+        assert result.exit_code == 0
+        mock_manager.list_by_status.assert_called_once_with(status=None, limit=20)
+        # Prompt in the list output should not contain raw newlines (they are replaced)
+        # The output should have "Line 1 Line 2 Line 3" on a single row, not multiple lines
+        lines = result.output.strip().split("\n")
+        # Find the line with the agent run info
+        run_lines = [line for line in lines if "ar-multiline" in line]
+        assert len(run_lines) == 1  # Should be on a single line
 
     @patch("gobby.cli.agents.resolve_agent_run_id")
     @patch("gobby.cli.agents.get_agent_run_manager")

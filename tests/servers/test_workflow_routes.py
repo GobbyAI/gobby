@@ -247,16 +247,17 @@ def test_import_yaml(client: TestClient) -> None:
     yaml_content = """\
 name: imported-wf
 description: From YAML
-type: step
+type: pipeline
 steps:
-  - name: work
-    tools: [all]
+  - id: work
+    exec: echo work
 """
     resp = client.post("/api/workflows/import", json={"yaml_content": yaml_content})
     assert resp.status_code == 200
     data = resp.json()
     assert data["definition"]["name"] == "imported-wf"
     assert data["definition"]["source"] == "installed"
+    assert data["definition"]["workflow_type"] == "pipeline"
 
 
 def test_import_yaml_invalid(client: TestClient) -> None:
