@@ -109,6 +109,28 @@ covers:<plan-id>:<section-id>:<item-id>
 
 Free-form `plan-ref:` labels are not honored by the coverage contract.
 
+### Authoring Scope: Narrative Only — Never the Manifest
+
+Planner authors **narrative sections only**: `# {Epic Title}`, `## Overview`,
+`## Constraints`, `## Phase N: Name`, `### N.N {Task Title}` deliverables with
+`**Acceptance:**` blocks, `framing` / `verification` / `deferred` sections, and
+the `## Plan Changelog` rolling summary (per §2.23). Stop there.
+
+The `## M1 Task Manifest` section is **NOT** part of the planner's surface. It
+is written by `plan-adversary` as the final act of approval — the act of
+emitting the manifest is what forces the adversary to confront ambiguity it
+might otherwise wave through. If a planner draft includes a `## M1 Task
+Manifest` section, the adversary will replace it on approval. Drafts presented
+for review SHOULD NOT carry one.
+
+Why this split: the planner's job is to fill holes in narrative; the
+adversary's job is to commit to a typed, expansion-ready bridge between the
+plan and the leaves. Mixing those concerns is what produced the long-context
+drift §2.23 fixes. Leave the manifest to the adversary.
+
+See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the schema and
+the adversary-writes-on-approval contract.
+
 ### Table-Row Decomposition
 
 Any `deliverable` section whose body uses a markdown table to enumerate work

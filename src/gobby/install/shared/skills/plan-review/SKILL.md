@@ -34,6 +34,10 @@ Before qualitative review, plan-adversary MUST load the A2 parser callable
 Use the parser result as the contract gate; only run the qualitative checklist
 after the typed grammar passes.
 
+The pre-verdict gate calls `parse_plan(..., parse_mode="draft")` so the review
+loop does not deadlock on a not-yet-written manifest. The post-approval
+self-check uses `parse_mode="expansion"` (see Manifest Emission below).
+
 Canonical heading regex:
 
 ```regex
@@ -176,6 +180,68 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
   ONLY that section to do the work. The implementing agent does **not** get
   the full plan document. A section that says "see Phase 1 for context" is a
   blocking finding.
+
+---
+
+## Manifest Emission on Approval
+
+Plan-adversary is the **sole writer** of the `## M1 Task Manifest` section.
+Planners author narrative only; the adversary commits the typed bridge between
+deliverables and expansion leaves on the same call where it approves. The act
+of emitting the manifest is what forces the adversary to confront ambiguity it
+might otherwise wave through — if a manifest entry cannot be written for a
+deliverable, the plan is not ready.
+
+See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the entry schema
+and parser-enforced invariants. This skill covers the adversary's emission
+**responsibility**; the schema lives in the contract.
+
+### Sequence on Clean Review
+
+When no blocking findings remain (zero findings or only nits):
+
+1. Append a `## M1 Task Manifest` section to the end of the plan file with
+   `kind: manifest` and a YAML block carrying one entry per `kind: deliverable`
+   section. The `M1` heading ID is required by the canonical heading regex.
+2. Self-check via `parse_plan(plan_path, parse_mode="expansion")`. Strict
+   expansion validates that the manifest is present, schema-correct, and that
+   every acceptance item is covered by exactly one entry.
+3. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
+   **3 retries**.
+4. After the cap is exhausted, behavior splits by yolo state on the planning
+   anchor task:
+   - **non-yolo**: call
+     `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
+     with the parser error details. Do NOT approve.
+   - **yolo**: do NOT call `escalate_task` — yolo NEVER escalates on this
+     path (top-level invariant). Instead:
+     - Append a `## Yolo Fallbacks` audit section to the planning anchor's
+       description (NOT the plan file) documenting the failure mode.
+     - Fall back to the deterministic stub-manifest path by calling
+       `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)`. Re-run
+       `parse_plan(plan_path, parse_mode="expansion")`.
+     - If the stub also fails (the deliverable schema in the plan is malformed
+       beyond the emitter's reach), append a second `## Yolo Fallbacks` audit
+       marker and force-approve with `mark_task_review_approved` whose
+       `approval_notes` document that downstream `gobby expand` will reject
+       the plan and require human intervention at expansion time.
+5. On success (any path that yields a parser-clean manifest, or the yolo
+   force-approve path), call `mark_task_review_approved` with `approval_notes`
+   that document the manifest outcome (e.g. "approved with N manifest
+   entries").
+
+### Plan-File Write Scope
+
+`Edit` and `Write` are permitted ONLY for the plan file at
+`task_artifacts.plan_file_path`. Writing to any other path violates the agent
+contract. The only legitimate plan-file write is appending the
+`## M1 Task Manifest` section on approval.
+
+**Rejection rounds MUST NOT edit the plan file.** Plan edits between rounds
+are the planner's responsibility (§2.23). When emitting findings, route them
+through `mark_task_review_rejected(rejection_notes=...)` only — the rejection
+tool appends `## Adversary Findings — Round N` to the anchor task description
+without touching the plan.
 
 ---
 

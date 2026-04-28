@@ -73,6 +73,18 @@ Canonical section-heading regex:
 - Structured coverage record format:
   `covers:<plan-id>:<section-id>:<item-id>`. Free-form `plan-ref:` labels are
   not honored.
+- Manifest section: implementation plans carry a single `## M1 Task Manifest`
+  section at the end of the document with `kind: manifest` and one YAML entry
+  per `kind: deliverable` section (fields: `title`, `category`, `task_type`,
+  `depends_on`, `validation_criteria`, `labels`, `assigned_agent`, `tdd`,
+  `source_section`). Planners author narrative only; `plan-adversary` writes
+  the manifest as the final act of approval. Parser modes:
+  `parse_mode="draft"` tolerates a missing manifest (used by adversary
+  pre-verdict review and `/gobby plan` Phase 3a); `parse_mode="expansion"` and
+  default `parse_mode="strict"` require the manifest and enforce the
+  deliverable→entry 1:1 invariant plus `covers:` label resolution. Full
+  schema, invariants, and adversary-writes-on-approval contract live in
+  `docs/contracts/plan-coverage.md`.
 - CLI synopsis:
   `gobby plan coverage --plan <path> --plan-id <id> --plan-hash <sha256> --task-tree <db|jsonl|path> [--root-task <ref>] [--project-id <id>] [--matrix-file <path>] [--evidence <kind>] [--manifest <path>] [--regenerate]`.
   Required flags: `--plan`, `--plan-id`, `--plan-hash`, `--task-tree`.

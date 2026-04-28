@@ -81,6 +81,108 @@ covers:<plan-id>:<section-id>:<item-id>
 Free-form `plan-ref:` labels are not honored; only structured `covers:` labels
 are valid coverage signal.
 
+## Task Manifest
+
+Implementation plans carry a single `## M1 Task Manifest` section at the end of
+the document. The manifest is the typed bridge between the plan's deliverable
+sections and the leaves the deterministic compiler emits at expansion time. The
+section heading uses the canonical ID `M1` so it satisfies the section-ID
+regex; `kind: manifest` exempts it from the `**Acceptance:**` requirement.
+
+~~~markdown
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: <human-readable title>
+  category: <code|config|docs|refactor|test|research|planning|manual>
+  task_type: <feature|bug|chore|...>
+  depends_on: [<section-id>, ...]
+  validation_criteria: <one-line pass/fail>
+  labels:
+    - covers:<plan-id>:<section-id>:<item-id>
+  assigned_agent: <agent-name>
+  tdd: <true|false>
+  source_section: <section-id>
+```
+~~~
+
+Entry schema (one entry per `kind: deliverable` section):
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `title` | str | Human-readable title for the synthesized leaf |
+| `category` | enum | One of `VALID_CATEGORIES` |
+| `task_type` | enum | Task-type tag for the synthesized leaf |
+| `depends_on` | list[str] | References plan section IDs |
+| `validation_criteria` | str | One-line pass/fail |
+| `labels` | list[str] | Exactly one `covers:<plan-id>:<section-id>:<item-id>` label per acceptance item in the source section |
+| `assigned_agent` | str | Routes the leaf to a specific agent |
+| `tdd` | bool | True implies the deterministic compiler emits a TEST/IMPL/REF triple |
+| `source_section` | str | Must reference a `kind: deliverable` section ID |
+
+### Parser-Enforced Invariants
+
+When the manifest is present, these invariants are checked regardless of mode:
+
+- Schema-check every entry against the table above.
+- Every `kind: deliverable` section has exactly one manifest entry referencing
+  it via `source_section` (1:1 invariant).
+- Every `covers:` label resolves to a real acceptance item under the entry's
+  `source_section`.
+- No orphan manifest entries — every entry's `source_section` resolves to a
+  real deliverable section.
+
+A malformed manifest fails the parser in any mode. Only the missing-manifest
+behavior differs by mode.
+
+### Parser Modes
+
+`gobby.plans.parser.parse_plan` accepts a `parse_mode` parameter that selects
+validation strictness:
+
+| Mode | Manifest | Used by | Behavior |
+| --- | --- | --- | --- |
+| `parse_mode="draft"` | optional | plan-adversary pre-verdict gate; `/gobby plan` Phase 3a; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
+| `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; plan-adversary's post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
+| `parse_mode="strict"` (default) | required | callers that want full validation regardless of context | Same strict invariants as `expansion`; default so any caller that omits `parse_mode` keeps full validation. |
+
+The deadlock between "review the plan" and "manifest must exist" is resolved by
+construction: the adversary reviews in `draft` mode, writes the manifest on
+clean review, self-checks in `expansion` mode, and downstream `gobby expand`
+parses in `expansion` against the now-manifest-bearing plan.
+
+### Adversary-Writes-on-Approval Contract
+
+Plan authors do not write the manifest. The plan-adversary writes it as the
+final act of approval — emitting the `## M1 Task Manifest` is what forces the
+adversary to confront ambiguity it might otherwise wave through. If the
+adversary cannot write a manifest entry for a deliverable, the plan is not
+ready.
+
+Sequence on clean review (no blocking findings):
+
+1. Adversary appends the `## M1 Task Manifest` section to the plan file.
+2. Adversary self-checks via `parse_plan(plan_path, parse_mode="expansion")`.
+3. On `PlanParseError`, the adversary fixes the manifest in-place and retries
+   up to 3 times.
+4. After the cap is exhausted, behavior splits by yolo state: non-yolo
+   escalates with `escalate_task(reason="needs_human:manifest_emission_failure:...")`;
+   yolo NEVER escalates — instead writes a `## Yolo Fallbacks` audit section,
+   falls back to the deterministic
+   `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)` path, and
+   re-runs the strict parse. If even the stub fails, the agent appends a
+   second audit marker and force-approves the plan; downstream `gobby expand`
+   will reject the plan when it parses in `expansion` mode, surfacing the
+   issue at expansion time where a human can intervene.
+5. On success (clean parse or yolo force-approve), the adversary calls
+   `mark_task_review_approved` with `approval_notes` documenting the
+   manifest outcome.
+
+On rejection rounds the adversary MUST NOT edit the plan file — plan edits
+between rounds are the planner's responsibility. Findings are routed through
+`mark_task_review_rejected(rejection_notes=...)` only.
+
 ## Coverage CLI
 
 ```bash

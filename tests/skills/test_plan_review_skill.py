@@ -112,7 +112,7 @@ class TestPlanReviewContent:
         return the planning task to open."""
         assert "mark_task_review_rejected" in body
         assert "round_number" in body
-        assert "returns the task to `open`" in body
+        assert "returns the anchor to `open`" in body
 
     def test_halt_condition_uses_needs_requirements_prefix(self, body: str) -> None:
         """Insufficient-context halt uses the same prefix the autonomous
