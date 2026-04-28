@@ -589,7 +589,7 @@
   border-radius: 4px;
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
   transition: border-color 0.15s;
 }
@@ -599,7 +599,7 @@
 }
 
 .assignee-picker-icon {
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .assignee-picker-value {
@@ -610,7 +610,7 @@
 }
 
 .assignee-picker-chevron {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
 }
 
@@ -641,7 +641,7 @@
 .assignee-picker-mode-btn {
   flex: 1;
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: var(--font-sans);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -661,7 +661,7 @@
   width: calc(100% - 16px);
   margin: 4px 8px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: inherit;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -680,7 +680,7 @@
   border-radius: 4px;
   color: var(--text-secondary);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
   text-align: left;
 }
@@ -696,7 +696,7 @@
 }
 
 .assignee-picker-option-icon {
-  font-size: 13px;
+  font-size: var(--text-md);
   flex-shrink: 0;
 }
 
@@ -709,7 +709,7 @@
 
 .assignee-picker-option-id {
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
 }
 
@@ -722,7 +722,7 @@
 .assignee-picker-custom-input {
   flex: 1;
   padding: 3px 6px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: inherit;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -732,7 +732,7 @@
 
 .assignee-picker-custom-btn {
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: var(--font-sans);
   background: rgba(59, 130, 246, 0.12);
   color: #3b82f6;
@@ -751,14 +751,14 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   max-width: 80px;
   overflow: hidden;
 }
 
 .assignee-badge-icon {
-  font-size: 11px;
+  font-size: var(--text-xs);
   flex-shrink: 0;
 }
 
@@ -780,7 +780,7 @@
 
 .task-comments-loading,
 .task-comments-empty {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   padding: 4px 0;
 }
@@ -792,7 +792,7 @@
 }
 
 .task-comments-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   padding-top: 4px;
 }
@@ -822,23 +822,23 @@
 }
 
 .task-comment-author-icon {
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .task-comment-author {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .task-comment-time {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   margin-left: auto;
 }
 
 .task-comment-body {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -858,7 +858,7 @@
 }
 
 .task-comment-reply-btn {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   background: none;
   border: none;
@@ -892,7 +892,7 @@
   display: block;
   width: 100%;
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-family: var(--font-sans);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
@@ -909,7 +909,7 @@
 
 .task-comment-send-btn {
   padding: 5px 12px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: var(--font-sans);
   background: rgba(59, 130, 246, 0.12);
   color: #3b82f6;
@@ -949,7 +949,7 @@
   gap: 6px;
   width: 100%;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-family: var(--font-sans);
   background: transparent;
   border: none;
@@ -970,6 +970,6 @@
 
 .task-comment-suggestion-id {
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
 }

@@ -571,7 +571,7 @@
   height: 1.25rem;
   padding: 0 0.375rem;
   border-radius: 9999px;
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;

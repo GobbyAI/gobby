@@ -52,7 +52,7 @@
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 1.5rem;
+  font-size: var(--text-3xl);
   cursor: pointer;
   border-radius: 0.25rem;
 }

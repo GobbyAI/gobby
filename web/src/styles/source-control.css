@@ -414,7 +414,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 1.5rem;
+  font-size: var(--text-3xl);
   cursor: pointer;
   padding: 0 0.25rem;
   line-height: 1;
@@ -1058,7 +1058,7 @@
   display: inline-block;
   padding: 1px 6px;
   border-radius: 12px;
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
   font-weight: 500;
   border: 1px solid;
   white-space: nowrap;
@@ -1079,7 +1079,7 @@
 }
 
 .sc-issues__detail-header h3 {
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -1091,7 +1091,7 @@
   color: var(--text-secondary);
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -1101,7 +1101,7 @@
 }
 
 .sc-issues__detail-text {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   white-space: pre-wrap;
   overflow-wrap: break-word;

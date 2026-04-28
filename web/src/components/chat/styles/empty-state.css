@@ -7,7 +7,7 @@
 }
 .chat-scope-empty {
   padding: 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   text-align: center;
 }
@@ -51,12 +51,12 @@
 }
 
 .chat-empty-state__title {
-  font-size: 1.125rem;
+  font-size: var(--text-xl);
   color: var(--text-secondary);
 }
 
 .chat-empty-state__copy {
   max-width: 26rem;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   color: var(--text-muted);
 }

@@ -7,8 +7,8 @@
 }
 
 .message-content code {
-  font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-  font-size: 0.9em;
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
   background: var(--bg-code);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
@@ -71,7 +71,7 @@
 .message-content table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.9em;
+  font-size: var(--text-base);
 }
 .message-content thead {
   background: var(--bg-muted);
@@ -169,7 +169,7 @@
 
 .message-content code {
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: var(--text-base);
   background: var(--code-bg);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
@@ -241,7 +241,7 @@
 .message-content table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.9em;
+  font-size: var(--text-base);
 }
 .message-content thead {
   background: var(--bg-tertiary);
@@ -403,7 +403,7 @@
 }
 
 .thinking-block-expand {
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
 }
 
 .thinking-block-label {

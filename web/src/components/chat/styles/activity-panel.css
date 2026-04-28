@@ -103,7 +103,7 @@
 }
 
 .tool-call-icon {
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 .tool-call-calling .tool-call-icon {
@@ -144,7 +144,7 @@
 }
 
 .tool-call-expand {
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   margin-left: 0.25rem;
 }
@@ -253,7 +253,7 @@
 }
 
 .activity-panel-tab-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -312,7 +312,7 @@
   border: 1px solid var(--border);
   border-radius: 0.375rem;
   padding: 0.375rem 0.75rem;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   margin: 0.375rem 0.75rem;
   flex: 1;
   min-width: 0;
@@ -335,7 +335,7 @@
   padding: 0.375rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 0.375rem;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   transition:
     border-color 0.1s,
     background 0.1s,
@@ -390,7 +390,7 @@
   border-radius: 0.375rem;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   text-align: left;
 }
 

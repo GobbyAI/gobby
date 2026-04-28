@@ -13,7 +13,7 @@
   justify-content: center;
   height: 100%;
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 
 /* Controls - top right */
@@ -32,7 +32,7 @@
   border: 1px solid var(--border);
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -65,7 +65,7 @@
   border: 1px solid var(--border);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   outline: none;
   transition: border-color 0.15s ease;
@@ -97,7 +97,7 @@
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   cursor: pointer;
   text-align: left;
@@ -108,7 +108,7 @@
 }
 
 .code-graph-search-kind {
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   flex-shrink: 0;
@@ -122,7 +122,7 @@
 
 .code-graph-search-path {
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -138,7 +138,7 @@
   border-radius: 4px;
   background: rgba(10, 10, 10, 0.8);
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
 }
 
@@ -162,7 +162,7 @@
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
   font-family: var(--font-mono);
 }
 
@@ -207,7 +207,7 @@
 }
 
 .code-graph-detail-type {
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-family: var(--font-mono);
@@ -217,7 +217,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 1rem;
+  font-size: var(--text-lg);
   cursor: pointer;
   padding: 0;
   line-height: 1;
@@ -228,7 +228,7 @@
 }
 
 .code-graph-detail-name {
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
   font-family: var(--font-mono);
@@ -237,7 +237,7 @@
 }
 
 .code-graph-detail-sig {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   color: #e6b450;
   font-family: var(--font-mono);
   background: rgba(0, 0, 0, 0.3);
@@ -249,14 +249,14 @@
 }
 
 .code-graph-detail-path {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
   margin-bottom: 2px;
 }
 
 .code-graph-detail-meta {
-  font-size: 0.65rem;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   font-family: var(--font-mono);
 }

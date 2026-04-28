@@ -6,7 +6,7 @@
   padding: 0.4rem 0.75rem;
   background: rgba(59, 130, 246, 0.08);
   border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 
@@ -32,7 +32,7 @@
 .session-observation-detach {
   margin-left: auto;
   padding: 0.15rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-secondary);
@@ -320,7 +320,7 @@
 }
 
 .launch-agent-success-icon {
-  font-size: 2rem;
+  font-size: var(--text-4xl);
   color: var(--color-success-foreground, #22c55e);
 }
 

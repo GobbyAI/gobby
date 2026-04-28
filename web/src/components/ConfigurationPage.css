@@ -46,7 +46,7 @@
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 500;
   cursor: pointer;
   border-radius: 4px;
@@ -74,7 +74,7 @@
   background: var(--bg-secondary);
   color: var(--text-secondary);
   border-radius: 5px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -121,7 +121,7 @@
   background: #f59e0b15;
   border-bottom: 1px solid #f59e0b33;
   color: #f59e0b;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .config-restart-banner button {
@@ -130,7 +130,7 @@
   color: #000;
   border: none;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
 }
@@ -167,13 +167,13 @@
 }
 
 .config-section-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .config-section-toggle {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
   transition: transform 0.2s;
 }
@@ -200,13 +200,13 @@
 }
 
 .config-field-label {
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 500;
   color: var(--text-primary);
 }
 
 .config-field-help {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
   line-height: 1.4;
 }
@@ -217,8 +217,8 @@
   border: 1px solid var(--border-color);
   border-radius: 5px;
   color: var(--text-primary);
-  font-size: 13px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: var(--text-md);
+  font-family: var(--font-mono);
 }
 
 .config-input:focus {
@@ -232,7 +232,7 @@
   border: 1px solid var(--border-color);
   border-radius: 5px;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .config-toggle-row {
@@ -303,7 +303,7 @@
 }
 
 .config-secrets-header h3 {
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 600;
   margin: 0;
 }
@@ -311,7 +311,7 @@
 .config-secrets-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .config-secrets-table th {
@@ -320,7 +320,7 @@
   border-bottom: 1px solid var(--border-color);
   color: var(--text-tertiary);
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -334,14 +334,14 @@
 .config-secret-masked {
   color: var(--text-tertiary);
   font-style: italic;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .config-secret-badge {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 6px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 500;
   color: var(--text-tertiary);
   background: var(--bg-tertiary);
@@ -360,7 +360,7 @@
   background: transparent;
   color: var(--text-secondary);
   border-radius: 3px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
@@ -380,7 +380,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -389,8 +389,8 @@
   background: var(--bg-tertiary);
   padding: 1px 5px;
   border-radius: 3px;
-  font-family: 'SF Mono', monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 /* Secret form (inline) */
@@ -442,7 +442,7 @@
 
 .config-prompts-sidebar-title {
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -457,7 +457,7 @@
   padding: 8px 14px;
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-md);
   transition: all 0.1s;
 }
 
@@ -473,7 +473,7 @@
 }
 
 .config-prompt-category-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
   background: var(--bg-primary);
   padding: 1px 6px;
@@ -518,13 +518,13 @@
 }
 
 .config-prompt-card-name {
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 500;
   color: var(--text-primary);
 }
 
 .config-prompt-card-desc {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-tertiary);
   margin-top: 2px;
 }
@@ -532,7 +532,7 @@
 .config-prompt-badge {
   padding: 2px 8px;
   border-radius: 10px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -566,7 +566,7 @@
 }
 
 .config-prompt-detail-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
@@ -591,7 +591,7 @@
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 /* =============================================================================
@@ -625,7 +625,7 @@
 
 .config-yaml-errors {
   color: #ef4444;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 /* =============================================================================
@@ -638,7 +638,7 @@
   justify-content: center;
   flex: 1;
   color: var(--text-tertiary);
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .config-loading {
@@ -647,7 +647,7 @@
   justify-content: center;
   flex: 1;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 /* =============================================================================
@@ -680,7 +680,7 @@
 
 .config-dialog h3 {
   margin: 0 0 16px 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .config-dialog-actions {
@@ -718,7 +718,7 @@
   }
 
   .config-secrets-table {
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .config-secrets-table th,

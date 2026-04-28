@@ -276,7 +276,7 @@
 }
 
 .memory-empty-icon {
-  font-size: 2rem;
+  font-size: var(--text-4xl);
   opacity: 0.5;
 }
 
@@ -493,7 +493,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 1.25rem;
+  font-size: var(--text-2xl);
   cursor: pointer;
   padding: 0.25rem;
   line-height: 1;
@@ -594,7 +594,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 1.25rem;
+  font-size: var(--text-2xl);
   cursor: pointer;
   padding: 0.25rem;
   line-height: 1;
@@ -697,7 +697,7 @@
   color: var(--text-muted);
   cursor: pointer;
   padding: 0;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   line-height: 1;
 }
 

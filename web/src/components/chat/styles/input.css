@@ -95,7 +95,7 @@
 
 .chat-scope-btn {
   padding: 0.25rem 0.625rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   background: transparent;
   color: var(--text-secondary);
   border: none;
@@ -144,7 +144,7 @@
 .chat-scope-search {
   width: 100%;
   padding: 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   border: none;
@@ -162,7 +162,7 @@
   display: block;
   width: 100%;
   padding: 0.4rem 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   text-align: left;
   background: none;
   color: var(--text-secondary);
@@ -242,7 +242,7 @@
   color: var(--text-primary);
   border: none;
   border-radius: 50%;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -557,7 +557,7 @@
   border-radius: 999px;
   background: var(--accent);
   color: var(--accent-foreground);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
@@ -576,7 +576,7 @@
 }
 
 .chat-input-notice {
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -622,7 +622,7 @@
   border-color: var(--border);
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
 }
 
 .chat-input-select:hover {
@@ -680,7 +680,7 @@
   display: block;
   padding: 0.375rem 0.625rem 0.25rem;
   color: var(--text-muted);
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -761,7 +761,7 @@
 
 .chat-session-status__state {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-weight: 500;
   white-space: nowrap;
   line-height: 1;

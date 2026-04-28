@@ -638,7 +638,7 @@
 
 .workflows-modal h3 {
   margin: 0 0 16px;
-  font-size: 16px;
+  font-size: var(--text-lg);
   color: var(--text-primary);
 }
 
@@ -648,7 +648,7 @@
 
 .workflows-modal-field label {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   margin-bottom: 4px;
 }
@@ -658,7 +658,7 @@
 .workflows-modal-field select {
   width: 100%;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--text-md);
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-primary);
@@ -692,7 +692,7 @@
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-md);
   cursor: pointer;
 }
 
@@ -702,7 +702,7 @@
   border-radius: 6px;
   background: var(--accent);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 500;
   cursor: pointer;
 }
@@ -734,7 +734,7 @@
 
 .workflows-yaml-header h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--text-base);
   color: var(--text-primary);
   font-weight: 600;
 }
@@ -746,7 +746,7 @@
 }
 
 .workflows-yaml-error {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--color-error);
 }
 

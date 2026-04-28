@@ -429,7 +429,7 @@
 }
 
 .pipeline-step-output pre {
-  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  font-family: var(--font-mono);
   font-size: calc(var(--font-size-base) * 0.75);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1120,7 +1120,7 @@
   padding: 0.625rem 0.75rem;
   margin-top: 0.5rem;
   border-top: 1px solid var(--border);
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   color: var(--text-secondary);
 }
 

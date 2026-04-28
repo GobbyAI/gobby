@@ -42,7 +42,7 @@
 
 /* Read-only badge */
 .read-only-badge {
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   padding: 0.1rem 0.375rem;
   background: #422006;
   color: #fbbf24;

@@ -2,6 +2,23 @@
 :root {
   --font-size-base: 16px;
 
+  /* Typography ladder — every step scales from --font-size-base so the Settings slider rescales the whole UI. */
+  --text-2xs: calc(var(--font-size-base) * 0.625);
+  --text-xs: calc(var(--font-size-base) * 0.6875);
+  --text-sm: calc(var(--font-size-base) * 0.75);
+  --text-md: calc(var(--font-size-base) * 0.8125);
+  --text-base: calc(var(--font-size-base) * 0.875);
+  --text-lg: var(--font-size-base);
+  --text-xl: calc(var(--font-size-base) * 1.125);
+  --text-2xl: calc(var(--font-size-base) * 1.25);
+  --text-3xl: calc(var(--font-size-base) * 1.5);
+  --text-4xl: calc(var(--font-size-base) * 2);
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
   --bg-primary: oklch(15% 0.005 125);
   --bg-secondary: oklch(19% 0.006 125);
   --bg-tertiary: oklch(23% 0.007 125);
@@ -581,7 +598,7 @@ body {
 }
 
 .session-pid {
-  font-size: 0.625rem;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   font-family: inherit;
 }

@@ -23,5 +23,5 @@
   justify-content: center;
   flex: 1;
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }

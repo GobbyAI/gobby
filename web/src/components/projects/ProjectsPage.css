@@ -62,7 +62,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 1.1rem;
+  font-size: var(--text-xl);
   cursor: pointer;
   padding: 0;
   line-height: 1;
@@ -173,7 +173,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .projects-toolbar-btn:hover {
@@ -215,7 +215,7 @@
 }
 
 .projects-overview-count {
-  font-size: 24px;
+  font-size: var(--text-3xl);
   font-weight: 600;
   font-family: inherit;
 }
@@ -231,7 +231,7 @@
 }
 
 .projects-overview-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -480,7 +480,7 @@
 }
 
 .projects-detail-tab-badge {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   background: var(--accent);
   color: var(--bg-primary);
   padding: 1px 5px;
@@ -566,14 +566,14 @@
 }
 
 .projects-summary-stat-value {
-  font-size: 20px;
+  font-size: var(--text-2xl);
   font-weight: 600;
   font-family: inherit;
   color: var(--accent);
 }
 
 .projects-summary-stat-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   text-transform: uppercase;
 }
@@ -632,7 +632,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
 }
 
 .projects-overview-task-dot {

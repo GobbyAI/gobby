@@ -35,7 +35,7 @@
 
 .cron-sidebar-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .cron-sidebar-actions {
@@ -55,7 +55,7 @@
 .cron-filter-input {
   width: 100%;
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--bg-primary);
@@ -75,7 +75,7 @@
 .cron-filter-select {
   flex: 1;
   padding: 4px 6px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--bg-primary);
@@ -120,7 +120,7 @@
 
 .cron-job-name {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -150,14 +150,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 
 .cron-action-badge {
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 500;
   text-transform: uppercase;
 }
@@ -197,13 +197,13 @@
 
 .cron-empty h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
   color: var(--text-primary);
 }
 
 .cron-empty p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 /* Job detail panel */
@@ -221,13 +221,13 @@
 }
 
 .cron-detail-title {
-  font-size: 20px;
+  font-size: var(--text-2xl);
   font-weight: 600;
   margin: 0 0 4px;
 }
 
 .cron-detail-description {
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--text-secondary);
   margin: 0;
 }
@@ -244,7 +244,7 @@
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -296,7 +296,7 @@
 }
 
 .cron-info-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -304,7 +304,7 @@
 }
 
 .cron-info-value {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
   word-break: break-all;
 }
@@ -314,7 +314,7 @@
   background: var(--bg-primary);
   padding: 2px 6px;
   border-radius: 3px;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 /* Action config */
@@ -323,7 +323,7 @@
 }
 
 .cron-config-section h4 {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   margin: 0 0 8px;
 }
@@ -334,7 +334,7 @@
   border-radius: 6px;
   padding: 12px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
@@ -346,7 +346,7 @@
 }
 
 .cron-runs-section h4 {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   margin: 0 0 12px;
   display: flex;
@@ -357,14 +357,14 @@
 .cron-runs-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .cron-runs-table th {
   text-align: left;
   padding: 6px 10px;
   font-weight: 600;
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
@@ -385,7 +385,7 @@
   gap: 4px;
   padding: 2px 6px;
   border-radius: 3px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
 }
 
@@ -413,7 +413,7 @@
   padding: 16px;
   text-align: center;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 /* Create dialog */
@@ -439,7 +439,7 @@
 
 .cron-dialog h3 {
   margin: 0 0 16px;
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .cron-form-group {
@@ -448,7 +448,7 @@
 
 .cron-form-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   margin-bottom: 4px;
   color: var(--text-secondary);
@@ -459,7 +459,7 @@
 .cron-form-textarea {
   width: 100%;
   padding: 6px 8px;
-  font-size: 13px;
+  font-size: var(--text-md);
   border: 1px solid color-mix(in srgb, var(--border-color) 100%, var(--text-secondary) 30%);
   border-radius: 4px;
   background: var(--bg-secondary);
@@ -480,12 +480,12 @@
   min-height: 80px;
   resize: vertical;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .cron-form-json {
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
   line-height: 1.5;
   background: var(--bg-tertiary, var(--bg-primary));
   tab-size: 2;
