@@ -440,7 +440,7 @@ class TestMergeResolveTool:
         )
         mock_storage.get_conflict.return_value = mock_conflict
 
-        # Mock successful AI resolution
+        # Mock successful AI resolution with the resolved content propagated.
         mock_resolver.resolve_file.return_value = ResolutionResult(
             success=True,
             tier=ResolutionTier.CONFLICT_ONLY_AI,
@@ -448,6 +448,7 @@ class TestMergeResolveTool:
             resolved_files=["src/test.py"],
             unresolved_conflicts=[],
             needs_human_review=False,
+            resolved_content_by_file={"src/test.py": "merged version"},
         )
 
         resolved_conflict = MergeConflict(
@@ -546,14 +547,24 @@ class TestMergeApplyTool:
 
     @pytest.fixture
     def mock_git_manager(self):
-        """Create mock git manager."""
+        """Create mock git manager. _run_git returns subprocess-like records."""
         git_manager = MagicMock()
-        git_manager.apply_resolution = MagicMock()
-        git_manager.commit = MagicMock()
+        git_manager._run_git = MagicMock()
         return git_manager
 
     @pytest.fixture
-    def merge_registry(self, mock_storage, mock_resolver, mock_git_manager):
+    def mock_worktree_manager(self, tmp_path):
+        """Mock worktree manager whose `get` returns a worktree under tmp_path."""
+        manager = MagicMock()
+        worktree = MagicMock()
+        worktree.worktree_path = str(tmp_path)
+        manager.get.return_value = worktree
+        return manager
+
+    @pytest.fixture
+    def merge_registry(
+        self, mock_storage, mock_resolver, mock_git_manager, mock_worktree_manager
+    ):
         """Create merge registry with mocked dependencies."""
         from gobby.mcp_proxy.tools.merge import create_merge_registry
 
@@ -561,11 +572,14 @@ class TestMergeApplyTool:
             merge_storage=mock_storage,
             merge_resolver=mock_resolver,
             git_manager=mock_git_manager,
+            worktree_manager=mock_worktree_manager,
         )
 
     @pytest.mark.asyncio
-    async def test_merge_apply_all_resolved(self, merge_registry, mock_storage, mock_git_manager):
-        """merge_apply completes merge when all conflicts resolved."""
+    async def test_merge_apply_all_resolved(
+        self, merge_registry, mock_storage, mock_git_manager, tmp_path
+    ):
+        """merge_apply writes resolved content, stages, and commits the merge."""
         from gobby.storage.merge_resolutions import MergeConflict, MergeResolution
 
         mock_resolution = MergeResolution(
@@ -580,7 +594,6 @@ class TestMergeApplyTool:
         )
         mock_storage.get_resolution.return_value = mock_resolution
 
-        # All conflicts resolved
         resolved_conflicts = [
             MergeConflict(
                 id="mc-conflict1",
@@ -589,14 +602,25 @@ class TestMergeApplyTool:
                 status="resolved",
                 ours_content="our version",
                 theirs_content="their version",
-                resolved_content="merged version",
+                resolved_content="merged version\n",
                 created_at="2025-01-01T00:00:00+00:00",
                 updated_at="2025-01-01T00:00:00+00:00",
             )
         ]
         mock_storage.list_conflicts.return_value = resolved_conflicts
 
-        # Mock successful resolution update
+        def fake_run_git(args, cwd=None, timeout=None):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            if args[:1] == ["diff"]:
+                result.stdout = ""
+            else:
+                result.stdout = ""
+            return result
+
+        mock_git_manager._run_git.side_effect = fake_run_git
+
         updated_resolution = MergeResolution(
             id="mr-test123",
             worktree_id="wt-abc",
@@ -613,6 +637,12 @@ class TestMergeApplyTool:
 
         assert result["success"] is True
         assert result["resolution"]["status"] == "resolved"
+        # Resolved content was written to disk under the worktree path.
+        written = (tmp_path / "src" / "test.py").read_text()
+        assert written == "merged version\n"
+        # git add + diff + commit were issued in that order.
+        called_cmds = [call.args[0][:2] for call in mock_git_manager._run_git.call_args_list]
+        assert called_cmds == [["add", "--"], ["diff", "--name-only"], ["commit", "--no-edit"]]
 
     @pytest.mark.asyncio
     async def test_merge_apply_with_pending_conflicts(self, merge_registry, mock_storage):

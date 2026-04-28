@@ -9,6 +9,7 @@ Implements a four-tier resolution strategy:
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -98,6 +99,40 @@ async def auto_resolve_trivial_conflicts(
     return remaining
 
 
+_CONFLICT_BLOCK_RE = re.compile(
+    r"<<<<<<< [^\n]*\n.*?\n=======\n.*?\n>>>>>>> [^\n]*\n",
+    re.DOTALL,
+)
+
+
+def splice_resolutions_into_file(
+    file_content: str,
+    hunk_resolutions: list[str],
+) -> str | None:
+    """Splice LLM-resolved hunks back into a file with conflict markers.
+
+    Replaces each `<<<<<<<...=======...>>>>>>>` block with the corresponding
+    entry from hunk_resolutions, preserving surrounding content.
+
+    Returns None when the conflict-block count does not match the resolution
+    count — caller should fall through to a different tier.
+    """
+    matches = list(_CONFLICT_BLOCK_RE.finditer(file_content))
+    if len(matches) != len(hunk_resolutions):
+        return None
+
+    out: list[str] = []
+    last_end = 0
+    for match, replacement in zip(matches, hunk_resolutions, strict=True):
+        out.append(file_content[last_end : match.start()])
+        normalized = replacement.strip("\n")
+        if normalized:
+            out.append(normalized + "\n")
+        last_end = match.end()
+    out.append(file_content[last_end:])
+    return "".join(out)
+
+
 class ResolutionTier(Enum):
     """Resolution strategy tiers, from fastest to most expensive."""
 
@@ -122,6 +157,8 @@ class MergeResult:
         resolved_files: List of files that were successfully resolved
         unresolved_conflicts: List of conflicts that could not be resolved
         needs_human_review: Whether manual intervention is required
+        resolved_content_by_file: Map of file path -> full resolved file content,
+            populated by AI tiers so callers can write the resolution to disk.
     """
 
     success: bool
@@ -130,6 +167,7 @@ class MergeResult:
     resolved_files: list[str] = field(default_factory=list)
     unresolved_conflicts: list[dict[str, Any]] = field(default_factory=list)
     needs_human_review: bool = False
+    resolved_content_by_file: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -140,6 +178,7 @@ class MergeResult:
             "resolved_files": self.resolved_files,
             "unresolved_conflicts": self.unresolved_conflicts,
             "needs_human_review": self.needs_human_review,
+            "resolved_content_by_file": self.resolved_content_by_file,
         }
 
 
@@ -212,6 +251,11 @@ class MergeResolver:
         if total_lines <= self.conflict_size_threshold:
             result = await self._resolve_conflicts_only([conflict])
             if result["success"]:
+                content_by_file = {
+                    r["file"]: r["content"]
+                    for r in result.get("resolutions", [])
+                    if r.get("content")
+                }
                 return ResolutionResult(
                     success=True,
                     tier=ResolutionTier.CONFLICT_ONLY_AI,
@@ -219,11 +263,17 @@ class MergeResolver:
                     resolved_files=[file_path],
                     unresolved_conflicts=[],
                     needs_human_review=False,
+                    resolved_content_by_file=content_by_file,
                 )
 
         # Tier 3: Full-file resolution
         result = await self._resolve_full_file([conflict])
         if result["success"]:
+            content_by_file = {
+                r["file"]: r["content"]
+                for r in result.get("resolutions", [])
+                if r.get("content")
+            }
             return ResolutionResult(
                 success=True,
                 tier=ResolutionTier.FULL_FILE_AI,
@@ -231,6 +281,7 @@ class MergeResolver:
                 resolved_files=[file_path],
                 unresolved_conflicts=[],
                 needs_human_review=False,
+                resolved_content_by_file=content_by_file,
             )
 
         # Tier 4: Human review fallback
@@ -458,18 +509,43 @@ class MergeResolver:
                     caller="worktrees.merge.resolve_hunks",
                 )
 
-                if response:
-                    # Simple parsing assumption - in real app would be more robust
-                    resolved_hunks = response.split("---HUNK SEPARATOR---")
-                    resolutions.append(
-                        {
-                            "file": file_path,
-                            "content": response,  # Storing full response for now as simple implementation
-                            "hunks_resolved": len(resolved_hunks),
-                        }
-                    )
-                else:
+                if not response:
                     return {"success": False, "resolutions": []}
+
+                resolved_hunks = [
+                    chunk.strip("\n")
+                    for chunk in response.split("---HUNK SEPARATOR---")
+                ]
+                resolved_hunks = [h for h in resolved_hunks if h]
+                if not resolved_hunks:
+                    resolved_hunks = [response.strip("\n")]
+
+                try:
+                    file_with_markers = Path(file_path).read_text()
+                except OSError as read_err:
+                    logger.error(
+                        f"Failed to read {file_path} for hunk splicing: {read_err}"
+                    )
+                    return {"success": False, "resolutions": []}
+
+                spliced = splice_resolutions_into_file(
+                    file_with_markers, resolved_hunks
+                )
+                if spliced is None:
+                    logger.warning(
+                        f"Hunk count mismatch splicing {file_path}: "
+                        f"file has {len(_CONFLICT_BLOCK_RE.findall(file_with_markers))} "
+                        f"conflict blocks, LLM returned {len(resolved_hunks)} hunks"
+                    )
+                    return {"success": False, "resolutions": []}
+
+                resolutions.append(
+                    {
+                        "file": file_path,
+                        "content": spliced,
+                        "hunks_resolved": len(resolved_hunks),
+                    }
+                )
             except Exception as e:
                 logger.error(f"LLM resolution failed for {file_path}: {e}")
                 return {"success": False, "resolutions": []}

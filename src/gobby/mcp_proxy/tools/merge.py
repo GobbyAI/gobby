@@ -14,7 +14,9 @@ via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -246,8 +248,16 @@ def create_merge_registry(
                 )
 
                 if result.success:
-                    # Get resolved content from result (would be in resolved_files)
-                    resolved = "AI resolved content"  # Placeholder
+                    resolved = result.resolved_content_by_file.get(conflict.file_path)
+                    if not resolved:
+                        return {
+                            "success": False,
+                            "error": (
+                                "AI resolver returned success but produced no content "
+                                f"for {conflict.file_path}"
+                            ),
+                            "needs_human_review": True,
+                        }
                     updated = merge_storage.update_conflict(
                         conflict_id=conflict_id,
                         status=ConflictStatus.RESOLVED.value,
@@ -305,14 +315,88 @@ def create_merge_registry(
             }
 
         try:
-            # Apply resolutions to git (would write files and stage)
-            if git_manager:
-                for conflict in conflicts:
-                    if conflict.resolved_content:
-                        # Would write conflict.resolved_content to conflict.file_path
-                        pass
+            if not git_manager or not worktree_manager:
+                return {
+                    "success": False,
+                    "error": "git_manager or worktree_manager not configured",
+                }
 
-            # Update resolution status
+            worktree = worktree_manager.get(resolution.worktree_id)
+            if not worktree or not worktree.worktree_path:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Worktree '{resolution.worktree_id}' not found or has no path"
+                    ),
+                }
+            wt_path = worktree.worktree_path
+
+            written: list[str] = []
+            for conflict in conflicts:
+                if conflict.resolved_content is None:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Conflict {conflict.id} for {conflict.file_path} has no "
+                            "resolved_content; resolve it before applying"
+                        ),
+                    }
+                target = Path(wt_path) / conflict.file_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(conflict.resolved_content)
+
+                add_result = await asyncio.to_thread(
+                    git_manager._run_git,
+                    ["add", "--", conflict.file_path],
+                    cwd=wt_path,
+                    timeout=10,
+                )
+                if add_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"git add failed for {conflict.file_path}: "
+                            f"{add_result.stderr.strip()}"
+                        ),
+                    }
+                written.append(conflict.file_path)
+
+            unmerged_check = await asyncio.to_thread(
+                git_manager._run_git,
+                ["diff", "--name-only", "--diff-filter=U"],
+                cwd=wt_path,
+                timeout=10,
+            )
+            unmerged = [
+                line.strip()
+                for line in unmerged_check.stdout.strip().split("\n")
+                if line.strip()
+            ]
+            if unmerged:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Cannot complete merge: {len(unmerged)} files still have "
+                        "unmerged changes after applying resolutions"
+                    ),
+                    "unmerged_files": unmerged,
+                }
+
+            commit_result = await asyncio.to_thread(
+                git_manager._run_git,
+                ["commit", "--no-edit"],
+                cwd=wt_path,
+                timeout=30,
+            )
+            if commit_result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": (
+                        f"git commit failed: "
+                        f"{(commit_result.stderr or commit_result.stdout).strip()}"
+                    ),
+                }
+
             updated = merge_storage.update_resolution(
                 resolution_id=resolution_id,
                 status="resolved",
@@ -323,7 +407,7 @@ def create_merge_registry(
                 "success": True,
                 "resolution": updated.to_dict() if updated else None,
                 "message": "Merge completed successfully",
-                "files_merged": [c.file_path for c in conflicts],
+                "files_merged": written,
             }
 
         except Exception as e:
