@@ -461,4 +461,14 @@ def create_merge_registry(
             logger.exception(f"Error aborting merge for resolution_id={resolution_id}")
             return {"success": False, "error": str(e)}
 
+    # Register merge-landscape analytics tools on the same registry so the
+    # merge-orchestrator agent can survey/predict/verify alongside resolve/apply.
+    from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
+
+    register_merge_landscape_tools(
+        registry,
+        worktree_manager=worktree_manager,
+        git_manager=git_manager,
+    )
+
     return registry
