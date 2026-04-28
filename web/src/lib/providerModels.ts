@@ -46,7 +46,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
 };
 
-const PROVIDER_SORT_ORDER = ["claude", "codex", "gemini", "qwen", "droid"] as const;
+const PROVIDER_SORT_ORDER = ["claude", "droid", "codex", "gemini", "qwen"] as const;
 const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
 export const AUTO_REASONING_EFFORT = "auto";
 

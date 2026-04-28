@@ -204,8 +204,8 @@ describe("providerModels", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
     expect(getOrderedProviders(["qwen", "droid", "claude"])).toEqual([
       "claude",
-      "qwen",
       "droid",
+      "qwen",
     ]);
   });
 
