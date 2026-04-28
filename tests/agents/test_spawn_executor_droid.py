@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import shlex
 import shutil
+import subprocess  # nosec B404 - integration test launches local CLIs.
+import sys
+import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.isolation import _copy_cli_hooks
 from gobby.agents.spawn_executor import SpawnRequest, SpawnResult, execute_spawn
+from gobby.utils.daemon_client import DaemonClient
 
 pytestmark = pytest.mark.unit
 
@@ -176,13 +185,127 @@ class TestExecuteSpawnDroid:
     os.environ.get("GOBBY_RUN_DROID_HOOK_INTEGRATION") != "1",
     reason="set GOBBY_RUN_DROID_HOOK_INTEGRATION=1 to launch a live Droid/tmux hook test",
 )
-def test_droid_worktree_spawn_inherits_global_hooks() -> None:
-    """Live verification placeholder for Droid global hook inheritance.
+def test_droid_worktree_spawn_fires_pre_tool_use_against_gobby_daemon(
+    tmp_path: Path,
+) -> None:
+    """Opt-in live check that Droid PreToolUse fires from an isolated worktree.
 
-    The implementation intentionally does not copy hooks into isolation roots:
-    Droid reads user-global ``~/.factory/hooks/hooks.json`` independently of
-    ``--cwd``. This test is opt-in because it launches a real Droid session,
-    depends on a running Gobby daemon with Droid hooks installed, and may call
-    external model APIs.
+    The fallback hook copy in ``isolation.py`` writes Gobby-owned Droid hooks
+    into the worktree-local Factory config. This harness launches real Droid
+    under that worktree, verifies a PreToolUse sentinel hook ran, and confirms
+    the Gobby daemon accepted at least one hook request.
     """
-    pytest.skip("live Droid hook integration requires an explicit local harness run")
+    if shutil.which("git") is None:
+        pytest.skip("git is required to create the Droid hook integration worktree")
+
+    client = DaemonClient(timeout=5.0)
+    healthy, error = client.check_health()
+    if not healthy:
+        pytest.skip(f"Gobby daemon is not ready for Droid hook integration: {error}")
+
+    worktree_path = _create_integration_worktree(tmp_path)
+    asyncio.run(
+        _copy_cli_hooks(
+            source_path=str(tmp_path / "repo"),
+            target_path=str(worktree_path),
+            provider="droid",
+        )
+    )
+
+    sentinel_path = tmp_path / "pretooluse-fired.txt"
+    _prepend_pre_tool_use_sentinel(
+        worktree_path / ".factory" / "hooks" / "hooks.json",
+        sentinel_path,
+    )
+
+    before_hooks = _hooks_total(client)
+    env = os.environ.copy()
+    env["GOBBY_DROID_HOOK_SENTINEL"] = str(sentinel_path)
+
+    result = subprocess.run(  # nosec B603 - opt-in integration against local Droid CLI.
+        [
+            "droid",
+            "exec",
+            "--input-format",
+            "stream-json",
+            "--cwd",
+            str(worktree_path),
+            "--auto",
+            "high",
+            "Use a shell command to list the files in the current directory, then stop.",
+        ],
+        cwd=worktree_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert _wait_for_path(sentinel_path), "Droid did not fire the PreToolUse sentinel hook"
+    assert sentinel_path.read_text().strip() == "PreToolUse"
+    assert _hooks_total(client) > before_hooks
+
+
+def _create_integration_worktree(tmp_path: Path) -> Path:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _run_git(repo_path, "init")
+    _run_git(repo_path, "config", "user.email", "droid-hook-test@example.invalid")
+    _run_git(repo_path, "config", "user.name", "Droid Hook Test")
+    (repo_path / "README.md").write_text("Droid hook integration\n")
+    _run_git(repo_path, "add", "README.md")
+    _run_git(repo_path, "commit", "-m", "initial")
+
+    worktree_path = tmp_path / "worktree"
+    _run_git(repo_path, "worktree", "add", "-b", "droid-hook-test", str(worktree_path))
+    return worktree_path
+
+
+def _run_git(cwd: Path, *args: str) -> None:
+    result = subprocess.run(  # nosec B603, B607 - test invokes fixed local git command.
+        ["git", *args],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def _prepend_pre_tool_use_sentinel(hooks_file: Path, sentinel_path: Path) -> None:
+    settings = json.loads(hooks_file.read_text())
+    script = (
+        "import os; "
+        "from pathlib import Path; "
+        "Path(os.environ['GOBBY_DROID_HOOK_SENTINEL']).write_text('PreToolUse\\n')"
+    )
+    sentinel_entry = {
+        "matcher": "*",
+        "hooks": [
+            {
+                "type": "command",
+                "command": f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}",
+            }
+        ],
+    }
+    settings["hooks"]["PreToolUse"].insert(0, sentinel_entry)
+    hooks_file.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+def _hooks_total(client: DaemonClient) -> int:
+    response = client.call_http_api("/api/metrics/current", method="GET", timeout=5.0)
+    response.raise_for_status()
+    counters = response.json().get("counters", {})
+    return int(counters.get("hooks_total", {}).get("value", 0))
+
+
+def _wait_for_path(path: Path, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return True
+        time.sleep(0.1)
+    return path.exists()
