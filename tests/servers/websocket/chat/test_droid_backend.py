@@ -96,9 +96,96 @@ def _session_init_line(model: str = "gpt-5.4") -> str:
     )
 
 
+def _turn_response_lines(text: str) -> list[str]:
+    return [
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "type": "response",
+                "factoryApiVersion": "1.0.0",
+                "factoryProtocolVersion": "1.25.0",
+                "id": "gobby-message-2",
+                "result": {},
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "type": "notification",
+                "factoryApiVersion": "1.0.0",
+                "factoryProtocolVersion": "1.25.0",
+                "method": "droid.session_notification",
+                "params": {
+                    "notification": {
+                        "type": "assistant_text_delta",
+                        "messageId": "msg-1",
+                        "blockIndex": 0,
+                        "textDelta": text,
+                    }
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "type": "notification",
+                "factoryApiVersion": "1.0.0",
+                "factoryProtocolVersion": "1.25.0",
+                "method": "droid.session_notification",
+                "params": {
+                    "notification": {
+                        "type": "droid_working_state_changed",
+                        "newState": "idle",
+                    }
+                },
+            }
+        ),
+    ]
+
+
+def _permission_request_line(
+    *,
+    request_id: str = "permission-1",
+    tool_id: str = "tool-1",
+    tool_name: str = "Read",
+    tool_input: dict[str, Any] | None = None,
+) -> str:
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "type": "request",
+            "factoryApiVersion": "1.0.0",
+            "factoryProtocolVersion": "1.25.0",
+            "id": request_id,
+            "method": "droid.request_permission",
+            "params": {
+                "toolUses": [
+                    {
+                        "toolUse": {
+                            "type": "tool_use",
+                            "id": tool_id,
+                            "name": tool_name,
+                            "input": tool_input
+                            if tool_input is not None
+                            else {"file_path": "README.md"},
+                        },
+                        "confirmationType": "read",
+                        "details": {"type": "read", "filePath": "README.md"},
+                    }
+                ],
+                "options": [
+                    {"label": "Proceed once", "value": "proceed_once"},
+                    {"label": "Cancel", "value": "cancel"},
+                ],
+            },
+        }
+    )
+
+
 def test_droid_tool_name_adapter() -> None:
     assert _droid_tool_name_adapter("gobby___list_mcp_servers") == ("mcp__gobby__list_mcp_servers")
     assert _droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
+    assert _droid_tool_name_adapter("Execute") == "Bash"
     assert _droid_tool_name_adapter("Read") == "Read"
 
 
@@ -171,6 +258,198 @@ async def test_send_message_streams_fixture_and_writes_prompt() -> None:
         "Hello from Droid"
     ]
     assert isinstance(events[-1], DoneEvent)
+
+
+@pytest.mark.asyncio
+async def test_send_message_answers_auto_allowed_permission_request() -> None:
+    process = _FakeProcess(
+        [_session_init_line()]
+        + [
+            _turn_response_lines("Approved")[0],
+            _permission_request_line(request_id="permission-1"),
+            *_turn_response_lines("Approved")[1:],
+        ]
+    )
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+
+    with (
+        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch(
+            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        events = [event async for event in session.send_message("read the readme")]
+
+    writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
+    permission_response = writes[2]
+    assert permission_response["type"] == "response"
+    assert permission_response["id"] == "permission-1"
+    assert permission_response["result"] == {"selectedOption": "proceed_once"}
+    assert [event.content for event in events if isinstance(event, TextChunk)] == ["Approved"]
+    assert isinstance(events[-1], DoneEvent)
+
+
+@pytest.mark.asyncio
+async def test_send_message_cancels_permission_when_pre_tool_blocks() -> None:
+    process = _FakeProcess(
+        [_session_init_line()]
+        + [
+            _turn_response_lines("Denied")[0],
+            _permission_request_line(
+                request_id="permission-1",
+                tool_id="tool-1",
+                tool_name="Execute",
+                tool_input={"command": "python -c 'print(1)'"},
+            ),
+            *_turn_response_lines("Denied")[1:],
+        ]
+    )
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+    pre_tool_calls: list[dict[str, Any]] = []
+
+    async def block_pre_tool(payload: dict[str, Any]) -> dict[str, Any]:
+        pre_tool_calls.append(payload)
+        return {"decision": "block", "reason": "blocked by test"}
+
+    session._on_pre_tool = block_pre_tool
+
+    with (
+        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch(
+            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        events = [event async for event in session.send_message("run a command")]
+
+    writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
+    permission_response = writes[2]
+    assert permission_response["id"] == "permission-1"
+    assert permission_response["result"] == {"selectedOption": "cancel"}
+    assert pre_tool_calls == [
+        {"tool_name": "Bash", "tool_input": {"command": "python -c 'print(1)'"}}
+    ]
+    assert [event.content for event in events if isinstance(event, TextChunk)] == ["Denied"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_waits_for_user_permission_approval() -> None:
+    process = _FakeProcess(
+        [_session_init_line()]
+        + [
+            _turn_response_lines("Ran")[0],
+            _permission_request_line(
+                request_id="permission-1",
+                tool_id="tool-1",
+                tool_name="Execute",
+                tool_input={"command": "python -c 'print(1)'"},
+            ),
+            *_turn_response_lines("Ran")[1:],
+        ]
+    )
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+    session.chat_mode = "auto"
+    approval_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def approve_tool(tool_name: str, arguments: dict[str, Any]) -> None:
+        approval_calls.append((tool_name, arguments))
+        session.provide_approval("approve")
+
+    session._tool_approval_callback = approve_tool
+
+    with (
+        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch(
+            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        events = [event async for event in session.send_message("run a command")]
+
+    writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
+    permission_response = writes[2]
+    assert approval_calls == [("Bash", {"command": "python -c 'print(1)'"})]
+    assert permission_response["result"] == {"selectedOption": "proceed_once"}
+    assert [event.content for event in events if isinstance(event, TextChunk)] == ["Ran"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_supports_multiple_turns_on_same_process() -> None:
+    process = _FakeProcess(
+        [_session_init_line()] + _turn_response_lines("First") + _turn_response_lines("Second")
+    )
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+
+    with (
+        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch(
+            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        first = [event async for event in session.send_message("one")]
+        second = [event async for event in session.send_message("two")]
+
+    writes = [json.loads(write.decode("utf-8")) for write in process.stdin.writes]
+    assert [write["method"] for write in writes] == [
+        "droid.initialize_session",
+        "droid.add_user_message",
+        "droid.add_user_message",
+    ]
+    assert [event.content for event in first if isinstance(event, TextChunk)] == ["First"]
+    assert [event.content for event in second if isinstance(event, TextChunk)] == ["Second"]
+    assert process.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_send_message_reattaches_dead_process_before_next_turn() -> None:
+    processes = [
+        _FakeProcess([_session_init_line()] + _turn_response_lines("First")),
+        _FakeProcess([_session_init_line()] + _turn_response_lines("Second")),
+    ]
+    backend = DroidWebChatBackend()
+    session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
+    session.project_path = "/tmp/project"
+
+    with (
+        patch("gobby.servers.websocket.chat.droid_backend.shutil.which", return_value="/bin/droid"),
+        patch(
+            "gobby.servers.websocket.chat.droid_backend.asyncio.create_subprocess_exec",
+            side_effect=processes,
+        ) as create_process,
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        first = [event async for event in session.send_message("one")]
+        processes[0].returncode = 0
+        second = [event async for event in session.send_message("two")]
+
+    assert create_process.call_count == 2
+    first_writes = [json.loads(write.decode("utf-8")) for write in processes[0].stdin.writes]
+    second_writes = [json.loads(write.decode("utf-8")) for write in processes[1].stdin.writes]
+    assert [write["method"] for write in first_writes] == [
+        "droid.initialize_session",
+        "droid.add_user_message",
+    ]
+    assert [write["method"] for write in second_writes] == [
+        "droid.initialize_session",
+        "droid.add_user_message",
+    ]
+    assert second_writes[0]["params"]["sessionId"] == "droid-session-1"
+    assert [event.content for event in first if isinstance(event, TextChunk)] == ["First"]
+    assert [event.content for event in second if isinstance(event, TextChunk)] == ["Second"]
 
 
 @pytest.mark.asyncio
