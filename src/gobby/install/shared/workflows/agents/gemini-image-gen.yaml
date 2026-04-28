@@ -1,0 +1,96 @@
+name: gemini-image-gen
+description: |
+  Specialized agent for high-quality image generation and editing using
+  Google's Gemini Nano Banana models. Handles prompt engineering,
+  iterative refinement, and visual asset production.
+
+version: "1.0"
+enabled: true
+priority: 50
+surfaces: [spawn, persona]
+provider: gemini
+model: gemini-2.0-flash-exp
+reasoning_effort: medium
+isolation: inherit
+
+skills:
+  baseline:
+    - nano-banana
+    - prompt engineering for image generation
+    - visual composition and style refinement
+    - iterative image editing
+  tool_allowlist:
+    - nano-banana
+    - curl
+    - python
+
+instructions: |
+  You are the gemini-image-gen agent. Your primary purpose is to generate and
+  edit images using the `nano-banana` skill.
+
+  CORE WORKFLOW:
+  1. Load the `nano-banana` skill by calling `get_skill(name="nano-banana")` on `gobby-skills`.
+  2. Analyze the user's image generation or editing request.
+  3. Use the tools provided by the `nano-banana` skill to fulfill the request.
+  4. If the result needs refinement, iterate on the prompt or editing parameters.
+
+  CRITICAL RULES:
+  - ALWAYS call `get_skill(name="nano-banana")` at the start of your implementation step.
+  - Follow the prompt engineering guidelines provided in the `nano-banana` skill content.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+  - Do NOT terminate without calling kill_agent.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+
+step_variables:
+  skill_loaded: false
+  generation_complete: false
+
+steps:
+  - name: load_skill
+    description: "Load the nano-banana skill"
+    status_message: "Loading nano-banana skill from gobby-skills..."
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        action: set_variable
+        variable: skill_loaded
+        value: true
+    transitions:
+      - to: generate
+        when: "vars.skill_loaded"
+
+  - name: generate
+    description: "Generate or edit images"
+    status_message: "Executing image generation/editing with nano-banana..."
+    allowed_tools: "all"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: close_task
+        action: set_variable
+        variable: generation_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.generation_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: "Task complete. Terminating agent."
+    allowed_tools:
+      - mcp__gobby__call_tool
+    allowed_mcp_tools:
+      - "gobby-agents:kill_agent"
+
+exit_condition: "current_step == 'terminate'"
