@@ -74,6 +74,7 @@ class TestWebChatRuntimeManager:
 
         assert isinstance(droid_session, DroidManagedChatSession)
         assert droid_session.provider == "droid"
+        assert droid_session._provider_label() == "droid"
 
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(
@@ -108,6 +109,9 @@ class TestWebChatRuntimeManager:
         assert manager._gemini_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
         assert manager._qwen_backend._sandbox_config is not None
         assert manager._qwen_backend._sandbox_config.extra_write_paths == ["/tmp/web-write"]
+        assert manager._droid_backend._sandbox_config is not None
+        assert manager._droid_backend._sandbox_config.enabled is False
+        assert manager._droid_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
 
     def test_manager_defaults_web_chat_sandbox_to_enabled(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None, daemon_config=DaemonConfig())
