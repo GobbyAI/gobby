@@ -31,7 +31,7 @@ Human-in-the-loop steps (requirements elicitation, manual plan drafting) happen 
 
 - **`allow_automation: bool = False`** is the gate. The dispatcher never touches a task without it. Backlog stays invisible to the cron until an operator opts in, so migration is free.
 - **Existing `status` enum preserved** — `open | in_progress | needs_review | review_approved | closed | escalated`. It's the canonical claim/work state. Adding a parallel `lifecycle` enum is additive, not a rename.
-- **Lifecycle is at the epic level.** Leaf subtasks carry `status` only; their parent epic's lifecycle is what rules 7 and onward observe.
+- **Lifecycle is dispatch-relevant on every task** (epics AND leaves). The shipped schema (#12776) puts the `lifecycle` column on `tasks` directly; both epics and leaves carry it. Epics walk the full pipeline (`plan_review → test_arch → expanding → in_development → holistic_review → pr → merging → merged`); leaves typically inhabit `in_development → holistic_review` as the dev/qa loop drives them, then park at `(holistic_review, review_approved)` until the parent epic merges and `rule_cascade_close_on_merge` cascades them to `closed`. Expansion (§2.8) initializes every generated leaf to `lifecycle=in_development` so `rule_dispatch_leaf` can pick it up; the legacy `lifecycle_stage` column (constraint: `in_progress | needs_review | review_approved`) is unrelated and unchanged. Helper predicates inspect `task.lifecycle` directly on both epics and leaves.
 - **One cron heartbeat**, not per-epic. `CronExecutor.register_handler("state-dispatcher", handler)` registered on daemon startup; one interval cron job fires it every N seconds (N ≈ 30–60).
 - **Single global agent-slot cap**, configurable. Default 10 concurrent active autonomous runs on this machine; other users tune down. Overflow queues for the next tick (no persistent queue — state-driven rules re-evaluate).
 - **`plan_review ↔ planner` rewrite loop** is the only in-stage loop with adversary involvement. `dev ↔ qa` is a leaf-level loop (when QA is in the profile).
@@ -40,7 +40,7 @@ Human-in-the-loop steps (requirements elicitation, manual plan drafting) happen 
 - **Isolation is its own knob**: `--isolation none|worktree|clone`, default `worktree`. Written as an `isolation` column on the task. Separate from stage selection. All three modes implemented in this epic — `worktree` shares `.git` (cheap, fast); `clone` is an independent local clone (portable, hard-isolated, deletable sandbox); `none` runs in-branch on the source repo. Clone uses existing `CloneGitManager` / `LocalCloneManager` infrastructure (§1.6, §1.7, §1.9, §2.10).
 - **Target branch is durable build-time state.** `gobby build` captures `--target-branch <name>` (default: `git rev-parse --abbrev-ref HEAD`) into `task_artifacts.target_branch` at invocation. `CreateWorktree` (§1.6/§1.7) and `merge.yaml` (§2.10) resolve from there — no rule hard-codes `main`. (R4.F6 fix.)
 - **`yolo` means never escalate**, not "no PR." A yolo task's rules pick a deterministic fallback at every would-be-escalation site instead of `EscalateTask`. Yolo is safe because the worktree sandboxes failures. Yolo cascades at `gobby build` time onto the subtree, not at dispatch time.
-- **Existing `merge.yaml` is only a merge runner, not a PR-creation agent.** The `pr` lifecycle stage has no existing agent. Until follow-up epic **#12728** ships a real PR-creation agent, non-yolo `rule_pr` escalates with `needs_human: PR creation not yet automated`; a human opens the PR, then calls the extended `de_escalate_task(task_id, next_status="review_approved", lifecycle=Lifecycle.merging)` (single call — §1.8). Yolo `rule_pr` skips straight to `merging` (no remote PR). Then `merge.yaml` runs. Clean merges complete; conflicts escalate (non-yolo) or are best-effort-resolved in-agent (yolo).
+- **Existing `merge.yaml` is only a merge runner, not a PR-creation agent.** The `pr` lifecycle stage has no existing agent. Until follow-up epic **#12728** ships a real PR-creation agent, non-yolo `rule_pr` escalates with `needs_human: PR creation not yet automated`; a human opens the PR, then calls the extended `de_escalate_task(task_id, target_status="review_approved", lifecycle=Lifecycle.merging)` (single call — §1.8). Yolo `rule_pr` skips straight to `merging` (no remote PR). Then `merge.yaml` runs. Clean merges complete; conflicts escalate (non-yolo) or are best-effort-resolved in-agent (yolo).
 - **Rule engine stays event-driven** (turn_start, after_tool, etc.). Dispatch is cron-driven and lives in its own module. Do not conflate.
 - **PR/merge skill with AI conflict resolution is out of scope.** Filed as #12728. Referenced from `rule_pr`, not implemented here.
 - **BMAD porting and `requirements-analyst` dispatch are out of scope.** Those agents are interactive-flavored and sit outside the autonomous pipeline. `/gobby build` does not invoke them.
@@ -141,7 +141,7 @@ R6 was the first review of the post-R5 rewrite (which pulled clone isolation bac
 R7 was a deeper-than-prior-rounds review (16 min, 157 tool calls, 79 turns) that caught my v3 rewrite still using pseudo-API names and shapes without grounding against current code. Four real findings; all addressed by re-grounding every cited surface against `gcode symbol` + `list_tools` lookups before editing:
 
 - **R7.F1** Both isolation actions used pseudo-APIs: `CreateClone` was `CloneIsolationHandler(db).prepare_environment(...)` (constructor doesn't take `db`); imported `SpawnConfig` from `gobby.agents.spawn` (real location: `gobby.agents.isolation`); persisted `ctx.clone_path` (`IsolationContext` returns `cwd`, not `clone_path`). Same problem on the worktree side: I used `WorktreeGitManager().create_worktree(...)` directly, but the symmetric high-level API is `WorktreeIsolationHandler.prepare_environment(SpawnConfig) -> IsolationContext`. **Fix**: §1.9 collapses both isolation cases into one `case CreateWorktree(...) | CreateClone(...)` block that picks the handler class, builds a real `SpawnConfig` via `_build_spawn_config(db, epic_task_id, base_branch=...)`, awaits `prepare_environment`, then writes `(ctx.cwd, ctx.worktree_id|clone_id)` into `task_artifacts` via `set_artifacts_atomic`. New `_build_isolation_handler(db, handler_cls, epic_task_id)` helper assembles the storage + git managers each handler requires.
-- **R7.F2** `ExpansionService(db)` and `LocalExpansionRunManager.create(task_id=, tdd=)` were both wrong shapes — real `ExpansionService(*, task_manager, llm_service, config=None, run_manager=None)` and `LocalExpansionRunManager.create(*, parent_task_id, project_id, triggering_session_id, input_source, plan_file=None, ...)`. Plus `compile_run` raises on failure rather than returning a failed-run record. **Fix**: §1.9 `StartExpansionRun` case now imports and calls `start_expansion_run_impl` from `gobby.mcp_proxy.tools.tasks_ops` directly (the existing MCP tool's underlying handler, which already builds the right `LocalExpansionRunManager.create(...)` call against the real signatures). §2.8b reduced from "add a new wrapper" to "ensure the existing handler is exported as `start_expansion_run_impl` for in-process use." No new pseudo-APIs.
+- **R7.F2** `ExpansionService(db)` and `LocalExpansionRunManager.create(task_id=, tdd=)` were both wrong shapes — real `ExpansionService(*, task_manager, llm_service, config=None, run_manager=None)` and `LocalExpansionRunManager.create(*, parent_task_id, project_id, triggering_session_id, input_source, plan_file=None, ...)`. Plus `compile_run` raises on failure rather than returning a failed-run record. **Fix**: §1.9 `StartExpansionRun` case now imports and calls `start_expansion_run_impl` from `gobby.mcp_proxy.tools.tasks._expansion` directly (the existing MCP tool's underlying handler, which already builds the right `LocalExpansionRunManager.create(...)` call against the real signatures). §2.8b reduced from "add a new wrapper" to "ensure the existing handler is exported as `start_expansion_run_impl` for in-process use." No new pseudo-APIs.
 - **R7.F3** Merge write-back used MCP tools that don't exist. Verified via `list_tools(server_name="gobby-tasks-ops")`: NO `set_artifact`, `set_artifacts_atomic`, or `append_description_section` on `gobby-tasks-ops`. `gobby-worktrees` exposes `delete_worktree` (NOT `remove_worktree`). `merge_worktree`/`merge_clone` responses don't return `merge_commit_sha`. `mark_task_review_approved` takes `approval_notes`, not `reason`. Plus a stale duplicate finalize block from the v2 rewrite was still in §2.10 with `git rev-parse HEAD` calls that contradicted the rewritten contract. **Fix**: new §1.1d "MCP tool extensions on gobby-tasks-ops" task adds `set_artifact`, `set_artifacts_atomic`, `clear_isolation_pair`, `append_description_section`, and `get_artifacts` MCP tools (thin wrappers over the §1.1b Python helpers). §2.10 rewritten with real tool names and param names: `delete_worktree` (cleanup), `mark_worktree_merged` (registry update), `clear_isolation_pair` (atomic artifact pair clear), `approval_notes`/`rejection_notes`. Merge SHA capture explicitly deferred to #12728 with `merge_commit_sha` left NULL on every merge. Stale duplicate finalize block removed.
 - **R7.F4** CHECK constraint was incomplete — blocked "both families populated" but allowed partial states (`worktree_path` set with `worktree_id` NULL). Worktree cleanup never cleared the artifact pair (only clone had explicit cleanup). **Fix**: strengthened CHECK to three predicates: `(worktree_path IS NULL) = (worktree_id IS NULL) AND (clone_path IS NULL) = (clone_id IS NULL) AND (worktree_path IS NULL OR clone_path IS NULL)` — pairwise co-presence within each family + family XOR. §2.10 worktree cleanup path now mirrors clone with explicit `clear_isolation_pair("worktree")` after `delete_worktree`. New `clear_isolation_pair(task_id, family)` helper in §1.1b's CRUD.
 
@@ -178,6 +178,132 @@ These are the exact tool surfaces R7.F3 demanded grounding for, so the most cons
 - The CHECK constraint expression `(A IS NULL) = (B IS NULL)` relies on SQLite's `IS NULL` returning 0/1 and `=` returning a boolean-typed integer — verify with a migration smoke test before rollout.
 - `agents.lifecycle_monitor` idle threshold is too tight for xhigh-reasoning subagents that pause between tool calls. File a follow-up to either lengthen the threshold or skip idle reprompts when the most recent response_item is a `reasoning` payload.
 
+## Plan Changelog
+`kind: framing`
+
+Cumulative one-bullet-per-surgical-fix log of revisions made between adversary rounds (per §2.23.3). Each round's edits land here so the next adversary instance — spawned with fresh context per §2.23.1 — can see how the plan moved between rounds without rereading the full description.
+
+**Round 2 (this revision, in response to Round 1 adversary findings F1–F5):**
+
+- F1 (gobby-format) — Stripped dangling `(depends: …)` annotations whose targets do not exist in this trimmed revision: §1.3 (was `depends: 1.2`), §1.8 (was `depends: 1.1`), §2.8b (was `depends: 1.1b`), §2.9 / §2.10 (dropped `1.1b` from `depends: 1.8, 1.1b`), §2.15 (was `depends: 1.1`), §2.21 (was `depends: 1.1`), §3.2 (was `depends: 3.1`). The merged-foundation work that those refs originally pointed at lives in #12776/#12777/#12778 and is documented in the relevant sections' `Status: partial` notes; no in-plan dependency edges are needed for it.
+- F2 (bad-sequencing) — Resolved the manifest deadlock between §2.21 and §2.22. `parse_plan` now accepts a `parse_mode` parameter (`draft | expansion | strict`). Plan-adversary review parses in `draft` mode (manifest optional); on clean review, the adversary writes the manifest and self-checks in `expansion` mode (manifest required and strictly validated); downstream `gobby expand` parses in `expansion` mode. §2.21.3 and §2.22.4 acceptance items reflect the mode contract.
+- F3 (unhandled-edge) — Split validation gates between approval and rejection. `mark_task_review_approved` runs the full close-equivalent gates (commit-attached, validation_criteria pass, errors_resolved, memory_review_completed) — approving IS the close-equivalent path. `mark_task_review_rejected` and `escalate_task` run light gates (valid claim/session, `rejection_notes`/`reason` non-empty); rejection MUST succeed when validation fails or commits are missing because that is the state the reviewer is reporting. §1.8.6 and §2.14a.5 acceptance items spell out the verdict-split via a `_run_validation_gates(task, verdict)` helper.
+- F4 (bad-sequencing) — Narrowed §2.20's `depends:` annotation from the entire §2.11–§2.24 range to `(depends: 2.21, 2.22)`. §2.20 now correctly reads as a pre-implementation gate that proves Epic 1's deterministic compile path can produce a covered task tree against this plan, rather than a late smoke test that fires after most of the §2.X work has already landed. Other §2.X sections only need their acceptance items reviewed by plan-adversary; their implementation is downstream of §2.20.
+- F5 (traceability) — Resolved the conflict between §1.7 hard-coded constants and §2.19 `task_artifacts`-driven retry caps. §1.7 now defines `MAX_EXPANSION_ATTEMPTS_DEFAULT` and `MAX_QA_ROUNDS_DEFAULT` as fallbacks and introduces `_resolve_retry_cap(task, name, default)` that prefers `task_artifacts` (set by `gobby build` per §2.19) over the default. Rule code reads via the helper from the start, so §2.19's contribution becomes pure data plumbing (BuildConfig defaults, CLI flags, BuildOptions resolution, persistence) without rule-code edits. §1.7.2 and §2.19.4 acceptance items align around this single read path.
+
+**Round 3 (this revision, in response to Round 2 adversary findings F1–F7):**
+
+- F1 (gobby-format, table-row decomposition) — Decomposed the §2.19 retry-cap table (5 rows) and §2.21 parser-mode table (3 rows) into per-row acceptance items with stable IDs. §2.19 now has one item per cap (`max_expansion_attempts`, `max_qa_rounds`, `max_merge_attempts`, `max_holistic_rounds`, `max_review_rounds`) plus cross-cutting items for resolution order and BuildResult shape; §2.21 splits 2.21.3 into 2.21.3 (parameter signature), 2.21.3a (draft mode), 2.21.3b (expansion mode), 2.21.3c (strict default), 2.21.3d (cross-mode invariants). Per-row coverage now intact under Plan-Coverage Contract.
+- F2 (bad-sequencing, leaf state contract) — Updated the Constraints section: lifecycle is on every task (epics AND leaves) per the shipped #12776 schema, not epic-only as the stale prose claimed. Added §2.8.4 acceptance item requiring expansion to initialize generated leaves at `lifecycle=in_development`. Replaced every invalid `lifecycle_stage=holistic_review` reference with `lifecycle=holistic_review` (the legacy `lifecycle_stage` column's CHECK constraint only allows `in_progress | needs_review | review_approved`, so the prior prose would have been a runtime CHECK failure if implemented literally).
+- F3 (bad-sequencing, approval gate over-scope) — Made `_run_validation_gates(task, verdict, lifecycle, *, caller_agent=None)` stage-aware. Three gate sets now: **leaf-close** (full close-equivalent: commit-attached, validation_criteria, errors_resolved, memory_review_completed) for qa-reviewer leaf approval at `lifecycle=in_development`; **stage-advance** (stage-specific output gates only: manifest emitted / test architecture appended / expansion run completed / leaves terminal-or-holistic / merge clean) for plan-adversary, test-architect, expansion-qa, holistic-reviewer, and merge stage approvals; **light** (claim/session + actionable rejection_notes/reason) for any rejection or escalation. §1.8.6 and §2.14a.5 acceptance items rewritten with the table.
+- F4 (traceability, de_escalate_task API name) — Renamed `next_status` → `target_status` everywhere in the plan to match the live MCP schema (verified via `get_tool_schema(de_escalate_task)`). The `lifecycle` extension parameter is added as an additional optional parameter; the existing `target_status` is preserved.
+- F5 (weak-testability, V1 verification) — Replaced the stale `tests/tasks/test_expansion_start_run.py::ExpansionService.start_run(...)` test with `tests/tasks/test_start_expansion_run_impl.py` (aligned with §2.8b — there is no `start_run` wrapper; the `start_expansion_run_impl` export is what the dispatcher imports). Updated `tests/build/test_target_branch.py` to assert leaf builds leave `task_artifacts.target_branch` UNSET (per §3.2 leaf builds running with `isolation=none`); plan-file and epic builds populate it.
+- F6 (gobby-format, monolith target) — Added §2.8c "Split `expansion_service.py` monolith" as a refactor deliverable (`category: refactor`) that depends on §2.8 and §2.8b. Splits the 1,495-line file into focused modules under `src/gobby/tasks/expansion/` (≤ 800 lines per file). Backward-compat re-export shim preserved at the old path. Acceptance items 2.8c.1–2.8c.4 cover module structure, shim, internal-import migration, and test-suite stability.
+- F7 (unhandled-edge, mutex detach state leak) — Replaced the task-id-global `_DETACHED: set[str]` with a per-acquire `_DETACH_TOKENS: dict[str, bool]`. `acquire()` now yields `(ok, token)`; `detach_from_context(token)` records under the token; the `finally` block pops the token before scope exit so subsequent acquires on the same task get a clean detach decision. Updated the §1.9 dispatcher caller to consume the tuple yield and pass the token. Added §1.4.2 acceptance item with the regression test scenario the prior design failed.
+
+**Round 4 (this revision, in response to Round 3 adversary findings F1–F4):**
+
+- F1 (bad-sequencing, dispatcher exhaustiveness) — Added match arms in §1.9 `_dispatch` for `MarkTaskReviewApproved`, `CascadeCloseLeaves`, and `ArchivePlan`; added `CreateClone` to the §1.9 imports; documented `_action_kind` exhaustive map (missing entry raises KeyError so adding a new action without updating the map fails loud). Added §1.9.2/1.9.4 acceptance items for the exhaustiveness contract.
+- F2 (bad-sequencing, yolo merge gate deadlock) — Switched the §2.10 yolo cap-exhausted force-advance from `mark_task_review_approved` to `advance_lifecycle(epic, to=Lifecycle.merged, ...)`. The Round 3 stage-advance gate at `lifecycle=merging` requires merge-clean state by design (so non-yolo approvals can't slip past a failed merge); the yolo fallback bypasses that gate via the explicit transition tool, which §1.8 documents as the escape hatch. Same pattern applied to §1.7 `rule_qa` yolo cap-exhaustion (`AdvanceLifecycle(holistic_review, status="review_approved")` instead of `MarkTaskReviewApproved`) — the leaf-close gate would re-run the failing validation that triggered the cap-exhaustion. Updated `advance_lifecycle` signature to accept an optional `status` parameter for these explicit-target callers. Added §2.10.4 acceptance item + V1 verification updates.
+- F3 (unhandled-edge, merging stage-skip path) — Removed the `_stage_enabled(task, "merging")` branches from `rule_merging` (`merging` is non-skippable per Constraints, so no skip path) and from `rule_all_leaves_holistic`'s target-chain (`Lifecycle.merging` is now the unconditional terminal in the chain — `Lifecycle.merged` is no longer reachable via stage-skip). Added defensive audit-marker handling in `rule_merging` if a `stage-:merging` label is observed despite §3.2 validation rejecting it at build time. Added §3.2.7 acceptance item for the build-service `--skip-stage merging` rejection (with `dev` and `worktree` covered too).
+- F4 (bad-sequencing, _resolve_cwd agent_name signature) — Updated §1.9 `SpawnAgent` dispatch to call `_resolve_cwd(task, s.agent)` so the merge agent (`agent_name="merge"`) routes to the source repo regardless of `task.isolation`. Added §1.9.3 acceptance item with the dispatcher-path test as the contract gate (helper-unit tests are no longer the only check).
+
+**Round 5 (this revision, in response to Round 4 adversary findings F1–F4):**
+
+- F1 (bad-sequencing, CloseLeaf untracked) — Removed `CloseLeaf` from §1.6 actions and the `Action` union. No rule emits it; close transitions go through `mark_task_review_approved` (leaf-close gate, §1.8.6) or `CascadeCloseLeaves` (epic-merge cascade). Keeping it as an unused escape hatch undermined the §1.9.2 exhaustiveness contract.
+- F2 (unhandled-edge, expansion failed-run path) — Renamed `_expansion_run_completed` to `_expansion_run_terminal` (returns true for `completed` OR `failed`). Updated `rule_validate_expansion` to dispatch expansion-qa on either terminal state. Updated §2.9 to specify expansion-qa reads failed-run details and rejects with the failure cited in `rejection_notes`, so `mark_task_review_rejected(lifecycle=expanding)` clears the artifact and increments attempts on failed runs (the prior `_completed`-only predicate stranded them). Helper list and prose updated accordingly.
+- F3 (missing-requirement, pipeline deprecation classification) — Restructured §2.14b to handle BOTH `agents/deprecated/` AND `pipelines/deprecated/` as first-class. The retired orchestrators (`orchestrator.yaml`, `front-half-orchestrator.yaml`, `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, `conductor.yaml`-pipeline) are pipeline definitions, not agents — the prior plan misclassified them. Added new acceptance items §2.14b.3 (bundled-sync removes pipeline rows) and §2.14b.4/§2.14b.5 (migrations broken out by kind). The conductor AGENT (separate from the pipeline of the same name) goes to `agents/deprecated/`.
+- F4 (weak-testability, AdvanceLifecycle.status field) — Added `status: str | None = None` field to the `AdvanceLifecycle` dataclass in §1.6. Updated §1.9 dispatcher's match arm to forward `status=status` to the `advance_lifecycle` helper. Updated §1.7 `rule_qa` yolo cap-exhaustion to pass `status="review_approved"` explicitly. The §1.8 `advance_lifecycle` signature already accepted the optional `status` parameter (added in Round 4); this round wires the action wrapper and dispatcher to actually carry it through.
+
+**Round 6 (this revision, in response to Round 5 adversary findings F1–F5):**
+
+- F1 (bad-sequencing, §1.7 missing CreateClone import) — Added `CreateClone` to §1.7's `from gobby.dispatch.actions import …` block so `rule_create_clone` resolves the symbol it returns. The §1.7 prose-imported action set is now consistent with what the rules emit.
+- F2 (unhandled-edge, §1.9 TOCTOU on action class / agent_run_id) — Reworked `run_tick` to compute the pre-lock `_action_kind` for mutex acquisition only, then recompute the canonical action and kind AFTER the lock; if the kind differs, the dispatcher skips the task with an action-class-changed reason (the next tick re-acquires with the correct kind). `agent_run_id` is allocated from the FRESH action and attached to the mutex row via the new `mutex.attach_run_id(db, task_id, run_id, holder)` helper. Added §1.4.3 acceptance for `attach_run_id` and §1.9.5 acceptance for the TOCTOU-aware dispatch flow.
+- F3 (gobby-format, §1.8 gate-set table-row decomposition) — Split the §1.8.6 acceptance item into §1.8.6 (helper signature + cross-product test) plus §1.8.6a (leaf-close gate set), §1.8.6b (stage-advance gate set), §1.8.6c (light gate set), one item per row in the gate-set table. Each carries its own test-name reference so the gate sets can be independently tracked and expanded.
+- F4 (weak-testability, V1 missing failed-expansion-run dispatch test) — Updated `tests/dispatch/test_rule_expansion.py` description in V1 to require `test_rule_validate_expansion_dispatches_qa_on_failed_run` plus `test_failed_run_rejection_clears_artifact_and_increments_attempts`. The original failed-run stranding bug is now pinned by an explicit dispatch-on-failed test, not just the new `_expansion_run_terminal` predicate name.
+- F5 (traceability, stale MarkTaskReviewApproved prose) — Rewrote §1.7 `rule_qa` docstring to state the yolo cap-exhaustion fallback emits `[AppendAuditMarker, AdvanceLifecycle(holistic_review, status="review_approved")]` (no longer mentions `MarkTaskReviewApproved`). Updated §1.9's `MarkTaskReviewApproved` dispatch-arm comment to clarify "no rule currently emits this — retained for forward compatibility" and removed the contradictory claim that `rule_qa` is the caller.
+
+**Round 7 (this revision, in response to Round 6 adversary findings F1–F5):**
+
+- F1 (bad-sequencing, §1.7 missing Isolation import) — Added `Isolation` to the `from gobby.storage.tasks._models import …` line in §1.7 alongside `Lifecycle, Task`. `rule_create_worktree`, `rule_create_clone`, and `rule_dispatch_leaf` reference `Isolation.worktree | clone | none`; the import block now matches what the rules use.
+- F2 (bad-sequencing, expansion input_source mismatch with live API) — Aligned §1.9 dispatcher with the live `LocalExpansionRunManager.create` API: the `input_source` literal accepts only `"plan"` or `"task"` (NOT `"plan_file"` or `"epic"`). The plan-file path is passed via the separate `plan_file=` kwarg. Updated the dispatcher snippet to compute `input_source="plan" if _has_plan_file else "task"` and pass `plan_file=_plan_file_path(...)` when present.
+- F3 (unhandled-edge, sweep_on_startup running per-tick) — Removed `sweep_on_startup` call from `run_tick`. Daemon-boot mutex reconciliation now lives in a one-shot `sweep_mutexes_once(db)` call in `runner_init.py`, executed once before any tick (cron or `_kick_dispatcher_tick`) can fire. This closes the overlapping-tick race where the second tick would delete a live non-spawn mutex row held by the first tick. Removed `swept` field from `TickReport` (no longer per-tick state).
+- F4 (traceability, stale MarkTaskReviewApproved prose) — Rewrote §1.6 `MarkTaskReviewApproved` dataclass docstring to clarify "no rule currently emits this — retained for forward compatibility." Rewrote §1.8 `lifecycle=merging` rejection prose to name `append_description_section` + `advance_lifecycle(... to=Lifecycle.merged ...)` as the merge yolo cap-exhausted force-advance, matching §2.10. No prose path now claims `mark_task_review_approved` is the yolo force-advance.
+- F5 (bad-sequencing, §1.8 holistic-approval merging-skip path) — Removed the "or `merged` if both are skipped" wording from §1.8's holistic_review approval transition. The path is now: `holistic_review → pr` (default), or `holistic_review → merging` (when `pr` is skipped). NEVER `holistic_review → merged` via stage-skip. `merging` is non-skippable per Constraints; the merge agent always runs.
+
+**Round 9 (this revision, in response to Round 8 adversary findings F1–F3):**
+
+- F1 (bad-sequencing, rule_start_expansion races terminal runs) — Replaced the `not _expansion_active(task)` predicate with `_expansion_run_artifact_absent(task)` in `rule_start_expansion`. The prior predicate matched on terminal (completed/failed) runs, letting the start rule overwrite the terminal run before `rule_validate_expansion` could dispatch expansion-qa to read failure details and reject. Guarding on a MISSING `expansion_run_id` artifact preserves the recovery path: terminal runs keep their artifact until expansion-qa rejects (clearing it + incrementing `expansion_attempts`); only THEN does `rule_start_expansion` re-fire. Updated the helpers paragraph to reference the new predicate name.
+- F2 (bad-sequencing, start_expansion_run_impl as registry closure) — Pinned an explicit dependency-injected signature for `start_expansion_run_impl` in §2.8b: `async def start_expansion_run_impl(*, task_manager, llm_service, config, completion_registry, triggering_session_id, task_id, plan_file=None, auto_apply=True, force_new=False, provider=None, model=None, project=None) -> ExpansionRun`. The MCP closure inside `RegistryContext` resolves dependencies from context and forwards to the impl; the dispatcher (§1.9) constructs them from the daemon services it already holds. Added §2.8b.2 acceptance for the dispatcher dependency wiring. Updated §1.9's `StartExpansionRun` match arm to pass all five dependencies explicitly.
+- F3 (unhandled-edge, merge cleanup-after-approval orphans artifacts on cleanup failure) — Reordered §2.10's clean-merge success path so cleanup runs BEFORE terminal approval. Sequence: (1) `mark_worktree_merged` / `delete_worktree` / `clear_isolation_pair` (worktree) or `delete_clone` / `clear_isolation_pair` (clone) → (2) `mark_task_review_approved` (LAST). On any cleanup-step failure, the agent escalates with `reason="needs_human:merge_cleanup_failed:<step>:<details>"` and the epic stays at `lifecycle=merging, status=escalated` so a human can recover via `de_escalate_task(target_status='open', lifecycle=Lifecycle.merging, ...)`. Updated §2.10.2 acceptance and the relevant V1 verification entries to assert the new order. Approval can no longer succeed before cleanup, so terminal lifecycle + orphaned artifacts is unreachable.
+
+**Round 10 (this revision, in response to Round 9 adversary findings F1–F2):**
+
+- F1 (bad-sequencing, DispatcherServices wiring incomplete in §1.10) — Made the dispatcher's daemon-side state explicit end-to-end via a new `DispatcherServices` dataclass (db, task_manager, llm_service, config, completion_registry, triggering_session_id). `run_tick(services, holder, max_active)` now takes the container instead of just `(db, ...)` and reads dependencies from it; `_dispatch(services, ...)` does the same. `register_state_dispatcher(executor, services, config)` accepts the container; `runner_init.py` constructs it once at boot from the daemon services it already holds, stores it on `daemon_state.dispatcher_services`, and reuses it for both cron handlers and immediate `_kick_dispatcher_tick` (§3.2.5) — both surfaces wire expansion-impl identically. Updated §1.9, §1.10, §3.2.5 acceptance items. No more private global helpers like `_task_manager(db)` or `_llm_service()`; every dependency arrives at `run_tick` via `services`.
+- F2 (unhandled-edge, yolo cleanup-failure escalates instead of force-advancing) — Split §2.10's cleanup-failure handling by yolo. Non-yolo keeps the `escalate_task("needs_human:merge_cleanup_failed:...")` path (lifecycle stays `merging, status=escalated` for human recovery). Yolo gets a deterministic fallback per the top-level "yolo never escalates" invariant: `[append_description_section("Yolo Fallbacks", ...), advance_lifecycle(to=Lifecycle.merged, reason="yolo: merge cleanup failed; force-advanced with artifacts preserved", by_actor="merge")]`. Artifacts stay uncleared on both branches for human inspection. Updated §2.10.2 acceptance + the merge-yaml prose; tests assert yolo cleanup-failure NEVER calls `escalate_task`.
+
+**Round 11 (this revision, in response to Round 10 adversary findings F1–F3):**
+
+- F1 (bad-sequencing, §1.10 / §3.2.5 cite non-live config/storage APIs) — Aligned the dispatcher wiring with three live APIs verified against source: (i) dispatch knobs live on `BuildConfig.max_active_agents` and `BuildConfig.dispatch_interval_seconds` (`src/gobby/config/build.py:68-69`), NOT on `DaemonConfig.get(...)` — `DaemonConfig` is a Pydantic model with no `.get` method. (ii) `ServiceContainer` (`src/gobby/app_context.py:30`) is the live dependency surface; `runner_init.py` adds a new `dispatcher_services: DispatcherServices` field on it, and `_kick_dispatcher_tick` (§3.2.5) reads via `get_app_context().dispatcher_services`. (iii) `cron_jobs` rows are created via `CronJobStorage.create_job(..., schedule_type="interval", interval_seconds=..., action_config={"handler": "state-dispatcher"})` — there is no `schedule_expression` field. Updated the §1.10 code snippet, the cron-row example, §1.10.1, added §1.10.2 (ServiceContainer wiring) and §1.10.3 (BuildConfig read-path), and updated §3.2.5 to call out the live wiring surfaces.
+- F2 (weak-testability, V1 stale cleanup-failure escalation prose) — Updated the V1 entries for `tests/dispatch/test_merge_integration.py` and `tests/agents/test_merge_integration.py` to split cleanup-failure assertions by yolo: non-yolo escalates with `needs_human:merge_cleanup_failed:`; yolo NEVER calls `escalate_task`, instead emits `append_description_section + advance_lifecycle(to=merged, ...)` and preserves artifacts. The R10.F2 prose now matches §2.10.2's contract; expansion can no longer generate tests for the pre-Round 10 unconditional escalation.
+- F3 (nit, manual smoke command points at archived plan) — Updated step 2 of the V1 manual smoke from `task-12725-lifecycle-dispatch.md` (which moved to `completed/` during pre-revision cleanup) to `task-12725-lifecycle-dispatch-rev1.md`.
+
+**Round 12 (this revision, in response to Round 11 adversary findings F1–F2):**
+
+- F1 (bad-sequencing, `_kick_dispatcher_tick` lacked live BuildConfig surface) — Added `build_config: BuildConfig` as a first-class field on `DispatcherServices`. `runner_init.py` calls `load_build_config(runner.database, runner.project_id)` and passes the result into the dataclass. `_kick_dispatcher_tick` reads `services.build_config.max_active_agents` directly — never `get_app_context().config.max_active_agents` (that field is `DaemonConfig`, no `.get()`). Updated §1.9 dataclass definition, the §1.10 wiring snippet, and §3.2.5 acceptance to reflect the new field.
+- F2 (bad-sequencing, expansion impl path + class name don't exist live) — Verified live source: there is no `gobby.mcp_proxy.tools.tasks_ops` module; the expansion handler lives at `gobby.mcp_proxy.tools.tasks._expansion`. Replaced every reference (§1.9 dispatcher import, §2.8b acceptance file paths, V1 test paths) via `replace_all`. Also corrected `CompletionRegistry` → `CompletionEventRegistry` (the live class at `src/gobby/events/completion_registry.py:21`) — both in the `start_expansion_run_impl` signature and in the `DispatcherServices` field type. The dispatcher's `from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl` import is now valid against the actual repo layout.
+
+**Round 13 (this revision, in response to Round 12 adversary findings F1–F2):**
+
+- F1 (bad-sequencing, `load_build_config` signature + missing `runner.dispatcher_session_id`) — Verified live: `load_build_config(project_root: str | Path, flag_overrides: Mapping[str, Any] | None = None)` is path-based, NOT `(db, project_id)`. Updated §1.10 wiring snippet to call `load_build_config(runner.git_manager.repo_path)` and explained that flag overrides are per-build (persisted to task_artifacts via §2.19) so the daemon-side load uses none. Added §1.10.4 acceptance: synthetic dispatcher session is registered exactly once at daemon boot with `source="dispatcher"`, `external_id="dispatcher-<machine_id>-<boot_timestamp>"`, exposed as `runner.dispatcher_session`; `triggering_session_id` is `runner.dispatcher_session.external_id`. Added test acceptance for source value, single-row creation, and "never claims tasks" invariant.
+- F2 (bad-sequencing, §1.9 missing dependency on §2.8b export) — Added `2.8b` to §1.9's `depends:` list. Added a cross-phase dependency note in §1.9 explaining that §1.9 lives in Phase 1 but depends on §2.8b in Phase 2 because the dispatcher's `StartExpansionRun` handler imports `start_expansion_run_impl` (§2.8b's deliverable). The deterministic compile path now schedules §2.8b's TDD leaves before §1.9's `StartExpansionRun`-handler TDD leaf.
+
+**Round 14 (this revision, in response to Round 13 adversary findings F1–F3):**
+
+- F1 (bad-sequencing, `executor` not in scope in `init_servers`) — Added §1.10.5 acceptance: `GobbyRunner` exposes `runner.cron_executor` (the same `CronExecutor` instance attached to `runner.cron_scheduler`) so dispatcher wiring in `init_servers` can call `register_state_dispatcher(runner.cron_executor, ...)`. Updated the §1.10 wiring snippet to reference `runner.cron_executor`.
+- F2 (bad-sequencing, `register_session` returns str not Session) — Verified live: `LocalSessionManager.register_session(...) -> str` (the persisted session id, or temporary UUID on failure). Updated §1.10.4 + the §1.10 wiring snippet to store the SAME string we passed as `external_id` on `runner.dispatcher_session_id` (a string attribute, NOT a Session object). `DispatcherServices.triggering_session_id` reads that string directly. Added `dispatcher_session_id: str` attribute spec on `GobbyRunner`.
+- F3 (bad-sequencing, no deliverable creates `gobby.dispatch.prompts` / `PROMPT_BUILDERS`) — Added §1.6a as a new `[category: code]` deliverable: `src/gobby/dispatch/prompts.py` defines `PROMPT_BUILDERS: dict[str, PromptBuilder]` with all eight keys emitted by §1.7 rules (`planner_rewrite`, `plan_adversary`, `test_architect`, `expansion_qa`, `developer`, `qa_reviewer`, `holistic_reviewer`, `merge_runner`). §1.7's depends list now includes `1.6a`. Bijection-invariant test (§1.6a.2) introspects `RULES` for all `SpawnAgent.prompt_builder` literals and asserts the set equals `PROMPT_BUILDERS.keys()`, so adding a new spawn rule without a matching builder fails CI.
+
+**Round 15 (this revision, in response to Round 14 adversary findings F1–F2):**
+
+- F1 (bad-sequencing, SpawnRequest deps still reference private global helpers) — Extended `DispatcherServices` with three more fields: `session_manager: ChildSessionManager`, `machine_id: str`, `parent_session_id: str` (the dispatcher session UUID, same value as `triggering_session_id` since the dispatcher is the parent for all dispatched agents). Rewrote §1.9's `_dispatch(SpawnAgent)` arm to read every SpawnRequest dependency from `services.<field>` — no `_dispatcher_parent_session()`, no `_session_manager()`, no `_machine_id()`. Updated §1.10 wiring snippet to populate the new fields from `runner.session_manager` and `runner.machine_id`. Updated §1.10.2 acceptance to lock the no-private-helpers contract via a `gcode search-content` regression check. Cleaned the §2.8b.2 acceptance prose to read from `services.<field>` instead of stale private helpers.
+- F2 (bad-sequencing, register_session storage UUID vs external_id) — Verified live: `LocalSessionManager.register_session(...) -> str` returns the **storage UUID** (the `sessions(id)` row primary key), NOT the `external_id` we passed in. The expansion_runs table foreign-keys `triggering_session_id` to `sessions(id)`, so propagating the external_id (per the prior Round 13 fix) would corrupt the FK. Updated §1.10 wiring snippet, §1.10.2, and §1.10.4 to capture the **return value** of `register_session(...)` and store it on `runner.dispatcher_session_id: str`. Added an explicit failure-path acceptance: if the returned id is not present in `sessions(id)` (the live API's "temporary UUID on failure" case), daemon startup raises rather than continue with a dangling FK. Removed every `runner.dispatcher_session.external_id` reference; the storage UUID alone is what threads through `DispatcherServices`.
+
+**Round 16 (this revision, in response to Round 15 adversary findings F1–F2):**
+
+- F1 (gobby-format, manifest heading lacks section ID) — Renamed the manifest heading from `## Task Manifest` → `## M1 Task Manifest`. The `M1` ID matches the canonical heading regex's alpha-prefix-plus-digit branch (same shape as the existing `P1`, `V1`, `O1` framing headings in this plan). Without an ID, the post-approval `parse_plan(..., parse_mode="expansion")` self-check (§2.22.4) would mechanically reject the manifest the adversary just wrote. Added explicit prose stating the parser treats `kind: manifest` as exempt from the `**Acceptance:**` requirement (manifest entries take the place of acceptance items for that section). Updated §2.21 Section shape, §2.21 Contract additions, and §2.22.1 acceptance to use the new `M1` heading.
+- F2 (missing-requirement, plan-coverage.md not updated for §2.15/§2.16 retirement work) — Added §2.15.7 acceptance: replace the "Plan index" subsection in `docs/contracts/plan-coverage.md` with a DB-backed "Plan Storage" subsection (the `plans` table is authoritative; `gobby-plans` MCP/CLI are the read/write surfaces; `state` enum is `active | archived` only — no `merged`). Added §2.16.6 acceptance: remove the "Grandfathered plans" subsection, all `.legacy-classification.yaml` references, and `legacy` from the `plan_kind` enum docs. Both items pin a regression test (`tests/docs/test_plan_coverage_contract_sync.py`) that greps the contract file for stale tokens — no `index.yaml`, no `merged` state, no `legacy` plan_kind, no `.grandfathered`, no `.legacy-classification`. The canonical contract doc ends up describing only the post-revision implementation reality.
+
+**Round 17 (this revision, in response to Round 16 adversary findings F1–F2):**
+
+- F1 (unhandled-edge, plan-review bypass paths skip manifest emission) — Two manifest gates added: (a) `--skip-stage plan_review` is build-time validated against existing `## M1 Task Manifest` per new §3.2.8 acceptance — the build service runs `parse_plan(plan_path, parse_mode="expansion")` and rejects with a clear `BuildError` if the manifest is missing/malformed. By the time the dispatcher sees the task, the manifest invariant holds, so `rule_plan_adversary`'s skip-path can advance directly. (b) Yolo round-budget-exhausted path: introduced new `EmitStubManifest` action (added to §1.6 dataclasses, the `Action` union, the §1.7 imports, the §1.9 imports + dispatch arm). The yolo cap-exhausted fallback now emits `[AppendAuditMarker, EmitStubManifest, AdvanceLifecycle(test_arch)]` — a deterministic stub manifest synthesized from the plan's `kind: deliverable` sections preserves the §2.21 manifest invariant while keeping the "yolo never escalates" invariant. Audit marker captures the override.
+- F2 (bad-sequencing, missing planner resubmit terminal contract) — Added §2.23.5 acceptance pinning the planner's terminal MCP transition: a single atomic call to `mark_task_needs_review(task_id=anchor_id, review_notes=...)` whose tool implementation clears `planning-current-verdict:rejected` and sets `status=needs_review` in one transaction. Planner's `allowed_mcp_tools` surface includes `mark_task_needs_review` + `escalate_task` only — NOT `mark_task_review_approved`, `close_task`, or `mark_task_review_rejected`. Updated the §1.8 `mark_task_needs_review` documentation to describe the atomic clear-and-set contract (R7.F-planner-resubmit) and pointed cross-reference to §2.23.5. Added a dispatch-flow test asserting the full rejection → planner rewrite → adversary re-review walk has no intermediate state where `rule_plan_rewrite_on_reject` could re-fire and trap the task.
+
+**Round 18 (this revision, in response to Round 17 adversary findings F1–F2):**
+
+- F1 (weak-testability, EmitStubManifest action coverage gaps) — Added `EmitStubManifest` to `_action_kind` (maps to `"field"` — same TTL/contention class as `AppendAuditMarker` since it's a file-side-effect action), added it to §1.9.2's exhaustive action list and dispatcher-test downstream-effect assertions (asserting `gobby.plans.manifest_emitter.emit_stub_manifest` is called with the plan file path). Updated the V1 `tests/dispatch/test_rules.py` `rule_plan_adversary` rounds-exhausted bullet to assert the exact `[AppendAuditMarker, EmitStubManifest, AdvanceLifecycle(test_arch)]` action sequence for the yolo path.
+- F2 (unhandled-edge, EmitStubManifest failure-path gaps + §2.22.4 yolo-self-check escalation) — Tightened `EmitStubManifest`'s contract in §1.6 with R7.F-stub-manifest-strict: (a) missing `plan_file_path` artifact is a hard `RuntimeError` that prevents the subsequent `AdvanceLifecycle`, (b) existing-manifest validation runs `parse_plan(parse_mode="expansion")` and replaces a malformed manifest rather than no-op'ing past it, (c) post-write strict parse verification gates the lifecycle advance. Updated §1.9 dispatch arm to raise on missing artifact. Updated §2.22.4 (R7.F-self-check-yolo) to split self-check exhaustion by yolo: non-yolo escalates as before; yolo writes a `Yolo Fallbacks` audit marker, falls back to the deterministic stub manifest, and if even that fails appends a second audit marker and force-approves with explicit notes documenting the impossibility. yolo NEVER calls `escalate_task`.
+
+**Round 19 (this revision, in response to Round 18 adversary findings F1–F2):**
+
+- F1 (traceability, no deliverable for `manifest_emitter.py`) — Added §2.21a as a new `[category: code]` deliverable for `src/gobby/plans/manifest_emitter.py`. Pinned the public signature `emit_stub_manifest(plan_path, *, by_actor, plan_kind) -> EmitOutcome` where `EmitOutcome = Literal["fresh" | "replaced_malformed" | "noop_existing_valid" | "fallback_force_approve"]`. Six acceptance items cover the import surface, fresh emission, idempotent no-op, malformed-manifest replacement, absorbed-failure (never-raises) on unsalvageable plans, and default agent/tdd/category mapping. Updated §2.22's depends list to include `2.21a`.
+- F2 (unhandled-edge, yolo livelock on stub-manifest failure) — Reframed `EmitStubManifest`'s contract (R7.F-no-livelock) so the dispatch arm NEVER raises. The §2.21a emitter absorbs every failure mode (returns one of four `EmitOutcome` values; on unsalvageable plans appends a `## Yolo Fallbacks` audit section to the plan file and returns `"fallback_force_approve"`). The dispatcher's `EmitStubManifest` arm: on missing `plan_file_path` artifact, appends an audit marker on the planning anchor and continues; on present artifact, calls the emitter and continues. The subsequent `AdvanceLifecycle(test_arch)` in the rule's action sequence ALWAYS runs — no path can leave the task at `plan_review` after a yolo cap-exhausted dispatch. Documented downstream `gobby expand` rejection at expansion time as the documented escape hatch for genuinely-unsalvageable plans (matches §2.22.4's force-approve fallback contract).
+
+**Round 20 (this revision, in response to Round 19 adversary findings F1):**
+
+- F1 (traceability, three of five §2.19 retry caps not wired into runtime paths) — Wired all five caps end-to-end:
+  - **`max_review_rounds`** (R7.F-review-cap-wired): updated `_rounds_remaining` helper docstring to read via `_resolve_retry_cap(task, "max_review_rounds", MAX_REVIEW_ROUNDS_DEFAULT)` against `planning-round:N` label as the live counter. Added `MAX_REVIEW_ROUNDS_DEFAULT = 3` constant.
+  - **`max_merge_attempts`** (R7.F-merge-cap-wired): `rule_merging` resolves the cap and threads it into the merge agent's `initial_variables` as `max_merge_attempts: int`. §2.10 prose updated to read the cap from session vars rather than hardcoded "default 3". Added `MAX_MERGE_ATTEMPTS_DEFAULT = 3` constant.
+  - **`max_holistic_rounds`** (R7.F-holistic-cap-wired): added `_holistic_attempts` helper (reads `holistic-attempts:N` label on the epic) and a cap-exhaustion branch in `rule_holistic` symmetric to `rule_qa`'s pattern — non-yolo escalates with `needs_human:`; yolo emits `[AppendAuditMarker, AdvanceLifecycle(pr or merging)]` (force-advance bypassing stage-advance gate). §1.8's `mark_task_review_rejected(epic, lifecycle=holistic_review)` branch now increments `holistic-attempts:N` atomically with the cited-subtasks rewind. Added `MAX_HOLISTIC_ROUNDS_DEFAULT = 3` constant. holistic-reviewer agent receives the resolved cap + current attempt via `initial_variables` for use in signoff context.
+  - All three constants land alongside the existing `MAX_EXPANSION_ATTEMPTS_DEFAULT` and `MAX_QA_ROUNDS_DEFAULT` so adding a new cap is a single-line module edit + one §2.19 acceptance item.
+
+**Round 8 (this revision, in response to Round 7 adversary findings F1–F4):**
+
+- F1 (bad-sequencing, isolation handler constructor arg order) — Verified the live `src/gobby/agents/isolation.py` signatures via direct source inspection: `WorktreeIsolationHandler(git_manager, worktree_storage)` and `CloneIsolationHandler(clone_manager, clone_storage, git_manager=None)` — both take the git/clone manager FIRST, then the storage. Plan previously documented them with the args swapped (which would have caused `prepare_environment` to call `.create_worktree(...)` on the storage object). Updated §1.9's `_build_isolation_handler` prose to match the live order; deleted the conflicting follow-up sentence; added the `tests/dispatch/test_dispatcher_isolation_handler_args.py` reference that locks the order.
+- F2 (bad-sequencing, `db.transaction(immediate=True)` doesn't exist) — Verified live `LocalDatabase` API: `transaction()` and `transaction_immediate()` are separate parameter-less methods; there is no `transaction(immediate=True)`. Replaced every occurrence in §1.4 (mutex acquire) with `db.transaction_immediate()` so the mutex code is callable as written.
+- F3 (bad-sequencing, `start_expansion_run_impl` doesn't accept `tdd`) — Removed the `tdd: bool` field from the `StartExpansionRun` action dataclass and from the dispatcher call. The deterministic compiler driven by the `## Task Manifest` (§2.21) decides which deliverables emit TEST/IMPL/REF triples via each manifest entry's `tdd: bool`; the dispatcher no longer needs a coarse epic-level toggle. Updated `rule_start_expansion` to emit `StartExpansionRun(task_id=task.id)` with no second argument; updated the dispatcher's match arm to call `start_expansion_run_impl(task_id, plan_file, auto_apply, force_new)` per the live MCP-tool signature.
+- F4 (unhandled-edge, non-yolo merge conflict bypassing cleanup) — Updated §2.10's non-yolo conflict escalation recovery: the human resolves the conflict and calls `de_escalate_task(task_id, target_status='open', lifecycle=Lifecycle.merging, reason='...')` so the task routes back through `rule_merging` and the merge agent's normal success cleanup runs (mark_worktree_merged, delete_worktree, clear_isolation_pair, terminal write-back). The prior `lifecycle=Lifecycle.merged` recovery skipped cleanup and left orphaned artifacts. Updated the V1 verification entry to assert the escalate reason names `lifecycle=Lifecycle.merging`.
+
 ### Source-Grounding Summary (pre-Round 3)
 `kind: framing`
 
@@ -194,7 +320,7 @@ Three parallel Explore agents ran to verify APIs before this rewrite. Confirmed:
 
 **Goal**: Add the minimum task-model state to support dispatch, build the dispatcher module with its mutex primitive, register it as a cron handler, and wire the core stage rules.
 
-### 1.3 Extend task CRUD for new fields and helpers [category: code] (depends: 1.2)
+### 1.3 Extend task CRUD for new fields and helpers [category: code]
 `kind: deliverable`
 
 > **Status: partial** — CRUD fields shipped via commit `614c5bbe` (`src/gobby/storage/tasks/_crud.py`). Remaining: shared helpers `list_automation_candidates`, `_is_yolo`, and the storage-level `_skipped_stages(task) -> set[str]` (currently only a local copy at `src/gobby/tasks/expansion_service.py::_skipped_stages` exists; §1.7 imports the shared symbol from `_crud`).
@@ -274,15 +400,25 @@ def acquire(db: LocalDatabase, task_id: str, holder: str, kind: ActionKind,
             *, agent_run_id: str | None = None):
     """Try to acquire the per-task dispatcher mutex. Yields True on success.
 
-    For kind='spawn', the caller should call detach_from_context() if the
-    spawn succeeds — release then happens via the claim/end hooks (§1.5).
-    For other kinds, release happens automatically on context exit.
+    R7.F-mutex-detach fix: detach state is **per-acquire** (token-scoped),
+    not task-id global. Each successful acquire allocates a new token; only
+    that token's owner can detach the mutex. After the `try`/`finally` runs,
+    the token is dropped — a subsequent acquire on the same task gets a
+    fresh token and a fresh detach decision. This closes the leak where
+    a spawn-detach left `_DETACHED[task_id]` set forever, causing the next
+    non-spawn acquire to skip its required scope-exit release.
+
+    For kind='spawn', the caller should call detach_from_context(token) if
+    the spawn succeeds — release then happens via the claim/end hooks (§1.5).
+    For other kinds, the caller MUST NOT call detach; release happens
+    automatically on context exit.
     """
     ttl = TTL_BY_KIND[kind]
     now = datetime.now(UTC)
     expires = (now + timedelta(seconds=ttl)).isoformat()
     acquired = False
-    with db.transaction(immediate=True) as conn:  # BEGIN IMMEDIATE
+    token = uuid4().hex  # per-acquire detach token; never reused across calls
+    with db.transaction_immediate() as conn:  # BEGIN IMMEDIATE
         # UPSERT against task_dispatch_mutex (§1.1a). Absent row = free.
         row = conn.execute(
             "SELECT lease_until, run_id FROM task_dispatch_mutex WHERE task_id = ?",
@@ -291,10 +427,10 @@ def acquire(db: LocalDatabase, task_id: str, holder: str, kind: ActionKind,
         if row is not None:
             lease_until, existing_run = row
             if existing_run is not None:
-                yield False
+                yield (False, None)
                 return
             if lease_until is not None and lease_until >= now.isoformat():
-                yield False
+                yield (False, None)
                 return
         conn.execute(
             """
@@ -312,25 +448,64 @@ def acquire(db: LocalDatabase, task_id: str, holder: str, kind: ActionKind,
         )
         acquired = True
     try:
-        yield True
+        yield (True, token)
     finally:
         # R3.F5 fix: release on scope exit whenever we acquired and were not
-        # detached, regardless of kind. Previously gated on `agent_run_id is
-        # None`, which leaked the lease whenever execute_spawn raised before
-        # detach_from_context could run. Detach is now the *sole* "skip release"
-        # signal; spawn success detaches, spawn failure does not.
-        if acquired and not _is_detached(task_id):
-            with db.transaction() as conn:
-                conn.execute(
-                    "DELETE FROM task_dispatch_mutex "
-                    "WHERE task_id = ? AND lease_holder = ?",
-                    (task_id, holder),
-                )
+        # detached, regardless of kind. R7.F-mutex-detach fix: detach is checked
+        # by token, not by task_id, and the token entry is consumed before exit
+        # so a subsequent acquire on the same task gets a clean detach state.
+        if acquired:
+            detached = _DETACH_TOKENS.pop(token, False)
+            if not detached:
+                with db.transaction() as conn:
+                    conn.execute(
+                        "DELETE FROM task_dispatch_mutex "
+                        "WHERE task_id = ? AND lease_holder = ?",
+                        (task_id, holder),
+                    )
 
-def detach_from_context(task_id: str) -> None:
-    """Tells the current acquire() NOT to release on scope exit — handoff to the
-    agent-run lifecycle. Called after a successful spawn only."""
-    _DETACHED.add(task_id)
+# Module-private map: detach token -> True. Populated only by detach_from_context
+# under the matching acquire() scope; popped by acquire's finally so entries
+# never outlive their owning acquire scope. This replaces the prior task-id-global
+# `_DETACHED: set[str]` which leaked detach state across separate acquires.
+_DETACH_TOKENS: dict[str, bool] = {}
+
+def detach_from_context(token: str) -> None:
+    """Tell the owning `acquire()` NOT to release on scope exit — handoff to
+    the agent-run lifecycle. Called after a successful spawn only, with the
+    token returned by `acquire()`. Tokens are per-acquire and consumed on
+    scope exit; calling with a stale or unknown token is a no-op (defensive).
+
+    Caller pattern (R7.F-toctou-action-class):
+        with mutex.acquire(db, task_id, holder, kind) as (ok, token):
+            if not ok:
+                return
+            # ... locked re-eval; on SpawnAgent action, allocate run_id ...
+            attach_run_id(db, task_id, run_id, holder)
+            run = execute_spawn(...)
+            mutex.detach_from_context(token)  # only on spawn success
+    """
+    _DETACH_TOKENS[token] = True
+
+def attach_run_id(db: LocalDatabase, task_id: str, run_id: str, holder: str) -> None:
+    """Attach `run_id` to the mutex row owned by `holder` for `task_id`.
+    R7.F-toctou-action-class: the dispatcher acquires the mutex BEFORE
+    knowing which `agent_run_id` will be used (the canonical action is
+    determined by the locked re-evaluation, not the pre-lock evaluation).
+    On `SpawnAgent` paths, the run id is allocated from the fresh action
+    after the lock is held; this helper writes it onto the existing row.
+    UPDATE-only: requires the row to already exist with the matching
+    holder; raises if the row was swept (defensive)."""
+    with db.transaction() as conn:
+        rows = conn.execute(
+            "UPDATE task_dispatch_mutex SET run_id = ? "
+            "WHERE task_id = ? AND lease_holder = ? AND run_id IS NULL",
+            (run_id, task_id, holder),
+        )
+        if rows.rowcount == 0:
+            raise RuntimeError(
+                f"attach_run_id: no matching mutex row for task={task_id} holder={holder}"
+            )
 
 def clear_reservation(db: LocalDatabase, task_id: str, agent_run_id: str) -> None:
     """Called by claim hook and end_agent_run hook. Idempotent."""
@@ -363,6 +538,8 @@ def force_release(db: LocalDatabase, task_id: str, reason: str) -> None:
 **Acceptance:**
 
 - 1.4.1 — Dispatcher mutex is implemented according to this section. file: `src/gobby/dispatch/mutex.py`.
+- 1.4.2 — Detach state is per-acquire (token-scoped), not task-id global. `acquire()` yields `(ok: bool, token: str | None)`; `detach_from_context(token)` records under the token; the `finally` block pops the token before exit so subsequent acquires on the same task get a clean detach decision. test: `tests/dispatch/test_mutex.py::test_detach_does_not_leak_across_acquires` covers the scenario the prior global-state design failed: (a) acquire kind="spawn" → detach_from_context(token1) → exit; (b) hook clears the DB row; (c) acquire kind="lifecycle" on the same task_id → exit without detach → assert the DB row is DELETED on scope exit (would have been retained under the leaked-detach design). Also covers (d) calling `detach_from_context` with an unknown/stale token is a no-op (defensive).
+- 1.4.3 — `attach_run_id(db, task_id, run_id, holder)` UPDATEs the existing mutex row's `run_id` to support the dispatcher's TOCTOU-aware run-id allocation pattern (the dispatcher acquires the lock before knowing which run_id will be used; on `SpawnAgent`, the id is allocated from the locked re-evaluation and attached after the fact). The helper requires the row to exist with the matching holder and `run_id IS NULL`; mismatch raises. file: `src/gobby/dispatch/mutex.py`. test: `tests/dispatch/test_mutex.py::test_attach_run_id` covers (a) successful attach updates the row, (b) attaching to a missing row raises, (c) attaching to a row with non-null run_id raises, (d) attaching with mismatched holder raises.
 
 ### 1.5 Register mutex-clearing event handlers [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -399,8 +576,12 @@ class SpawnAgent:
 
 @dataclass
 class StartExpansionRun:
+    """R7.F-tdd-removed: `tdd` field removed. The deterministic compiler (driven
+    by the `## Task Manifest` per §2.21) decides which deliverables emit
+    TEST/IMPL/REF triples via each manifest entry's `tdd: bool`. The dispatcher
+    no longer needs a coarse epic-level toggle, and the live
+    `start_expansion_run_impl` API does not accept a `tdd` kwarg."""
     task_id: str
-    tdd: bool
 
 @dataclass
 class CreateWorktree:
@@ -430,17 +611,24 @@ class AdvanceLifecycle:
     to: Lifecycle
     reason: str                                      # MANDATORY — recorded in task_lifecycle_events (§1.1c)
     by_actor: str = "dispatcher"                     # "dispatcher", "cli", "<agent_name>", etc.
+    status: str | None = None                        # explicit status override; when None, advance_lifecycle resolves
+                                                     # a default per (to, task_type): merged→closed; leaf→holistic_review→review_approved;
+                                                     # everything else→open. Yolo cap-exhaustion paths (§1.7 rule_qa,
+                                                     # §2.10 merge force-advance) pass an explicit value to bypass the
+                                                     # review-style gates the leaf-close / stage-advance gate sets would run.
 
-@dataclass
-class CloseLeaf:
-    task_id: str                                     # retained as escape hatch; not used by default
+# CloseLeaf was previously defined here as an escape hatch but no rule emits
+# it; close transitions go through `mark_task_review_approved` (leaf-close
+# gate set, §1.8.6) or the cascade close on epic merge (`CascadeCloseLeaves`).
+# Removed from §1.6 actions and the `Action` union to keep dispatcher
+# exhaustiveness honest (per §1.9.2 contract — no unused action variants).
 
 @dataclass
 class CascadeCloseLeaves:
     '''Cascade-close all named leaves under an epic in a single transaction.
     Used by `rule_cascade_close_on_merge` (§1.7) when the epic transitions to
     `lifecycle=merged` — leaves parked at `status=review_approved,
-    lifecycle_stage=holistic_review` close together with the epic. Idempotent:
+    lifecycle=holistic_review` close together with the epic. Idempotent:
     leaves already at `status=closed` are skipped without error.'''
     epic_task_id: str
     leaf_task_ids: list[str]
@@ -448,14 +636,69 @@ class CascadeCloseLeaves:
 @dataclass
 class MarkTaskReviewApproved:
     '''Synthetic dispatcher action that issues the `mark_task_review_approved`
-    transition (§1.8) on behalf of the dispatcher. Used by `rule_qa` yolo
-    fallback when `MAX_QA_ROUNDS` is exhausted: leaf advances to
-    `status=review_approved, lifecycle_stage=holistic_review` per the §1.8
-    leaf transition. `by_actor=dispatcher` is recorded in
-    `task_lifecycle_events`.'''
+    transition (§1.8) on behalf of the dispatcher. NOTE: no rule currently
+    emits this action — the yolo cap-exhaustion fallbacks in `rule_qa`
+    (§1.7) and §2.10 (merge yolo) use `AdvanceLifecycle(..., status=...)`
+    instead, because routing through `mark_task_review_approved` would
+    re-run the leaf-close gate (§1.8.6a) that just rejected the validation
+    that triggered the cap exhaustion in the first place. This action is
+    retained for forward compatibility: a future caller that intentionally
+    wants the review gate to run (e.g. a dispatcher-side approval that
+    follows a successful CI run) can route through here.'''
     task_id: str
     by_actor: str = "dispatcher"
     approval_notes: str = ""
+
+@dataclass
+class EmitStubManifest:
+    """R7.F-yolo-manifest-fallback / R7.F-no-livelock: dispatcher-emitted
+    deterministic stub manifest used by `rule_plan_adversary`'s yolo
+    cap-exhausted fallback (§1.7). Wraps `gobby.plans.manifest_emitter.
+    emit_stub_manifest(...)` from §2.21a — the dispatcher does NOT
+    re-implement emission logic.
+
+    Yolo-invariant contract: this action NEVER raises in the dispatch arm.
+    The yolo cap-exhausted sequence MUST progress to `AdvanceLifecycle(test_arch)`
+    deterministically — raising would leave the task at `plan_review` for
+    the next tick, which would re-emit the audit marker and re-attempt the
+    same failure (livelock). The §2.21a emitter absorbs every failure
+    surface (missing artifact handled here, malformed plan handled in the
+    emitter's `"fallback_force_approve"` path) and writes a `## Yolo
+    Fallbacks` audit section explaining the outcome. Downstream
+    `gobby expand` will reject the plan when it parses in
+    `parse_mode="expansion"` if the manifest is genuinely unsalvageable —
+    surfacing the issue at expansion time where a human can intervene
+    rather than spinning the dispatcher.
+
+    Failure-path contract (R7.F-no-livelock):
+
+    1. **Missing `task_artifacts.plan_file_path`**: the dispatch arm
+       appends a `## Yolo Fallbacks` audit marker via
+       `append_description_section` to the planning anchor, recording
+       "plan_file_path artifact missing on yolo cap exhaustion; force-
+       advancing without manifest emission. Downstream gobby expand will
+       reject this plan." Then it returns; the subsequent `AdvanceLifecycle`
+       runs. The dispatch arm does NOT raise.
+
+    2. **Existing manifest valid (`emit_stub_manifest` returns
+       "noop_existing_valid")**: idempotent. No file change. Lifecycle
+       advance proceeds.
+
+    3. **Malformed existing manifest replaced ("replaced_malformed")**:
+       emitter rewrote the manifest, post-write parse passed. Lifecycle
+       advance proceeds.
+
+    4. **Fresh emission ("fresh")**: emitter wrote a new manifest, post-
+       write parse passed. Lifecycle advance proceeds.
+
+    5. **Plan-shape unsalvageable ("fallback_force_approve")**: emitter
+       appended its own `## Yolo Fallbacks` marker to the plan file
+       documenting the issue. Dispatch arm proceeds to lifecycle advance
+       — never raises. Downstream `gobby expand` rejection at expansion
+       time is the documented escape hatch.
+    """
+    task_id: str
+    by_actor: str = "dispatcher"
 
 @dataclass
 class ArchivePlan:
@@ -489,7 +732,7 @@ class Skip:
     reason: str
 
 Action = (SpawnAgent | StartExpansionRun | CreateWorktree | CreateClone
-          | AdvanceLifecycle | CloseLeaf | CascadeCloseLeaves
+          | AdvanceLifecycle | CascadeCloseLeaves | EmitStubManifest
           | MarkTaskReviewApproved | ArchivePlan | EscalateTask
           | AppendAuditMarker | Skip)
 ```
@@ -500,7 +743,57 @@ Action = (SpawnAgent | StartExpansionRun | CreateWorktree | CreateClone
 
 - 1.6.1 — Dispatch action wrappers is implemented according to this section. file: `src/gobby/dispatch/actions.py`.
 
-### 1.7 Decision rules for all stages [category: code] (depends: 1.6)
+### 1.6a Prompt-builder registry [category: code] (depends: 1.6)
+`kind: deliverable`
+
+Target: `src/gobby/dispatch/prompts.py` (new file).
+
+R7.F-prompt-builders fix. The dispatcher's `_dispatch(SpawnAgent)` arm (§1.9) does `prompt, initial_vars = PROMPT_BUILDERS[s.prompt_builder](task)`. Every spawn rule in §1.7 emits a `prompt_builder` string key (`planner_rewrite`, `plan_adversary`, `test_architect`, `expansion_qa`, `developer`, `qa_reviewer`, `holistic_reviewer`, `merge_runner`). Without the registry module, the dispatcher's import fails and the first spawn path raises `KeyError`. This deliverable creates the registry alongside §1.6's actions module so §1.7 + §1.9 can land coherently.
+
+**Module shape**:
+
+```python
+# src/gobby/dispatch/prompts.py
+from collections.abc import Callable
+from gobby.storage.tasks._models import Task
+
+PromptBuilder = Callable[[Task], tuple[str, dict]]
+
+# One builder per spawn key emitted by §1.7's rules. Each builder reads
+# durable task state (description, labels, task_artifacts, parent epic) and
+# returns (prompt_text, initial_variables_dict). Builders are pure: no MCP
+# calls, no side effects. The dispatcher's mutex hold makes the read
+# consistent with the locked re-evaluation.
+def _build_planner_rewrite(task: Task) -> tuple[str, dict]: ...
+def _build_plan_adversary(task: Task) -> tuple[str, dict]: ...
+def _build_test_architect(task: Task) -> tuple[str, dict]: ...
+def _build_expansion_qa(task: Task) -> tuple[str, dict]: ...
+def _build_developer(task: Task) -> tuple[str, dict]: ...
+def _build_qa_reviewer(task: Task) -> tuple[str, dict]: ...
+def _build_holistic_reviewer(task: Task) -> tuple[str, dict]: ...
+def _build_merge_runner(task: Task) -> tuple[str, dict]: ...
+
+PROMPT_BUILDERS: dict[str, PromptBuilder] = {
+    "planner_rewrite":     _build_planner_rewrite,
+    "plan_adversary":      _build_plan_adversary,
+    "test_architect":      _build_test_architect,
+    "expansion_qa":        _build_expansion_qa,
+    "developer":           _build_developer,
+    "qa_reviewer":         _build_qa_reviewer,
+    "holistic_reviewer":   _build_holistic_reviewer,
+    "merge_runner":        _build_merge_runner,
+}
+```
+
+The 8-key roster is the closed set the dispatcher needs as of this epic; adding a new spawn rule MUST also add a builder key here, and `tests/dispatch/test_prompt_builders.py` enforces the bijection between `RULES`-emitted keys and `PROMPT_BUILDERS` keys.
+
+**Acceptance:**
+
+- 1.6a.1 — `src/gobby/dispatch/prompts.py` exposes `PROMPT_BUILDERS` with all eight keys above and a `PromptBuilder` type alias. file: `src/gobby/dispatch/prompts.py`. test: `tests/dispatch/test_prompt_builders.py::test_registry_keys_present` covers each key.
+- 1.6a.2 — Bijection invariant: every `prompt_builder` string emitted by `RULES` (§1.7) resolves to a key in `PROMPT_BUILDERS`; no orphan keys exist on either side. test: `tests/dispatch/test_prompt_builders.py::test_rules_keys_match_registry` introspects `RULES` for all `SpawnAgent.prompt_builder` literals and asserts the set equals `PROMPT_BUILDERS.keys()`. Adding a new rule without a builder fails this test.
+- 1.6a.3 — Each builder returns `(str, dict)` and is pure (no MCP/DB side effects beyond reading the passed `Task`). Each builder's prompt names the specific contract surface the spawned agent reads (e.g., `qa_reviewer` references the `qa-reviewer.yaml` persona contract from §2.11). test: `tests/dispatch/test_prompt_builders.py::test_each_builder_signature_and_purity` covers each builder under a mocked `Task` fixture.
+
+### 1.7 Decision rules for all stages [category: code] (depends: 1.6, 1.6a)
 `kind: deliverable`
 
 Target: `src/gobby/dispatch/rules.py` (new file)
@@ -512,11 +805,16 @@ Ordered, first-match-wins. No `STAGE_BY_PROFILE` map — `_stage_enabled(task, s
 ```python
 from gobby.dispatch.actions import (
     Action, AdvanceLifecycle, AppendAuditMarker, ArchivePlan,
-    CascadeCloseLeaves, CreateWorktree, EscalateTask,
-    MarkTaskReviewApproved, Skip, SpawnAgent, StartExpansionRun,
+    CascadeCloseLeaves, CreateClone, CreateWorktree, EmitStubManifest,
+    EscalateTask, Skip, SpawnAgent, StartExpansionRun,
 )
+# Note: `MarkTaskReviewApproved` is defined in actions but no rule emits it —
+# the yolo cap-exhaustion paths use `AdvanceLifecycle(..., status=...)`
+# directly (per §1.8.6 which would otherwise re-run the failing review gate).
+# The dispatcher (§1.9) keeps the match arm for forward compatibility but
+# its trigger documentation explicitly says "no rule currently emits this".
 from gobby.storage.tasks._crud import _is_yolo, _skipped_stages
-from gobby.storage.tasks._models import Lifecycle, Task
+from gobby.storage.tasks._models import Isolation, Lifecycle, Task
 
 def _stage_enabled(task: Task, stage: str) -> bool:
     """Stage is enabled iff it is not in the task's `stage-:*` labels.
@@ -549,10 +847,18 @@ def rule_plan_rewrite_on_reject(task: Task) -> Action | None:
 
 def rule_plan_adversary(task: Task) -> Action | None:
     if not _stage_enabled(task, "plan_review"):
-        # Stage skipped; if the task somehow landed at plan_review, advance past it.
+        # R7.F-bypass-manifest fix: stage-skip is allowed only when an
+        # existing `## M1 Task Manifest` is already present in the plan
+        # file (verified at `gobby build` time per §3.2.7 — the build
+        # service rejects `--skip-stage plan_review` for plan-file/epic
+        # builds whose plan does not parse cleanly under
+        # `parse_plan(plan_path, parse_mode="expansion")`). By the time the
+        # dispatcher sees the task, the manifest invariant already holds,
+        # so the skip path is safe to advance directly.
         if task.lifecycle == Lifecycle.plan_review:
             return AdvanceLifecycle(task_id=task.id, to=Lifecycle.test_arch,
-                                    reason="plan_review stage skipped", by_actor="dispatcher")
+                                    reason="plan_review stage skipped (manifest precondition validated at build time)",
+                                    by_actor="dispatcher")
         return None
     if (task.lifecycle == Lifecycle.plan_review
         and task.status in ("open", "needs_review")
@@ -566,12 +872,28 @@ def rule_plan_adversary(task: Task) -> Action | None:
         and task.status in ("open", "needs_review")
         and not _rounds_remaining(task)):
         if _is_yolo(task):
-            # Yolo fallback: force-approve current draft, advance to test_arch.
+            # R7.F-yolo-manifest-fallback: yolo cap exhaustion preserves the
+            # "yolo never escalates" invariant AND the §2.21 manifest-presence
+            # invariant (downstream `gobby expand` will read the plan in
+            # `parse_mode="expansion"`, which requires a manifest). The dispatcher
+            # cannot run plan-adversary's manifest-emission step itself (the
+            # adversary just exhausted its rounds without approving), so it emits
+            # a deterministic stub manifest from the plan's `kind: deliverable`
+            # sections via `EmitStubManifest` — one entry per deliverable, default
+            # `assigned_agent="backend-developer"`, `tdd=True` for code/test
+            # categories, `source_section` set to each deliverable's section ID,
+            # and a `covers:<plan-id>:<section-id>:<item-id>` label per acceptance
+            # item. The stub is a concession to the yolo invariant; an audit
+            # marker captures the override so a human reviewing the merged epic
+            # can see that the manifest was force-generated rather than authored.
             return [
                 AppendAuditMarker(task_id=task.id, heading="Yolo Fallbacks",
-                                  body=f"{_now_iso()}: plan_review round budget exhausted; force-approved."),
+                                  body=f"{_now_iso()}: plan_review round budget exhausted; "
+                                       f"manifest auto-generated from kind:deliverable sections; "
+                                       f"plan force-approved."),
+                EmitStubManifest(task_id=task.id, by_actor="dispatcher"),
                 AdvanceLifecycle(task_id=task.id, to=Lifecycle.test_arch,
-                                 reason="yolo force-approve (rounds exhausted)",
+                                 reason="yolo force-approve (rounds exhausted; stub manifest emitted)",
                                  by_actor="dispatcher"),
             ]
         return EscalateTask(task_id=task.id,
@@ -591,12 +913,36 @@ def rule_test_arch(task: Task) -> Action | None:
         )
     return None
 
-MAX_EXPANSION_ATTEMPTS = 3
+# Default retry caps. Used as fallbacks when `task_artifacts` does not carry a
+# resolved override (fresh install, ad-hoc dispatch, or pre-§2.19 builds). Rule
+# code MUST read via `_resolve_retry_cap(task, name, default)` so per-build
+# overrides written into `task_artifacts` at `gobby build` time (§2.19) take
+# effect without rule-code edits. Naming the defaults explicitly (`_DEFAULT`
+# suffix) makes the read path unambiguous and prevents a future refactor from
+# accidentally reverting to direct constant reads.
+MAX_EXPANSION_ATTEMPTS_DEFAULT = 3
+
+def _resolve_retry_cap(task: Task, name: str, default: int) -> int:
+    """Resolve a retry cap for `task` by name. Reads `task_artifacts` first
+    (the resolved value persisted by `gobby build` at dispatch time, §2.19);
+    falls back to the module-level `_DEFAULT` constant if absent. The helper
+    is the single read path so adding a new cap is a one-line change here +
+    one acceptance item in §2.19."""
+    artifacts_value = _retry_cap_from_artifacts(task, name)
+    return artifacts_value if artifacts_value is not None else default
 
 def rule_start_expansion(task: Task) -> Action | None:
-    """R4.F1 — first half of the split. Starts a new expansion run when no run
-    is active. After expansion-qa rejects, §2.9 clears `task_artifacts.expansion_run_id`
-    and bumps `expansion_attempts`, allowing this rule to re-fire on the next tick.
+    """R4.F1 — first half of the split. Starts a new expansion run ONLY when
+    `task_artifacts.expansion_run_id` is missing. R7.F-start-vs-validate fix:
+    the prior `not _expansion_active(task)` predicate matched on terminal
+    (`completed`/`failed`) runs too — letting the start rule overwrite the
+    terminal run before `rule_validate_expansion` could dispatch expansion-qa
+    to read failure details and reject. Guarding on a MISSING artifact
+    instead of an INACTIVE run preserves the recovery path: terminal runs
+    keep their `expansion_run_id` until expansion-qa rejects (which §2.9
+    clears the artifact and increments `expansion_attempts`), THEN this rule
+    re-fires on the next tick.
+
     Cap retries; non-yolo escalates, yolo force-advances."""
     if not _stage_enabled(task, "expanding"):
         if task.lifecycle == Lifecycle.expanding:
@@ -605,33 +951,43 @@ def rule_start_expansion(task: Task) -> Action | None:
         return None
     if not (task.lifecycle == Lifecycle.expanding
             and task.status == "open"
-            and not _expansion_active(task)):
+            and _expansion_run_artifact_absent(task)):  # was: not _expansion_active(task)
         return None
     attempts = _expansion_attempts(task)
-    if attempts >= MAX_EXPANSION_ATTEMPTS:
+    cap = _resolve_retry_cap(task, "max_expansion_attempts", MAX_EXPANSION_ATTEMPTS_DEFAULT)
+    if attempts >= cap:
         if _is_yolo(task):
             return [
                 AppendAuditMarker(task_id=task.id, heading="Yolo Fallbacks",
-                    body=f"{_now_iso()}: expansion attempts exhausted ({attempts}); force-advanced to in_development."),
+                    body=f"{_now_iso()}: expansion attempts exhausted ({attempts}/{cap}); force-advanced to in_development."),
                 AdvanceLifecycle(task_id=task.id, to=Lifecycle.in_development,
                                  reason="yolo: expansion attempts exhausted",
                                  by_actor="dispatcher"),
             ]
         return EscalateTask(task_id=task.id,
-            reason=f"needs_human: expansion failed {attempts} times; review rejection notes and either fix the plan or de-escalate to retry")
-    return StartExpansionRun(task_id=task.id, tdd=_is_coding_epic(task))
+            reason=f"needs_human: expansion failed {attempts} times (cap={cap}); review rejection notes and either fix the plan or de-escalate to retry")
+    return StartExpansionRun(task_id=task.id)
 
 def rule_validate_expansion(task: Task) -> Action | None:
-    """R4.F1 — second half of the split. When the expansion run has completed
-    and validation has not yet been dispatched, spawn `expansion-qa`. The
-    candidate scan + per-task mutex prevent duplicate dispatch within a tick;
+    """R4.F1 — second half of the split. When the expansion run reaches a
+    terminal state (`completed` OR `failed`) and validation has not yet been
+    dispatched, spawn `expansion-qa`. Expansion-qa reads the run details and
+    routes: completed → validate the produced tree; failed → call
+    `mark_task_review_rejected(lifecycle=expanding)` with the failure reason
+    in `rejection_notes`, which clears `expansion_run_id` and increments
+    `expansion_attempts` (§1.8 R4.F1 extension), letting `rule_start_expansion`
+    re-fire on the next tick. R7.F-failed-run fix: covering `failed` in this
+    predicate is what makes recovery actually work — the prior `_completed`-only
+    predicate stranded failed runs because nothing cleared their artifact.
+
+    The candidate scan + per-task mutex prevent duplicate dispatch within a tick;
     expansion-qa's claim flips `claimed_by_session_id` for the lifetime of the
     run, so the candidate scan filters this task out across ticks."""
     if not _stage_enabled(task, "expanding"):
         return None
     if (task.lifecycle == Lifecycle.expanding
         and task.status == "open"
-        and _expansion_run_completed(task)):
+        and _expansion_run_terminal(task)):
         return SpawnAgent(
             agent="expansion-qa", task_id=task.id, prompt_builder="expansion_qa",
         )
@@ -699,17 +1055,24 @@ def rule_dispatch_leaf(task: Task) -> Action | None:
         additional_skills=task.additional_skills,
     )
 
-MAX_QA_ROUNDS = 5
+MAX_QA_ROUNDS_DEFAULT = 5
+MAX_MERGE_ATTEMPTS_DEFAULT = 3      # R7.F-merge-cap-wired: read by `rule_merging` and threaded into merge.yaml session vars
+MAX_HOLISTIC_ROUNDS_DEFAULT = 3     # R7.F-holistic-cap-wired: read by `rule_holistic` for cap exhaustion
+MAX_REVIEW_ROUNDS_DEFAULT = 3       # R7.F-review-cap-wired: read by `_rounds_remaining` for plan-review budget
 
 def rule_qa(task: Task) -> Action | None:
     '''Per-leaf QA dispatch with retry cap. The agent dispatched is the
     read-only `qa-reviewer` (§2.11) — Claude operating with a ruthless
     senior-dev persona. Approval flips the leaf to
-    `status=review_approved, lifecycle_stage=holistic_review` (§1.8);
-    rejection bumps `qa-attempts:N` and reopens the leaf for another dev pass.
-    On `MAX_QA_ROUNDS` exhaustion, non-yolo escalates with `needs_human:`
-    reason; yolo issues `MarkTaskReviewApproved` plus a `Yolo Fallbacks`
-    audit marker so the override is auditable.'''
+    `status=review_approved, lifecycle=holistic_review` (§1.8); rejection
+    bumps `qa-attempts:N` and reopens the leaf for another dev pass. On cap
+    exhaustion, non-yolo escalates with `needs_human:` reason; yolo emits
+    `[AppendAuditMarker, AdvanceLifecycle(holistic_review, status="review_approved")]`
+    — the explicit-transition action bypasses the leaf-close gate that would
+    otherwise re-run the failing validation that triggered the cap exhaustion
+    (per §1.8.6a). The audit marker is the durable record of the override.
+    The cap is resolved via `_resolve_retry_cap` so `gobby build --max-qa-rounds N`
+    overrides flow through (§2.19).'''
     if not _stage_enabled(task, "qa"):
         return None
     if not (task.lifecycle == Lifecycle.in_development
@@ -717,19 +1080,31 @@ def rule_qa(task: Task) -> Action | None:
             and not task.claimed_by_session_id):
         return None
     attempts = _qa_attempts(task)
-    if attempts >= MAX_QA_ROUNDS:
+    cap = _resolve_retry_cap(task, "max_qa_rounds", MAX_QA_ROUNDS_DEFAULT)
+    if attempts >= cap:
         if _is_yolo(task):
+            # R7.F-yolo-fallback-gate: the force-advance path bypasses qa
+            # validation by design (yolo: never escalate, push work through),
+            # so it MUST NOT route through `MarkTaskReviewApproved` whose
+            # leaf-close gate would re-evaluate the failing validation. Use
+            # the explicit `AdvanceLifecycle` action + audit marker. The leaf
+            # parks at `(holistic_review, review_approved)` exactly as the
+            # normal-approval path does (advance_lifecycle resets status to
+            # `review_approved` for this lifecycle target — see §1.8). The
+            # audit marker is the durable record that the override happened.
             return [
                 AppendAuditMarker(task_id=task.id, heading="Yolo Fallbacks",
-                    body=f"{_now_iso()}: qa rounds exhausted ({attempts}); "
-                         f"leaf force-approved (review_approved + holistic_review)."),
-                MarkTaskReviewApproved(task_id=task.id, by_actor="dispatcher",
-                    approval_notes=f"yolo: qa rounds exhausted after {attempts} attempts"),
+                    body=f"{_now_iso()}: qa rounds exhausted ({attempts}/{cap}); "
+                         f"leaf force-advanced to holistic_review without qa approval."),
+                AdvanceLifecycle(task_id=task.id, to=Lifecycle.holistic_review,
+                                 reason=f"yolo: qa rounds exhausted after {attempts} attempts (cap={cap})",
+                                 by_actor="dispatcher",
+                                 status="review_approved"),  # explicit terminal status — bypasses leaf-close gate
             ]
         return EscalateTask(task_id=task.id,
             reason=f"needs_human: qa-reviewer rejected leaf {attempts} times "
-                   f"(MAX_QA_ROUNDS={MAX_QA_ROUNDS}); review the rejection "
-                   f"notes and either fix the leaf or de-escalate with override")
+                   f"(cap={cap}); review the rejection notes and either fix "
+                   f"the leaf or de-escalate with override")
     return SpawnAgent(
         agent="qa-reviewer", task_id=task.id, prompt_builder="qa_reviewer",
         additional_skills=task.additional_skills,
@@ -738,12 +1113,13 @@ def rule_qa(task: Task) -> Action | None:
 def rule_all_leaves_holistic(task: Task) -> Action | None:
     '''Renamed from `rule_all_closed_advance_to_holistic`. Fires when every
     child leaf is in a terminal-or-audit-pending state — either
-    `status=closed` or `(status=review_approved AND lifecycle_stage=
-    holistic_review)`. If at least one leaf is audit-pending, advance the
-    epic to `holistic_review` (or the next enabled stage) so holistic-reviewer
-    audits the cumulative diff. Trivial-epic shortcut: if every leaf is
-    `closed` (no audit-pending leaves), holistic skips and the epic respects
-    `stage-:pr` / `stage-:merging` labels — per-build, not a blanket rule.'''
+    `status=closed` or `(status=review_approved AND lifecycle=holistic_review)`.
+    If at least one leaf is audit-pending, advance the epic to `holistic_review`
+    (or the next enabled stage) so holistic-reviewer audits the cumulative diff.
+    Trivial-epic shortcut: if every leaf is `closed` (no audit-pending leaves),
+    holistic skips and the epic respects the `stage-:pr` label only — `merging`
+    is non-skippable per Constraints, so the chain always lands at `merging`
+    and runs the merge agent.'''
     if not (task.task_type == "epic"
             and task.lifecycle == Lifecycle.in_development
             and _all_leaves_terminal_or_holistic(task)):
@@ -751,38 +1127,67 @@ def rule_all_leaves_holistic(task: Task) -> Action | None:
     if _any_leaves_holistic_pending(task):
         target = (Lifecycle.holistic_review if _stage_enabled(task, "holistic_review")
                   else Lifecycle.pr if _stage_enabled(task, "pr")
-                  else Lifecycle.merging if _stage_enabled(task, "merging")
-                  else Lifecycle.merged)
+                  else Lifecycle.merging)  # `merging` is non-skippable; always reachable
         return AdvanceLifecycle(task_id=task.id, to=target,
             reason="all leaves terminal-or-holistic; audit pending",
             by_actor="dispatcher")
     # Trivial-epic shortcut: every leaf closed cleanly. Skip holistic.
     target = (Lifecycle.pr if _stage_enabled(task, "pr")
-              else Lifecycle.merging if _stage_enabled(task, "merging")
-              else Lifecycle.merged)
+              else Lifecycle.merging)  # `merging` is non-skippable; always reachable
     return AdvanceLifecycle(task_id=task.id, to=target,
         reason="all subtasks closed (trivial epic; holistic skipped)",
         by_actor="dispatcher")
 
 def rule_holistic(task: Task) -> Action | None:
+    """R7.F-holistic-cap-wired: holistic-review rejection cap. After a
+    cited-subtasks rejection (§1.8 R4.F5), the epic rewinds to in_development
+    and the leaves redo dev/qa. When all leaves return to terminal-or-holistic,
+    `rule_all_leaves_holistic` fires and advances back to holistic_review.
+    Each holistic-reviewer rejection bumps a `holistic-attempts:N` label on
+    the epic (counter symmetric to `qa-attempts:N` on leaves). At cap
+    exhaustion, non-yolo escalates with `needs_human:` reason; yolo emits the
+    deterministic force-advance fallback per §2.10's pattern."""
     if not _stage_enabled(task, "holistic_review"):
         if task.lifecycle == Lifecycle.holistic_review:
             return AdvanceLifecycle(task_id=task.id, to=Lifecycle.pr,
                                     reason="holistic_review stage skipped", by_actor="dispatcher")
         return None
-    if (task.task_type == "epic"
-        and task.lifecycle == Lifecycle.holistic_review
-        and task.status in ("open", "needs_review")
-        and not task.claimed_by_session_id):
-        return SpawnAgent(
-            agent="holistic-reviewer", task_id=task.id, prompt_builder="holistic_reviewer",
-        )
-    return None
+    if not (task.task_type == "epic"
+            and task.lifecycle == Lifecycle.holistic_review
+            and task.status in ("open", "needs_review")
+            and not task.claimed_by_session_id):
+        return None
+    attempts = _holistic_attempts(task)
+    cap = _resolve_retry_cap(task, "max_holistic_rounds", MAX_HOLISTIC_ROUNDS_DEFAULT)
+    if attempts >= cap:
+        if _is_yolo(task):
+            # Yolo never escalates: force-advance to pr (or merging if pr is
+            # skipped) via explicit advance_lifecycle (bypasses the
+            # stage-advance gate that would re-evaluate holistic preconditions).
+            target = (Lifecycle.pr if _stage_enabled(task, "pr") else Lifecycle.merging)
+            return [
+                AppendAuditMarker(task_id=task.id, heading="Yolo Fallbacks",
+                    body=f"{_now_iso()}: holistic_review rounds exhausted ({attempts}/{cap}); "
+                         f"epic force-advanced to {target.value} without holistic approval."),
+                AdvanceLifecycle(task_id=task.id, to=target,
+                                 reason=f"yolo: holistic rounds exhausted after {attempts} attempts (cap={cap})",
+                                 by_actor="dispatcher"),
+            ]
+        return EscalateTask(task_id=task.id,
+            reason=f"needs_human: holistic-reviewer rejected epic {attempts} times "
+                   f"(cap={cap}); review the rejection notes and either fix the "
+                   f"cited subtasks or de-escalate with override")
+    return SpawnAgent(
+        agent="holistic-reviewer", task_id=task.id, prompt_builder="holistic_reviewer",
+        # R7.F-holistic-cap-wired: pass resolved cap so holistic-reviewer
+        # can include it in approval/rejection signoff_summary context.
+        initial_variables={"max_holistic_rounds": cap, "current_attempt": attempts + 1},
+    )
 
 def rule_pr(task: Task) -> Action | None:
     """R3.F4 + yolo fallback. No PR-creation agent exists until #12728.
     Non-yolo: escalate; human opens PR manually and calls
-    `de_escalate_task(task_id, next_status="review_approved", lifecycle=Lifecycle.merging)`
+    `de_escalate_task(task_id, target_status="review_approved", lifecycle=Lifecycle.merging)`
     (single call — §1.8 extends the tool).
     Yolo: skip straight to merging (local merge only, no remote PR)."""
     if not _stage_enabled(task, "pr"):
@@ -805,29 +1210,42 @@ def rule_pr(task: Task) -> Action | None:
             task_id=task.id,
             reason="needs_human: PR creation not yet automated (see #12728). "
                    "Open the PR manually, then call de_escalate_task(task_id, "
-                   "next_status='review_approved', lifecycle=Lifecycle.merging).",
+                   "target_status='review_approved', lifecycle=Lifecycle.merging).",
         )
     return None
 
 def rule_merging(task: Task) -> Action | None:
-    if not _stage_enabled(task, "merging"):
-        if task.lifecycle == Lifecycle.merging:
-            return AdvanceLifecycle(task_id=task.id, to=Lifecycle.merged,
-                                    reason="merging stage skipped", by_actor="dispatcher")
-        return None
+    # `merging` is non-skippable per Constraints. There is no `_stage_enabled`
+    # branch here — a malformed `stage-:merging` label cannot bypass the merge
+    # agent. `gobby build` rejects `--skip-stage merging` at build time (§3.2);
+    # if a `stage-:merging` label is observed at dispatch time despite that
+    # validation, an audit marker is written and the rule still dispatches the
+    # merge agent (the label is observed-but-ignored on this stage).
     if (task.task_type == "epic"
         and task.lifecycle == Lifecycle.merging
         and task.status in ("open", "review_approved")
         and not task.claimed_by_session_id):
+        merge_cap = _resolve_retry_cap(task, "max_merge_attempts", MAX_MERGE_ATTEMPTS_DEFAULT)
+        merge_vars = {
+            "yolo": _is_yolo(task),
+            "max_merge_attempts": merge_cap,  # R7.F-merge-cap-wired: merge.yaml reads this from session vars per §2.10
+        }
+        if "stage-:merging" in task.labels:
+            return [
+                AppendAuditMarker(task_id=task.id, heading="Stage-Skip Audit",
+                    body=f"{_now_iso()}: stage-:merging label present but ignored — merging is non-skippable; dispatching merge agent."),
+                SpawnAgent(agent="merge", task_id=task.id, prompt_builder="merge_runner",
+                    initial_variables=merge_vars),
+            ]
         return SpawnAgent(
             agent="merge", task_id=task.id, prompt_builder="merge_runner",
-            initial_variables={"yolo": _is_yolo(task)},   # agent's conflict handling branches on this
+            initial_variables=merge_vars,   # agent's conflict handling branches on yolo + reads cap
         )
     return None
 
 def rule_cascade_close_on_merge(task: Task) -> Action | None:
     '''When an epic transitions to `lifecycle=merged`, every leaf parked at
-    `status=review_approved, lifecycle_stage=holistic_review` cascades to
+    `status=review_approved, lifecycle=holistic_review` cascades to
     `status=closed` in a single atomic CascadeCloseLeaves action. Already-
     closed leaves are no-op. Fires whether the epic reached merged via the
     full pipeline (merge agent) or via stage-skip / yolo fallback.'''
@@ -883,7 +1301,7 @@ def evaluate(task: Task) -> Action:
     return Skip(reason="no rule matched")
 ```
 
-Helpers `_current_verdict_rejected`, `_rounds_remaining`, `_expansion_active`, `_expansion_run_completed`, `_expansion_attempts`, `_qa_attempts`, `_target_branch`, `_is_coding_epic`, `_has_ready_subtasks`, `_all_leaves_terminal_or_holistic`, `_any_leaves_holistic_pending`, `_leaves_pending_cascade_close`, `_has_plan_file`, `_plan_already_archived`, `_plan_id_for`, `_skipped_stages`, `_is_yolo`, `_has_worktree`, `_has_clone`, `_has_isolation_artifact`, `_parent_epic`, `_now_iso` live alongside rules. `_qa_attempts(task)` reads the leaf's `qa-attempts:N` label (set by `mark_task_review_rejected` at `lifecycle=in_development`, §1.8). `_all_leaves_terminal_or_holistic(epic)` returns true when every leaf is `status=closed` or `(status=review_approved AND lifecycle_stage=holistic_review)`; `_any_leaves_holistic_pending(epic)` returns true when at least one leaf is in the holistic-pending state (drives the trivial-epic shortcut in `rule_all_leaves_holistic`). `_leaves_pending_cascade_close(epic)` returns the list of leaf IDs at `status=review_approved, lifecycle_stage=holistic_review` that the cascade-close action must close. `_has_plan_file(epic)` checks `task_artifacts.plan_file_path` non-null; `_plan_already_archived(epic)` checks the `plans` table (§2.15) for `state=archived`; `_plan_id_for(epic)` derives the `plan_id` from `task_artifacts.plan_file_path` or the `plans` table row. `_has_isolation_artifact(epic)` returns true when the appropriate artifact column for the epic's `isolation` is populated (`worktree_path` for `worktree`, `clone_path` for `clone`); for `isolation=none` it returns true unconditionally (in-branch work needs no artifact). They read durable task state: labels (`planning-current-verdict:rejected`, `planning-round:N`, `planning-max-rounds:N`, `qa-attempts:N`, `stage-:<name>`), `task_artifacts` rows (R4.F1 expansion fields, R4.F6 target_branch, plan_file_path), the expansion-run table (for `_expansion_run_completed`), the `plans` table (§2.15) for archive state, subtask tree presence, and task fields on `tasks`. `_target_branch` falls back to `git rev-parse --abbrev-ref HEAD` when `task_artifacts.target_branch` is absent (legacy tasks created before R4.F6). **No `_get_stack`, no `_get_profile`, no `_added_stages`, no `_expansion_started`, no `_all_subtasks_closed`** — those helpers are obsolete:
+Helpers `_current_verdict_rejected`, `_rounds_remaining` (R7.F-review-cap-wired: reads `_resolve_retry_cap(task, "max_review_rounds", MAX_REVIEW_ROUNDS_DEFAULT)` for the cap and `planning-round:N` label for the live counter; returns `cap > current_round`), `_expansion_run_artifact_absent`, `_expansion_run_terminal`, `_expansion_attempts`, `_qa_attempts`, `_retry_cap_from_artifacts`, `_target_branch`, `_is_coding_epic`, `_has_ready_subtasks`, `_all_leaves_terminal_or_holistic`, `_any_leaves_holistic_pending`, `_leaves_pending_cascade_close`, `_has_plan_file`, `_plan_already_archived`, `_plan_id_for`, `_skipped_stages`, `_is_yolo`, `_has_worktree`, `_has_clone`, `_has_isolation_artifact`, `_parent_epic`, `_now_iso` live alongside rules. `_retry_cap_from_artifacts(task, name) -> int | None` reads the cap key from `task_artifacts` (set by `gobby build` per §2.19) and returns `None` when absent; `_resolve_retry_cap(task, name, default)` (defined inline above) wraps it with the `_DEFAULT` fallback. `_qa_attempts(task)` reads the leaf's `qa-attempts:N` label (set by `mark_task_review_rejected` at `lifecycle=in_development`, §1.8). `_holistic_attempts(task)` reads the epic's `holistic-attempts:N` label (set by `mark_task_review_rejected` at `lifecycle=holistic_review`, R7.F-holistic-cap-wired — symmetric to qa-attempts on leaves; §1.8's holistic_review rejection branch increments it before reopening cited subtasks). `_all_leaves_terminal_or_holistic(epic)` returns true when every leaf is `status=closed` or `(status=review_approved AND lifecycle=holistic_review)`; `_any_leaves_holistic_pending(epic)` returns true when at least one leaf is in the holistic-pending state (drives the trivial-epic shortcut in `rule_all_leaves_holistic`). `_leaves_pending_cascade_close(epic)` returns the list of leaf IDs at `status=review_approved, lifecycle=holistic_review` that the cascade-close action must close. `_has_plan_file(epic)` checks `task_artifacts.plan_file_path` non-null; `_plan_already_archived(epic)` checks the `plans` table (§2.15) for `state=archived`; `_plan_id_for(epic)` derives the `plan_id` from `task_artifacts.plan_file_path` or the `plans` table row. `_has_isolation_artifact(epic)` returns true when the appropriate artifact column for the epic's `isolation` is populated (`worktree_path` for `worktree`, `clone_path` for `clone`); for `isolation=none` it returns true unconditionally (in-branch work needs no artifact). They read durable task state: labels (`planning-current-verdict:rejected`, `planning-round:N`, `planning-max-rounds:N`, `qa-attempts:N`, `stage-:<name>`), `task_artifacts` rows (R4.F1 expansion fields, R4.F6 target_branch, plan_file_path), the expansion-run table (for `_expansion_run_completed`), the `plans` table (§2.15) for archive state, subtask tree presence, and task fields on `tasks`. `_target_branch` falls back to `git rev-parse --abbrev-ref HEAD` when `task_artifacts.target_branch` is absent (legacy tasks created before R4.F6). **No `_get_stack`, no `_get_profile`, no `_added_stages`, no `_expansion_started`, no `_all_subtasks_closed`** — those helpers are obsolete:
 
 - `stack` was replaced by `assigned_agent` (§2.8).
 - Profile is CLI sugar only; no label storage, no helper needed.
@@ -892,13 +1310,13 @@ Helpers `_current_verdict_rejected`, `_rounds_remaining`, `_expansion_active`, `
 **Acceptance:**
 
 - 1.7.1 — Decision rules for all stages is implemented according to this section. file: `src/gobby/dispatch/rules.py`.
-- 1.7.2 — `MAX_QA_ROUNDS = 5` is defined as a module-level constant alongside `MAX_EXPANSION_ATTEMPTS`. `rule_qa` reads it; on cap exhaustion non-yolo returns `EscalateTask` with `needs_human:` reason, yolo returns `[AppendAuditMarker, MarkTaskReviewApproved]`. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_qa_cap.py` covers (a) cap exhaustion non-yolo escalates, (b) cap exhaustion yolo issues MarkTaskReviewApproved + audit marker, (c) under-cap dispatches qa-reviewer agent.
-- 1.7.3 — `rule_all_leaves_holistic` (renamed from `rule_all_closed_advance_to_holistic`) fires per the mixed-state predicate: every child is `status=closed` OR `(status=review_approved AND lifecycle_stage=holistic_review)`. When at least one child is audit-pending, advance to `holistic_review` (or next enabled stage); when every child is closed (no audit pending), apply the trivial-epic shortcut and skip holistic. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_holistic.py` covers (a) mixed-state with audit-pending → holistic_review, (b) all-closed → skip holistic, (c) mid-state non-firing.
+- 1.7.2 — Retry caps resolve through `_resolve_retry_cap(task, name, default)`, which reads `task_artifacts` (set by `gobby build` per §2.19) and falls back to module-level defaults. Defaults: `MAX_EXPANSION_ATTEMPTS_DEFAULT = 3`, `MAX_QA_ROUNDS_DEFAULT = 5`. `rule_start_expansion` reads `max_expansion_attempts`; `rule_qa` reads `max_qa_rounds`. On cap exhaustion non-yolo returns `EscalateTask` with `needs_human:` reason citing the resolved cap. Yolo returns `[AppendAuditMarker, AdvanceLifecycle]` for both rules (`AdvanceLifecycle` not `MarkTaskReviewApproved`, because the leaf-close gate at `lifecycle=in_development` would re-evaluate the failing validation that triggered the cap-exhaustion in the first place — yolo cap-exhaustion is the explicit force-advance escape hatch, so it must use the explicit transition tool that bypasses review-style gates). The leaf advances to `(holistic_review, review_approved)` via `advance_lifecycle(task, to=holistic_review, status="review_approved", ...)` per §1.8. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_qa_cap.py` covers (a) cap exhaustion non-yolo escalates, (b) cap exhaustion yolo issues `AdvanceLifecycle(holistic_review, status="review_approved")` + audit marker (NOT `MarkTaskReviewApproved` — explicit assertion that no review-gate evaluation happens on this path), (c) under-cap dispatches qa-reviewer agent, (d) cap override from `task_artifacts` takes precedence over the default; `tests/dispatch/test_rules_expansion_cap.py` covers the same shape for expansion attempts.
+- 1.7.3 — `rule_all_leaves_holistic` (renamed from `rule_all_closed_advance_to_holistic`) fires per the mixed-state predicate: every child is `status=closed` OR `(status=review_approved AND lifecycle=holistic_review)`. When at least one child is audit-pending, advance to `holistic_review` (or next enabled stage); when every child is closed (no audit pending), apply the trivial-epic shortcut and skip holistic. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_holistic.py` covers (a) mixed-state with audit-pending → holistic_review, (b) all-closed → skip holistic, (c) mid-state non-firing.
 - 1.7.4 — `rule_cascade_close_on_merge` returns `CascadeCloseLeaves(epic_task_id, leaf_task_ids)` when the epic has `lifecycle=merged` and `_leaves_pending_cascade_close(task)` returns a non-empty list. Idempotent — already-closed leaves are excluded by the helper. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_cascade_close.py` covers (a) cascade fires for audit-pending leaves, (b) all-already-closed → no-op, (c) leaf-list correctness.
 - 1.7.5 — `rule_archive_plan_on_merge` returns `ArchivePlan(epic_task_id, plan_id)` when the epic has `lifecycle=merged, status=closed`, has `task_artifacts.plan_file_path`, and the plan is not already archived in the `plans` table (§2.15). file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_archive_plan.py` covers (a) fires on terminal close with active plan, (b) no-op when plan already archived, (c) no-op when no plan_file_path artifact.
 - 1.7.6 — RULES tuple ordering: `rule_qa` precedes `rule_all_leaves_holistic`; `rule_cascade_close_on_merge` and `rule_archive_plan_on_merge` are appended after `rule_merging`. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_ordering.py`.
 
-### 1.8 Lifecycle transitions in review tools [category: code] (depends: 1.1)
+### 1.8 Lifecycle transitions in review tools [category: code]
 `kind: deliverable`
 
 Target: `src/gobby/storage/tasks/_transitions.py` and the matching MCP wrappers
@@ -911,30 +1329,45 @@ Extend existing transitions and add one new one:
   - `lifecycle=plan_review` → advance to `test_arch`; status resets to `open`.
   - `lifecycle=test_arch` → advance to `expanding`; status resets to `open`.
   - `lifecycle=expanding` → advance to `in_development`; status resets to `open`. (Called by expansion-qa after successful validation — §2.9 wires this.)
-  - `lifecycle=holistic_review` (epic) → **advance to `pr`** (R3.F4 fix); status resets to `open`. If `pr` stage is skipped, further advance to `merging` (or `merged` if both are skipped).
+  - `lifecycle=holistic_review` (epic) → **advance to `pr`** (R3.F4 fix); status resets to `open`. If `pr` is skipped via `stage-:pr`, further advance to `merging` — but NEVER directly to `merged`. `merging` is non-skippable per Constraints; the merge agent always runs. A `stage-:merging` label is observed-but-ignored at this transition (and §3.2 rejects it at build time).
   - `lifecycle=merging` → advance to `merged` (terminal); status = `closed`.
   - `lifecycle=in_development` (leaf — qa-reviewer caller) → advance the leaf to `lifecycle=holistic_review` and set `status=review_approved`. Leaf does **not** close — it parks at `holistic_review + review_approved` until the parent epic merges, at which point `rule_cascade_close_on_merge` (§1.7) cascades the leaf to `status=closed`. The atomic leaf transition is what trips `rule_all_leaves_holistic` (§1.7) once every sibling reaches a terminal-or-holistic state. The transition writes a `task_lifecycle_events` row with `reason="mark_task_review_approved"` and `by_actor=<current_session_agent_name>` (typically `qa-reviewer` or `dispatcher` for yolo fallbacks).
   - Every advance writes a `task_lifecycle_events` row with `reason="mark_task_review_approved"` and `by_actor=<current_session_agent_name>`.
 
 - **`mark_task_review_rejected(task_id, rejection_notes=None, round_number=None, cited_subtasks=None)`**: extended signature — `cited_subtasks` is a list of leaf refs (R4.F5). Behavior by lifecycle:
   - `lifecycle=plan_review` → stays at `plan_review`; adds `planning-current-verdict:rejected` label; increments `planning-round:N`; appends findings to description (existing behavior per R2.F1). `cited_subtasks` ignored.
-  - `lifecycle=holistic_review` (R4.F5 fix; epic only) → `cited_subtasks` is **REQUIRED** (one or more leaf refs needing rework); rejection without it raises a validation error. The tool atomically (single transaction): (a) appends findings to the epic description, (b) reopens each cited subtask (`status: review_approved | closed → open`; `lifecycle: holistic_review → in_development` for leaves rewound from the audit-pending park), and (c) rewinds the epic lifecycle `holistic_review → in_development` with `status=open`. The atomic reopen prevents `rule_all_leaves_holistic` (§1.7, renamed) from immediately bouncing the epic back into `holistic_review` on the next tick (because at least one subtask is now `open` at `in_development`, the predicate is false until the dev/qa loop drives the cited leaves back to terminal-or-holistic). The escalate-rescope third path (below) is the only no-cited rejection mechanism — bare rejection without `cited_subtasks` is invalid by design.
+  - `lifecycle=holistic_review` (R4.F5 fix; epic only) → `cited_subtasks` is **REQUIRED** (one or more leaf refs needing rework); rejection without it raises a validation error. The tool atomically (single transaction): (a) appends findings to the epic description, (b) reopens each cited subtask (`status: review_approved | closed → open`; `lifecycle: holistic_review → in_development` for leaves rewound from the audit-pending park), (c) rewinds the epic lifecycle `holistic_review → in_development` with `status=open`, and (d) **increments `holistic-attempts:N` label** on the epic (R7.F-holistic-cap-wired — symmetric to `qa-attempts:N` on leaves; consumed by `rule_holistic`'s cap-exhaustion branch in §1.7). The atomic reopen prevents `rule_all_leaves_holistic` (§1.7, renamed) from immediately bouncing the epic back into `holistic_review` on the next tick (because at least one subtask is now `open` at `in_development`, the predicate is false until the dev/qa loop drives the cited leaves back to terminal-or-holistic). The escalate-rescope third path (below) is the only no-cited rejection mechanism — bare rejection without `cited_subtasks` is invalid by design.
   - `lifecycle=expanding` (R4.F1 extension) → stays at `expanding`; findings appended; **clears `task_artifacts.expansion_run_id`** (so `rule_start_expansion` can re-fire on the next tick); **calls `increment_expansion_attempts(task_id)`** so the retry cap is enforced. §2.9 (expansion-qa) is the caller.
-  - `lifecycle=merging` (R6.F4 extension) → stays at `merging`; status resets to `open`; findings appended (yolo retry detail or non-yolo failure note); **does NOT itself manipulate the `merge-attempts:N` label** — that label is managed by the merge agent (§2.10) immediately before the rejection call. The tool atomically (single transaction) appends findings, resets status, and writes the rejection event to `task_lifecycle_events`. `rule_merging` re-dispatches the merge agent on the next tick. §2.10 (merge agent yolo retry path) is the caller. After `merge-attempts:N >= cap`, the merge agent switches to the force-advance fallback (`mark_task_review_approved` with audit marker), which §2.10 documents in detail.
+  - `lifecycle=merging` (R6.F4 extension) → stays at `merging`; status resets to `open`; findings appended (yolo retry detail or non-yolo failure note); **does NOT itself manipulate the `merge-attempts:N` label** — that label is managed by the merge agent (§2.10) immediately before the rejection call. The tool atomically (single transaction) appends findings, resets status, and writes the rejection event to `task_lifecycle_events`. `rule_merging` re-dispatches the merge agent on the next tick. §2.10 (merge agent yolo retry path) is the caller. After `merge-attempts:N >= cap`, the merge agent switches to the force-advance fallback: `gobby-tasks-ops:append_description_section(heading="Yolo Fallbacks", body=...)` + `gobby-tasks:advance_lifecycle(epic, to=Lifecycle.merged, reason="yolo: merge attempts exhausted; force-advanced without merge", by_actor="merge")` — `advance_lifecycle`, not `mark_task_review_approved`, because the stage-advance gate at `lifecycle=merging` (§1.8.6b) requires merge-clean state and would deadlock the fallback. §2.10 documents the full sequence.
   - Leaf `lifecycle=in_development` (qa-reviewer caller) → no lifecycle change; `status: needs_review → open`; rejection_notes appended to description; **increments `qa-attempts:N` label** (matching the cap-enforcement contract in `rule_qa`, §1.7 — `MAX_QA_ROUNDS=5`). The leaf re-enters the dev/qa loop on the next tick. `cited_subtasks` ignored. After the cap, behavior is rule-driven (escalate non-yolo / force-advance yolo per `rule_qa` cap exhaustion).
 
-- **Holistic-review escalate-rescope (third path)**: when the holistic-reviewer determines the plan premise is wrong rather than the implementation, it calls `escalate_task(task_id=epic, reason="needs_human:rescope_required:<details>")` (or `reason="needs_human:requirements_unclear:<details>"`). The tool flips the epic to `status=escalated`, leaves `lifecycle=holistic_review` unchanged, and writes a `task_lifecycle_events` row. The user resumes via the existing extended `de_escalate_task(epic, next_status=..., lifecycle=..., reason=...)` after revising the plan or accepting the rework scope. Validation: `escalate_task` rejects reasons that don't start with `needs_human:rescope_required:` or `needs_human:requirements_unclear:` when the caller is the holistic-reviewer agent (enforced via `by_actor` check); other agents may use other `needs_human:` prefixes per existing escalation conventions.
+- **Holistic-review escalate-rescope (third path)**: when the holistic-reviewer determines the plan premise is wrong rather than the implementation, it calls `escalate_task(task_id=epic, reason="needs_human:rescope_required:<details>")` (or `reason="needs_human:requirements_unclear:<details>"`). The tool flips the epic to `status=escalated`, leaves `lifecycle=holistic_review` unchanged, and writes a `task_lifecycle_events` row. The user resumes via the existing extended `de_escalate_task(epic, target_status=..., lifecycle=..., reason=...)` after revising the plan or accepting the rework scope. Validation: `escalate_task` rejects reasons that don't start with `needs_human:rescope_required:` or `needs_human:requirements_unclear:` when the caller is the holistic-reviewer agent (enforced via `by_actor` check); other agents may use other `needs_human:` prefixes per existing escalation conventions.
 
-- **`mark_task_needs_review`**: no lifecycle change. Planner MUST clear the `planning-current-verdict:rejected` label when submitting for review (R2.F1, enforced in §2.7 planner step definition).
+- **`mark_task_needs_review`**: no lifecycle change. The transition tool itself clears the `planning-current-verdict:rejected` label atomically with the status change to `needs_review` (R2.F1 + R7.F-planner-resubmit). The planner agent's terminal step calls `mark_task_needs_review(task_id, review_notes=...)` — defined as a §2.23.5 deliverable — and the tool's atomic clear-and-set guarantees `rule_plan_rewrite_on_reject` (§1.7) cannot re-fire on the same task in any intermediate state.
 
-- **New tool `advance_lifecycle(task_id, to, reason, by_actor)`**: MCP-exposed explicit transition. `reason` is **mandatory** (TEXT NOT NULL in `task_lifecycle_events`); `by_actor` defaults to the calling session's agent name. Writes the row and updates `tasks.lifecycle`. Also resets `status` to `open` unless the new lifecycle is `merged` (terminal → `closed`).
+- **New tool `advance_lifecycle(task_id, to, reason, by_actor, status=None)`**: MCP-exposed explicit transition. `reason` is **mandatory** (TEXT NOT NULL in `task_lifecycle_events`); `by_actor` defaults to the calling session's agent name. Writes the lifecycle event row and updates `tasks.lifecycle`. The `status` parameter is **optional** and explicit:
+  - When `status` is omitted, the tool resolves a default based on `(to, task_type)`: `merged` → `closed`; leaf advancing to `holistic_review` (yolo qa-fallback parking) → `review_approved`; everything else → `open`.
+  - When `status` is provided, the tool uses that value verbatim. Used by yolo merge-cap-exhaustion (`status=closed` alongside `to=merged`) and yolo qa-cap-exhaustion (`status=review_approved` alongside `to=holistic_review`) — both bypass review gates by design and assert the desired terminal status explicitly.
+  - The tool does NOT run review-style validation gates (it is the explicit-transition escape hatch). The session-context rules still apply (autonomous-only, etc.).
 
-- **Extended tool `de_escalate_task(task_id, next_status, lifecycle=None, reason=None)`**: now accepts an optional `lifecycle` parameter for single-call recovery. Matters for pr-escalation and holistic-rescope: after a human opens a PR, they run `de_escalate_task(task_id, next_status="review_approved", lifecycle=Lifecycle.merging, reason="human opened PR #N")`; after a rescope-escalation, they revise the plan and run `de_escalate_task(epic, next_status="open", lifecycle=Lifecycle.in_development, reason="rescoped per revised plan")`. The tool:
-  1. Clears the escalated state, sets `status = next_status`.
+- **Extended tool `de_escalate_task(task_id, target_status, lifecycle=None, reason=None)`**: now accepts an optional `lifecycle` parameter for single-call recovery. Matters for pr-escalation and holistic-rescope: after a human opens a PR, they run `de_escalate_task(task_id, target_status="review_approved", lifecycle=Lifecycle.merging, reason="human opened PR #N")`; after a rescope-escalation, they revise the plan and run `de_escalate_task(epic, target_status="open", lifecycle=Lifecycle.in_development, reason="rescoped per revised plan")`. The tool:
+  1. Clears the escalated state, sets `status = target_status`.
   2. If `lifecycle` is provided, also calls `advance_lifecycle(task_id, to=lifecycle, reason=reason or "de-escalation", by_actor="human")`.
   3. Writes the combined change in a single transaction.
 
-Session-context enforcement stays as today (mark_* autonomous-only; close_task interactive unless escaping with labels). §2.14a extends this to scope interactive-only hooks (e.g., `require-task-close`) so they do not block autonomous build agents calling `mark_task_*`; §2.14a also requires `mark_task_review_*` to run the same validation gates as `close_task` (commit-attached, validation_criteria, errors_resolved, memory_review_completed) — there is no `skip_validation` for autonomous build agents.
+Session-context enforcement stays as today (mark_* autonomous-only; close_task interactive unless escaping with labels). §2.14a extends this to scope interactive-only hooks (e.g., `require-task-close`) so they do not block autonomous build agents calling `mark_task_*`.
+
+**Validation gates are verdict-AND-stage-aware** (resolves both the read-only-reviewer trap and the non-code-stage-approval trap):
+
+The single helper `_run_validation_gates(task, verdict, lifecycle)` switches on the `(verdict, lifecycle)` tuple. Three gate sets exist:
+
+| Gate set | When it fires | Required gates |
+|----------|---------------|----------------|
+| **leaf-close** | `verdict=approved` AND the calling transition is the leaf-approval path (`mark_task_review_approved` on a leaf at `lifecycle=in_development` — qa-reviewer caller). This is the only verdict path that ships code; the leaf parks at `(holistic_review, review_approved)` until cascade-close, but the work is done. | `commit-attached`, `validation_criteria` pass, `errors_resolved`, `memory_review_completed`. No `skip_validation`. |
+| **stage-advance** | `verdict=approved` AND the calling transition is a stage-advancement path (plan-adversary approving an anchor or epic at `lifecycle=plan_review`; test-architect at `lifecycle=test_arch`; expansion-qa at `lifecycle=expanding`; holistic-reviewer approving an epic at `lifecycle=holistic_review`; merge agent finalizing at `lifecycle=merging → merged`). These approvals advance lifecycle; they do NOT necessarily ship code on the task being approved. Stage-specific outputs gate the approval instead. | Stage-specific. plan_review: adversary's `## Task Manifest` was emitted on the plan file (or — when the anchor is the verdict target rather than the planning epic — `signoff_summary` was provided). test_arch: test architecture description was appended. expanding: an expansion run completed and the validated tree exists. holistic_review: every leaf is in a terminal-or-holistic state. merging: a merge commit / clean state on the target branch. None of these gates require `commit-attached` or `validation_criteria` on the approving task. |
+| **light** | `verdict=rejected` OR `verdict=escalated` on any task at any lifecycle. Rejection IS the path for reporting failed validation; requiring it to pass would deadlock. | Valid claim/session for the calling agent, and either `rejection_notes` or `reason` non-empty. No commit, no validation_criteria, no other gate variables. |
+
+The helper signature is `_run_validation_gates(task, verdict, lifecycle, *, caller_agent=None) -> None`. It dispatches on `(verdict, lifecycle, caller_agent)` to choose the gate set. Tests cover (a) every cell in the gate-set table, (b) cross-product of lifecycle × verdict, and (c) `caller_agent` resolution from session context when not passed explicitly.
 
 **Acceptance:**
 
@@ -943,13 +1376,18 @@ Session-context enforcement stays as today (mark_* autonomous-only; close_task i
 - 1.8.3 — `mark_task_review_rejected` on a leaf at `lifecycle=in_development` increments `qa-attempts:N` label, sets `status=open`, appends rejection_notes, leaves `lifecycle=in_development`. file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/test_qa_review_transitions.py::test_leaf_reject_increments_qa_attempts`.
 - 1.8.4 — `mark_task_review_rejected(epic, lifecycle=holistic_review)` without `cited_subtasks` raises a validation error (R4.F5 invariant preserved). The escalate-rescope third path via `escalate_task(epic, reason="needs_human:rescope_required:..."|"needs_human:requirements_unclear:...")` is the only no-cited rejection mechanism. test: `tests/storage/test_holistic_rejection.py::test_bare_rejection_invalid_and_escalate_rescope_path`.
 - 1.8.5 — `mark_task_review_rejected(epic, lifecycle=holistic_review, cited_subtasks=[leaf_ids])` atomically rewinds: cited leaves go from `(holistic_review, review_approved)` (or `(holistic_review, closed)` if cascade ran) to `(in_development, open)`; epic goes to `(in_development, open)`. file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/test_holistic_rejection.py::test_cited_rewinds_leaves_and_epic`.
-- 1.8.6 — `mark_task_review_*` transitions run the same validation gates as `close_task` (commit-attached, validation_criteria pass, errors_resolved, memory_review_completed); `skip_validation` is not honored. behavior: integration test in `tests/storage/test_mark_task_review_validation.py` covers a missing-commit rejection and a passing-gate approval. (Cross-reference §2.14a.5.)
-- 1.8.7 — Extended `de_escalate_task(task_id, next_status, lifecycle, reason)` performs the combined status + lifecycle change in a single transaction; `task_lifecycle_events` records both rows (de-escalate and lifecycle advance) atomically. test: `tests/storage/test_de_escalate.py::test_combined_status_lifecycle`.
+- 1.8.6 — `_run_validation_gates(task, verdict, lifecycle, *, caller_agent=None)` helper signature lands in `_transitions.py` and is called from each `mark_task_*` / `escalate_task` entry-point. The helper dispatches on `(verdict, lifecycle, caller_agent)` to choose one of the three gate sets covered by 1.8.6a–1.8.6c below. Cross-product test in `tests/storage/test_mark_task_review_validation.py::test_full_verdict_lifecycle_matrix` asserts the right gate set fires for every reachable `(verdict, lifecycle)` combination. file: `src/gobby/storage/tasks/_transitions.py`. (Cross-reference §2.14a.5.)
+- 1.8.6a — **leaf-close** gate set: `mark_task_review_approved` on a leaf at `lifecycle=in_development` (qa-reviewer caller; the only verdict path that ships code on the approved task) runs the full close-equivalent gates: `commit-attached`, `validation_criteria` pass, `errors_resolved`, `memory_review_completed`. `skip_validation` is rejected (silently stripped is not enough — the gate explicitly fails if it's set on a build-agent caller). file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/test_mark_task_review_validation.py::test_leaf_close_gate_set` covers (a) full gate set fires on qa approval of an in_development leaf, (b) approval blocked when commit is missing, (c) approval blocked when validation_criteria fails, (d) `skip_validation` rejected.
+- 1.8.6b — **stage-advance** gate set: `mark_task_review_approved` on a task at `lifecycle ∈ {plan_review, test_arch, expanding, holistic_review, merging}` runs stage-specific output gates ONLY (manifest emitted / test architecture appended / expansion run completed / leaves in terminal-or-holistic / merge clean) and DOES NOT require commit-attached or validation_criteria on the approving task. Each lifecycle's specific gate is documented in §1.8 prose. file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/test_mark_task_review_validation.py::test_stage_advance_gate_set` covers each lifecycle's stage-specific gate firing and asserts that approval succeeds without commit-attached when the stage-specific output is present (closing the prior single-gate-set deadlock).
+- 1.8.6c — **light** gate set: `mark_task_review_rejected` and `escalate_task` at any lifecycle run only valid claim/session + `rejection_notes`/`reason` non-empty. Rejection MUST succeed when commits are missing or validation_criteria fails — that is precisely the state the reviewer is reporting. file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/test_mark_task_review_validation.py::test_light_gate_set` covers (a) rejection succeeds with a missing commit, (b) rejection succeeds with failing validation_criteria when rejection_notes is non-empty, (c) escalation succeeds the same way, (d) light gate fails when claim/session is invalid or notes/reason is empty.
+- 1.8.7 — Extended `de_escalate_task(task_id, target_status, lifecycle, reason)` performs the combined status + lifecycle change in a single transaction; `task_lifecycle_events` records both rows (de-escalate and lifecycle advance) atomically. test: `tests/storage/test_de_escalate.py::test_combined_status_lifecycle`.
 
-### 1.9 Dispatcher scanner [category: code] (depends: 1.4, 1.6, 1.7, 1.8)
+### 1.9 Dispatcher scanner [category: code] (depends: 1.4, 1.6, 1.7, 1.8, 2.8b)
 `kind: deliverable`
 
 Target: `src/gobby/dispatch/dispatcher.py` (new file)
+
+> **Cross-phase dependency note** (R7.F-1.9-2.8b-ordering): §1.9 lives in Phase 1 but depends on §2.8b in Phase 2 because the dispatcher's `StartExpansionRun` handler imports `start_expansion_run_impl` from `gobby.mcp_proxy.tools.tasks._expansion`, and §2.8b is the deliverable that exports that symbol. The expansion-qa contract surfaces (the live tooling that the impl wraps) already exist in the repo; §2.8b only adds the explicit `_impl` export with the dependency-injected signature. §1.9's `_dispatch(StartExpansionRun)` arm cannot be implemented (or tested end-to-end) until §2.8b lands. Phase 1 ordering still makes architectural sense — the dispatcher engine is foundation work — but the dependency annotation makes the cross-phase constraint explicit so the deterministic compile path schedules §2.8b before §1.9's TDD-impl leaves.
 
 ```python
 from dataclasses import asdict, dataclass, field
@@ -961,8 +1399,9 @@ import json
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.dispatch import mutex, rules
 from gobby.dispatch.actions import (
-    AdvanceLifecycle, AppendAuditMarker, CreateWorktree, EscalateTask,
-    Skip, SpawnAgent, StartExpansionRun,
+    AdvanceLifecycle, AppendAuditMarker, ArchivePlan, CascadeCloseLeaves,
+    CreateClone, CreateWorktree, EmitStubManifest, EscalateTask,
+    MarkTaskReviewApproved, Skip, SpawnAgent, StartExpansionRun,
 )
 from gobby.dispatch.prompts import PROMPT_BUILDERS
 from gobby.storage.database import LocalDatabase
@@ -976,7 +1415,8 @@ from gobby.worktrees.git import WorktreeGitManager
 class TickReport:
     started_at: str = ""
     finished_at: str = ""
-    swept: int = 0
+    # `swept` removed (R7.F-sweep-overlap): startup mutex reconciliation lives
+    # in `runner_init.py`'s one-shot `sweep_mutexes_once(db)` call, not per-tick.
     dispatched: list[str] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
@@ -984,9 +1424,47 @@ class TickReport:
 MAX_ACTIVE_AGENTS_DEFAULT = 10   # configurable via daemon config
 DISPATCHER_LOG = Path.home() / ".gobby" / "logs" / "dispatcher.jsonl"
 
-async def run_tick(db: LocalDatabase, holder: str, max_active: int) -> TickReport:
+@dataclass
+class DispatcherServices:
+    """R7.F-dispatcher-services: explicit dependency container for the
+    dispatcher's daemon-side state. The Round 9 `start_expansion_run_impl`
+    fix made expansion's dependencies explicit; this round threads them
+    end-to-end so both cron ticks (§1.10) and immediate build-triggered
+    ticks (`_kick_dispatcher_tick`, §3.2) use the same wired services.
+    No private global helpers — every dependency arrives at `run_tick` via
+    this object.
+
+    R7.F-build-config-on-services: `build_config` is a first-class field
+    so `_kick_dispatcher_tick` can read `max_active_agents` from a live
+    `BuildConfig` surface. The container's `config` field is `DaemonConfig`
+    (Pydantic model with no `.get()`); dispatch knobs live on `BuildConfig`,
+    so we carry both: `config` for daemon-wide settings, `build_config` for
+    the dispatch knobs."""
+    db: LocalDatabase
+    task_manager: LocalTaskManager
+    llm_service: LLMService
+    config: DaemonConfig
+    build_config: BuildConfig
+    completion_registry: CompletionEventRegistry  # live class name; no `CompletionRegistry`
+    session_manager: ChildSessionManager  # live SpawnRequest dependency (R7.F-spawn-deps)
+    machine_id: str                        # live SpawnRequest dependency
+    triggering_session_id: str             # storage UUID returned by register_session (NOT the external_id we passed in — see §1.10.4 R7.F-storage-uuid)
+    parent_session_id: str                 # dispatcher's parent session for spawned agents — same value as triggering_session_id
+
+
+async def run_tick(services: DispatcherServices, holder: str, max_active: int) -> TickReport:
+    """Per-tick dispatcher. Concurrency-safe under overlapping ticks (cron + an
+    immediate `_kick_dispatcher_tick` from `gobby build`): does NOT call
+    `mutex.sweep_on_startup` here — that's a daemon-boot reconciliation owned
+    by `runner_init.py` (§1.10) which runs exactly once before the first tick.
+    Calling it per-tick (R7.F-sweep-overlap) would let an overlapping tick
+    delete a live non-spawn mutex row and double-dispatch the same task.
+
+    `services` carries the live daemon dependencies the dispatch path needs
+    (per R7.F-dispatcher-services). All `_dispatch` arms read from `services`
+    instead of calling module-level helpers."""
+    db = services.db
     report = TickReport(started_at=datetime.now(UTC).isoformat())
-    report.swept = mutex.sweep_on_startup(db)          # no-op after first tick
     active = _count_active_autonomous_agents(db)
     for task in list_automation_candidates(db):
         if active >= max_active:
@@ -996,26 +1474,52 @@ async def run_tick(db: LocalDatabase, holder: str, max_active: int) -> TickRepor
         if isinstance(action, Skip):
             report.skipped.append((task.id, action.reason))
             continue
-        # Acquire mutex for the duration of evaluate-and-act:
-        primary_action = action if not isinstance(action, list) else action[-1]
-        kind = _action_kind(primary_action)
-        agent_run_id = f"run-{uuid4().hex[:12]}" if isinstance(primary_action, SpawnAgent) else None
-        with mutex.acquire(db, task.id, holder, kind, agent_run_id=agent_run_id) as ok:
+        # Acquire mutex for the duration of evaluate-and-act. The pre-lock
+        # action is used ONLY to choose the lock kind/TTL; the canonical action
+        # (and its kind, agent_run_id) is recomputed AFTER the lock to close
+        # the TOCTOU window per R7.F-toctou-action-class.
+        provisional_action = action if not isinstance(action, list) else action[-1]
+        provisional_kind = _action_kind(provisional_action)
+        with mutex.acquire(db, task.id, holder, provisional_kind, agent_run_id=None) as (ok, mutex_token):
             if not ok:
-                report.skipped.append((task.id, f"mutex contended ({kind})"))
+                report.skipped.append((task.id, f"mutex contended ({provisional_kind})"))
                 continue
-            # Re-evaluate under lock to close TOCTOU window:
+            # Re-evaluate under lock to close the TOCTOU window:
             fresh = _reload_task(db, task.id)
             action = rules.evaluate(fresh)
             if isinstance(action, Skip):
                 report.skipped.append((task.id, action.reason))
                 continue
+            actions = action if isinstance(action, list) else [action]
+            primary_action = actions[-1]
+            kind = _action_kind(primary_action)
+            # R7.F-toctou-action-class: if the locked re-evaluation produced a
+            # different action class than the pre-lock evaluation, the mutex
+            # we hold is for the wrong kind (e.g. 30s lifecycle TTL when we
+            # actually need a 600s spawn lease). Skip and let the next tick
+            # re-acquire with the correct kind. This avoids: (a) running a
+            # spawn under a non-spawn mutex row that expires before the agent
+            # claims the task, and (b) running a non-spawn action under a
+            # long-lived spawn lease that blocks subsequent ticks.
+            if kind != provisional_kind:
+                report.skipped.append((task.id, f"action class changed under lock ({provisional_kind}→{kind}); retry next tick"))
+                continue
+            # Now allocate the agent_run_id from the FRESH action so the
+            # mutex row's run_id aligns with the actual spawn (event-handler
+            # cleanup keys on this).
+            agent_run_id = f"run-{uuid4().hex[:12]}" if isinstance(primary_action, SpawnAgent) else None
+            if agent_run_id is not None:
+                # Update the mutex row's run_id to match the freshly-allocated
+                # spawn id. acquire() initially wrote run_id=None; this update
+                # is in the same logical "lock acquired" window.
+                mutex.attach_run_id(db, task.id, agent_run_id, holder)
             try:
-                actions = action if isinstance(action, list) else [action]
                 for a in actions:
-                    await _dispatch(db, fresh, a, agent_run_id, report)
+                    await _dispatch(services, fresh, a, agent_run_id, report)
                 if any(isinstance(a, SpawnAgent) for a in actions):
-                    mutex.detach_from_context(task.id)
+                    # R7.F-mutex-detach: pass the per-acquire token, not task_id.
+                    # Detach state is consumed on scope exit (see acquire's finally).
+                    mutex.detach_from_context(mutex_token)
                     active += 1
             except Exception as exc:
                 report.errors.append((task.id, str(exc)))
@@ -1023,21 +1527,29 @@ async def run_tick(db: LocalDatabase, holder: str, max_active: int) -> TickRepor
     _persist_tick_report(report)
     return report
 
-async def _dispatch(db, task, action, agent_run_id, report):
+async def _dispatch(services: DispatcherServices, task, action, agent_run_id, report):
+    db = services.db
     match action:
         case SpawnAgent() as s:
             prompt, initial_vars = PROMPT_BUILDERS[s.prompt_builder](task)
             req = SpawnRequest(
                 prompt=prompt,
-                cwd=_resolve_cwd(task),
+                # R7.F-cwd-agent: pass agent name so _resolve_cwd can route
+                # the merge agent to the source repo regardless of isolation
+                # (per the helper contract documented below). Dev/QA leaves
+                # take the parent epic's isolation artifact.
+                cwd=_resolve_cwd(task, s.agent),
                 provider=_resolve_provider(s),
                 session_id=str(uuid4()),
                 run_id=agent_run_id,
                 agent_run_id=agent_run_id,
-                parent_session_id=_dispatcher_parent_session(),
+                # R7.F-spawn-deps: every spawn dependency comes from `services`,
+                # not from private global helpers. The dispatcher session is
+                # the parent for all dispatched agents — same UUID, same row.
+                parent_session_id=services.parent_session_id,
                 project_id=task.project_id,
-                session_manager=_session_manager(),
-                machine_id=_machine_id(),
+                session_manager=services.session_manager,
+                machine_id=services.machine_id,
                 task_id=task.id,
                 title=f"{s.agent} for {task.id}",
                 model=s.model_override,
@@ -1052,27 +1564,29 @@ async def _dispatch(db, task, action, agent_run_id, report):
             if not result.success:
                 raise RuntimeError(f"execute_spawn failed: {result.error}")
             report.dispatched.append(task.id)
-        case StartExpansionRun(task_id, tdd):
-            # R6.F5 / R7.F2: route through the existing `gobby-tasks-ops:start_expansion_run`
-            # MCP tool's underlying Python handler, which already builds the
-            # required `LocalExpansionRunManager.create(parent_task_id=...,
-            # project_id=..., triggering_session_id=..., input_source=...)`
-            # call with the right metadata, kicks off the background compile,
-            # and returns the run record. We import the impl directly (the MCP
-            # tool is a stateless wrapper). On compile-side exceptions, the
-            # handler surfaces a failed run via its standard error path; we
+        case StartExpansionRun(task_id):
+            # R6.F5 / R7.F2 / R7.F-tdd-removed / R7.F-impl-deps / R7.F-dispatcher-services:
+            # call the dependency-injected `start_expansion_run_impl` (§2.8b)
+            # with the daemon services threaded through `services`. The MCP
+            # closure path is unchanged — this is purely an in-process
+            # additional caller. NOTE: TDD shape is per-manifest-entry per
+            # §2.21; no epic-level `tdd` kwarg. On compile-side exceptions,
+            # the impl surfaces a failed run via its standard error path; we
             # still persist the id so `rule_validate_expansion` and
-            # `expansion-qa` (§2.9) can observe failure and reject.
-            from gobby.mcp_proxy.tools.tasks_ops import start_expansion_run_impl
+            # `expansion-qa` (§2.9) can observe failure and reject (per the
+            # `_expansion_run_terminal` predicate that covers `completed | failed`).
+            from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
             from gobby.storage.tasks._artifacts import set_artifact
             run = await start_expansion_run_impl(
-                task_manager=_task_manager(db),
-                llm_service=_llm_service(),
-                config=_daemon_config(),
-                parent_task_id=task_id,
-                triggering_session_id=_dispatcher_session_id(),
-                input_source=("plan_file" if _has_plan_file(db, task_id) else "epic"),
-                tdd=tdd,
+                task_manager=services.task_manager,
+                llm_service=services.llm_service,
+                config=services.config,
+                completion_registry=services.completion_registry,
+                triggering_session_id=services.triggering_session_id,
+                task_id=task_id,
+                plan_file=_plan_file_path(db, task_id) if _has_plan_file(db, task_id) else None,
+                auto_apply=True,
+                force_new=False,
             )
             set_artifact(db, task_id, "expansion_run_id", run.id)
             report.dispatched.append(task_id)
@@ -1106,8 +1620,14 @@ async def _dispatch(db, task, action, agent_run_id, report):
                 set_artifacts_atomic(db, epic_task_id,
                                      clone_path=ctx.cwd, clone_id=ctx.clone_id)
             report.dispatched.append(epic_task_id)
-        case AdvanceLifecycle(task_id, to, reason, by_actor):
-            advance_lifecycle(db, task_id, to, reason=reason, by_actor=by_actor)
+        case AdvanceLifecycle(task_id, to, reason, by_actor, status):
+            # R7.F-advance-status: forward the optional `status` so yolo
+            # cap-exhaustion paths can land at their explicit terminal status
+            # (merging→merged status="closed"; in_development→holistic_review
+            # status="review_approved"). When status=None the helper applies
+            # the (to, task_type) default per §1.8.
+            advance_lifecycle(db, task_id, to, reason=reason, by_actor=by_actor,
+                              status=status)
             report.dispatched.append(task_id)
         case EscalateTask(task_id, reason):
             from gobby.storage.tasks._transitions import escalate_task
@@ -1116,6 +1636,70 @@ async def _dispatch(db, task, action, agent_run_id, report):
         case AppendAuditMarker(task_id, heading, body):
             append_description_section(db, task_id, heading=heading, body=body)
             # Not reported as "dispatched" — purely an audit side-effect.
+        case MarkTaskReviewApproved(task_id, by_actor, approval_notes):
+            # NOTE (R7.F-stale-prose): no rule currently emits this action —
+            # yolo qa-cap exhaustion uses `AdvanceLifecycle(..., status=
+            # "review_approved")` instead so it bypasses the leaf-close gate
+            # that would re-evaluate the failing validation (§1.7 rule_qa,
+            # §1.8.6a). The arm is retained for forward compatibility: a
+            # future caller that wants the leaf-close gate to run on a
+            # dispatcher-emitted approval can route through here. Goes
+            # through `_transitions.mark_task_review_approved`, so the gate
+            # set is resolved per §1.8.6 with `caller_agent="dispatcher"`.
+            from gobby.storage.tasks._transitions import mark_task_review_approved
+            mark_task_review_approved(db, task_id, approval_notes=approval_notes,
+                                      by_actor=by_actor)
+            report.dispatched.append(task_id)
+        case CascadeCloseLeaves(epic_task_id, leaf_task_ids):
+            # R7.F-dispatch-exhaustiveness: emitted by `rule_cascade_close_on_merge`
+            # when an epic reaches `lifecycle=merged` and audit-pending leaves
+            # need to cascade to `closed`. Atomic per-leaf close in a single
+            # transaction; already-closed leaves are filtered upstream by the
+            # rule's `_leaves_pending_cascade_close` helper but the writer
+            # double-checks idempotently.
+            from gobby.storage.tasks._transitions import cascade_close_leaves
+            cascade_close_leaves(db, epic_task_id, leaf_task_ids)
+            report.dispatched.append(epic_task_id)
+        case EmitStubManifest(task_id, by_actor):
+            # R7.F-yolo-manifest-fallback / R7.F-no-livelock: this arm NEVER
+            # raises. The yolo cap-exhausted sequence in §1.7 returns
+            # `[AppendAuditMarker, EmitStubManifest, AdvanceLifecycle(test_arch)]`
+            # and the AdvanceLifecycle MUST run deterministically — raising
+            # would leave the task at plan_review for the next tick which
+            # would re-emit the audit marker and re-attempt the same failure
+            # (livelock). Failures are absorbed via audit markers; downstream
+            # `gobby expand` rejection at expansion time is the documented
+            # escape hatch when a plan is genuinely unsalvageable.
+            from gobby.plans.manifest_emitter import emit_stub_manifest
+            from gobby.storage.tasks._artifacts import get_artifact
+            from gobby.storage.tasks._transitions import append_description_section
+            plan_file_path = get_artifact(db, task_id, "plan_file_path")
+            if plan_file_path:
+                # The §2.21a emitter never raises — its `EmitOutcome` literal
+                # covers every failure mode internally (audit-section appended
+                # in-file on unsalvageable plans). The dispatcher just calls it.
+                emit_stub_manifest(plan_file_path, by_actor=by_actor)
+            else:
+                # Absorb missing-artifact failure as an audit marker on the
+                # planning anchor; lifecycle advance still runs as the next
+                # action in the parent rule's sequence. No raise.
+                append_description_section(
+                    db, task_id, heading="Yolo Fallbacks",
+                    body=f"{_now_iso()}: plan_file_path artifact missing on yolo cap exhaustion; "
+                         f"force-advancing without manifest emission. "
+                         f"Downstream gobby expand will reject this plan, "
+                         f"requiring human intervention at expansion time.",
+                )
+            report.dispatched.append(task_id)
+        case ArchivePlan(epic_task_id, plan_id):
+            # R7.F-dispatch-exhaustiveness: emitted by `rule_archive_plan_on_merge`
+            # when the epic terminally closes. Routes to the §2.15/§2.18
+            # plan-management API which atomically moves the plan file to
+            # `.gobby/plans/completed/`, flips the DB plan-state to archived,
+            # and removes the coverage manifest.
+            from gobby.storage.plans import LocalPlanManager
+            LocalPlanManager(db).archive_plan(plan_id, reason="epic merged")
+            report.dispatched.append(epic_task_id)
 
 def _persist_tick_report(report: TickReport) -> None:
     """Append a structured line to ~/.gobby/logs/dispatcher.jsonl.
@@ -1126,11 +1710,17 @@ def _persist_tick_report(report: TickReport) -> None:
         fh.write(json.dumps(asdict(report)) + "\n")
 ```
 
-`_action_kind` maps each `Action` subclass to an `ActionKind` for the mutex (`CreateClone` and `CreateWorktree` both map to `"worktree"` kind — same TTL/contention class). `_build_isolation_handler(db, handler_cls, epic_task_id)` constructs the appropriate handler with its real dependencies — `WorktreeIsolationHandler(worktree_storage, git_manager)` or `CloneIsolationHandler(clone_storage, clone_manager, git_manager=...)`; both pull from existing daemon services (`db.local_worktree_manager`, `db.local_clone_manager`, `WorktreeGitManager(repo_path)`, `CloneGitManager(repo_path)`). `_build_spawn_config(db, epic_task_id, *, base_branch)` fills a `SpawnConfig` (`src/gobby/agents/isolation.py`) with `project_id`, `project_path`, `provider`, `task_id`, `base_branch`, and any other fields the handlers' branch-name generation requires. `_resolve_cwd(task, agent_name)` returns the appropriate working directory for the agent. **Dev/QA agents** running on a leaf get the parent epic's isolation artifact: `task_artifacts.clone_path` when `task.isolation == clone`, `task_artifacts.worktree_path` when `worktree`, repo root when `none`; the resolution walks up to `_parent_epic(task)` for leaves. **The merge agent** is the exception (R6.F3): it runs in the source repo regardless of isolation, because the `gobby-worktrees:merge_worktree` and `gobby-clones:merge_clone` tools manage paths internally and require the source-repo cwd. So when `agent_name == "merge"`, `_resolve_cwd` returns the repo root unconditionally; the dispatcher passes `worktree_id` / `clone_id` and `target_branch` as `initial_variables` instead. `_clones_dir()` reads `BuildConfig.clones_dir` (§3.1, default `~/.gobby/clones/`). `_count_active_autonomous_agents` queries `running_agents` for sessions flagged autonomous (the spawn path tags them). `_reload_task` re-queries the row under the mutex to avoid TOCTOU. `append_description_section` in `_transitions.py` is a new helper that appends a `## {heading}\n{body}\n` block to the task description (idempotent by (task_id, heading, body) signature — duplicate markers within the same tick are deduped).
+`_action_kind` maps each `Action` subclass to an `ActionKind` for the mutex per the table below; missing entries raise `KeyError` so adding a new action without updating the map fails loud rather than silently picking a default. `MarkTaskReviewApproved`, `CascadeCloseLeaves`, and `ArchivePlan` map to `"lifecycle"` (short TTL, same class as `AdvanceLifecycle`); `CreateClone` and `CreateWorktree` both map to `"worktree"` (longer TTL — same TTL/contention class); `SpawnAgent` maps to `"spawn"`; `StartExpansionRun` maps to `"expansion"`; `AppendAuditMarker` and `EmitStubManifest` both map to `"field"` (file/description side-effect class — `EmitStubManifest` writes the plan file in place; same TTL semantics as audit markers); `EscalateTask` maps to `"lifecycle"`.
+
+`_build_isolation_handler(db, handler_cls, epic_task_id)` constructs the appropriate handler with its real dependencies. Constructor argument order matches the live signatures in `src/gobby/agents/isolation.py` (R7.F-isolation-ctor): `WorktreeIsolationHandler(git_manager, worktree_storage)` (git manager FIRST, then storage) and `CloneIsolationHandler(clone_manager, clone_storage, git_manager=None)` (clone manager FIRST, then storage; the optional `git_manager` is the source-repo git manager for branch detection). The dependencies pull from existing daemon services: `WorktreeGitManager(repo_path)` + `db.local_worktree_manager` for the worktree handler; `CloneGitManager(repo_path)` + `db.local_clone_manager` + the source-repo `GitManager` for the clone handler. The dispatcher test for §1.9 (`tests/dispatch/test_dispatcher_isolation_handler_args.py`) mocks both classes and asserts the positional argument bindings to lock the order against silent regressions. `_build_spawn_config(db, epic_task_id, *, base_branch)` fills a `SpawnConfig` (`src/gobby/agents/isolation.py`) with `project_id`, `project_path`, `provider`, `task_id`, `base_branch`, and any other fields the handlers' branch-name generation requires. `_resolve_cwd(task, agent_name)` returns the appropriate working directory for the agent. **Dev/QA agents** running on a leaf get the parent epic's isolation artifact: `task_artifacts.clone_path` when `task.isolation == clone`, `task_artifacts.worktree_path` when `worktree`, repo root when `none`; the resolution walks up to `_parent_epic(task)` for leaves. **The merge agent** is the exception (R6.F3): it runs in the source repo regardless of isolation, because the `gobby-worktrees:merge_worktree` and `gobby-clones:merge_clone` tools manage paths internally and require the source-repo cwd. So when `agent_name == "merge"`, `_resolve_cwd` returns the repo root unconditionally; the dispatcher passes `worktree_id` / `clone_id` and `target_branch` as `initial_variables` instead. `_clones_dir()` reads `BuildConfig.clones_dir` (§3.1, default `~/.gobby/clones/`). `_count_active_autonomous_agents` queries `running_agents` for sessions flagged autonomous (the spawn path tags them). `_reload_task` re-queries the row under the mutex to avoid TOCTOU. `append_description_section` in `_transitions.py` is a new helper that appends a `## {heading}\n{body}\n` block to the task description (idempotent by (task_id, heading, body) signature — duplicate markers within the same tick are deduped).
 
 **Acceptance:**
 
 - 1.9.1 — Dispatcher scanner is implemented according to this section. file: `src/gobby/dispatch/dispatcher.py`.
+- 1.9.2 — `_dispatch` is exhaustive over every `Action` subclass from §1.6: `SpawnAgent`, `StartExpansionRun`, `CreateWorktree`, `CreateClone`, `AdvanceLifecycle`, `EscalateTask`, `AppendAuditMarker`, `EmitStubManifest`, `MarkTaskReviewApproved`, `CascadeCloseLeaves`, `ArchivePlan`. Missing match arms (or unimported action classes) fail at import time, not at runtime. file: `src/gobby/dispatch/dispatcher.py`. test: `tests/dispatch/test_dispatcher_exhaustiveness.py` constructs an instance of each Action subclass and runs it through `_dispatch` with mocked downstream side-effects, asserting (a) the call returns without `match` exhausting, (b) the documented downstream effect fires (mark_task_review_approved called with notes for `MarkTaskReviewApproved`; cascade_close_leaves invoked for `CascadeCloseLeaves`; LocalPlanManager.archive_plan called for `ArchivePlan`; `gobby.plans.manifest_emitter.emit_stub_manifest` called with the plan file path for `EmitStubManifest`), and (c) every dispatched action's report row is populated correctly.
+- 1.9.5 — TOCTOU-aware action-class handling: `run_tick` recomputes `_action_kind` from the locked re-evaluation's action and skips the dispatch if the kind differs from the pre-lock kind (the mutex we hold is for the wrong TTL/contention class). `agent_run_id` is allocated from the FRESH action, not the pre-lock action, and attached to the mutex row via `mutex.attach_run_id` so the spawn-event-handler cleanup (§1.5) keys on the right id. file: `src/gobby/dispatch/dispatcher.py`. test: `tests/dispatch/test_dispatcher_toctou.py` covers (a) pre-lock evaluation = `AdvanceLifecycle`, locked re-evaluation = `SpawnAgent` → dispatcher skips with the action-class-changed reason; (b) pre-lock = `SpawnAgent`, locked = `Skip` → dispatcher skips per Skip's reason without dispatching; (c) pre-lock = locked = `SpawnAgent` → dispatcher allocates a fresh `agent_run_id`, attaches it via `mutex.attach_run_id`, and spawns; (d) pre-lock = locked = `AdvanceLifecycle` → dispatcher proceeds without allocating a run_id (none needed for non-spawn actions).
+- 1.9.3 — `_resolve_cwd(task, agent_name: str)` is the documented two-argument signature. The `SpawnAgent` dispatch path passes `s.agent` so the merge agent (`agent_name="merge"`) routes to the source repo regardless of `task.isolation`, while dev/qa leaves take the parent epic's `worktree_path` or `clone_path`. file: `src/gobby/dispatch/dispatcher.py`. test: `tests/dispatch/test_dispatcher_cwd_resolution.py` covers (a) `SpawnAgent(agent="merge")` on an epic with `isolation=worktree` produces `SpawnRequest.cwd = repo_root` and `worktree_id` arrives via initial variables; (b) `SpawnAgent(agent="backend-developer")` on a leaf with parent `isolation=worktree` produces `SpawnRequest.cwd = parent.worktree_path`; (c) parallel coverage for `isolation=clone`; (d) `isolation=none` returns repo root for any agent.
+- 1.9.4 — `_action_kind` exhaustive map per the table above; missing action raises `KeyError` immediately. test: `tests/dispatch/test_action_kind_map.py` covers each `Action` subclass returning the documented kind and asserts the map is locked (adding a new action without updating the map breaks the test).
 
 ### 1.10 Cron handler registration [category: code] (depends: 1.9)
 `kind: deliverable`
@@ -1139,54 +1729,162 @@ Target: `src/gobby/dispatch/cron_registration.py` (new) + `src/gobby/runner_init
 
 ```python
 # src/gobby/dispatch/cron_registration.py
-from gobby.dispatch.dispatcher import MAX_ACTIVE_AGENTS_DEFAULT, run_tick
+from gobby.config.build import BuildConfig  # max_active_agents, dispatch_interval_seconds live here
+from gobby.dispatch import mutex
+from gobby.dispatch.dispatcher import DispatcherServices, run_tick
 from gobby.scheduler.executor import CronExecutor
+from gobby.storage.cron import CronJobStorage  # live cron storage module
 from gobby.storage.cron_models import CronJob
 
-def register_state_dispatcher(executor: CronExecutor, db, config) -> None:
-    max_active = config.get("dispatch", {}).get("max_active_agents",
-                                                 MAX_ACTIVE_AGENTS_DEFAULT)
+def register_state_dispatcher(
+    executor: CronExecutor,
+    services: DispatcherServices,
+    build_config: BuildConfig,
+) -> None:
+    """R7.F-dispatcher-services / R7.F-live-config: takes a `DispatcherServices`
+    instance + the live `BuildConfig` (which carries `max_active_agents` and
+    `dispatch_interval_seconds`). Both cron handlers and immediate
+    `_kick_dispatcher_tick` calls (§3.2) consume the same services instance,
+    so the expansion-impl path is wired identically in both surfaces."""
+    max_active = build_config.max_active_agents
     async def handler(job: CronJob) -> str:
         holder = f"state-dispatcher:{job.id}"
-        report = await run_tick(db, holder, max_active)
+        report = await run_tick(services, holder, max_active)
         return (f"dispatched={len(report.dispatched)} "
-                f"skipped={len(report.skipped)} "
-                f"swept={report.swept} errors={len(report.errors)}")
+                f"skipped={len(report.skipped)} errors={len(report.errors)}")
     executor.register_handler("state-dispatcher", handler)
 
-def ensure_state_dispatcher_cron_row(db, project_id: str) -> None:
-    """Idempotent: insert a cron_jobs row if one doesn't exist for this project."""
-    ...
+def ensure_state_dispatcher_cron_row(
+    cron_storage: CronJobStorage, project_id: str, build_config: BuildConfig,
+) -> None:
+    """Idempotent: insert a `cron_jobs` row via the live `CronJobStorage.create_job`
+    API (`schedule_type="interval"`, `interval_seconds=...`, `action_config={"handler": "state-dispatcher"}`).
+    No-op if a row with the same `name` already exists on this project."""
+    cron_storage.create_job(
+        project_id=project_id,
+        name="state-dispatcher",
+        schedule_type="interval",
+        interval_seconds=build_config.dispatch_interval_seconds,
+        action_type="handler",
+        action_config={"handler": "state-dispatcher"},
+        enabled=True,
+    )
+
+def sweep_mutexes_once(db) -> int:
+    """R7.F-sweep-overlap: daemon-boot mutex reconciliation. Called exactly
+    once per daemon process during startup, BEFORE any tick (cron or
+    `_kick_dispatcher_tick`) can fire. Removed from `run_tick` to prevent
+    overlapping ticks from deleting live non-spawn mutex rows."""
+    return mutex.sweep_on_startup(db)
 ```
 
-In `runner_init.py`, after `CronExecutor` instantiation and before `CronScheduler.start()`:
+In `runner_init.py`, after `ServiceContainer` instantiation (the live
+`set_app_context(services)` call near the end of `init_servers`) — actually
+before that, since dispatcher services need to be on the container the cron
+handler reads via `get_app_context()`. Concretely: build `DispatcherServices`,
+add it to `ServiceContainer` before `set_app_context`, then register the cron
+handler.
 
 ```python
+from gobby.app_context import ServiceContainer, set_app_context
 from gobby.dispatch.cron_registration import (
-    ensure_state_dispatcher_cron_row, register_state_dispatcher,
+    ensure_state_dispatcher_cron_row, register_state_dispatcher, sweep_mutexes_once,
 )
-register_state_dispatcher(executor, db, config)
-ensure_state_dispatcher_cron_row(db, project_id)
+from gobby.dispatch.dispatcher import DispatcherServices
+
+# R7.F-sweep-overlap: do the mutex reconciliation ONCE here, before any tick
+# can fire. Per-tick sweep is removed from run_tick to avoid live-row deletion
+# under overlapping ticks (cron + _kick_dispatcher_tick from gobby build).
+sweep_mutexes_once(runner.database)
+
+# R7.F-dispatcher-services / R7.F-live-config / R7.F-build-config-on-services /
+# R7.F-load-config-signature: build the dependency container from the live
+# `runner` attributes and the parsed `BuildConfig`. Reused for both cron
+# handlers AND immediate build-triggered ticks via
+# `ServiceContainer.dispatcher_services`.
+from gobby.config.build import load_build_config
+
+# `load_build_config(project_root, flag_overrides=None)` is the live signature;
+# it walks `~/.gobby/build.yaml`, `<project_root>/.gobby/build.yaml`, and any
+# CLI flag overrides. The dispatcher's daemon-side load uses no flag overrides
+# (overrides are per-build and persisted to task_artifacts at build time per
+# §2.19; the dispatcher reads from artifacts via _resolve_retry_cap, not from
+# the static BuildConfig). project_root is resolved from the live git manager:
+project_root = runner.git_manager.repo_path
+build_config = load_build_config(project_root)
+
+# Synthetic dispatcher session id (R7.F-dispatcher-session / R7.F-storage-uuid):
+# the daemon allocates one Gobby session row per process startup with
+# `source="dispatcher"` and an explicit
+# `external_id="dispatcher-<machine_id>-<boot_timestamp>"`. The session exists
+# for triggering-session traceability on dispatched expansion runs and any
+# other audit-trail surfaces; it never claims tasks. Constructed in
+# `runner_init.py` via:
+#
+#     storage_uuid = runner.session_manager.register_session(
+#         external_id=f"dispatcher-{machine_id}-{boot_timestamp}",
+#         machine_id=machine_id,
+#         source="dispatcher",
+#         project_id=runner.project_id,
+#     )
+#
+# The live `register_session` returns the **storage UUID** (the `sessions(id)`
+# row primary key) — NOT the `external_id` we passed in. The expansion-runs
+# table foreign-keys `triggering_session_id` to `sessions(id)`, so we MUST
+# capture and propagate the storage UUID, not the external id. On failure
+# the live API returns a temporary UUID and logs; the dispatcher refuses to
+# start (raises) if the returned id is not present in `sessions(id)` — an
+# unresolvable triggering session would write expansion-run rows with
+# dangling FK refs. The captured storage UUID is stored on
+# `runner.dispatcher_session_id: str`:
+dispatcher_session_id = runner.dispatcher_session_id  # storage UUID, not external_id
+
+dispatcher_services = DispatcherServices(
+    db=runner.database,
+    task_manager=runner.task_manager,
+    llm_service=runner.llm_service,
+    config=runner.config,                            # DaemonConfig (Pydantic model)
+    build_config=build_config,                       # BuildConfig with dispatch knobs
+    completion_registry=runner.completion_registry,  # CompletionEventRegistry
+    session_manager=runner.session_manager,          # ChildSessionManager (R7.F-spawn-deps)
+    machine_id=runner.machine_id,
+    triggering_session_id=dispatcher_session_id,     # storage UUID
+    parent_session_id=dispatcher_session_id,         # same row — dispatcher is parent for all spawned agents
+)
+
+# Add to ServiceContainer (new field, see §1.10.2 acceptance) BEFORE set_app_context
+# so `get_app_context().dispatcher_services` works for `_kick_dispatcher_tick`.
+services = ServiceContainer(
+    # ... all existing fields per the live `init_servers` constructor call ...
+    dispatcher_services=dispatcher_services,
+)
+set_app_context(services)
+
+register_state_dispatcher(runner.cron_executor, dispatcher_services, build_config)
+ensure_state_dispatcher_cron_row(runner.cron_storage, runner.project_id, build_config)
 ```
 
-The cron_jobs row:
+The cron_jobs row, per the live `CronJobStorage.create_job` API (R7.F-live-cron-api — `schedule_expression` does not exist as a field; the live shape is `schedule_type` + `interval_seconds` for interval jobs, or `schedule_type` + `cron_expression` for cron jobs):
 
 ```python
-{
-    "id": "state-dispatcher-main",
-    "project_id": project_id,
-    "name": "state-dispatcher",
-    "schedule_type": "interval",
-    "schedule_expression": "60s",
-    "action_type": "handler",
-    "action_config": {"handler": "state-dispatcher"},
-    "enabled": True,
-}
+cron_storage.create_job(
+    project_id=project_id,
+    name="state-dispatcher",
+    schedule_type="interval",
+    interval_seconds=build_config.dispatch_interval_seconds,  # default 60
+    action_type="handler",
+    action_config={"handler": "state-dispatcher"},
+    enabled=True,
+)
 ```
 
 **Acceptance:**
 
-- 1.10.1 — Cron handler registration is implemented according to this section. file: `src/gobby/dispatch/cron_registration.py`.
+- 1.10.1 — Cron handler registration is implemented according to this section, using the live `CronJobStorage.create_job(project_id, name, schedule_type="interval", interval_seconds=..., action_type="handler", action_config={"handler": "state-dispatcher"})` shape. file: `src/gobby/dispatch/cron_registration.py`. test: `tests/dispatch/test_cron_registration.py` covers (a) handler registered under name "state-dispatcher", (b) cron row inserted with the live field shape (no `schedule_expression`), (c) idempotent — re-running on existing row is a no-op, (d) `interval_seconds` matches `BuildConfig.dispatch_interval_seconds`.
+- 1.10.5 — `GobbyRunner` exposes the `CronExecutor` instance as `runner.cron_executor` (R7.F-cron-executor-attr). The live runner already constructs the executor inside `init_orchestration` as a local; this acceptance lifts it onto the `runner` object so `init_servers` can wire dispatcher registration against the same instance the `cron_scheduler` uses. file: `src/gobby/runner.py`, `src/gobby/runner_init.py`. test: `tests/runner_init/test_cron_executor_attr.py` asserts `runner.cron_executor` is the same instance attached to `runner.cron_scheduler`.
+- 1.10.2 — `ServiceContainer` (live at `src/gobby/app_context.py`) gains a `dispatcher_services: DispatcherServices` field; `runner_init.py` constructs `DispatcherServices` from `runner` attributes (`runner.database`, `runner.task_manager`, `runner.llm_service`, `runner.config`, `runner.completion_registry`, `runner.session_manager`, `runner.machine_id`, `runner.dispatcher_session_id` (the storage UUID returned by `register_session`)) plus a freshly-loaded `BuildConfig` from `load_build_config(runner.git_manager.repo_path)` (R7.F-load-config-signature: live signature is `load_build_config(project_root, flag_overrides=None)`, NOT `(db, project_id)`). Adds the result to `ServiceContainer` before `set_app_context(services)`. file: `src/gobby/app_context.py`, `src/gobby/runner_init.py`. test: `tests/runner_init/test_dispatcher_services_wiring.py` covers (a) `ServiceContainer.dispatcher_services` is populated after `init_servers`, (b) `get_app_context().dispatcher_services` returns the same instance, (c) `_kick_dispatcher_tick` (§3.2) reads through this surface and constructs no fresh services, (d) `load_build_config` is called with `runner.git_manager.repo_path` (path-based) — NOT with `(db, project_id)`, (e) every `SpawnRequest` dependency (`session_manager`, `machine_id`, `parent_session_id`) is resolved from `services` — the dispatcher source contains no private global helpers like `_session_manager()` or `_machine_id()` (regression locked via `gcode search-content "_session_manager\|_machine_id\|_dispatcher_parent_session"` returning empty inside `src/gobby/dispatch/`).
+- 1.10.4 — Synthetic dispatcher session (R7.F-dispatcher-session / R7.F-storage-uuid): `runner_init.py` registers exactly one Gobby session per daemon process at boot via the live `LocalSessionManager.register_session(external_id="dispatcher-<machine_id>-<boot_timestamp>", machine_id=..., source="dispatcher", project_id=...)`. The live API returns `str` — the **storage UUID** (the `sessions(id)` row primary key), NOT the `external_id` we passed in. We capture and store the **storage UUID** on `runner.dispatcher_session_id: str`; the external_id is what the live API uses internally to dedupe registrations. `DispatcherServices.triggering_session_id` and `parent_session_id` carry the storage UUID directly because `expansion_runs.triggering_session_id` foreign-keys `sessions(id)`. On failure the live API returns a temporary UUID; the dispatcher MUST refuse to start (raises `RuntimeError`) if the returned id is not present in `sessions(id)` — an unresolvable triggering session would write expansion-run rows with dangling FK refs and corrupt the audit trail. file: `src/gobby/runner.py` (add `dispatcher_session_id: str` attribute), `src/gobby/runner_init.py` (call `register_session` once at boot, capture return value, validate FK presence). test: `tests/runner_init/test_dispatcher_session.py` covers (a) exactly one row is created per daemon boot, (b) source is `"dispatcher"`, (c) `runner.dispatcher_session_id` matches the persisted `sessions.id` (storage UUID), NOT the external_id we passed in, (d) the session never claims a task (assertion via `claim_task` permission rule), (e) explicit failure path: when register_session returns a temporary UUID not present in `sessions(id)`, daemon startup raises rather than continue with a dangling FK.
+- 1.10.3 — `register_state_dispatcher(executor, services, build_config)` reads `max_active_agents` from the `BuildConfig` directly (not from a `DaemonConfig.get(...)` call — `DaemonConfig` is a Pydantic model with no `.get` method). file: `src/gobby/dispatch/cron_registration.py`. test: `tests/dispatch/test_cron_registration.py::test_register_uses_build_config_max_active`.
 
 ## P2 Phase 2: New Agents + Stage Integration
 `kind: framing`
@@ -1230,25 +1928,80 @@ Expansion has two responsibilities: shaping the subtask tree based on which stag
 - 2.8.1 — Expansion emits stage-driven task trees from `_skipped_stages(epic)` state instead of stored profiles. file: `src/gobby/tasks/expansion_service.py`.
 - 2.8.2 — Every automated leaf in code, config, docs, or test categories receives an `assigned_agent` value (and optional `additional_skills`) selected via the `expansion-agent-selection` heuristic against `list_agent_definitions`; ambiguous leaves default to `backend-developer` and emit an `## Agent Selection` description marker. file: `src/gobby/tasks/expansion_service.py`.
 - 2.8.3 — Expansion-QA rejects any expansion run that emits a `category: planning` leaf and rejects any `[category: test]` leaf whose description does not clearly identify test infrastructure (fixtures, helpers, conftest, harness modules). file: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`. behavior: rejection cites the specific offending leaf in `rejection_notes`.
+- 2.8.4 — Expansion initializes every generated leaf at `lifecycle=in_development` so `rule_dispatch_leaf` (§1.7) can pick it up on the next tick. The legacy `lifecycle_stage` column is left at its default; only `lifecycle` (the new dispatch field on every task per the Constraints update) is set. Epic itself reaches `lifecycle=in_development` either by `gobby build` (skip-stage path) or by the test_arch/expanding rule chain. file: `src/gobby/tasks/expansion_service.py`. test: `tests/tasks/test_expansion_lifecycle_init.py` covers (a) every generated leaf has `lifecycle=in_development` after a successful expansion run, (b) generated leaves do NOT have any value written to `lifecycle_stage` (kept at default), (c) regression: a leaf left at default `lifecycle=open` would fail dispatch — explicit assertion that no leaf is at `open` post-expansion.
 
-### 2.8b Expose `start_expansion_run_impl` for in-process dispatcher use [category: code] (depends: 1.1b)
+### 2.8b Expose `start_expansion_run_impl` for in-process dispatcher use [category: code]
 `kind: deliverable`
 
 > **Status: partial** — nested MCP handler `start_expansion_run` shipped via commit `4ee54dc5` at `src/gobby/mcp_proxy/tools/tasks/_expansion.py`; the importable `start_expansion_run_impl` symbol required by §1.9 is not exported.
 
-Target: `src/gobby/mcp_proxy/tools/tasks_ops.py` (or wherever the MCP tool's handler lives)
+Target: `src/gobby/mcp_proxy/tools/tasks/_expansion.py` (or wherever the MCP tool's handler lives)
 
-R6.F5 + R7.F2 fix. The existing `gobby-tasks-ops:start_expansion_run` MCP tool already wraps the canonical "create expansion-run row + kick compile + return run record" flow against the real `ExpansionService(*, task_manager, llm_service, config=None, run_manager=None)` constructor and `LocalExpansionRunManager.create(*, parent_task_id, project_id, triggering_session_id, input_source, plan_file=None, provider=None, model=None, options=None, run_id=None) -> ExpansionRun`. The dispatcher (§1.9 `StartExpansionRun` case) calls the same handler directly, in-process, under its mutex hold. No new `ExpansionService.start_run` wrapper needed — the impl already exists.
+R6.F5 + R7.F2 + R7.F-impl-deps fix. The existing `gobby-tasks-ops:start_expansion_run` MCP tool is a registry closure inside `RegistryContext` — it depends on `task_manager`, `llm_service`, daemon `config`, the completion registry, and `_resolve_current_session(ctx)` for the triggering session id. The MCP transport layer wires those dependencies; the dispatcher does not have a `RegistryContext` available, only `db` + `task`. Exporting the closure verbatim is not possible; this task pins a **dependency-injected impl signature** the dispatcher can call directly.
 
-This task: ensure the underlying handler is exported as `start_expansion_run_impl` (or equivalent name) so the dispatcher can `from gobby.mcp_proxy.tools.tasks_ops import start_expansion_run_impl` rather than going through the MCP transport layer. Verify the impl returns the `ExpansionRun` (or at minimum `run.id`); if today it only returns a serialized dict, refactor to return the underlying record alongside its dict form, or have it return `run.id` directly. Add a unit test asserting the impl returns the run id and that compile failures still produce a row whose `id` the caller can persist.
+**`start_expansion_run_impl` signature** (locked by §2.8b.1, used by §1.9):
+
+```python
+async def start_expansion_run_impl(
+    *,
+    task_manager: LocalTaskManager,
+    llm_service: LLMService,
+    config: DaemonConfig,
+    completion_registry: CompletionEventRegistry,  # live class name; no `CompletionRegistry`
+    triggering_session_id: str,
+    task_id: str,
+    plan_file: str | None = None,
+    auto_apply: bool = True,
+    force_new: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+    project: str | None = None,
+) -> ExpansionRun:
+    """Dependency-injected core of the `gobby-tasks-ops:start_expansion_run`
+    MCP tool. The MCP closure simply resolves the dependencies from
+    RegistryContext and forwards to this impl; the dispatcher (§1.9)
+    constructs the dependencies from the daemon services it already holds
+    and calls the impl directly. Returns the persisted `ExpansionRun`
+    (with `.id` populated) even on compile failure — the caller persists
+    the id so `rule_validate_expansion` and expansion-qa (§2.9) can
+    observe the failed run and reject."""
+```
+
+Dispatcher dependency wiring (per §1.9 / §1.10 R7.F-dispatcher-services): the dispatcher reads every dependency from the `DispatcherServices` instance threaded through `run_tick(services, ...)`. No private global helpers (`_task_manager(db)`, `_llm_service()`, etc.) — all five dependencies (`task_manager`, `llm_service`, `config`, `completion_registry`, `triggering_session_id`) come from `services` fields populated in `runner_init.py` from live `runner` attributes. The MCP closure path stays untouched — this is purely an in-process additional caller.
 
 The dispatcher captures `run.id` and writes it into `task_artifacts.expansion_run_id` (§1.9). Compile failures are recoverable: `rule_validate_expansion` waits for the run to reach a terminal state (completed OR failed); on failed, expansion-qa picks it up and rejects via `mark_task_review_rejected(lifecycle=expanding)`, which clears `expansion_run_id` and increments `expansion_attempts` (§1.8 R4.F1 extension).
 
 **Acceptance:**
 
-- 2.8b.1 — Expose start_expansion_run_impl for in-process dispatcher use is implemented according to this section. file: `src/gobby/mcp_proxy/tools/tasks_ops.py`.
+- 2.8b.1 — `start_expansion_run_impl` exported from `src/gobby/mcp_proxy/tools/tasks/_expansion.py` with the dependency-injected signature above. The MCP closure inside `RegistryContext` resolves its dependencies from context and forwards to this impl; the dispatcher (§1.9) constructs the dependencies from the daemon registry and calls the impl directly. file: `src/gobby/mcp_proxy/tools/tasks/_expansion.py`. test: `tests/tasks/test_start_expansion_run_impl.py` covers (a) the impl is importable and accepts the documented kwargs, (b) the MCP closure forwards correctly without re-implementing logic, (c) the impl returns the `ExpansionRun` with a populated `.id` even on compile failure, (d) the dispatcher path constructs the dependencies and calls the impl without going through MCP transport.
+- 2.8b.2 — Dispatcher dependency wiring: §1.10 constructs `DispatcherServices` once at daemon boot from live `runner` attributes (`runner.task_manager`, `runner.llm_service`, `runner.config`, `runner.completion_registry`, `runner.dispatcher_session_id`); §1.9's `_dispatch(StartExpansionRun)` arm calls `start_expansion_run_impl(task_manager=services.task_manager, llm_service=services.llm_service, config=services.config, completion_registry=services.completion_registry, triggering_session_id=services.triggering_session_id, ...)`. No private global helpers — every dependency is a `services.<field>` access. file: `src/gobby/dispatch/dispatcher.py`. test: `tests/dispatch/test_dispatcher_expansion_dependencies.py` mocks `DispatcherServices` and asserts each dependency is forwarded to the impl exactly once per dispatch and that no module-level helper functions like `_task_manager` / `_llm_service` exist in `src/gobby/dispatch/dispatcher.py`.
 
-### 2.9 Expansion-QA transition contract [category: config] (depends: 1.8, 1.1b)
+### 2.8c Split `expansion_service.py` monolith [category: refactor] (depends: 2.8, 2.8b)
+`kind: deliverable`
+
+Target: `src/gobby/tasks/expansion_service.py` (currently 1,495 lines — exceeds the project's 1,000-line monolith ceiling per `CLAUDE.md` Guiding Principle #2). Split into focused modules under `src/gobby/tasks/expansion/`.
+
+This deliverable fires after the §2.8 / §2.8b additions land so the split happens with the final responsibility surface visible (TDD sandwich shape, agent selection, lifecycle init, in-process impl export). Doing the split before §2.8 would invite a second split round once §2.8's additions push the total back over 1,000 lines.
+
+**Suggested partition** (final shape decided during the refactor; this is the floor, not the ceiling):
+
+- `src/gobby/tasks/expansion/service.py` — public `ExpansionService` facade and orchestration glue (≤ 400 lines).
+- `src/gobby/tasks/expansion/tree_shape.py` — stage-driven tree-shape logic (`_skipped_stages`-aware leaf generation; the §2.8.1 work).
+- `src/gobby/tasks/expansion/agent_selection.py` — `assigned_agent` selection per leaf, `expansion-agent-selection` skill consumption (the §2.8.2 work plus the agent-selection heuristics).
+- `src/gobby/tasks/expansion/lifecycle_init.py` — leaf `lifecycle=in_development` initialization (the §2.8.4 work).
+- `src/gobby/tasks/expansion/runs.py` — expansion-run lifecycle: `LocalExpansionRunManager.create` integration, compile kickoff, status transitions (the §2.8b path; pairs with the impl export there).
+- `src/gobby/tasks/expansion/__init__.py` — re-exports the public surface so existing import paths (`from gobby.tasks.expansion_service import ...`) continue to work for one release via a thin shim, then are deprecated.
+
+Backward-compat: keep `src/gobby/tasks/expansion_service.py` as a re-export shim during the transition. Any callers outside this epic continue to import from the old path; new callers use the new structure.
+
+**Acceptance:**
+
+- 2.8c.1 — `src/gobby/tasks/expansion/` package created with the modules listed above; every file is under 1,000 lines (≤ 800 lines preferred). file: `src/gobby/tasks/expansion/service.py`. file: `src/gobby/tasks/expansion/tree_shape.py`. file: `src/gobby/tasks/expansion/agent_selection.py`. file: `src/gobby/tasks/expansion/lifecycle_init.py`. file: `src/gobby/tasks/expansion/runs.py`. file: `src/gobby/tasks/expansion/__init__.py`. test: `tests/tasks/test_expansion_module_structure.py` asserts the line-count ceiling per file and the public-surface re-exports.
+- 2.8c.2 — `src/gobby/tasks/expansion_service.py` reduced to a re-export shim that imports from the new package. Existing import paths continue to work; `wc -l` on the shim is under 50 lines. behavior: every existing import site (search via `gcode search` for `from gobby.tasks.expansion_service`) keeps working without source-side changes. test: covered indirectly by the existing test suite continuing to pass.
+- 2.8c.3 — Internal imports within the codebase migrate to the new module paths. The shim is documented as deprecated for removal in a future release. file: existing call sites under `src/gobby/dispatch/`, `src/gobby/build/`, `src/gobby/mcp_proxy/tools/tasks/`. test: `gcode search "from gobby.tasks.expansion_service"` returns only the shim itself (and tests asserting the shim).
+- 2.8c.4 — Test suite passes after the split: the existing `tests/tasks/test_expansion_*.py` files continue to pass against the new module layout. test: `uv run pytest tests/tasks/test_expansion_*.py`.
+
+### 2.9 Expansion-QA transition contract [category: config] (depends: 1.8)
 `kind: deliverable`
 
 > **Status: partial** — plan-coverage and review wiring shipped via commit `4ee54dc5` at `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`; the `assigned_agent`, `category: planning`, and test-infrastructure-only `[category: test]` checks named in the acceptance items are pending.
@@ -1259,9 +2012,10 @@ R3.F3 fix + R4.F1/F3/F4 extensions. Today's `expansion-qa` validates the expansi
 
 1. **On validation success** (all `### N.N` sections present as subtasks; every automated-category leaf has `assigned_agent`; no `category: planning` leaves; `[category: test]` leaves are infrastructure not authored cases):
    - `mark_task_review_approved(parent_task_id)` — which, per §1.8, advances `lifecycle: expanding → in_development` and resets status to `open`. The `task_artifacts.expansion_run_id` and `expansion_attempts` fields are NOT cleared on approval (kept as audit trail of which run produced the approved tree).
-2. **On validation failure** — call `mark_task_review_rejected(parent_task_id, rejection_notes=<findings>)`. Per §1.8 (R4.F1 extension), this leaves the epic at `lifecycle=expanding, status=open`, **clears `task_artifacts.expansion_run_id`** (so `rule_start_expansion` can re-fire on the next tick), and **increments `task_artifacts.expansion_attempts`**. After `MAX_EXPANSION_ATTEMPTS` (default 3, defined in §1.7), `rule_start_expansion` either escalates (non-yolo) or force-advances with an audit marker (yolo).
+2. **On validation failure or failed expansion run** — call `mark_task_review_rejected(parent_task_id, rejection_notes=<findings>)`. Per §1.8 (R4.F1 extension), this leaves the epic at `lifecycle=expanding, status=open`, **clears `task_artifacts.expansion_run_id`** (so `rule_start_expansion` can re-fire on the next tick), and **increments `task_artifacts.expansion_attempts`**. After `MAX_EXPANSION_ATTEMPTS` (resolved via `_resolve_retry_cap` per §1.7/§2.19, default 3), `rule_start_expansion` either escalates (non-yolo) or force-advances with an audit marker (yolo).
 
    Validation failures that trigger rejection:
+   - **Failed expansion run** (R7.F-failed-run): `expansion-qa` is dispatched whenever the expansion run reaches a terminal state (`completed` OR `failed`, per `rule_validate_expansion`'s `_expansion_run_terminal` predicate, §1.7). On a `failed` run, expansion-qa reads the failure details from the run record and rejects with rejection_notes citing the compile error verbatim. This is what makes the failed-run path actually clear the artifact and increment attempts — the prior `_expansion_run_completed`-only predicate stranded failed runs.
    - **Generic**: missing `### N.N` sections, malformed subtask shapes, mismatched parent linkage.
    - **R4.F3** Missing `assigned_agent` on any automated-category leaf (`code | config | docs | test`). Finding cites the specific leaf: "agent selection pass did not populate assigned_agent for <leaf ref>."
    - **R4.F3** Any leaf with `category: planning`. Finding cites the leaf: "planning category not permitted on leaves; promote to a separate epic or change category."
@@ -1273,7 +2027,7 @@ Unblock `mark_task_review_approved` and `mark_task_review_rejected` in the agent
 
 - 2.9.1 — Expansion-QA transition contract is implemented according to this section. file: `src/gobby/install/shared/workflows/agents/expansion-qa.yaml`.
 
-### 2.10 Merge agent — lifecycle integration [category: config] (depends: 1.8, 1.1b)
+### 2.10 Merge agent — lifecycle integration [category: config] (depends: 1.8)
 `kind: deliverable`
 
 Target: `src/gobby/install/shared/workflows/agents/merge.yaml`
@@ -1285,24 +2039,31 @@ Keep the existing tool-driven contract that the shipped `merge.yaml` already imp
 **Dispatcher side** (recap, no new pseudo-APIs):
 - `rule_merging` already emits `SpawnAgent(agent="merge", ...)`. The `merge_runner` prompt builder (§1.6 PROMPT_BUILDERS) reads `task_artifacts` via `gobby-tasks-ops:get_artifacts` (§1.1d) and passes `worktree_id` OR `clone_id` (per the §1.1b CHECK XOR) and `target_branch` as `initial_variables`. The shipped `merge.yaml` already branches on which session var is present.
 
-**`merge.yaml` finalize-step extensions** (the only YAML changes):
-- After the existing tool flow returns success, the agent calls `mark_task_review_approved(task_id=epic_task_id, approval_notes="merge completed")` (the tool's real param is `approval_notes`, not `reason`). §1.8 advances `lifecycle: merging → merged, status: closed`.
-- **Worktree cleanup**: call `gobby-worktrees:mark_worktree_merged(worktree_id)` so the worktrees registry reflects the merged state, then `gobby-worktrees:delete_worktree(worktree_id)` (the real tool name; `remove_worktree` does NOT exist) for filesystem teardown. Then clear the artifact pair atomically via `gobby-tasks-ops:clear_isolation_pair(epic_task_id, "worktree")` (§1.1d). Worktree cleanup is unconditional on success today.
-- **Clone cleanup**: if `BuildConfig.cleanup_clones_on_merge` is true (§3.1), call `gobby-clones:delete_clone(clone_id)`, then `gobby-tasks-ops:clear_isolation_pair(epic_task_id, "clone")` (§1.1d). Otherwise leave both the clone on disk and the artifact row in place.
+**`merge.yaml` finalize-step extensions** (the only YAML changes). R7.F-cleanup-ordering: cleanup runs BEFORE terminal approval, so a cleanup failure does not strand the epic at terminal lifecycle with orphaned artifacts. Approval is the LAST step in the success path.
+
+Sequence on a clean merge:
+
+1. **Worktree path**: `gobby-worktrees:mark_worktree_merged(worktree_id)` (registry write). Then `gobby-worktrees:delete_worktree(worktree_id)` (filesystem teardown). Then `gobby-tasks-ops:clear_isolation_pair(epic_task_id, "worktree")` (§1.1d, atomic artifact-pair clear).
+   **Clone path**: if `BuildConfig.cleanup_clones_on_merge` is true (§3.1), `gobby-clones:delete_clone(clone_id)`, then `gobby-tasks-ops:clear_isolation_pair(epic_task_id, "clone")`. Otherwise the clone stays on disk and the artifact row is preserved (operator opted into manual cleanup).
+2. **Cleanup-failure recovery — non-yolo**: if any of the above tools fails on a non-yolo merge, the agent calls `escalate_task(task_id=epic_task_id, reason="needs_human:merge_cleanup_failed:<failing_step>:<details>")`. The epic stays at `lifecycle=merging, status=escalated` so a human can fix the cleanup state and call `de_escalate_task(task_id, target_status='open', lifecycle=Lifecycle.merging, reason='cleanup recovered')`, which routes the task back through `rule_merging` for a re-dispatch where the agent confirms cleanup state and proceeds to terminal approval. Lifecycle stays non-terminal and artifacts are explicitly accounted for — never orphaned silently.
+
+   **Cleanup-failure recovery — yolo** (R7.F-yolo-cleanup): the constraints invariant is that yolo never escalates. On a yolo merge with cleanup failure, the agent does NOT call `escalate_task`; instead it (a) `gobby-tasks-ops:append_description_section(epic_task_id, heading="Yolo Fallbacks", body="<timestamp>: cleanup failed at <step> (<details>); <worktree|clone> preserved at <path>; lifecycle force-advanced to merged")`, then (b) `gobby-tasks:advance_lifecycle(task_id=epic_task_id, to=Lifecycle.merged, reason="yolo: merge cleanup failed; force-advanced with artifacts preserved", by_actor="merge")`. The artifact pair is left in place for human inspection. The downstream `rule_cascade_close_on_merge` and `rule_archive_plan_on_merge` still fire on the `merged` transition.
+3. **Terminal approval (LAST)**: only after step 1 completes successfully, the agent calls `mark_task_review_approved(task_id=epic_task_id, approval_notes="merge completed; cleanup confirmed")`. §1.8 advances `lifecycle: merging → merged, status: closed`. The §1.8.6b stage-advance gate at `lifecycle=merging` requires merge-clean + cleanup-clean state — the gate fires after cleanup so a precondition failure here is the correct signal.
 - **Merge SHA capture is deferred**: neither `merge_worktree` nor `merge_clone` currently returns `merge_commit_sha` in its response (verified via current code). Capturing it requires extending those tools, which is real implementation work; deferred to **#12728** alongside PR-creation. The `task_artifacts.merge_commit_sha` column is reserved for that future write but is left NULL on every merge in this epic. No raw `git` calls anywhere — the agent's tool surface forbids Bash.
 
 **Failure paths** (rejection contract — `lifecycle=merging` rejection case in §1.8 R6.F4):
 
 1. **Clean merge** — described above.
-2. **Conflict — non-yolo** (worktree only; clone path has no AI resolution per shipped flow): the existing AI flow (`gobby-merge:merge_start` → `merge_status` → `merge_resolve` → `merge_apply`) attempts resolution. If resolution succeeds → success path. If resolution fails (`merge_abort` is called by the agent), the agent calls `escalate_task(task_id=epic_task_id, reason="needs_human: merge conflict on <target_branch>; resolve manually and call de_escalate_task(task_id, target_status='review_approved', lifecycle=Lifecycle.merged, reason='human resolved conflict')")`. For clone conflicts, the same escalate path is taken directly (no AI resolution attempt — clone has no `gobby-merge:*` integration).
-3. **Conflict — yolo** (worktree): try AI resolution as in (2); on success, take the success path. On failure, increment a `merge-attempts:N` label on the epic via the existing `add_label` / `update_task` (labels) tools (default cap 3), call `mark_task_review_rejected(task_id=epic_task_id, rejection_notes="yolo conflict resolution attempt failed: <details>")` — see §1.8 R6.F4 for the `lifecycle=merging` rejection contract — then `kill_agent`. `rule_merging` re-dispatches on the next tick. (Clone-with-yolo: same retry pattern, but each attempt is a fresh `sync_clone` + `merge_clone`; no AI step.)
-4. **Yolo conflict — retries exhausted** (`merge-attempts:N >= cap`): preserve the R3.U1 "yolo never escalates" invariant via the documented force-advance fallback. Call `gobby-tasks-ops:append_description_section(epic_task_id, heading="Yolo Fallbacks", body="<timestamp>: merge attempts exhausted (<N>); <worktree|clone> preserved at <path>; lifecycle force-advanced to merged without merge")` (§1.1d), then `mark_task_review_approved(task_id=epic_task_id, approval_notes="yolo: merge attempts exhausted, force-advanced; isolation artifact preserved")`. Lifecycle advances to `merged, status=closed`. The artifact pair is **NOT cleared** on this path — cleanup is skipped so a human can inspect (the artifact row stays populated with `worktree_path`/`worktree_id` or `clone_path`/`clone_id`). Documented exception under R3.U1.
+2. **Conflict — non-yolo** (worktree only; clone path has no AI resolution per shipped flow): the existing AI flow (`gobby-merge:merge_start` → `merge_status` → `merge_resolve` → `merge_apply`) attempts resolution. If resolution succeeds → success path. If resolution fails (`merge_abort` is called by the agent), the agent calls `escalate_task(task_id=epic_task_id, reason="needs_human: merge conflict on <target_branch>; resolve manually in the worktree, then call de_escalate_task(task_id, target_status='open', lifecycle=Lifecycle.merging, reason='human resolved conflict; ready for merge agent retry')")`. R7.F-non-yolo-recovery: de-escalating to `lifecycle=merging, status=open` (NOT directly to `merged`) routes the task back through `rule_merging`, which re-dispatches the merge agent. The agent's success path then runs the normal cleanup — `mark_worktree_merged`, `delete_worktree`, `clear_isolation_pair` — and writes the terminal lifecycle. De-escalating directly to `lifecycle=merged` was the prior contract but skipped artifact cleanup and the merge-success write-back, leaving worktrees orphaned and the lifecycle event audit incomplete. For clone conflicts, the same escalate path is taken directly (no AI resolution attempt — clone has no `gobby-merge:*` integration); recovery follows the same `de_escalate_task(... lifecycle=Lifecycle.merging ...)` pattern so `rule_merging` can re-dispatch with the now-resolvable clone state.
+3. **Conflict — yolo** (worktree): try AI resolution as in (2); on success, take the success path. On failure, increment a `merge-attempts:N` label on the epic via the existing `add_label` / `update_task` (labels) tools (cap resolved from `max_merge_attempts` session variable per R7.F-merge-cap-wired — `rule_merging` populates the var from `_resolve_retry_cap(task, "max_merge_attempts", MAX_MERGE_ATTEMPTS_DEFAULT)`, default 3, overridable per §2.19.3). Call `mark_task_review_rejected(task_id=epic_task_id, rejection_notes="yolo conflict resolution attempt failed: <details>")` — see §1.8 R6.F4 for the `lifecycle=merging` rejection contract — then `kill_agent`. `rule_merging` re-dispatches on the next tick. (Clone-with-yolo: same retry pattern, but each attempt is a fresh `sync_clone` + `merge_clone`; no AI step.)
+4. **Yolo conflict — retries exhausted** (`merge-attempts:N >= cap`): preserve the R3.U1 "yolo never escalates" invariant via the documented force-advance fallback. The fallback uses the explicit `advance_lifecycle` tool, NOT `mark_task_review_approved`, because the stage-advance gate at `lifecycle=merging` requires merge-clean state (per §1.8.6) — using `mark_task_review_approved` here would deadlock the fallback exactly when it's needed. Sequence: (a) `gobby-tasks-ops:append_description_section(epic_task_id, heading="Yolo Fallbacks", body="<timestamp>: merge attempts exhausted (<N>); <worktree|clone> preserved at <path>; lifecycle force-advanced to merged without merge")` (§1.1d). (b) `gobby-tasks:advance_lifecycle(task_id=epic_task_id, to=Lifecycle.merged, reason="yolo: merge attempts exhausted; force-advanced without merge", by_actor="merge")` — `advance_lifecycle` (§1.8) sets `status=closed` automatically when the new lifecycle is `merged` (terminal), so the epic reaches `(merged, closed)` in one call. The artifact pair is **NOT cleared** on this path — cleanup is skipped so a human can inspect (the artifact row stays populated with `worktree_path`/`worktree_id` or `clone_path`/`clone_id`). Documented exception under R3.U1. The downstream `rule_cascade_close_on_merge` and `rule_archive_plan_on_merge` (§1.7) still fire as expected on the `merged` transition.
 
 **Allowlist additions** to merge.yaml's existing `allowed_mcp_tools`:
 
 - `gobby-tasks:mark_task_review_approved`
 - `gobby-tasks:mark_task_review_rejected`
 - `gobby-tasks:escalate_task`
+- `gobby-tasks:advance_lifecycle` (yolo cap-exhausted force-advance; bypasses stage-advance review gates per §1.8)
 - `gobby-tasks:add_label` (for `merge-attempts:N` increments)
 - `gobby-tasks-ops:get_artifacts` (initial read of `worktree_id`/`clone_id`/`target_branch` if not already in session vars)
 - `gobby-tasks-ops:clear_isolation_pair` (§1.1d — clean up artifact pair atomically on success)
@@ -1315,9 +2076,9 @@ Real PR-creation, merge-SHA capture, and AI-driven conflict resolution for clone
 **Acceptance:**
 
 - 2.10.1 — Merge agent receives worktree_id or clone_id plus target_branch through dispatcher initial variables and reads artifacts when needed. file: `src/gobby/install/shared/workflows/agents/merge.yaml`.
-- 2.10.2 — Clean merge success calls mark_task_review_approved and performs worktree or clone cleanup with the real MCP tool names. file: `src/gobby/install/shared/workflows/agents/merge.yaml`.
+- 2.10.2 — Clean merge success path runs cleanup BEFORE terminal approval (R7.F-cleanup-ordering). Sequence: (a) `mark_worktree_merged` / `delete_worktree` / `clear_isolation_pair` (worktree path) OR `delete_clone` / `clear_isolation_pair` (clone path), then (b) `mark_task_review_approved`. Cleanup-failure handling splits by yolo (R7.F-yolo-cleanup): non-yolo calls `escalate_task(reason="needs_human:merge_cleanup_failed:<step>:<details>")` and the epic stays at `lifecycle=merging, status=escalated`; yolo calls `[append_description_section("Yolo Fallbacks", ...), advance_lifecycle(to=Lifecycle.merged, reason="yolo: merge cleanup failed; force-advanced with artifacts preserved", by_actor="merge")]` so it never escalates per the top-level yolo invariant — artifacts preserved for human inspection. Approval is the LAST step in the non-yolo clean-success path; the yolo cleanup-failure path advances directly via `advance_lifecycle` and never calls `mark_task_review_approved`. file: `src/gobby/install/shared/workflows/agents/merge.yaml`. test: `tests/agents/test_merge_cleanup_ordering.py` covers (a) clean path executes cleanup → approval in order on non-yolo, (b) non-yolo cleanup-failure escalates with `needs_human:merge_cleanup_failed:` reason and lifecycle stays at `merging`, (c) **yolo cleanup-failure NEVER calls `escalate_task`** — instead force-advances to `merged` via `advance_lifecycle` with audit marker, (d) yolo and non-yolo both preserve uncleared artifacts on cleanup failure for human inspection, (e) re-dispatch after `de_escalate_task` retries cleanup on the non-yolo path and lands at terminal `merged` only when cleanup succeeds.
 - 2.10.3 — Non-yolo conflicts escalate with needs_human instructions while preserving lifecycle state for recovery. behavior: `non-yolo merge conflict path in §2.10`.
-- 2.10.4 — Yolo conflicts retry through mark_task_review_rejected and force-advance only after the documented attempt cap. behavior: `yolo merge conflict retry path in §2.10`.
+- 2.10.4 — Yolo conflicts retry through `mark_task_review_rejected` (lifecycle stays `merging`, status resets to `open`, `merge-attempts:N` label increments) until `merge-attempts:N >= cap`. On cap exhaustion, the agent calls `gobby-tasks-ops:append_description_section(heading="Yolo Fallbacks", body=...)` followed by `gobby-tasks:advance_lifecycle(task_id, to=Lifecycle.merged, reason="yolo: merge attempts exhausted; force-advanced without merge", by_actor="merge")` — `advance_lifecycle` (not `mark_task_review_approved`) because the stage-advance gate at `lifecycle=merging` requires merge-clean state and would deadlock the fallback. The artifact pair is preserved (no `clear_isolation_pair` call). file: `src/gobby/install/shared/workflows/agents/merge.yaml`. test: `tests/agents/test_merge_yolo_fallback.py` covers (a) under-cap retries via mark_task_review_rejected, (b) cap-exhausted force-advance via advance_lifecycle, (c) artifact pair preserved on force-advance, (d) downstream rule_cascade_close_on_merge and rule_archive_plan_on_merge fire correctly on the resulting `lifecycle=merged` state.
 
 ### 2.11 qa-reviewer agent (read-only) [category: config] (depends: 1.7, 1.8)
 `kind: deliverable`
@@ -1362,7 +2123,7 @@ The shipped agent has two outcomes — approve, reject-with-cited. The user's de
 
 - **Approve** → `mark_task_review_approved(epic, approval_notes=...)`. §1.8 advances epic `holistic_review → pr` (or further per stage-skip labels).
 - **Reject with cited_subtasks** → `mark_task_review_rejected(epic, rejection_notes=..., cited_subtasks=[<leaf_refs>])`. §1.8 R4.F5 contract: cited leaves rewind from `(holistic_review, review_approved | closed)` to `(in_development, open)`; uncited leaves stay at `(holistic_review, review_approved)`; epic rewinds to `(in_development, open)`. The dev/qa loop re-runs only on cited leaves.
-- **Escalate for rescope** → `escalate_task(epic, reason="needs_human:rescope_required:<details>")` OR `reason="needs_human:requirements_unclear:<details>"`. §1.8 third-path: epic flips to `status=escalated, lifecycle=holistic_review` (lifecycle unchanged); user resumes via `de_escalate_task(epic, next_status=..., lifecycle=...)` after revising the plan or accepting the rework scope. Used when implementation is fine but the spec is wrong.
+- **Escalate for rescope** → `escalate_task(epic, reason="needs_human:rescope_required:<details>")` OR `reason="needs_human:requirements_unclear:<details>"`. §1.8 third-path: epic flips to `status=escalated, lifecycle=holistic_review` (lifecycle unchanged); user resumes via `de_escalate_task(epic, target_status=..., lifecycle=...)` after revising the plan or accepting the rework scope. Used when implementation is fine but the spec is wrong.
 
 **Doc audit in scope**: holistic-reviewer reads `docs/`, `CLAUDE.md`, README files affected by the diff, and any plan files referenced via `task_artifacts.plan_file_path`; missing or stale documentation is a rejection reason on its own (typically a cited-subtasks rejection naming the leaf that should have updated docs, OR an approval with a follow-up task created if docs are project-wide rather than leaf-scoped).
 
@@ -1412,10 +2173,12 @@ Several rules currently fire on the default agent surface — most notably `requ
   - **Replace with build-mode equivalent**: write a new rule that enforces the build-mode invariant. Example: `require-task-close` becomes `require-mark-task-terminal` for build agents — the agent must call `mark_task_review_approved` OR `mark_task_review_rejected` OR `escalate_task` before terminating; missing call blocks stop the same way.
   - **Keep firing**: rules that apply universally regardless of session role (security blocks, repo-level invariants).
 
-**`mark_task_*` validation behavior**:
+**`mark_task_*` validation behavior** (per §1.8.6 — verdict-AND-stage-aware gates):
 
-- `mark_task_review_approved` and `mark_task_review_rejected` MUST run the **same validation gates** as `close_task` — not skip validation. Currently `close_task` enforces commit-attached, validation_criteria pass, errors_resolved, memory_review_completed (per the task-transitions skill). The build agents hit the same gates when calling `mark_task_*`. There is no `skip_validation` for build-mode terminations.
-- Build-mode session variables (`task_claimed`, `errors_resolved`, etc.) are set by the agent's workflow steps the same way they are for interactive sessions. The build-agent yaml shape already sets these; this section verifies nothing slips when the gate moves from `close_task` to `mark_task_*`.
+- **leaf-close set**: `mark_task_review_approved` on a leaf at `lifecycle=in_development` (qa-reviewer caller) runs the full close-equivalent gates (commit-attached, validation_criteria pass, errors_resolved, memory_review_completed). `skip_validation` rejected. This is the only approval path that ships code on the approved task.
+- **stage-advance set**: `mark_task_review_approved` on a task at `lifecycle ∈ {plan_review, test_arch, expanding, holistic_review, merging}` runs stage-specific output gates only (manifest emitted, test architecture appended, expansion run completed, leaves terminal-or-holistic, merge clean). It does NOT require commit-attached or validation_criteria on the approving task — these stages advance lifecycle, they don't ship code on the approving task.
+- **light set**: `mark_task_review_rejected` and `escalate_task` at any lifecycle run only valid claim/session + `rejection_notes`/`reason` non-empty. Rejection is the path for reporting that validation failed or commits are missing; requiring those gates would deadlock the read-only reviewer.
+- Build-mode session variables (`task_claimed`, `errors_resolved`, etc.) are set by the agent's workflow steps for the leaf-close path the same way they are for interactive sessions. The stage-advance and light sets do not require those variables; they look at the stage's output instead.
 
 **Acceptance:**
 
@@ -1423,31 +2186,34 @@ Several rules currently fire on the default agent surface — most notably `requ
 - 2.14a.2 — Audit document classifies every rule that fires on agent edit/stop/transition events per the table above. file: `src/gobby/install/shared/rules/AGENT_SCOPE_AUDIT.md`.
 - 2.14a.3 — `require-task-close`, `require-clean-tree-before-status`, and other interactive-only rules carry a session-role / agent-name predicate so they no longer block build agents. test: `tests/rules/test_build_agent_scope.py` asserts each interactive-only rule does NOT fire when the active session belongs to a `BUILD_AGENT_NAMES` agent.
 - 2.14a.4 — Replacement rule `require-mark-task-terminal` blocks autonomous-build-agent stop when no `mark_task_*` or `escalate_task` has been called for the agent's claimed task. file: `src/gobby/install/shared/rules/require_mark_task_terminal.yaml`. test: `tests/rules/test_require_mark_task_terminal.py` covers each build agent and asserts stop is blocked until the terminal call lands.
-- 2.14a.5 — `mark_task_review_approved` and `mark_task_review_rejected` run the same validation gates as `close_task` (commit-linked, validation_criteria pass, gate variables set); `skip_validation` is silently stripped when build agents call them. test: `tests/storage/test_mark_task_review_validation.py` (cross-references §1.8.6).
+- 2.14a.5 — Verdict-AND-stage-aware gates per §1.8.6. Three gate sets: **leaf-close** (full close-equivalent gates: commit-linked, validation_criteria pass, errors_resolved, memory_review_completed; `skip_validation` stripped) for qa-reviewer's leaf approval; **stage-advance** (stage-specific output gates only — manifest emitted / test architecture appended / expansion completed / leaves terminal-or-holistic / merge clean) for plan-adversary, test-architect, expansion-qa, holistic-reviewer, and merge stage approvals; **light** (valid claim/session + actionable `rejection_notes`/`reason`) for any rejection or escalation. The rejection path MUST succeed when commits are missing or validation_criteria fails — that is the state the reviewer is reporting. The stage-advance set MUST succeed without commit-attached on the approving task — those stages don't ship code on the task they approve. test: `tests/storage/test_mark_task_review_validation.py` (cross-references §1.8.6).
 
-### 2.14b Deprecation pattern for retired agents/orchestrators [category: config]
+### 2.14b Deprecation pattern for retired agents and pipelines [category: config]
 `kind: deliverable`
 
-Target: new directory `src/gobby/install/shared/workflows/agents/deprecated/`; bundled-sync logic in `src/gobby/workflows/loader.py` (extend); `CLAUDE.md` (update Plan-Coverage / orchestration section to document the new pattern, replacing the tombstone-flag prose).
+Target: new directories `src/gobby/install/shared/workflows/agents/deprecated/` AND `src/gobby/install/shared/workflows/pipelines/deprecated/`; bundled-sync logic in `src/gobby/workflows/loader.py` (extend for both definition kinds); `CLAUDE.md` (update Plan-Coverage / orchestration section to document the new pattern, replacing the tombstone-flag prose).
 
-CLAUDE.md currently describes a tombstone pattern for retired orchestration templates: keep the file in place with `enabled: false, deprecated: true` so bundled-sync stabilizes the existing DB row. The user's preferred pattern going forward is cleaner: **deprecated agents/orchestrators move into a `deprecated/` subdirectory AND bundled-sync removes their DB rows on next startup**. Filesystem location signals deprecation; the DB stays clean.
+CLAUDE.md currently describes a tombstone pattern for retired orchestration templates: keep the file in place with `enabled: false, deprecated: true` so bundled-sync stabilizes the existing DB row. The user's preferred pattern going forward is cleaner: **deprecated definitions move into a `deprecated/` subdirectory AND bundled-sync removes their DB rows on next startup**. Filesystem location signals deprecation; the DB stays clean.
 
-**Pattern**:
+R7.F-pipeline-class fix: the retired orchestrators are **pipeline definitions**, not agents. The actual files in the repo today are at `src/gobby/install/shared/workflows/pipelines/orchestrator.yaml`, `pipelines/front-half-orchestrator.yaml`, `pipelines/dev-orchestrator.yaml`, `pipelines/delivery-orchestrator.yaml`, and `pipelines/conductor.yaml`. The agent `agents/conductor.yaml` is a separate, distinct file (an agent definition that the conductor pipeline used to spawn). Both kinds need first-class deprecation handling in this epic — `agents/deprecated/` for the conductor agent + qa-dev + old qa-reviewer; `pipelines/deprecated/` for the five retired pipeline orchestrators.
 
-- Move the file from `src/gobby/install/shared/workflows/agents/<name>.yaml` to `src/gobby/install/shared/workflows/agents/deprecated/<name>.yaml`.
+**Pattern** (applies identically to agents and pipelines):
+
+- Move the file from `…/<kind>/<name>.yaml` to `…/<kind>/deprecated/<name>.yaml`.
 - The yaml content keeps as-is (no need to flip `enabled: false`); the path signals deprecation.
-- Bundled-sync on startup walks `agents/deprecated/` and ensures any DB row matching a deprecated definition's name is removed. Same shape applies to `workflows/deprecated/`, `pipelines/deprecated/`, `rules/deprecated/` — all reserved for future deprecations; only `agents/deprecated/` is required for this epic.
-- Existing tombstoned orchestrator templates (`orchestrator.yaml`, `front-half-orchestrator.yaml`, `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, plus the old `conductor.yaml` agent) migrate into `deprecated/` as part of this work. Their `enabled: false, deprecated: true` flags are removed from the yaml content (path now signals it).
+- Bundled-sync on startup walks `<kind>/deprecated/` for each kind and ensures any DB row matching a deprecated definition's name (and matching kind) is removed. Same shape can extend to `rules/deprecated/` and `workflows/deprecated/` for future deprecations; only the agents and pipelines variants are required for this epic.
 
 **Acceptance:**
 
-- 2.14b.1 — New directory `src/gobby/install/shared/workflows/agents/deprecated/` exists; bundled-sync recognizes the subdirectory at startup. file: `src/gobby/install/shared/workflows/agents/deprecated/.gitkeep` (or first deprecated yaml). behavior: walking the directory does not error if the subdirectory is empty.
-- 2.14b.2 — Bundled-sync removes DB rows for definitions found in `agents/deprecated/`. file: `src/gobby/workflows/loader.py`. behavior: on next startup after a definition moves to deprecated, the corresponding DB row is deleted; subsequent startups are idempotent (no error when row is already gone). test: `tests/workflows/test_loader_deprecated_dir.py`.
-- 2.14b.3 — Migrate existing tombstoned orchestrators (`orchestrator.yaml`, `front-half-orchestrator.yaml`, `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, old `conductor.yaml`) from their current locations to `agents/deprecated/`; remove the `enabled: false, deprecated: true` flags from their yaml content. file: each of those filenames at the new path under `deprecated/`. test: covered indirectly by `tests/workflows/test_loader_deprecated_dir.py` (counts removed rows).
-- 2.14b.4 — `qa-dev.yaml` and old `qa-reviewer.yaml` move to `agents/deprecated/` as part of §2.11.1 / §2.11.2 (this section provides the pattern; §2.11 applies it). behavior: tested as part of §2.11.
-- 2.14b.5 — `CLAUDE.md` documents the new `deprecated/` directory pattern, replacing the tombstone-flag description for orchestrators. file: `CLAUDE.md`.
+- 2.14b.1 — New directories `src/gobby/install/shared/workflows/agents/deprecated/` AND `src/gobby/install/shared/workflows/pipelines/deprecated/` exist; bundled-sync recognizes both subdirectories at startup. file: `src/gobby/install/shared/workflows/agents/deprecated/.gitkeep`. file: `src/gobby/install/shared/workflows/pipelines/deprecated/.gitkeep`. behavior: walking either directory does not error when empty.
+- 2.14b.2 — Bundled-sync removes DB rows for agent definitions found in `agents/deprecated/`. file: `src/gobby/workflows/loader.py`. behavior: idempotent — re-running on already-removed rows is a no-op. test: `tests/workflows/test_loader_deprecated_agents.py`.
+- 2.14b.3 — Bundled-sync removes DB rows for pipeline definitions found in `pipelines/deprecated/`. file: `src/gobby/workflows/loader.py`. behavior: idempotent. test: `tests/workflows/test_loader_deprecated_pipelines.py`.
+- 2.14b.4 — Migrate the five retired pipeline orchestrators from `pipelines/` to `pipelines/deprecated/`: `orchestrator.yaml`, `front-half-orchestrator.yaml`, `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, `conductor.yaml` (the pipeline). Remove the `enabled: false, deprecated: true` flags from their yaml content; the path now signals deprecation. file: each filename at the new path under `pipelines/deprecated/`. test: a regression test asserts that `list_workflow_definitions(kind="pipeline", name=<each>)` returns no row after sync.
+- 2.14b.5 — Migrate the conductor agent (`agents/conductor.yaml`, separate from the pipeline of the same name) to `agents/deprecated/conductor.yaml`. file: `src/gobby/install/shared/workflows/agents/deprecated/conductor.yaml`. test: regression test asserts the agent definition row is removed after sync.
+- 2.14b.6 — `qa-dev.yaml` and old `qa-reviewer.yaml` move to `agents/deprecated/` as part of §2.11.1 / §2.11.2 (this section provides the pattern; §2.11 applies it). behavior: tested as part of §2.11.
+- 2.14b.7 — `CLAUDE.md` documents the new `deprecated/` directory pattern (covering both agents and pipelines), replacing the tombstone-flag description for orchestrators. file: `CLAUDE.md`.
 
-### 2.15 DB-backed plan state + `gobby-plans` MCP/CLI [category: code] (depends: 1.1)
+### 2.15 DB-backed plan state + `gobby-plans` MCP/CLI [category: code]
 `kind: deliverable`
 
 Target: new SQLite migration `src/gobby/storage/migrations/<next_version>_add_plans_table.py`; new `src/gobby/storage/plans.py` (defines `LocalPlanManager`); new MCP server registered under `src/gobby/mcp_proxy/tools/plans/__init__.py`; new CLI surface `src/gobby/cli/plans.py`; one-shot migration script `scripts/migrate_index_to_plans_table.py`. After migration succeeds, `.gobby/plans/index.yaml` is deleted from the repo.
@@ -1512,6 +2278,7 @@ Notes on the enum drops vs. the current `index.yaml` shape:
 - 2.15.4 — `gobby plans` CLI added under `src/gobby/cli/plans.py` with the five subcommands above. file: `src/gobby/cli/plans.py`. test: `tests/cli/test_plans_cli.py` covers list / show / register / archive / review-runs.
 - 2.15.5 — One-shot migration script in `scripts/migrate_index_to_plans_table.py` populates the `plans` table from `index.yaml` + filesystem walk; deletes `index.yaml` after success. behavior: idempotent — re-running on already-migrated state is a no-op (returns existing row counts). file: `scripts/migrate_index_to_plans_table.py`. test: `tests/scripts/test_migrate_index_to_plans_table.py`.
 - 2.15.6 — `tests/plans/test_plan_coverage_ci.py` rewritten to query the `plans` table instead of `index.yaml`; `index.yaml` no longer referenced anywhere in `src/` or `tests/`. test: `tests/plans/test_plan_coverage_ci.py` (existing file, modified).
+- 2.15.7 — `docs/contracts/plan-coverage.md` Plan Index section is replaced (R7.F-contract-doc-sync). Removed: the entire "Plan index" subsection that documented `.gobby/plans/index.yaml` as authoritative + entry shape; the `merged` value from the documented `state` enum; any prose treating `index.yaml` as the source of truth. Added: a "Plan Storage" subsection naming the `plans` table (§2.15 schema) as the source of truth, the `gobby-plans` MCP server + `gobby plans` CLI as the read/write surfaces, and the `state` enum reduced to `active | archived`. file: `docs/contracts/plan-coverage.md`. test: `tests/docs/test_plan_coverage_contract_sync.py` greps the file for `index.yaml`, `merged`-as-state, and `legacy`-as-plan_kind, asserting all three are absent post-revision.
 
 ### 2.16 Retire `.grandfathered`, `.grandfathered-task-state.yaml`, `.legacy-classification.yaml` [category: code] (depends: 2.15)
 `kind: deliverable`
@@ -1527,6 +2294,7 @@ Target: delete `.gobby/plans/.grandfathered`, `.gobby/plans/.grandfathered-task-
 - 2.16.3 — CLI commands removed from `src/gobby/cli/plan.py`: `grandfathered_refresh_command`, `legacy_classification_refresh_command`. file: `src/gobby/cli/plan.py`. test: `tests/cli/test_plan_cli.py` updated to remove tests for those commands.
 - 2.16.4 — Test files deleted: `tests/plans/test_plan_snapshots_cli.py`, `tests/plans/test_plan_snapshots_hook.py`. behavior: no test references these mechanisms.
 - 2.16.5 — `CLAUDE.md` Plan-Coverage Contract section: remove the `.grandfathered` mechanism description and the `.legacy-classification.yaml` requirement; remove the `legacy` value from the documented `plan_kind` enum. file: `CLAUDE.md`.
+- 2.16.6 — `docs/contracts/plan-coverage.md` waiver/grandfathered section (R7.F-contract-doc-sync): remove the entire "Grandfathered plans" subsection (the `.grandfathered` mechanism), remove all references to `.legacy-classification.yaml`, and remove `legacy` from the `plan_kind` enum documentation. The contract doc must end up with only `implementation | strategy` as `plan_kind` values and no waiver mechanism — if a future need emerges it gets DB-backed per §2.15. file: `docs/contracts/plan-coverage.md`. test: `tests/docs/test_plan_coverage_contract_sync.py::test_no_grandfathered_or_legacy` greps the file for `.grandfathered`, `.legacy-classification`, and `plan_kind: legacy`, asserting all three are absent post-revision.
 
 ### 2.17 System-managed coverage manifest lifecycle [category: code] (depends: 2.15)
 `kind: deliverable`
@@ -1593,26 +2361,29 @@ The plan-adversary `max_review_rounds` flag already exists (per the existing §3
 3. `BuildConfig` default from the config store.
 4. Hardcoded fallback constant — used only when the config store is uninitialized (fresh install).
 
+One row per retry cap from the table above; each item below covers all five axes — BuildConfig field, BuildOptions field, CLI flag, persistence into `task_artifacts`, read path through `_resolve_retry_cap` per §1.7.
+
 **Acceptance:**
 
-- 2.19.1 — `BuildConfig` adds five fields with sensible defaults: `max_expansion_attempts: int = 3`, `max_qa_rounds: int = 5`, `max_merge_attempts: int = 3`, `max_holistic_rounds: int = 3`, `max_review_rounds: int = 3` (last one may already exist; consolidate). file: `src/gobby/config/build.py`. test: `tests/config/test_build_config.py::test_retry_cap_defaults`.
-- 2.19.2 — `BuildOptions` extends with the same fields; defaults pull from `BuildConfig` if not set on the options instance. file: `src/gobby/build/service.py`. test: `tests/build/test_options_resolution.py::test_retry_caps_resolve_from_config_when_unset`.
-- 2.19.3 — CLI flags on `gobby build`: `--max-expansion-attempts`, `--max-qa-rounds`, `--max-merge-attempts`, `--max-holistic-rounds` (`--max-review-rounds` already exists). file: `src/gobby/cli/build.py`. test: `tests/cli/test_build_cli_flags.py::test_retry_cap_flags`.
-- 2.19.4 — Dispatch rules in `src/gobby/dispatch/rules.py` read retry caps from the parent epic's resolved `BuildOptions` (persisted to `task_artifacts` at build dispatch time) instead of from module-level constants. The hardcoded constants (`MAX_EXPANSION_ATTEMPTS`, `MAX_QA_ROUNDS`, etc.) become fallbacks used only when artifacts are absent. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_retry_caps.py` covers each cap with both default and overridden values.
-- 2.19.5 — `BuildResult` includes the resolved retry caps so the operator can see what the build is using. behavior: status output / JSON response shows `max_expansion_attempts`, `max_qa_rounds`, `max_merge_attempts`, `max_holistic_rounds`, `max_review_rounds`. test: `tests/build/test_result_shape.py::test_retry_caps_in_result`.
-- 2.19.6 — Persistence: resolved retry caps written to `task_artifacts` on the parent epic at build dispatch time. behavior: the dispatcher reads from artifacts; subsequent ticks honor the value chosen at build time even if the config store changes mid-build. file: `src/gobby/storage/tasks/_artifacts.py` or `src/gobby/build/service.py` (writes via existing `set_artifacts_atomic`). test: `tests/storage/test_artifacts_retry_caps.py`.
+- 2.19.1 — Cap `max_expansion_attempts` (default 3): `BuildConfig.max_expansion_attempts: int = 3`; `BuildOptions.max_expansion_attempts`; CLI flag `--max-expansion-attempts N`; persisted to `task_artifacts` at `gobby build` dispatch time; `rule_start_expansion` (§1.7) reads via `_resolve_retry_cap(task, "max_expansion_attempts", MAX_EXPANSION_ATTEMPTS_DEFAULT)`. file: `src/gobby/config/build.py`, `src/gobby/build/service.py`, `src/gobby/cli/build.py`. test: `tests/dispatch/test_rules_retry_caps.py::test_max_expansion_attempts` covers default + override + persistence + read path.
+- 2.19.2 — Cap `max_qa_rounds` (default 5): `BuildConfig.max_qa_rounds: int = 5`; `BuildOptions.max_qa_rounds`; CLI flag `--max-qa-rounds N`; persisted to `task_artifacts` at dispatch; `rule_qa` (§1.7) reads via `_resolve_retry_cap(task, "max_qa_rounds", MAX_QA_ROUNDS_DEFAULT)`. file: same paths as 2.19.1. test: `tests/dispatch/test_rules_retry_caps.py::test_max_qa_rounds`.
+- 2.19.3 — Cap `max_merge_attempts` (default 3): `BuildConfig.max_merge_attempts: int = 3`; `BuildOptions.max_merge_attempts`; CLI flag `--max-merge-attempts N`; persisted to `task_artifacts` at dispatch; merge agent (§2.10) reads via `_resolve_retry_cap(task, "max_merge_attempts", MAX_MERGE_ATTEMPTS_DEFAULT)` and consumes the `merge-attempts:N` label as the live counter. The `MAX_MERGE_ATTEMPTS_DEFAULT` constant is added to `src/gobby/dispatch/rules.py` alongside the other defaults. file: same paths as 2.19.1, plus `src/gobby/install/shared/workflows/agents/merge.yaml` reads the resolved cap from session variables set at spawn time. test: `tests/dispatch/test_rules_retry_caps.py::test_max_merge_attempts`.
+- 2.19.4 — Cap `max_holistic_rounds` (default 3): `BuildConfig.max_holistic_rounds: int = 3`; `BuildOptions.max_holistic_rounds`; CLI flag `--max-holistic-rounds N`; persisted to `task_artifacts` at dispatch; holistic-reviewer step contract (§2.12) reads via `_resolve_retry_cap(task, "max_holistic_rounds", MAX_HOLISTIC_ROUNDS_DEFAULT)`. The `MAX_HOLISTIC_ROUNDS_DEFAULT` constant is added to `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_rules_retry_caps.py::test_max_holistic_rounds`.
+- 2.19.5 — Cap `max_review_rounds` (default 3): `BuildConfig.max_review_rounds: int = 3` (consolidate with the existing field if already present from `/gobby plan max_rounds`); `BuildOptions.max_review_rounds`; CLI flag `--max-review-rounds N` (already exists); persisted to `task_artifacts` at dispatch; `rule_plan_adversary` (§1.7) reads via `_resolve_retry_cap(task, "max_review_rounds", MAX_REVIEW_ROUNDS_DEFAULT)`. The `MAX_REVIEW_ROUNDS_DEFAULT` constant is added (or aligned with the existing one). test: `tests/dispatch/test_rules_retry_caps.py::test_max_review_rounds`.
+- 2.19.6 — Resolution order across all five caps: CLI flag > profile-resolved value > BuildConfig default > module-level `_DEFAULT` constant. `BuildOptions` resolution applies this order; persistence writes the resolved value into `task_artifacts`; rules read via `_resolve_retry_cap` so subsequent ticks honor the dispatch-time value even if the config store changes mid-build. file: `src/gobby/build/service.py`. test: `tests/build/test_options_resolution.py` covers the resolution-order matrix for each cap.
+- 2.19.7 — `BuildResult` includes the resolved retry caps so the operator can see what the build is using. behavior: status output / JSON response shows all five resolved caps. file: `src/gobby/build/service.py`. test: `tests/build/test_result_shape.py::test_retry_caps_in_result`.
 
-### 2.21 Plan-Coverage Contract: `## Task Manifest` section requirement [category: docs] (depends: 1.1)
+### 2.21 Plan-Coverage Contract: `## Task Manifest` section requirement [category: docs]
 `kind: deliverable`
 
 Target: `docs/contracts/plan-coverage.md` (extend); `src/gobby/install/shared/skills/plan-draft/SKILL.md` (extend); `src/gobby/plans/parser.py` (parser updates); `CLAUDE.md` (Plan-Coverage Contract section update).
 
 **Why**: Today, expansion infers the task list from `kind: deliverable` sections. That's section-driven and implicit — the plan author writes prose; the system interprets. The contract makes the task list **explicit** via a `## Task Manifest` section at the end of every implementation plan. The manifest is the single source of truth for what tasks expansion creates; sections become human-readable narrative documenting why each task exists. The manifest is **written by plan-adversary on approval** (§2.22), not by the planner — the same agent that just verified the plan is the one writing the canonical task list. Manifest drift is impossible by construction.
 
-**Section shape** (added to the contract):
+**Section shape** (added to the contract). R7.F-manifest-id: the manifest heading carries an explicit `M1` section ID so it satisfies the canonical regex `^#{2,6}\s+(?:§\s*)?(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))`. `M1` matches the alpha-prefix-plus-digit branch (same shape as `P1`, `V1`, `O1` framing headings already in this plan). Without an ID, the post-approval `parse_plan(..., parse_mode="expansion")` self-check (§2.22.4) would mechanically reject the manifest. The adversary writes `## M1 Task Manifest` (NOT `## Task Manifest`) to keep the contract regex-honest.
 
 ````markdown
-## Task Manifest
+## M1 Task Manifest
 `kind: manifest`
 
 ```yaml
@@ -1631,18 +2402,104 @@ Target: `docs/contracts/plan-coverage.md` (extend); `src/gobby/install/shared/sk
 
 **Contract additions**:
 
-- New `kind` enum value: `manifest`. Exactly one `kind: manifest` section permitted per plan; placed at the end. Other allowed `kind` values stay: `deliverable | framing | verification | deferred`.
+- New `kind` enum value: `manifest`. At most one `kind: manifest` section per plan; placed at the end. The manifest heading uses the canonical ID `M1` (i.e. `## M1 Task Manifest`) so it satisfies the section-ID regex. The parser treats `kind: manifest` as exempt from the `**Acceptance:**` requirement (manifest entries take the place of acceptance items for this section). Other allowed `kind` values stay: `deliverable | framing | verification | deferred`.
 - Manifest entry schema: `title` (str), `category` (enum), `task_type` (enum), `depends_on` (list[str], references plan section IDs), `validation_criteria` (str), `labels` (list[str], must include exactly one `covers:` label per acceptance item in the source section), `assigned_agent` (str), `tdd` (bool — implies the deterministic compiler emits a TEST/IMPL/REF triple), `source_section` (str, references a `kind: deliverable` section ID).
-- Parser-enforced invariants: every `kind: deliverable` section has exactly one manifest entry referencing it via `source_section`; every `covers:` label resolves to a real acceptance item; no orphan manifest entries (every entry's `source_section` resolves).
+
+**Parser modes** (resolves the manifest-deadlock between §2.21 and §2.22):
+
+`parse_plan` accepts a `parse_mode` parameter selecting the validation strictness. The mode determines whether the manifest is required and how the deliverable→manifest invariants are applied:
+
+| Mode | Manifest | Used by | Behavior |
+|------|----------|---------|----------|
+| `parse_mode="draft"` | OPTIONAL | plan-adversary during the review loop; `/gobby plan` Phase 3a; `gobby plan coverage` when run against a draft | Parser passes whether or not `## Task Manifest` is present. If the section is present, schema and 1:1 invariants ARE enforced (a malformed manifest still fails). If absent, parser succeeds — adversary review must not deadlock on a not-yet-written manifest. |
+| `parse_mode="expansion"` | REQUIRED | `gobby expand` deterministic compile path; plan-adversary's post-approval self-check (§2.22.4); §2.20 re-expansion gate | Parser fails with `PlanParseError` if `## Task Manifest` is absent or if any deliverable has no manifest entry. This is the strict mode that gates expansion. |
+| `parse_mode="strict"` (default) | REQUIRED | callers that want full validation regardless of context | Same strict invariants as `expansion`. Default so existing call sites that omit `parse_mode` keep their current behavior, except the plan-review skill and the adversary's pre-verdict gate, which pass `parse_mode="draft"` explicitly. |
+
+The deadlock is resolved by construction: the adversary reviews in `draft` mode (parser tolerant of missing manifest); on clean review, adversary writes the manifest and self-checks in `expansion` mode (parser strict); on success, mark_task_review_approved fires and downstream `gobby expand` parses in `expansion` mode against the now-manifest-bearing plan. No phase ever needs the manifest before the previous phase has had a chance to write it.
+
+- Parser-enforced invariants (when manifest is present, regardless of mode): every `kind: deliverable` section has exactly one manifest entry referencing it via `source_section`; every `covers:` label resolves to a real acceptance item; no orphan manifest entries (every entry's `source_section` resolves to a real deliverable).
 
 **Acceptance:**
 
 - 2.21.1 — `docs/contracts/plan-coverage.md` documents the `## Task Manifest` section, the entry schema, the parser-enforced invariants, and the adversary-writes-on-approval contract. file: `docs/contracts/plan-coverage.md`.
 - 2.21.2 — `plan-draft` SKILL.md is updated: planner authors narrative sections only, never the manifest. file: `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
-- 2.21.3 — Parser (`src/gobby/plans/parser.py`) validates the manifest section: schema-checks each entry, enforces the deliverable→manifest-entry 1:1 invariant, resolves every `covers:` label against acceptance items, raises `PlanParseError` on violations. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py`.
+- 2.21.3 — Parser (`src/gobby/plans/parser.py`) accepts a `parse_mode` parameter (`Literal["draft", "expansion", "strict"]`) with default `"strict"`. The parameter signature lands first; per-mode behavior items follow. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py::test_parse_mode_signature_accepts_three_values`.
+- 2.21.3a — Mode `parse_mode="draft"`: parser tolerates missing `## Task Manifest` section (review loop never deadlocks on a not-yet-written manifest). When the manifest IS present in draft mode, the schema check + deliverable→manifest 1:1 invariant + `covers:` label resolution still run (a malformed draft manifest still fails). The plan-review skill (consumed by plan-adversary) calls `parse_plan(..., parse_mode="draft")`. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py::test_draft_tolerates_missing_manifest_but_validates_present_one`.
+- 2.21.3b — Mode `parse_mode="expansion"`: parser raises `PlanParseError("missing manifest")` when `## Task Manifest` is absent. When present, all schema and invariant checks run identically to other modes. `gobby expand` and §2.22.4 plan-adversary self-check call `parse_plan(..., parse_mode="expansion")`. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py::test_expansion_rejects_missing_manifest`.
+- 2.21.3c — Mode `parse_mode="strict"` (default): same strict invariants as `expansion` — manifest required, schema and 1:1 invariant enforced. Default is `strict` so any caller that omits `parse_mode` keeps full validation; the plan-review skill and the post-approval self-check are the only callers that pass an explicit non-strict mode. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py::test_strict_default_rejects_missing_manifest`.
+- 2.21.3d — Cross-mode invariant: when the manifest IS present, schema-check each entry, enforce the deliverable→manifest-entry 1:1 invariant, resolve every `covers:` label against acceptance items, and verify no orphan manifest entries — regardless of mode. Only the missing-manifest behavior differs by mode. file: `src/gobby/plans/parser.py`. test: `tests/plans/test_parser_manifest.py::test_manifest_invariants_enforced_in_all_modes` covers a malformed manifest rejected in `draft`, `expansion`, and `strict`.
 - 2.21.4 — `CLAUDE.md` Plan-Coverage Contract section updated to mention the manifest. file: `CLAUDE.md`.
 
-### 2.22 plan-adversary agent: manifest emission on approval [category: config] (depends: 2.21)
+### 2.21a Manifest-emitter library [category: code] (depends: 2.21)
+`kind: deliverable`
+
+Target: `src/gobby/plans/manifest_emitter.py` (new file).
+
+R7.F-manifest-emitter-deliverable fix. Both §1.9's `EmitStubManifest` dispatch arm and §2.22.4's yolo self-check fallback call `gobby.plans.manifest_emitter.emit_stub_manifest(...)`, but no deliverable existed for that module. This deliverable creates the module with a stable public signature so both callers (dispatcher path + plan-adversary agent path) consume the same implementation.
+
+**Public signature**:
+
+```python
+# src/gobby/plans/manifest_emitter.py
+from pathlib import Path
+from typing import Literal
+
+from gobby.plans.parser import parse_plan, PlanKind, PlanParseError
+
+EmitOutcome = Literal["fresh", "replaced_malformed", "noop_existing_valid", "fallback_force_approve"]
+
+def emit_stub_manifest(
+    plan_path: str | Path,
+    *,
+    by_actor: str = "dispatcher",
+    plan_kind: PlanKind = PlanKind.implementation,
+) -> EmitOutcome:
+    """Idempotent manifest emitter for the yolo cap-exhausted fallback path.
+
+    Sequence:
+    1. Read the plan file. Parse in `parse_mode="draft"`.
+    2. If a valid `## M1 Task Manifest` already exists (parse_mode="expansion"
+       passes against the existing manifest), return "noop_existing_valid".
+    3. If a malformed manifest exists, replace it with a freshly-synthesized
+       one and re-validate. On success return "replaced_malformed".
+    4. If no manifest exists, synthesize one from the plan's `kind: deliverable`
+       sections and write it. On success return "fresh".
+    5. If post-write validation fails (the deliverable schema in the plan is
+       malformed beyond the emitter's reach — e.g., missing acceptance items
+       on a deliverable section), append a `## Yolo Fallbacks` audit section
+       to the plan file documenting the failure mode and return
+       "fallback_force_approve". This is the absorbed-failure outcome — the
+       function NEVER raises; the yolo invariant requires deterministic
+       progress regardless of input quality. Downstream `gobby expand` will
+       reject the plan when it parses in `parse_mode="expansion"`, surfacing
+       the issue at expansion time where a human can intervene.
+
+    The synthesized manifest:
+    - One entry per `kind: deliverable` section.
+    - `source_section` set to the section ID.
+    - `covers:<plan-id>:<section-id>:<item-id>` labels for every acceptance item.
+    - `assigned_agent="backend-developer"` (default; the audit marker captures
+      that this was force-generated rather than authored).
+    - `tdd=True` for `code | test | refactor` categories; `False` for
+      `config | docs | research | planning | manual`.
+    - `task_type="feature"` default.
+    - `validation_criteria` copied from the deliverable section's first
+      acceptance item's artifact reference.
+    """
+```
+
+The module exports only `emit_stub_manifest` plus the `EmitOutcome` literal; everything else is a private helper.
+
+**Acceptance:**
+
+- 2.21a.1 — `src/gobby/plans/manifest_emitter.py` exposes `emit_stub_manifest(plan_path, *, by_actor, plan_kind) -> EmitOutcome` per the signature above. `EmitOutcome` is a typed `Literal` covering `"fresh" | "replaced_malformed" | "noop_existing_valid" | "fallback_force_approve"`. file: `src/gobby/plans/manifest_emitter.py`. test: `tests/plans/test_manifest_emitter.py::test_signature` covers the import surface and the outcome literal values.
+- 2.21a.2 — Fresh emission: a plan with no manifest gets a `## M1 Task Manifest` synthesized from `kind: deliverable` sections, with `source_section` and `covers:` labels per the contract above. The post-write `parse_plan(parse_mode="expansion")` passes. test: `tests/plans/test_manifest_emitter.py::test_fresh_emission` covers a plan with N deliverables → manifest with N entries.
+- 2.21a.3 — Idempotent on valid existing manifest: rerunning on a plan that already has a parse_expansion-clean manifest returns `"noop_existing_valid"` and does not modify the file. test: `tests/plans/test_manifest_emitter.py::test_noop_on_valid_existing`.
+- 2.21a.4 — Replaces malformed existing manifest: a plan with a `## M1 Task Manifest` that fails `parse_mode="expansion"` (missing entries, broken `covers:` labels, or schema-malformed entries) gets the malformed section replaced with a freshly-synthesized one. Returns `"replaced_malformed"`. test: `tests/plans/test_manifest_emitter.py::test_replace_malformed`.
+- 2.21a.5 — Absorbed failure on plan-shape problems: a plan whose `kind: deliverable` sections themselves are malformed beyond the emitter's reach (e.g., missing acceptance items) appends a `## Yolo Fallbacks` audit section and returns `"fallback_force_approve"`. The function NEVER raises — yolo invariant compliance. test: `tests/plans/test_manifest_emitter.py::test_fallback_force_approve_no_raise` constructs a plan with a deliverable section missing its `**Acceptance:**` block and asserts (a) emit_stub_manifest returns "fallback_force_approve", (b) no exception was raised, (c) a Yolo Fallbacks audit section was appended.
+- 2.21a.6 — Generated manifest entries default `assigned_agent="backend-developer"`, `tdd` per category (`code|test|refactor` → True, others → False), `task_type="feature"`. test: `tests/plans/test_manifest_emitter.py::test_default_assignment_and_tdd_by_category`.
+
+### 2.22 plan-adversary agent: manifest emission on approval [category: config] (depends: 2.21, 2.21a)
 `kind: deliverable`
 
 Target: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`; `src/gobby/install/shared/skills/plan-review/SKILL.md`.
@@ -1664,10 +2521,10 @@ Target: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`; `src/go
 
 **Acceptance:**
 
-- 2.22.1 — `plan-adversary.yaml` review step: on approval (no findings), the agent writes the `## Task Manifest` YAML at the end of the plan file before calling `mark_task_review_approved`. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`. test: `tests/agents/test_plan_adversary_manifest.py` covers the approval-with-manifest path.
+- 2.22.1 — `plan-adversary.yaml` review step: on approval (no findings), the agent writes the `## M1 Task Manifest` YAML (note the M1 ID — required by the canonical heading regex per §2.21 R7.F-manifest-id) at the end of the plan file before calling `mark_task_review_approved`. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`. test: `tests/agents/test_plan_adversary_manifest.py` covers the approval-with-manifest path AND verifies the heading uses the `M1` ID so the post-approval parser self-check passes.
 - 2.22.2 — `plan-review` SKILL.md updated to document the manifest-emission responsibility. file: `src/gobby/install/shared/skills/plan-review/SKILL.md`.
 - 2.22.3 — Plan-adversary tool surface adds scoped `Edit`/`Write` permission limited to the plan file path. file: `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`. test: writing to any other file path fails the agent's path-allowlist gate.
-- 2.22.4 — Adversary self-check: after writing the manifest, invokes parser validation; on failure, retries up to 3 times before escalating with `escalate_task(reason="needs_human:manifest_emission_failure:...")`. test: `tests/agents/test_plan_adversary_self_check.py` covers the parser-failure retry path.
+- 2.22.4 — Adversary self-check: after writing the manifest, calls `parse_plan(plan_path, parse_mode="expansion")` to validate the post-approval state strictly. On failure, the adversary retries the manifest write up to 3 times. After the cap is exhausted, behavior splits by yolo (R7.F-self-check-yolo): non-yolo escalates with `escalate_task(reason="needs_human:manifest_emission_failure:...")`; yolo NEVER calls `escalate_task` per the top-level invariant — instead writes a `## Yolo Fallbacks` audit section to the planning anchor description, falls back to the deterministic stub-manifest path (`emit_stub_manifest(plan_path)` from §1.7's `EmitStubManifest` action contract), and re-runs the strict parse. If even the stub fails (the deliverable schema in the plan itself is malformed beyond the emitter's reach), the agent appends a second audit marker and approves the plan with `mark_task_review_approved(approval_notes="yolo: manifest emission exhausted; stub fallback also failed; force-approved with no manifest — downstream gobby expand will reject this plan, requiring human intervention at expansion time")`. The pre-verdict review pass uses `parse_mode="draft"` so the loop does not deadlock on a not-yet-written manifest (§2.21.3). test: `tests/agents/test_plan_adversary_self_check.py` covers (a) non-yolo: draft-pass + expansion-fail + retry + escalate path; (b) yolo: same retry path then stub fallback succeeds; (c) yolo: stub fallback also fails → audit marker + force-approve; (d) explicit assertion that yolo NEVER calls `escalate_task` on this path.
 - 2.22.5 — Adversary never edits the plan file when emitting findings (rejection rounds are review-only). test: `tests/agents/test_plan_adversary_no_edits_on_reject.py` confirms no plan-file diff is produced by a rejection round.
 
 ### 2.23 planner agent / plan-draft skill: fresh context + tighter mandate [category: config] (depends: 2.21, 2.22)
@@ -1695,6 +2552,7 @@ Target: `src/gobby/install/shared/skills/plan-draft/SKILL.md`; `src/gobby/instal
 - 2.23.2 — `planner` agent (if separate yaml) is spawned with `clean_session=true` (or equivalent fresh-context flag) for every revision round; carries no context from prior rounds. file: `src/gobby/install/shared/workflows/agents/planner.yaml` (or the spawn-config path that wires plan-draft).
 - 2.23.3 — `## Plan Changelog` section is required on every revised plan post-Round-1; planner appends a one-bullet summary per round. behavior: parser tolerates this section under existing `kind: framing`.
 - 2.23.4 — Planner escalates on premise disagreement instead of re-engineering. test: `tests/agents/test_plan_author_escalation.py` covers a contrived "adversary suggests redesign" case; planner escalates rather than complies.
+- 2.23.5 — Planner resubmit terminal contract (R7.F-planner-resubmit). After applying surgical fixes and appending the changelog bullet, the planner's terminal MCP transition is a single atomic call to `mark_task_needs_review(task_id=planning_anchor_id, review_notes="planner round N+1 complete; <bullet>")`. Per §1.8, `mark_task_needs_review` clears the `planning-current-verdict:rejected` label and sets the task back to `status=needs_review`. The atomicity is critical: the dispatcher's `rule_plan_rewrite_on_reject` (§1.7, ordered before `rule_plan_adversary`) gates on the rejected label, so any non-atomic clear-then-resubmit could leave a window where the rule re-fires and traps the task in the planner branch indefinitely. The planner agent's allowed_mcp_tools surface includes `mark_task_needs_review` and `escalate_task` (for premise-disagreement) but NOT `mark_task_review_approved`, `close_task`, or `mark_task_review_rejected`. file: `src/gobby/install/shared/workflows/agents/planner.yaml` (terminal step + tool surface). test: `tests/dispatch/test_planner_resubmit.py` covers the full rejection → planner rewrite → adversary re-review walk: (a) initial rejection sets `planning-current-verdict:rejected`, (b) rule_plan_rewrite_on_reject dispatches planner, (c) planner calls `mark_task_needs_review`, which clears the label atomically, (d) next tick fires `rule_plan_adversary` (NOT `rule_plan_rewrite_on_reject`) — the task is no longer trapped, (e) explicit assertion that no intermediate state has the label cleared without `status=needs_review`.
 
 ### 2.24 `/gobby plan` skill: end-to-end coordinator flow [category: config] (depends: 2.21, 2.22, 2.23)
 `kind: deliverable`
@@ -1785,7 +2643,7 @@ This phase fires after the interactive review loop terminates (approval or exhau
 - 2.24.9 — Wake-and-route: on daemon wake, parent reads the active anchor's terminal state via `get_task` and routes per the anchor-task contract (review_approved → Phase 4 / Phase 3b; rejected + budget remaining → next round spawn; rejected + budget exhausted → surface findings; escalated → surface reason). test: `tests/skills/test_plan_skill_flow.py::test_wake_routing_by_anchor_status`.
 - 2.24.10 — Mode-agnostic coordinator: fire-and-forget orchestration applies in both interactive and delegated modes. The only mode-specific behavior is the user-confirmation gate after a rejected round (interactive: present findings + ask whether to continue; delegated: silently spawn next round). Parent never stays alive across rounds in either mode. test: `tests/skills/test_plan_skill_flow.py::test_interactive_and_delegated_share_orchestration` covers both modes against the same anchor / spawn / wake-route mechanics.
 
-### 2.20 Re-expansion of #12725 as Epic 1 end-to-end validation [category: manual] (depends: 2.11, 2.12, 2.13, 2.14a, 2.14b, 2.15, 2.16, 2.17, 2.18, 2.19, 2.21, 2.22, 2.23, 2.24)
+### 2.20 Re-expansion of #12725 as Epic 1 end-to-end validation [category: manual] (depends: 2.21, 2.22)
 `kind: deliverable`
 
 Target: live execution against the running daemon — re-expand `#12725` against the revised `task-12725-lifecycle-dispatch-rev1.md` once plan-adversary approves it; verify the deterministic compile path produces a covered manifest.
@@ -1794,9 +2652,12 @@ Target: live execution against the running daemon — re-expand `#12725` against
 
 **Pre-conditions**:
 
-- All previous §2.X deliverables are at minimum **specified in the plan** (acceptance items reviewed by plan-adversary). They do not all need to be implemented before re-expansion fires — re-expansion creates the leaves under which the implementation work happens.
+- §2.21 (Task Manifest contract) and §2.22 (plan-adversary manifest emission on approval) are **implemented**. These are the only sections whose implementation §2.20 depends on, because the deterministic compile path consumes the manifest written by the approving adversary. The narrow `(depends: 2.21, 2.22)` annotation reflects this.
+- All other §2.X deliverables (§2.11–§2.19, §2.23–§2.24) need only be **specified in the plan** with acceptance items the plan-adversary has approved. Their implementation is downstream of §2.20 — re-expansion creates the leaves under which that implementation work happens. Their `kind: deliverable` shape and acceptance items get parser-validated when the deterministic compile path reads the plan; they do not need to be coded before §2.20 fires.
 - `task-12725-lifecycle-dispatch-rev1.md` has its `plan_hash` up to date and a fresh coverage manifest at `.gobby/plans/coverage/<project_id>/12725/task-12725-lifecycle-dispatch-rev1.coverage.yaml`.
 - The deterministic compile path from commit `54ad154fb` is live in the running daemon.
+
+This sequencing makes §2.20 a pre-implementation gate, not a late smoke test: it proves Epic 1's contract can compile this plan into a coverable task tree before the bulk of §2.X implementation work begins. If §2.20 fails, that signal is most valuable BEFORE the implementation tasks start; landing it after them is exactly the regression mode this revision aims to avoid.
 
 **Procedure**:
 
@@ -1826,7 +2687,7 @@ If re-expansion fails or produces an incomplete tree, the failure modes inform E
 
 **Goal**: Provide the "one-line starts the automation" surface. Config hierarchy with global / project / flag / task layers. A CLI command for the quick path and an interactive `/gobby build` skill for the wizard path.
 
-### 3.2 Build service — CLI + MCP + HTTP shared core [category: code] (depends: 3.1)
+### 3.2 Build service — CLI + MCP + HTTP shared core [category: code]
 `kind: deliverable`
 
 > **Status: partial** — CLI/MCP/HTTP shared core shipped via commit `614c5bbe` at `src/gobby/build/service.py`. `_kick_dispatcher_tick()` is an explicit placeholder returning 0 (intentional; gets wired in §1.9 once the dispatcher exists). `target_branch=None → current git HEAD` resolution before persisting artifacts is not yet implemented.
@@ -1914,8 +2775,10 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 - 3.2.2 — CLI build surface delegates to the shared build service. file: `src/gobby/cli/build.py`.
 - 3.2.3 — MCP build surface delegates to the shared build service. file: `src/gobby/mcp_proxy/tools/build.py`.
 - 3.2.4 — HTTP build route delegates to the shared build service. file: `src/gobby/servers/routes/build.py`.
-- 3.2.5 — `_kick_dispatcher_tick()` triggers an immediate dispatcher heartbeat after build-state writes (replaces the current placeholder that returns `0`); the periodic cron continues to fire independently. symbol: `gobby.build.service._kick_dispatcher_tick`. behavior: returns the count of tasks dispatched by the kicked tick (the same shape `BuildResult.tick_dispatched` exposes).
-- 3.2.6 — `BuildOptions.target_branch=None` resolves to `git rev-parse --abbrev-ref HEAD` at service-call time before any `task_artifacts` write; explicit `--target-branch <name>` is preserved as-is. behavior: `task_artifacts.target_branch` is never persisted as `None` for plan-file or epic builds. file: `src/gobby/build/service.py`. test: `tests/build/test_target_branch.py` covers the default-resolve path and the explicit-override path.
+- 3.2.5 — `_kick_dispatcher_tick()` triggers an immediate dispatcher heartbeat after build-state writes (replaces the current placeholder that returns `0`); the periodic cron continues to fire independently. R7.F-dispatcher-services / R7.F-live-config / R7.F-build-config-on-services: this function calls `get_app_context().dispatcher_services` to read the live `DispatcherServices` instance (set on `ServiceContainer` in `runner_init.py` per §1.10.2) and reads `max_active_agents` from `services.build_config.max_active_agents` — `build_config` is a first-class field on `DispatcherServices` per the dataclass definition in §1.9. It then calls `run_tick(services, holder, max_active)` — the same path the cron handler uses, so expansion-impl dependencies (task_manager, llm_service, config, build_config, completion_registry, triggering_session_id) are wired identically in both surfaces. symbol: `gobby.build.service._kick_dispatcher_tick`. behavior: returns the count of tasks dispatched by the kicked tick (the same shape `BuildResult.tick_dispatched` exposes). test: `tests/build/test_kick_dispatcher_tick_services.py` covers (a) the function reads `DispatcherServices` via `get_app_context().dispatcher_services`, (b) it constructs no fresh services (no double-wiring), (c) cron and immediate-kick paths produce identical TickReports for an equivalent tick state, (d) `max_active_agents` is read from `services.build_config`, NEVER from `get_app_context().config` (which is `DaemonConfig`).
+- 3.2.6 — `BuildOptions.target_branch=None` resolves to `git rev-parse --abbrev-ref HEAD` at service-call time before any `task_artifacts` write; explicit `--target-branch <name>` is preserved as-is. behavior: `task_artifacts.target_branch` is never persisted as `None` for plan-file or epic builds. Leaf builds (which force `isolation=none` per the leaf-input contract) leave `target_branch` UNSET — no `set_artifact("target_branch", ...)` call is made on the leaf path. file: `src/gobby/build/service.py`. test: `tests/build/test_target_branch.py` covers the default-resolve path, the explicit-override path, and the leaf-unset path.
+- 3.2.7 — `--skip-stage` validation: the build service rejects any value not in `SKIPPABLE_STAGES = {"plan_review", "test_arch", "expanding", "qa", "holistic_review", "pr"}`. Specifically `--skip-stage merging`, `--skip-stage dev`, `--skip-stage worktree` raise a clear `BuildError` naming the rejected stage and listing the skippable set. Validation fires before any `task_artifacts` or label write so partial state is impossible. file: `src/gobby/build/service.py`. test: `tests/build/test_skip_stage_validation.py` covers (a) each non-skippable stage name rejected, (b) skippable stages accepted, (c) comma-separated list rejected if any element is non-skippable, (d) error message names the failing stage and lists the skippable set.
+- 3.2.8 — Manifest precondition for `--skip-stage plan_review` (R7.F-bypass-manifest): plan-file and epic builds with `--skip-stage plan_review` MUST have an existing `## M1 Task Manifest` that parses cleanly under `parse_plan(plan_path, parse_mode="expansion")`. The build service runs the parser at validation time and rejects with `BuildError("--skip-stage plan_review requires a pre-emitted ## M1 Task Manifest in <plan_path>; either run plan-adversary first or remove --skip-stage plan_review")` when the parse fails. Leaf builds are unaffected (no plan file). file: `src/gobby/build/service.py`. test: `tests/build/test_skip_plan_review_manifest_gate.py` covers (a) plan with manifest passes, (b) plan without manifest rejected with the error message above, (c) plan with malformed manifest rejected, (d) leaf builds with `--skip-stage plan_review` accepted (no plan file to validate).
 
 ## V1 Verification
 `kind: verification`
@@ -1929,16 +2792,18 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   - `rule_dispatch_leaf` with `assigned_agent="frontend-developer"` spawns frontend-developer.
   - `rule_dispatch_leaf` with `assigned_agent=None` spawns backend-developer + AppendAuditMarker (never escalates); marker text includes the leaf's category.
   - `rule_pr` with `yolo=false` escalates; with `yolo=true` emits `AppendAuditMarker + AdvanceLifecycle(merging)`.
-  - `rule_plan_adversary` rounds-exhausted path: non-yolo escalates; yolo force-approves.
+  - `rule_plan_adversary` rounds-exhausted path: non-yolo escalates; yolo emits the exact action sequence `[AppendAuditMarker, EmitStubManifest, AdvanceLifecycle(test_arch)]` (R7.F-yolo-manifest-fallback). Test asserts the action types, order, and the `EmitStubManifest.task_id` matches the planning anchor.
   - `rule_merging` passes `yolo` as an initial variable to the merge agent.
   - `rule_create_worktree` (R4.F6) reads `task_artifacts.target_branch`; falls back to `git rev-parse --abbrev-ref HEAD` when artifact absent; passes resolved branch to `CreateWorktree.base_branch`. Fires only for `isolation=worktree`.
   - `rule_create_clone` (R4.F2) fires only for `isolation=clone`; emits `CreateClone(epic_task_id, base_branch=<target>)`; no-ops when `clone_path` already set; respects `_has_isolation_artifact` mutual exclusion with worktree.
-- `tests/dispatch/test_rule_expansion.py` (R4.F1) — covers the `rule_start_expansion` / `rule_validate_expansion` split:
+- `tests/dispatch/test_rule_expansion.py` (R4.F1 + R7.F-failed-run) — covers the `rule_start_expansion` / `rule_validate_expansion` split:
   - `rule_start_expansion` emits `StartExpansionRun` when `expansion_run_id` is NULL and attempts < cap.
   - `rule_start_expansion` no-ops while `expansion_run_id` is set and run is not terminal.
-  - `rule_validate_expansion` spawns `expansion-qa` once `expansion_run_id` is set and the run state is `completed`; no-op when `claimed_by_session_id` is set (candidate scan filters during active QA).
-  - On expansion-qa rejection (mocked via `mark_task_review_rejected`), `expansion_run_id` clears and `expansion_attempts` increments; next tick `rule_start_expansion` re-fires.
-  - At `expansion_attempts >= MAX_EXPANSION_ATTEMPTS`, non-yolo emits `EscalateTask`; yolo emits `AppendAuditMarker + AdvanceLifecycle(in_development)`.
+  - `rule_validate_expansion` spawns `expansion-qa` once `expansion_run_id` is set and the run state is **`completed`**; no-op when `claimed_by_session_id` is set (candidate scan filters during active QA).
+  - **`rule_validate_expansion` ALSO spawns `expansion-qa` when the run state is `failed`** (R7.F-failed-run) — the `_expansion_run_terminal` predicate covers both terminal states, so failed runs are not stranded. test: `test_rule_validate_expansion_dispatches_qa_on_failed_run` constructs a task with `expansion_run_id` pointing at a `failed` run and asserts the rule emits `SpawnAgent(agent="expansion-qa")` exactly as for the completed case.
+  - On expansion-qa rejection of a failed run (mocked via `mark_task_review_rejected(lifecycle=expanding)`), `expansion_run_id` clears and `expansion_attempts` increments — same path as for a structurally-invalid completed run. test: `test_failed_run_rejection_clears_artifact_and_increments_attempts` covers the rejection path side-effects on the artifact row.
+  - On expansion-qa rejection of a completed-but-invalid run (mocked via `mark_task_review_rejected`), `expansion_run_id` clears and `expansion_attempts` increments; next tick `rule_start_expansion` re-fires.
+  - At `expansion_attempts >= MAX_EXPANSION_ATTEMPTS` (resolved per §1.7 / §2.19), non-yolo emits `EscalateTask`; yolo emits `AppendAuditMarker + AdvanceLifecycle(in_development)`.
 - `tests/tasks/test_expansion_agent_selection.py` — seed a plan with a mix of FE/BE/ambiguous `### N.N` sections; run expansion with mocked LLM output against a mocked `list_agent_definitions`; assert every code leaf has `assigned_agent` populated; assert ambiguous leaves default to `backend-developer` and produce an `## Agent Selection` description marker.
 - `tests/tasks/test_expansion_qa_transitions.py` (R3.F3) — expansion-qa calls `mark_task_review_approved` on success and `mark_task_review_rejected` on missing `assigned_agent`; fabricate both paths and assert the parent epic's lifecycle/status moves correctly.
 - `tests/dispatch/test_dispatcher.py` — end-to-end tick with mocked `execute_spawn`; assert TOCTOU re-evaluation under lock; assert agent-slot cap honored; assert `TickReport` is persisted to `~/.gobby/logs/dispatcher.jsonl` as structured JSON.
@@ -1946,25 +2811,25 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 - `tests/storage/test_transitions_lifecycle.py` — extended review tools advance lifecycle at the right boundaries; planner-resubmit clears rejection marker; **R3.F4**: holistic approval advances `holistic_review → pr`; status reset on advance (review_approved → open); `advance_lifecycle(reason, by_actor)` writes a `task_lifecycle_events` row; `de_escalate_task(lifecycle=...)` is a single-call recovery that updates both status and lifecycle in one transaction.
 - `tests/storage/test_holistic_rejection.py` (R4.F5) — `mark_task_review_rejected(epic, cited_subtasks=[...])` on `lifecycle=holistic_review` atomically appends findings, reopens cited subtasks (`(holistic_review, review_approved | closed) → (in_development, open)`), and rewinds the epic lifecycle (`holistic_review → in_development`) in a single transaction; assert atomicity by injecting a mid-transaction failure and checking nothing partially applied. Rejecting `lifecycle=holistic_review` without `cited_subtasks` (or with `[]`) raises a validation error. Confirm `rule_all_leaves_holistic` (renamed from `rule_all_closed_advance_to_holistic`, §1.7) does NOT immediately re-fire because at least one cited leaf is now `open` at `lifecycle=in_development`. Cover the escalate-rescope third path: `escalate_task(epic, reason="needs_human:rescope_required:...")` flips the epic to `status=escalated`, leaves `lifecycle=holistic_review` unchanged.
 - `tests/storage/test_expansion_rejection.py` (R4.F1) — `mark_task_review_rejected` on `lifecycle=expanding` clears `task_artifacts.expansion_run_id` and increments `expansion_attempts` in a single transaction; `mark_task_review_approved` on `lifecycle=expanding` does NOT clear those fields (audit trail of which run produced the approved tree).
-- `tests/build/test_target_branch.py` (R4.F6) — `gobby build` captures `git rev-parse --abbrev-ref HEAD` by default; `--target-branch <name>` overrides; missing branch raises with the available-branches list; `task_artifacts.target_branch` is populated on plan-file/epic/leaf builds; `rule_create_worktree` consumes it; legacy task without artifact row falls back to current HEAD.
+- `tests/build/test_target_branch.py` (R4.F6) — `gobby build` captures `git rev-parse --abbrev-ref HEAD` by default; `--target-branch <name>` overrides; missing branch raises with the available-branches list; `task_artifacts.target_branch` is populated on plan-file and epic builds; **leaf builds (which force `isolation=none` per §3.2) leave `target_branch` UNSET** because in-branch work has no separate target — the test asserts the leaf-build code path does not call `set_artifact("target_branch", ...)`; `rule_create_worktree` consumes it on the epic path; legacy epic without artifact row falls back to current HEAD.
 - `tests/dispatch/test_clone_dispatch.py` (R4.F2 in-scope, R6.F1 grounded) — `_dispatch` for `CreateClone` invokes `CloneIsolationHandler.prepare_environment(SpawnConfig(...))` (the high-level API that composes `LocalCloneManager.create` + `CloneGitManager.create_clone` + bootstrap); persists both `clone_path` and `clone_id` into `task_artifacts` via a single `set_artifacts_atomic` call; the SQL CHECK constraint blocks the write if a worktree artifact already exists. `_resolve_cwd(leaf, agent_name="developer")` routes into the clone path; `_resolve_cwd(epic, agent_name="merge")` returns repo root.
 - `tests/dispatch/test_merge_integration.py` (R4.F7 + R6.F3) — exercises §2.10 with the existing tool-driven contract:
-  - Clean worktree merge: `merge_worktree(worktree_id, push=true)` returns success → agent calls `mark_task_review_approved(approval_notes=...)`, `mark_worktree_merged(worktree_id)`, `delete_worktree(worktree_id)`, `clear_isolation_pair(epic_task_id, "worktree")`; lifecycle advances to `merged`, status `closed`. Merge SHA capture deferred to #12728 (R7.F3) — `merge_commit_sha` stays NULL.
-  - Clean clone merge: `sync_clone(clone_id)` then `merge_clone(clone_id, target_branch)` returns success → same lifecycle path; clone deleted via `delete_clone` and artifacts cleared via `set_artifacts_atomic(clone_path=None, clone_id=None)` iff `cleanup_clones_on_merge=true`.
+  - Clean worktree merge: `merge_worktree(worktree_id, push=true)` returns success → agent runs cleanup FIRST (R7.F-cleanup-ordering): `mark_worktree_merged(worktree_id)`, `delete_worktree(worktree_id)`, `clear_isolation_pair(epic_task_id, "worktree")` — THEN `mark_task_review_approved(approval_notes=...)` as the LAST step; lifecycle advances to `merged`, status `closed`. Cleanup-failure handling SPLITS by yolo (R7.F-yolo-cleanup): non-yolo calls `escalate_task("needs_human:merge_cleanup_failed:<step>:<details>")` and the epic stays at `lifecycle=merging, status=escalated`; yolo NEVER calls `escalate_task` — instead emits `[append_description_section(heading="Yolo Fallbacks", body=...), advance_lifecycle(to=Lifecycle.merged, reason="yolo: merge cleanup failed; force-advanced with artifacts preserved", by_actor="merge")]`, leaving artifacts uncleared for human inspection. Merge SHA capture deferred to #12728 (R7.F3) — `merge_commit_sha` stays NULL.
+  - Clean clone merge: `sync_clone(clone_id)` then `merge_clone(clone_id, target_branch)` returns success → cleanup FIRST (`delete_clone` and `clear_isolation_pair(epic_task_id, "clone")` iff `cleanup_clones_on_merge=true`), then `mark_task_review_approved` LAST. Same yolo-split cleanup-failure handling: non-yolo escalates, yolo force-advances via `advance_lifecycle` per the top-level "yolo never escalates" invariant.
   - Worktree conflict resolved by AI: `merge_worktree` returns has_conflicts=true → AI flow (`merge_start` → `merge_resolve` → `merge_apply`) resolves → `merge_worktree(push=true)` succeeds → success path.
   - Worktree conflict, AI fails (non-yolo): `merge_abort` then `escalate_task` with `de_escalate_task` instructions in reason; lifecycle stays `merging`, status `escalated`.
   - Yolo conflict, single attempt fails: `merge-attempts:1` label applied; `mark_task_review_rejected` called on `lifecycle=merging` (R6.F4 case); status resets to `open`; lifecycle stays `merging`. Next tick re-dispatches.
-  - Yolo conflict, retries exhausted (`merge-attempts:N >= cap`): `gobby-tasks-ops:append_description_section(heading="Yolo Fallbacks", body=...)` + `mark_task_review_approved(approval_notes=...)`; lifecycle advances to `merged`; isolation artifact pair NOT cleared (preserved for inspection). No `escalate_task` ever called.
+  - Yolo conflict, retries exhausted (`merge-attempts:N >= cap`): `gobby-tasks-ops:append_description_section(heading="Yolo Fallbacks", body=...)` + `gobby-tasks:advance_lifecycle(task_id, to=Lifecycle.merged, reason="yolo: merge attempts exhausted; force-advanced without merge", by_actor="merge")`; lifecycle advances to `merged, status=closed` via the explicit transition (not `mark_task_review_approved`, which would deadlock against the stage-advance gate); isolation artifact pair NOT cleared (preserved for inspection). No `escalate_task` ever called.
 - `tests/storage/test_artifact_xor.py` (R6.F2 + R7.F4) — SQL CHECK enforces all three predicates: pairwise co-presence within each isolation family, family XOR, plus rejecting partial states (`worktree_path` set with `worktree_id` NULL or vice versa). `set_artifacts_atomic` raises with a clear error mapping the failing predicate; `clear_isolation_pair("worktree")` clears the worktree pair atomically and lets a subsequent clone-pair write succeed.
 - `tests/mcp_proxy/test_tasks_ops_artifacts.py` (R7.F3 / §1.1d) — covers the new MCP tools: `set_artifact` with each valid field; `set_artifact` with an invalid field name surfaces an allowlist error; `set_artifacts_atomic` writes a `(worktree_path, worktree_id)` pair atomically; `clear_isolation_pair("clone")` clears `clone_path` + `clone_id` together; `append_description_section` appends a `## {heading}\n{body}\n` block and is idempotent on duplicate `(heading, body)` calls within the same transaction; `get_artifacts` returns the row dict or empty when absent.
 - `tests/build/test_isolation_validation.py` (R6.F2) — `build <#leafref> --isolation worktree` raises with leaf-isolation-rejected message; `build <#taskref> --isolation clone` on an epic that already has `worktree_path` raises with the change-isolation-rejected message; `build <#taskref>` on a not-yet-built epic accepts isolation cleanly.
 - `tests/storage/test_merging_rejection.py` (R6.F4) — `mark_task_review_rejected` on `lifecycle=merging` leaves lifecycle unchanged, resets status to `open`, appends findings, writes a `task_lifecycle_events` row. `cited_subtasks` ignored on this lifecycle.
-- `tests/tasks/test_expansion_start_run.py` (R6.F5) — `ExpansionService.start_run(task_id, tdd=True)` creates an expansion-run row, calls `LocalExpansionRunManager.start`, kicks off `compile_run`, and returns the persisted `ExpansionRun` with a populated `id`. Failure during `compile_run` flips `run.status` to `failed` but the row is still returned (so the dispatcher's `set_artifact("expansion_run_id", run.id)` write still happens; expansion-qa picks up failed runs and rejects in §2.9).
+- `tests/tasks/test_start_expansion_run_impl.py` (R6.F5, aligned with §2.8b) — `start_expansion_run_impl` is exported from `src/gobby/mcp_proxy/tools/tasks/_expansion.py` so the dispatcher can import it directly without going through MCP transport. The impl creates an expansion-run row via `LocalExpansionRunManager.create`, kicks `compile_run`, and returns the persisted `ExpansionRun` (or `run.id`) so the dispatcher's `StartExpansionRun` action handler can persist it via `set_artifact("expansion_run_id", run.id)`. Failure during `compile_run` flips `run.status` to `failed` but the row is still returned (expansion-qa picks up failed runs and rejects via §2.9). **No `ExpansionService.start_run(...)` wrapper exists** — §2.8b explicitly drops that wrapper in favor of exporting the existing impl. Test asserts (a) the export is importable, (b) the dispatcher path calls it directly and persists the returned id, (c) compile failures are recoverable through expansion-qa rejection.
 - `tests/agents/test_merge_integration.py` (R4.F7) — exercises the §2.10 finalize step:
-  - Clean merge → `mark_task_review_approved(epic, approval_notes=...)` called; `mark_worktree_merged` + `delete_worktree` + `clear_isolation_pair` for worktree (or `delete_clone` + `clear_isolation_pair` for clone); lifecycle advances to `merged`, status `closed`. `merge_commit_sha` stays NULL (deferred to #12728 per R7.F3).
-  - Non-yolo conflict → `escalate_task` called with reason starting `needs_human:`; reason text includes `de_escalate_task(... lifecycle=Lifecycle.merged ...)` instructions for the human.
+  - Clean merge → cleanup FIRST (R7.F-cleanup-ordering): `mark_worktree_merged` + `delete_worktree` + `clear_isolation_pair` for worktree (or `delete_clone` + `clear_isolation_pair` for clone). THEN `mark_task_review_approved(epic, approval_notes=...)` as the LAST step; lifecycle advances to `merged`, status `closed`. Cleanup-failure handling SPLITS by yolo (R7.F-yolo-cleanup): non-yolo emits `escalate_task("needs_human:merge_cleanup_failed:...")` (lifecycle stays `merging, status=escalated`); yolo emits `[append_description_section("Yolo Fallbacks", ...), advance_lifecycle(to=Lifecycle.merged, ..., by_actor="merge")]` and NEVER calls `escalate_task`. `merge_commit_sha` stays NULL (deferred to #12728 per R7.F3).
+  - Non-yolo conflict → `escalate_task` called with reason starting `needs_human:`; reason text includes `de_escalate_task(... target_status='open', lifecycle=Lifecycle.merging ...)` instructions so recovery routes back through `rule_merging` and the merge agent's success cleanup runs (worktree marked merged, artifact pair cleared, lifecycle terminal write-back). Test asserts the escalate reason names `lifecycle=Lifecycle.merging` (NOT `merged`) and that a follow-up de-escalation + tick produces a clean cleanup trace.
   - Yolo conflict, single-attempt failure → `mark_task_review_rejected` called; `merge-attempts:1` label applied; lifecycle stays `merging, status=open`.
-  - Yolo conflict, retries exhausted (`merge-attempts:N >= cap`) → `append_description_section(heading="Yolo Fallbacks", ...)` + `mark_task_review_approved(epic, approval_notes="yolo: merge attempts exhausted, force-advanced; isolation artifact preserved")`; lifecycle advances to `merged`; isolation pair NOT cleared (preserved); no escalate ever called.
+  - Yolo conflict, retries exhausted (`merge-attempts:N >= cap`) → `append_description_section(heading="Yolo Fallbacks", ...)` + `advance_lifecycle(epic, to=Lifecycle.merged, reason="yolo: merge attempts exhausted; force-advanced without merge", by_actor="merge")` (advance_lifecycle, not mark_task_review_approved — the stage-advance gate at lifecycle=merging would block the fallback); lifecycle advances to `merged, status=closed`; isolation pair NOT cleared (preserved); no escalate ever called.
 - `tests/storage/test_is_blocked_by_deps.py` — escalated upstream blocks; `review_approved` upstream blocks transiently; `closed` upstream unblocks; `suggest_next_task` / `list_ready_tasks` / `list_blocked_tasks` all use the centralized predicate.
 - `tests/build/test_service.py` — canonical `build(input_ref, opts)` covers plan_file, epic taskref, leaf taskref inputs; cascades `isolation`, `yolo`, `stage-:*` labels to the subtree; validates `--skip-stage` against SKIPPABLE_STAGES; `--agent` on non-leaf input raises.
 - `tests/build/test_surfaces.py` — CLI, MCP tool, and HTTP endpoint all produce identical `BuildResult` for equivalent inputs (shared-core invariant).
@@ -1979,7 +2844,7 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 **Manual smoke**:
 
 1. `uv run gobby start --verbose`
-2. `uv run gobby build .gobby/plans/task-12725-lifecycle-dispatch.md --profile full --max-review-rounds 2 --target-branch main`
+2. `uv run gobby build .gobby/plans/task-12725-lifecycle-dispatch-rev1.md --profile full --max-review-rounds 2 --target-branch main`
 3. Observe cron ticks in logs; watch the task progress through lifecycle stages via `gobby tasks show #<id>` (check `task_lifecycle_events` for transition history).
 4. Kick a quick-profile single-leaf task: create a bug via MCP with description+validation_criteria; `uv run gobby build #<id> --profile quick --agent backend-developer`; watch it dispatch and close.
 5. Verify web UI: open the build page, submit the equivalent of step 2 via the UI; confirm the POST `/api/build` endpoint returns a `BuildResult` identical to the CLI call.

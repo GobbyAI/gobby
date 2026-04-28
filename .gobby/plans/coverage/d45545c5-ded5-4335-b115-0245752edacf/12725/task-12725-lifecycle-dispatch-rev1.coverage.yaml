@@ -1,11 +1,11 @@
 header:
   plan_id: task-12725-lifecycle-dispatch-rev1
-  plan_hash: 61141e1b3b9db9f8a9c4dd8fd7182fb9a859150168f3b8ab30ac91b3f901b66a
+  plan_hash: 18b0ba960ee4ff22091179f2151cca401ab79b14ce3c8b8acf691c8feb9e789c
   root_task_ref: '12725'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-04-28T06:51:42Z'
+  generated_at: '2026-04-28T15:31:41Z'
   task_tree_source: db
-  task_tree_source_hash: 6afc00a3990413ae124f2d9b92ad738f6d7d42761c379765828098c04fa8a329
+  task_tree_source_hash: 9b9201f812f8500b73ed3c7d3d3ba79130e171276d15f28e657b4251b398f602
   evidence_summary: []
 rows:
 - section_id: '1.3'
@@ -50,6 +50,18 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
+- section_id: '1.4'
+  item_id: 1.4.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.4'
+  item_id: 1.4.3
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
 - section_id: '1.5'
   item_id: 1.5.1
   status: missing
@@ -58,6 +70,24 @@ rows:
   evidence: []
 - section_id: '1.6'
   item_id: 1.6.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 1.6a
+  item_id: 1.6a.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 1.6a
+  item_id: 1.6a.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 1.6a
+  item_id: 1.6a.3
   status: missing
   leaves: []
   deferral_target: null
@@ -135,6 +165,24 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '1.8'
+  item_id: 1.8.6a
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.8'
+  item_id: 1.8.6b
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.8'
+  item_id: 1.8.6c
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.8'
   item_id: 1.8.7
   status: missing
   leaves: []
@@ -146,8 +194,56 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
+- section_id: '1.9'
+  item_id: 1.9.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.9'
+  item_id: 1.9.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.9'
+  item_id: 1.9.3
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.9'
+  item_id: 1.9.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
 - section_id: '1.10'
   item_id: 1.10.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.10'
+  item_id: 1.10.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.10'
+  item_id: 1.10.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.10'
+  item_id: 1.10.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.10'
+  item_id: 1.10.3
   status: missing
   leaves: []
   deferral_target: null
@@ -170,8 +266,44 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
+- section_id: '2.8'
+  item_id: 2.8.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
 - section_id: 2.8b
   item_id: 2.8b.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.8b
+  item_id: 2.8b.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.8c
+  item_id: 2.8c.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.8c
+  item_id: 2.8c.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.8c
+  item_id: 2.8c.3
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.8c
+  item_id: 2.8c.4
   status: missing
   leaves: []
   deferral_target: null
@@ -356,6 +488,18 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
+- section_id: 2.14b
+  item_id: 2.14b.6
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.14b
+  item_id: 2.14b.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
 - section_id: '2.15'
   item_id: 2.15.1
   status: missing
@@ -392,6 +536,12 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
+- section_id: '2.15'
+  item_id: 2.15.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
 - section_id: '2.16'
   item_id: 2.16.1
   status: missing
@@ -418,6 +568,12 @@ rows:
   evidence: []
 - section_id: '2.16'
   item_id: 2.16.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.16'
+  item_id: 2.16.6
   status: missing
   leaves: []
   deferral_target: null
@@ -512,58 +668,194 @@ rows:
   leaves: []
   deferral_target: null
   evidence: []
-- section_id: '2.21'
-  item_id: 2.21.1
+- section_id: '2.19'
+  item_id: 2.19.7
   status: missing
   leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.21'
+  item_id: 2.21.1
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13395'
+    validation_criteria_snippet: All four files updated. plan-coverage.md describes
+      manifest schema + parse_mode table. plan-draft SKILL says planner doesn't write
+      manifest. plan-review SKILL ...
+    matched_artifact_ref: docs/contracts/plan-coverage.md
   deferral_target: null
   evidence: []
 - section_id: '2.21'
   item_id: 2.21.2
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13395'
+    validation_criteria_snippet: All four files updated. plan-coverage.md describes
+      manifest schema + parse_mode table. plan-draft SKILL says planner doesn't write
+      manifest. plan-review SKILL ...
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-draft/SKILL.md
   deferral_target: null
   evidence: []
 - section_id: '2.21'
   item_id: 2.21.3
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13392'
+    validation_criteria_snippet: '`parse_plan` accepts `parse_mode` keyword. New tests
+      in `tests/plans/test_parser_manifest.py` pass: `test_parse_mode_signature_accepts_three_values`,
+      `test_dra...'
+    matched_artifact_ref: src/gobby/plans/parser.py
+  deferral_target: null
+  evidence: []
+- section_id: '2.21'
+  item_id: 2.21.3a
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13392'
+    validation_criteria_snippet: '`parse_plan` accepts `parse_mode` keyword. New tests
+      in `tests/plans/test_parser_manifest.py` pass: `test_parse_mode_signature_accepts_three_values`,
+      `test_dra...'
+    matched_artifact_ref: src/gobby/plans/parser.py
+  deferral_target: null
+  evidence: []
+- section_id: '2.21'
+  item_id: 2.21.3b
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13392'
+    validation_criteria_snippet: '`parse_plan` accepts `parse_mode` keyword. New tests
+      in `tests/plans/test_parser_manifest.py` pass: `test_parse_mode_signature_accepts_three_values`,
+      `test_dra...'
+    matched_artifact_ref: src/gobby/plans/parser.py
+  deferral_target: null
+  evidence: []
+- section_id: '2.21'
+  item_id: 2.21.3c
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13392'
+    validation_criteria_snippet: '`parse_plan` accepts `parse_mode` keyword. New tests
+      in `tests/plans/test_parser_manifest.py` pass: `test_parse_mode_signature_accepts_three_values`,
+      `test_dra...'
+    matched_artifact_ref: src/gobby/plans/parser.py
+  deferral_target: null
+  evidence: []
+- section_id: '2.21'
+  item_id: 2.21.3d
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13392'
+    validation_criteria_snippet: '`parse_plan` accepts `parse_mode` keyword. New tests
+      in `tests/plans/test_parser_manifest.py` pass: `test_parse_mode_signature_accepts_three_values`,
+      `test_dra...'
+    matched_artifact_ref: src/gobby/plans/parser.py
   deferral_target: null
   evidence: []
 - section_id: '2.21'
   item_id: 2.21.4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#13395'
+    validation_criteria_snippet: All four files updated. plan-coverage.md describes
+      manifest schema + parse_mode table. plan-draft SKILL says planner doesn't write
+      manifest. plan-review SKILL ...
+    matched_artifact_ref: CLAUDE.md
+  deferral_target: null
+  evidence: []
+- section_id: 2.21a
+  item_id: 2.21a.1
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.21a
+  item_id: 2.21a.2
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.21a
+  item_id: 2.21a.3
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.21a
+  item_id: 2.21a.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.21a
+  item_id: 2.21a.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: 2.21a
+  item_id: 2.21a.6
   status: missing
   leaves: []
   deferral_target: null
   evidence: []
 - section_id: '2.22'
   item_id: 2.22.1
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13394'
+    validation_criteria_snippet: '`plan-adversary.yaml` instructions document the
+      manifest-emission workflow with M1 ID, draft pre-verdict parse, expansion post-write
+      self-check, retry-with-yol...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
   deferral_target: null
   evidence: []
 - section_id: '2.22'
   item_id: 2.22.2
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13395'
+    validation_criteria_snippet: All four files updated. plan-coverage.md describes
+      manifest schema + parse_mode table. plan-draft SKILL says planner doesn't write
+      manifest. plan-review SKILL ...
+    matched_artifact_ref: src/gobby/install/shared/skills/plan-review/SKILL.md
   deferral_target: null
   evidence: []
 - section_id: '2.22'
   item_id: 2.22.3
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13394'
+    validation_criteria_snippet: '`plan-adversary.yaml` instructions document the
+      manifest-emission workflow with M1 ID, draft pre-verdict parse, expansion post-write
+      self-check, retry-with-yol...'
+    matched_artifact_ref: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
   deferral_target: null
   evidence: []
 - section_id: '2.22'
   item_id: 2.22.4
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13394'
+    validation_criteria_snippet: '`plan-adversary.yaml` instructions document the
+      manifest-emission workflow with M1 ID, draft pre-verdict parse, expansion post-write
+      self-check, retry-with-yol...'
+    matched_artifact_ref: "`tests/agents/test_plan_adversary_self_check.py` covers\
+      \ (a) non-yolo: draft-pass + expansion-fail + retry + escalate path; (b) yolo:\
+      \ same retry path then stub fallback succeeds; (c) yolo: stub fallback also\
+      \ fails \u2192 audit marker + force-approve; (d) explicit assertion that yolo\
+      \ NEVER calls `escalate_task` on this path"
   deferral_target: null
   evidence: []
 - section_id: '2.22'
   item_id: 2.22.5
-  status: missing
-  leaves: []
+  status: invalid
+  leaves:
+  - leaf_task_ref: '#13394'
+    validation_criteria_snippet: '`plan-adversary.yaml` instructions document the
+      manifest-emission workflow with M1 ID, draft pre-verdict parse, expansion post-write
+      self-check, retry-with-yol...'
+    matched_artifact_ref: '`tests/agents/test_plan_adversary_no_edits_on_reject.py`
+      confirms no plan-file diff is produced by a rejection round'
   deferral_target: null
   evidence: []
 - section_id: '2.23'
@@ -586,6 +878,12 @@ rows:
   evidence: []
 - section_id: '2.23'
   item_id: 2.23.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.23'
+  item_id: 2.23.5
   status: missing
   leaves: []
   deferral_target: null
@@ -712,6 +1010,18 @@ rows:
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.6
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.2'
+  item_id: 3.2.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.2'
+  item_id: 3.2.8
   status: missing
   leaves: []
   deferral_target: null
