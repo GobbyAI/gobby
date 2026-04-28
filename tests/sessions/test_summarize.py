@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.sessions.summarize import generate_session_summaries
+from gobby.sessions.summarize import _generate_full_summary, generate_session_summaries
 
 pytestmark = pytest.mark.unit
 
@@ -24,6 +24,7 @@ def _make_session(
     session.transcript_path = transcript_path
     session.source = source
     session.summary_markdown = summary_markdown
+    session.digest_markdown = None
     return session
 
 
@@ -194,6 +195,54 @@ class TestGenerateSessionSummaries:
         # full_only flag is ignored — fallback to code-only renderer on LLM error
         assert result["success"] is True
         assert result["full_length"] > 0
+
+    @pytest.mark.asyncio
+    async def test_full_summary_uses_droid_parser_with_transcript_path(self) -> None:
+        session = _make_session(
+            session_id="sess-droid",
+            transcript_path="/tmp/droid-session.jsonl",
+            source="droid",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = ""
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "# Droid Summary"
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.sessions.transcripts.droid.DroidTranscriptParser") as MockParser,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+            patch("gobby.workflows.summary_actions.format_turns_for_llm", return_value="turns"),
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+            MockParser.return_value.extract_turns_since_clear.return_value = [{"type": "message"}]
+            MockParser.return_value.extract_last_messages.return_value = [
+                {"role": "user", "content": "hi"}
+            ]
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[{"type": "message"}],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown == "# Droid Summary"
+        assert full_error is None
+        MockParser.assert_called_once_with(
+            session_id="sess-droid",
+            transcript_path="/tmp/droid-session.jsonl",
+        )
 
 
 class TestGetClaimedTasks:

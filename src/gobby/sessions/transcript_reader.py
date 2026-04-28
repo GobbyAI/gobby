@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.sessions.transcript_renderer import RenderedMessage
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
+    from gobby.sessions.transcripts.droid import DroidTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
     from gobby.storage.session_models import Session
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
         | GeminiTranscriptParser
         | QwenTranscriptParser
         | CodexTranscriptParser
+        | DroidTranscriptParser
     )
 
 from pathlib import Path
@@ -62,6 +64,8 @@ def _detect_source_from_path(path: str | None) -> str | None:
         return "codex"
     if ".qwen" in parts:
         return "qwen"
+    if ".factory" in parts and "sessions" in parts:
+        return "droid"
     if ".gemini" in parts or lowered.endswith(".json"):
         return "gemini"
     if ".claude" in parts and "projects" in parts:
@@ -115,6 +119,9 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     line_type = data.get("type")
     payload = data.get("payload")
     message = data.get("message")
+
+    if line_type == "session_start" and data.get("version") == 2:
+        return "droid"
 
     if isinstance(payload, dict) and line_type in {
         "response_item",
@@ -262,6 +269,15 @@ def _find_transcript_on_disk(
                 matches = sorted(chats_dir.glob(f"*{external_id}*.jsonl"), reverse=True)
                 if matches:
                     return str(matches[0])
+    elif source == "droid":
+        droid_sessions = Path.home() / ".factory" / "sessions"
+        if droid_sessions.exists():
+            for proj_dir in droid_sessions.iterdir():
+                if not proj_dir.is_dir():
+                    continue
+                candidate = proj_dir / f"{external_id}.jsonl"
+                if candidate.is_file():
+                    return str(candidate)
 
     return None
 
@@ -287,10 +303,15 @@ def _decompress_archive(archive_path: str) -> list[str]:
     return lines
 
 
-def _get_parser(source: str, session_id: str | None = None) -> TranscriptParser:
+def _get_parser(
+    source: str,
+    session_id: str | None = None,
+    transcript_path: str | Path | None = None,
+) -> TranscriptParser:
     """Get the appropriate transcript parser for a source."""
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
+    from gobby.sessions.transcripts.droid import DroidTranscriptParser
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
@@ -300,12 +321,17 @@ def _get_parser(source: str, session_id: str | None = None) -> TranscriptParser:
         return QwenTranscriptParser(session_id=session_id)
     elif source == "codex":
         return CodexTranscriptParser(session_id=session_id)
+    elif source == "droid":
+        return DroidTranscriptParser(session_id=session_id, transcript_path=transcript_path)
     else:
         return ClaudeTranscriptParser(session_id=session_id)
 
 
 def _parse_lines(
-    lines: list[str], source: str, session_id: str | None = None
+    lines: list[str],
+    source: str,
+    session_id: str | None = None,
+    transcript_path: str | Path | None = None,
 ) -> list[ParsedMessage]:
     """Parse lines into ParsedMessage objects.
 
@@ -314,13 +340,16 @@ def _parse_lines(
     them out and let SessionMessageProcessor handle tool events on its own
     rule-engine path.
     """
-    parser = _get_parser(source, session_id=session_id)
+    parser = _get_parser(source, session_id=session_id, transcript_path=transcript_path)
     parsed = parser.parse_lines(lines, start_index=0)
     return [r for r in parsed if isinstance(r, ParsedMessage)]
 
 
 def _parse_json_session(
-    data: dict[str, Any], source: str, session_id: str | None = None
+    data: dict[str, Any],
+    source: str,
+    session_id: str | None = None,
+    transcript_path: str | Path | None = None,
 ) -> list[ParsedMessage]:
     """Parse a native JSON session file (e.g., Gemini/Qwen format)."""
     from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
@@ -333,20 +362,26 @@ def _parse_json_session(
         parser = QwenTranscriptParser(session_id=session_id)
         return parser.parse_session_json(data)
     # Fallback: wrap as single-line JSONL
-    return _parse_lines([json.dumps(data)], source, session_id=session_id)
+    return _parse_lines(
+        [json.dumps(data)],
+        source,
+        session_id=session_id,
+        transcript_path=transcript_path,
+    )
 
 
 def _parse_lines_to_dicts(
     lines: list[str],
     source: str,
     session_id: str | None = None,
+    transcript_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Parse JSONL lines through the appropriate transcript parser.
 
     Returns dicts matching the session_messages column shape so callers
     get a consistent format regardless of source.
     """
-    parsed = _parse_lines(lines, source, session_id=session_id)
+    parsed = _parse_lines(lines, source, session_id=session_id, transcript_path=transcript_path)
     return _parsed_to_dicts(parsed)
 
 
@@ -380,7 +415,7 @@ def _is_json_session_file(path: str) -> bool:
 class TranscriptReader:
     """Unified read layer: live transcript first, gzip archive fallback.
 
-    Supports JSONL (Claude, Codex) and native JSON (Gemini) transcript formats.
+    Supports JSONL (Claude, Codex, Droid) and native JSON (Gemini) transcript formats.
 
     Usage::
 
@@ -526,7 +561,12 @@ class TranscriptReader:
                         session_id=session_id,
                     )
                     parsed_message_count = len(
-                        _parse_json_session(data, effective_source, session_id=session_id)
+                        _parse_json_session(
+                            data,
+                            effective_source,
+                            session_id=session_id,
+                            transcript_path=transcript_path,
+                        )
                     )
                 except (json.JSONDecodeError, ValueError, OSError) as e:
                     logger.warning(f"Failed to parse JSON transcript for session {session_id}: {e}")
@@ -542,7 +582,12 @@ class TranscriptReader:
                         session_id=session_id,
                     )
                     parsed_message_count = len(
-                        _parse_lines(lines, effective_source, session_id=session_id)
+                        _parse_lines(
+                            lines,
+                            effective_source,
+                            session_id=session_id,
+                            transcript_path=transcript_path,
+                        )
                     )
                 except (json.JSONDecodeError, ValueError, OSError) as e:
                     logger.warning(
@@ -621,7 +666,12 @@ class TranscriptReader:
                 lines=lines,
                 session_id=session_id,
             )
-            return _parse_lines(lines, source, session_id=session_id)
+            return _parse_lines(
+                lines,
+                source,
+                session_id=session_id,
+                transcript_path=archive_path,
+            )
         except Exception as e:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
             return []
@@ -682,7 +732,7 @@ class TranscriptReader:
     async def _get_parsed_messages_from_file(self, session_id: str) -> list[ParsedMessage]:
         """Read and parse ParsedMessages from live transcript file.
 
-        Handles both JSONL (Claude, Codex) and native JSON (Gemini) formats.
+        Handles both JSONL (Claude, Codex, Droid) and native JSON (Gemini) formats.
         If transcript_path is missing, tries to re-derive it.
         """
         session = self._session_manager.get(session_id)
@@ -702,7 +752,12 @@ class TranscriptReader:
                     data=data,
                     session_id=session_id,
                 )
-                return _parse_json_session(data, source, session_id=session_id)
+                return _parse_json_session(
+                    data,
+                    source,
+                    session_id=session_id,
+                    transcript_path=transcript_path,
+                )
             else:
                 lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
                 source, _ = _resolve_effective_source(
@@ -711,7 +766,12 @@ class TranscriptReader:
                     lines=lines,
                     session_id=session_id,
                 )
-                return _parse_lines(lines, source, session_id=session_id)
+                return _parse_lines(
+                    lines,
+                    source,
+                    session_id=session_id,
+                    transcript_path=transcript_path,
+                )
         except Exception as e:
             logger.warning(f"Failed to read transcript for session {session_id}: {e}")
             return []
@@ -743,7 +803,12 @@ class TranscriptReader:
                 lines=lines,
                 session_id=session_id,
             )
-            all_messages = _parse_lines_to_dicts(lines, source, session_id=session_id)
+            all_messages = _parse_lines_to_dicts(
+                lines,
+                source,
+                session_id=session_id,
+                transcript_path=archive_path,
+            )
         except Exception as e:
             logger.warning(f"Failed to read archive for session {session_id}: {e}")
             return []
@@ -789,7 +854,12 @@ class TranscriptReader:
                     data=data,
                     session_id=session_id,
                 )
-                parsed = _parse_json_session(data, source, session_id=session_id)
+                parsed = _parse_json_session(
+                    data,
+                    source,
+                    session_id=session_id,
+                    transcript_path=transcript_path,
+                )
                 all_messages = _parsed_to_dicts(parsed)
             else:
                 lines = await asyncio.to_thread(self._read_jsonl_lines, transcript_path)
@@ -799,7 +869,12 @@ class TranscriptReader:
                     lines=lines,
                     session_id=session_id,
                 )
-                all_messages = _parse_lines_to_dicts(lines, source, session_id=session_id)
+                all_messages = _parse_lines_to_dicts(
+                    lines,
+                    source,
+                    session_id=session_id,
+                    transcript_path=transcript_path,
+                )
         except Exception as e:
             logger.warning(f"Failed to read transcript for session {session_id}: {e}")
             return []

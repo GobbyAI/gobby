@@ -185,14 +185,14 @@ async def generate_session_summaries(
 async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str, Any]]:
     """Read and parse a transcript file in its native format.
 
-    Claude and Codex use JSONL (one JSON object per line).
+    Claude, Codex, and Droid use JSONL (one JSON object per line).
     Gemini/Qwen store sessions as a single JSON object with a ``messages`` array.
     The returned dicts are in the source's native format — callers that need
     to iterate content blocks should use format-aware helpers.
 
     Args:
         path: Path to the transcript file.
-        source: Session source (``"claude"``, ``"gemini"``, ``"qwen"``, ``"codex"``).
+        source: Session source (``"claude"``, ``"gemini"``, ``"qwen"``, ``"codex"``, ``"droid"``).
     """
     # Gemini/Qwen JSON session files are a single JSON object, not JSONL.
     if path.suffix == ".json" and source in {"gemini", "qwen"}:
@@ -327,6 +327,13 @@ async def _generate_full_summary(
             from gobby.sessions.transcripts.codex import CodexTranscriptParser
 
             parser = CodexTranscriptParser()
+        elif getattr(session, "source", None) == "droid":
+            from gobby.sessions.transcripts.droid import DroidTranscriptParser
+
+            parser = DroidTranscriptParser(
+                session_id=getattr(session, "id", None),
+                transcript_path=getattr(session, "transcript_path", None),
+            )
         else:
             from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 

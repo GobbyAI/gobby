@@ -23,6 +23,7 @@ from gobby.sessions.transcript_archive import backup_transcript
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
+from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.database import DatabaseProtocol
@@ -463,6 +464,11 @@ class SessionLifecycleManager:
             parser = QwenTranscriptParser(session_id=session_id)
         elif session.source == "codex":
             parser = CodexTranscriptParser(session_id=session_id)
+        elif session.source == "droid":
+            parser = DroidTranscriptParser(
+                session_id=session_id,
+                transcript_path=session.transcript_path,
+            )
         # Default (claude or unknown) uses Claude transcript format
 
         # Gemini/Qwen store sessions as single JSON files, not JSONL.

@@ -569,6 +569,25 @@ class TestProcessSessionTranscriptParsers:
             MockParser.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_droid_parser_selected_with_transcript_path(self, tmp_path, manager):
+        """Droid source uses DroidTranscriptParser with the transcript path for sidecars."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        transcript_path.write_text('{"type": "message"}\n')
+
+        session = MagicMock()
+        session.source = "droid"
+        session.transcript_path = str(transcript_path)
+        manager.session_manager.get.return_value = session
+
+        with patch("gobby.sessions.lifecycle.DroidTranscriptParser") as MockParser:
+            MockParser.return_value.parse_lines.return_value = []
+            await manager._process_session_transcript("s1", str(transcript_path))
+            MockParser.assert_called_once_with(
+                session_id="s1",
+                transcript_path=str(transcript_path),
+            )
+
+    @pytest.mark.asyncio
     async def test_session_not_found_returns_early(self, tmp_path, manager):
         """Returns early when session not found in DB."""
         transcript_path = tmp_path / "transcript.jsonl"

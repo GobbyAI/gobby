@@ -150,7 +150,11 @@ class SessionMessageProcessor:
 
         self._active_sessions[session_id] = transcript_path
         self._sources[session_id] = source
-        self._parsers[session_id] = get_parser(source, session_id=session_id)
+        self._parsers[session_id] = get_parser(
+            source,
+            session_id=session_id,
+            transcript_path=transcript_path,
+        )
         if os.path.exists(transcript_path):
             logger.debug(f"Registered session {session_id} for processing ({source})")
         else:
