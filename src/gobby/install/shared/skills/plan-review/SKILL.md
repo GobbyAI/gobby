@@ -186,17 +186,22 @@ Findings carry a **severity**:
 - `blocking` — the plan should not be expanded until this is fixed.
 - `nit` — worth noting, but not a blocker on its own.
 
+**Anchor-task contract**: the spawn prompt names the **per-round anchor task** the parent created for this review (a child of the planning epic). Mark verdict on that anchor — NOT on the planning epic itself, NOT on the parent epic. The parent reads the anchor's terminal state on daemon-wake and routes from there.
+
 Escalate **only when context is insufficient or a true human-intervention blocker exists**.
 For routine revision rounds, reject review instead:
 
 - If ≥1 `blocking` finding after the second pass → call
-  `mark_task_review_rejected(task_id=<planning_task>, rejection_notes="<formatted findings>", round_number=N)`.
+  `mark_task_review_rejected(task_id=<anchor_task_id>, rejection_notes="<formatted findings>", round_number=N)`.
   Use the Output Format below for `rejection_notes`; the tool appends the
-  `## Adversary Findings — Round N` section and returns the task to `open`.
+  `## Adversary Findings — Round N` section to the anchor description and
+  returns the anchor to `open`. The parent closes the anchor on next wake.
 - If only `nit` findings remain → record them in the findings section so the
   drafter can see them, but **approve** the plan with
-  `mark_task_review_approved(task_id=<planning_task>, approval_notes="...")`.
-- If zero findings after the second pass → approve cleanly.
+  `mark_task_review_approved(task_id=<anchor_task_id>, approval_notes="...")`.
+- If zero findings after the second pass → approve cleanly on the anchor.
+
+Use the `anchor_task_id` value passed in the spawn prompt; do not infer or fall back to the planning epic.
 
 Non-blocking nits never trigger escalation on their own.
 

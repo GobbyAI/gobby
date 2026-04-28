@@ -1703,6 +1703,22 @@ Target: `src/gobby/install/shared/skills/plan/SKILL.md` — substantial rewrite.
 
 **Why**: The current `/gobby plan` skill has the right shape (opt-in mode, adversarial loop, terminal cleanup) but is wired around the old design (combined plan-author/adversary, no manifest emission, no fresh-context-per-round, no delegated-flow handoff to build). This rewrite encodes the canonical end-to-end flow. **If anything below surprises the user when they read it, alignment is broken and the surprise is itself a finding.**
 
+**Anchor-task contract (load-bearing)**:
+
+The parent session (Claude in chat, this skill) **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (per `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so no task is needed for plan authoring. The parent's role is pure orchestration — spawn agents, read verdict states, decide.
+
+Each adversary round spawns against a **freshly-created anchor task** (child of the planning epic, `category: planning`). The anchor exists **only for verdict capture**: the adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `mark_task_review_approved` (clean) or `mark_task_review_rejected` (with findings) on the anchor. Plan-author rounds (Round N > 1) get their own anchor task too — same pattern, different agent.
+
+The parent **fires-and-forgets**: spawn the agent, end the turn cleanly. The parent has no claimed task, so the stop-hook (`require-task-close`) does not block end-of-turn. The daemon's task-completion notification (P2P signoff message from the agent's session) wakes the parent when the agent terminates. The parent's next turn reads the anchor's terminal state via `get_task` and routes to the next step:
+
+- `status=review_approved` → advance to Phase 4 (expansion handoff) or Phase 3b (delegated build handoff).
+- `status=open` after `mark_task_review_rejected` → if budget remains, spawn next round on a fresh anchor; if budget exhausted, surface final findings to user.
+- `status=escalated` → surface escalation reason to user.
+
+Anchor lifecycle: each anchor closes when its round terminates (verdict captured). Cleanup at loop end: any still-open anchors are closed; planning epic stays open until expansion handoff completes.
+
+This pattern eliminates the parent-claim / parent-release dance and removes any stop-hook collisions. No polling, no `ScheduleWakeup`, no parent-side timers — the daemon notification is the only wake signal.
+
 **Canonical flow**:
 
 **Phase 1 — Initial plan authoring (Claude + user, interactive)**
@@ -1717,39 +1733,44 @@ Target: `src/gobby/install/shared/skills/plan/SKILL.md` — substantial rewrite.
 
 6. Skill prompts the user via `AskUserQuestion`: **Interactive** (per-round adversary findings shown to user; user re-approves each revised plan) or **Delegated** (silent revision loop until terminal; user only sees terminal outcome). Also prompts for `max_rounds` (default = `BuildConfig.max_review_rounds`, configurable per §2.19).
 
-**Phase 3a — Adversarial review loop (Claude as coordinator)**
+**Phase 3a — Adversarial review loop (fire-and-forget orchestration)**
 
-For each round N (user-facing 1-indexed; internally 0-indexed per existing convention):
+After Phase 1 the parent's role pivots from "plan writer" to "plan coordinator" — same session, different mode. The coordinator never stays alive across rounds. Each round is a single spawn-then-end-turn cycle, with the daemon's task-completion notification as the wake signal for the next turn. The fire-and-forget pattern applies in BOTH interactive and delegated modes; the only difference is whether the coordinator inserts a user-confirmation gate between rounds (interactive) or routes straight to the next spawn (delegated). Round numbering: user-facing 1-indexed; internally 0-indexed per existing convention.
 
-7. **Round 1**: spawn `plan-adversary` (LLM B, fresh context) against the user-approved first draft. No plan-author involvement on Round 1 — the user authored the draft.
-8. **Round N (N > 1)**: spawn `plan-author` (LLM A, fresh context per §2.23) with: current plan file + cumulative `## Plan Changelog` + `## Adversary Findings — Round N-1`. Plan-author applies surgical fixes per §2.23 mandate (fill holes, don't re-engineer); appends a one-bullet round summary to `## Plan Changelog`; exits. Then spawn `plan-adversary` (LLM B, fresh context) against the revised plan.
-9. **Adversary outcomes** (every round):
-   - **Approve** → adversary writes `## Task Manifest` YAML to plan file (per §2.22), self-checks via parser, calls `mark_task_review_approved`. Skill advances to **Phase 4**.
-   - **Reject** → adversary writes `## Adversary Findings — Round N` to planning task description, calls `mark_task_review_rejected`. Skill: in interactive mode, presents findings to user, re-prompts plan via `ExitPlanMode` for re-approval before next round; in delegated mode, silently advances to next round.
-10. **Round-budget exhaustion** (rejection on Round = max_rounds): skill presents the final findings + offers terminal options (revise manually + run `gobby build` directly, abort + close planning epic, restart with fresh budget). Each terminal option runs cleanup.
-11. **Coordinator role**: Claude (this skill instance) does NOT review or revise the plan during Phase 3. Its job is purely orchestration — spawn agents, wait on durable wake signals from the daemon (per the spawn-then-end-turn pattern), interpret terminal task states, route to the next step.
+7. **Round 1 spawn**: parent creates a fresh anchor task `Plan-adversary review — round 1` (child of the planning epic, `category: planning`). Parent spawns `plan-adversary` (LLM B, fresh context, no isolation) against the anchor with the current plan file. Parent ends the turn. No claim, no `ScheduleWakeup`.
+8. **Round N spawn (N > 1)**: parent creates a fresh anchor `Plan-author revision — round N` and spawns `plan-author` (LLM A, fresh context per §2.23) with the plan file + cumulative `## Plan Changelog` + `## Adversary Findings — Round N-1` from the prior anchor. Parent ends the turn. On plan-author wake (anchor terminal), parent creates `Plan-adversary review — round N`, spawns adversary, ends the turn.
+9. **Wake-and-route**: when the daemon wakes the parent (task-completion notification on the active anchor), parent reads anchor terminal state via `get_task` and branches by mode:
+   - `status=review_approved` (adversary clean) → adversary already appended the `## Task Manifest` YAML to the plan file (per §2.22). Parent advances to **Phase 4** (or Phase 3b for delegated mode). Same in both modes.
+   - `status=open` after `mark_task_review_rejected` (adversary findings on anchor description):
+     - **Interactive**: parent presents findings to user via `ExitPlanMode` or `AskUserQuestion`, asking whether to continue with the next revision round. User approves → parent ends turn after spawning next round; user aborts → parent runs cleanup. The user-confirmation gate happens in the parent's chat session; the parent does NOT stay alive waiting for it — the parent ends the turn after presenting and the user's reply triggers the next turn.
+     - **Delegated**: if budget remains, parent silently spawns the next round on a fresh anchor, ends turn. No user prompt.
+     - Both modes: if budget exhausted, parent surfaces findings + terminal options.
+   - `status=escalated` → parent surfaces escalation reason verbatim. Same in both modes.
+10. **Round-budget exhaustion**: parent presents the final adversary findings + offers terminal options (revise manually + run `gobby build` directly, abort + close planning epic, restart with fresh budget). Each terminal option runs cleanup (close all open anchors).
+11. **Anchor cleanup**: each anchor closes when its round terminates (its verdict has been captured). At loop end (approval, exhaustion, abort, or restart), any still-open anchors are closed. The planning epic stays open until Phase 4 expansion handoff completes.
+12. **Parent role**: never reviews or revises the plan. Never claims a task. Never schedules wakeups. Pure orchestration — spawn agent → end turn → daemon-wake → read anchor state → route. **No `ScheduleWakeup`, no `Monitor`, no polling. The daemon's task-completion notification is the only wake signal.**
 
 **Phase 3b — Delegated build handoff (alternative flow only when user picked "Delegated" in Phase 2)**
 
 This phase fires after the interactive review loop terminates (approval or exhaustion). It does NOT replace Phase 3a — Phase 3b is a follow-on once the plan is approved-or-final.
 
-12. Skill loads the `build` skill via `gobby-skills:get_skill`.
-13. Skill asks the user via `AskUserQuestion`: what scope of build do you want?
+13. Skill loads the `build` skill via `gobby-skills:get_skill`.
+14. Skill asks the user via `AskUserQuestion`: what scope of build do you want?
     - **Plan only** — adversary already approved; no expansion fires. User runs expansion later.
     - **Plan + test_arch** — run plan-adversary (already done) → test architect (per existing `rule_test_arch`).
     - **Plan + test_arch + expand** — through expansion only; user runs dev/qa/holistic later.
     - **Plan + full build** (test_arch → expand → dev → qa → holistic → pr → merge) — the killer-feature path.
-14. Based on the choice, the skill EITHER:
+15. Based on the choice, the skill EITHER:
     - Triggers `gobby build <plan_file> --profile <resolved>` in this session (immediate execution), OR
     - Provides the CLI command to the user as a string for them to run at their convenience.
-15. Skill exits.
+16. Skill exits.
 
 **Phase 4 — Expansion handoff (post-adversary-approval, regardless of interactive vs. delegated)**
 
-16. Skill calls `start_expansion_run(task_id=plan_parent_ref, plan_file=artifact_path, auto_apply=true)`.
-17. Wait for completion via durable daemon wake.
-18. On success: report child-task count to user; close planning epic; run terminal cleanup.
-19. On failure: surface error; offer retry / retry-with-overrides / escalate per existing skill design.
+17. Skill calls `start_expansion_run(task_id=plan_parent_ref, plan_file=artifact_path, auto_apply=true)`. Fire-and-forget — no parent claim. End the turn.
+18. Daemon wakes parent on expansion-run completion.
+19. On success: report child-task count to user; close planning epic; close any remaining anchor tasks.
+20. On failure: surface error; offer retry / retry-with-overrides / escalate per existing skill design.
 
 **Acceptance:**
 
@@ -1759,6 +1780,10 @@ This phase fires after the interactive review loop terminates (approval or exhau
 - 2.24.4 — On adversary approval, manifest emission is the trigger for expansion handoff. behavior: skill calls `start_expansion_run` only after manifest YAML is present in plan file. test: `tests/skills/test_plan_skill_flow.py::test_expansion_after_manifest`.
 - 2.24.5 — Delegated build handoff (Phase 3b) loads `build` skill, prompts for scope, dispatches or hands back CLI. file: `src/gobby/install/shared/skills/plan/SKILL.md`. test: `tests/skills/test_plan_skill_flow.py::test_delegated_build_handoff`.
 - 2.24.6 — Coordinator role enforced: skill does NOT edit the plan file during Phase 3. test: `tests/skills/test_plan_skill_flow.py::test_no_edits_during_review_loop` asserts no Edit/Write tool calls fire from this skill's session during Phase 3 rounds.
+- 2.24.7 — Anchor-task contract: parent never claims a task; each round spawns against a freshly-created anchor (`category: planning`, child of the planning epic) that exists solely for verdict capture. file: `src/gobby/install/shared/skills/plan/SKILL.md`. test: `tests/skills/test_plan_skill_flow.py::test_anchor_task_per_round` asserts (a) parent has no claimed task before / during / after spawn, (b) each adversary spawn gets its own anchor, (c) anchor closes when its round terminates.
+- 2.24.8 — Fire-and-forget orchestration: parent ends the turn after each spawn; daemon's task-completion notification is the only wake signal. No `ScheduleWakeup`, no `Monitor`, no polling. test: `tests/skills/test_plan_skill_flow.py::test_no_polling_or_scheduled_wakeup` asserts the skill never invokes ScheduleWakeup or Monitor during Phase 3a.
+- 2.24.9 — Wake-and-route: on daemon wake, parent reads the active anchor's terminal state via `get_task` and routes per the anchor-task contract (review_approved → Phase 4 / Phase 3b; rejected + budget remaining → next round spawn; rejected + budget exhausted → surface findings; escalated → surface reason). test: `tests/skills/test_plan_skill_flow.py::test_wake_routing_by_anchor_status`.
+- 2.24.10 — Mode-agnostic coordinator: fire-and-forget orchestration applies in both interactive and delegated modes. The only mode-specific behavior is the user-confirmation gate after a rejected round (interactive: present findings + ask whether to continue; delegated: silently spawn next round). Parent never stays alive across rounds in either mode. test: `tests/skills/test_plan_skill_flow.py::test_interactive_and_delegated_share_orchestration` covers both modes against the same anchor / spawn / wake-route mechanics.
 
 ### 2.20 Re-expansion of #12725 as Epic 1 end-to-end validation [category: manual] (depends: 2.11, 2.12, 2.13, 2.14a, 2.14b, 2.15, 2.16, 2.17, 2.18, 2.19, 2.21, 2.22, 2.23, 2.24)
 `kind: deliverable`

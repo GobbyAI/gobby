@@ -1,9 +1,9 @@
 header:
   plan_id: task-12725-lifecycle-dispatch-rev1
-  plan_hash: 4edb022993f2261442437db10aeaec2d25c71a90db68767a5c08a4877af67961
+  plan_hash: 1df65f2757c8fddc8353aaa024b2c0e44b0a9ad39448669c6e933699b00da8be
   root_task_ref: '12725'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-04-28T06:11:19Z'
+  generated_at: '2026-04-28T06:40:29Z'
   task_tree_source: db
   task_tree_source_hash: 6afc00a3990413ae124f2d9b92ad738f6d7d42761c379765828098c04fa8a329
   evidence_summary: []
@@ -622,6 +622,30 @@ rows:
   evidence: []
 - section_id: '2.24'
   item_id: 2.24.6
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.24'
+  item_id: 2.24.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.24'
+  item_id: 2.24.8
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.24'
+  item_id: 2.24.9
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.24'
+  item_id: 2.24.10
   status: missing
   leaves: []
   deferral_target: null

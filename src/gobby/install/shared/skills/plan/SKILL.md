@@ -332,6 +332,18 @@ Then proceed to Step 7.
 
 ## Step 7: Review Loop (adversarial/delegated modes only)
 
+### 7.0a. Anchor-task contract (load-bearing)
+
+The parent session **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (see `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so plan-mode + plan-file editing alone do not require a claim. The parent's role from Step 7 onward is pure orchestration.
+
+Each adversary (and plan-author, when present) round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned agent appends `## Adversary Findings — Round N` (or `## Plan-Author Revision — Round N` for plan-author rounds) to the anchor's description and calls `mark_task_review_approved` (clean) / `mark_task_review_rejected` (with findings) / `escalate_task` on the anchor.
+
+The parent **fires-and-forgets**: spawn the agent, end the turn cleanly. No claim, no `ScheduleWakeup`, no `Monitor`. The daemon's task-completion notification (P2P signoff message from the agent's session) wakes the parent when the agent terminates. On wake, the parent reads the anchor's terminal state via `get_task` and routes per Step 7.6.
+
+Anchor lifecycle: each anchor closes when its round terminates (verdict captured). Cleanup at loop end (approval, exhaustion, abort, restart) closes any still-open anchors. The planning epic itself stays open until Step 8 expansion handoff completes.
+
+This contract is mode-agnostic. Interactive and delegated share the same fire-and-forget orchestration; the only mode-specific behavior is the user-confirmation gate after a rejected round (Step 7.6).
+
 ### 7.0. Artifact precondition
 
 Before entering Step 7, verify `artifact_path` is still present:
@@ -373,26 +385,37 @@ Read `current_round` from the `planning-round:N` label on the planning epic (def
 
 Surface: `Round {current_round + 1} of {max_rounds}`.
 
-### 7.4. Spawn the adversary
+### 7.4. Create the per-round anchor and spawn the adversary
 
-Mirror the autonomous front-half's prompt shape (`_front_half.py::_adversary_prompt`):
+Create a fresh anchor task scoped to this round, then spawn against it:
 
 ```text
+anchor = create_task(
+    parent_task_id=planning_task_id,
+    task_type="task",
+    category="planning",
+    title=f"Plan-adversary review — round {current_round + 1}",
+    labels=[f"planning-round:{current_round}"],
+)
+set_variable(name="active_anchor_id", value=anchor.id, session_id="#<self>")
+
 run = spawn_agent(
     agent="plan-adversary",
-    task_id=planning_task_id,
+    task_id=anchor.id,                    # NOT planning_task_id
     parent_session_id=<self>,
     prompt=(
         f"Plan artifact: {artifact_path}\n"
         f"Parent task: {plan_parent_ref}\n"
+        f"Planning epic: {planning_task_id}\n"
         f"Display round: {current_round + 1}\n"
+        f"Anchor task (mark verdict on this): {anchor.id}\n"
         f"... (any docs the parent references)"
     ),
 )
 set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 ```
 
-The spawn path auto-injects `assigned_task_id` and auto-claims the task for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here.
+The spawn path auto-injects `assigned_task_id` and auto-claims the anchor for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here. The anchor (not the planning epic) is what the adversary marks at terminal.
 
 ### 7.5. Yield until the adversary wake
 
@@ -410,31 +433,36 @@ early-completion race.
 
 ### 7.6. Interpret the result
 
-On wake/resume, `get_task(planning_task_id)` and branch on status. If raw run
-details are needed for diagnostics, call `get_agent_result(run_id=adversary_run_id)`.
+On wake/resume, read the **anchor's** terminal state (NOT the planning epic):
 
-- **`review_approved`** → go to Step 8.
+```text
+anchor_id = get_variable(name="active_anchor_id", session_id="#<self>")
+anchor = get_task(anchor_id)
+```
+
+The adversary's findings live in `anchor.description` under the heading `## Adversary Findings — Round {current_round + 1}`. If raw run details are needed for diagnostics, call `get_agent_result(run_id=adversary_run_id)`.
+
+After reading the verdict, **close the anchor** so it does not linger. Then branch:
+
+- **`review_approved`** → close the anchor with reason "round approved"; go to Step 8.
 - **`open`** after `mark_task_review_rejected`
-  1. Extract the section `## Adversary Findings — Round {current_round + 1}` from the planning task description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
-  2. If `plan_review_mode == "adversarial"`, present it verbatim to the user.
+  1. Extract `## Adversary Findings — Round {current_round + 1}` from the anchor description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
+  2. Close the anchor with reason "round rejected; findings captured".
   3. If `current_round + 1 >= max_rounds` → go to Step 9.
   4. If `plan_review_mode == "adversarial"`:
-     Re-enter plan mode, revise the plan file with the user, route the revised
-     plan through the real `ExitPlanMode` approval boundary again, then loop
-     back to 7.4.
+     Present the findings verbatim to the user via `ExitPlanMode` or `AskUserQuestion`. End the current turn after presenting; the user's reply triggers the next turn. On the next turn, if the user approved continuing, re-enter plan mode, revise the plan file with the user, route the revised plan through `ExitPlanMode` again, then loop back to 7.4 (which creates the next anchor and spawns the next round).
   5. If `plan_review_mode == "delegated"`:
-     Revise the plan file in place using the adversary findings, run the same
-     verification checklist from Step 5, keep edits scoped to `artifact_path`
-     only, and loop back to 7.4 without re-entering plan mode. Do not interrupt
-     the user for non-terminal review rejections.
+     Revise the plan file in place using the adversary findings, run the same verification checklist from Step 5, keep edits scoped to `artifact_path` only, and loop back to 7.4 (creates next anchor + spawn) without re-entering plan mode. Do not interrupt the user for non-terminal review rejections.
 
-- **`escalated`** with `escalation_reason` starting `needs_requirements:`
-  1. Surface the questions to the user.
-  2. This is terminal for delegated mode and an interrupt for interactive mode.
-  3. Go to Step 9.
+- **`escalated`** with `escalation_reason` starting `needs_requirements:` or `needs_human:`
+  1. Close the anchor with reason "round escalated".
+  2. Surface the escalation reason verbatim to the user.
+  3. This is terminal for delegated mode and an interrupt for interactive mode.
+  4. Go to Step 9.
 
-- **Any other terminal state** → treat as adversary crash. Surface the state,
-  `adversary_run_id`, and any available `get_agent_result` details. Go to Step 9.
+- **Any other terminal state** → treat as adversary crash. Close the anchor with reason "round crashed". Surface the state, `adversary_run_id`, and any available `get_agent_result` details. Go to Step 9.
+
+**Why the anchor pattern**: capturing the verdict on a per-round anchor (rather than directly on the planning epic) keeps the planning epic's lifecycle clean — the epic stays open until Step 8 expansion handoff, regardless of how many adversary rounds run. It also avoids stop-hook collisions: the parent never claims any task; the adversary owns its anchor for the lifetime of its run; the parent reads anchor state on wake and closes it. No long-lived shared task state, no parent-claim/release dance.
 
 **Why only interactive mode re-enters plan mode each round:** the user's native
 approval boundary runs through `ExitPlanMode` / `provide_plan_decision`
@@ -512,6 +540,13 @@ to add for this feature.
 Every exit path from this skill — Step 6 plain-mode exit, Step 8 success, Step 8 failure/Escalate, Step 9 bypass/abort/restart, adversary crash — **must** run the same cleanup:
 
 ```text
+# Close any per-round anchors still open under the planning epic.
+# Each round closes its own anchor on terminal in Step 7.6, but a crash mid-round
+# can leave one orphaned. Sweep here as a safety net.
+open_anchors = list_tasks(parent_task_id=planning_task_id, status="open", limit=200)
+for anchor in open_anchors:
+    close_task(task_id=anchor.id, reason="terminal cleanup: anchor swept")
+
 lock_label = get_variable(name="interactive_lock_label", session_id="#<self>")
 if lock_label:
     remove_label(task_id=plan_parent_ref, label=lock_label)
@@ -525,6 +560,7 @@ for name in (
     "artifact_path",
     "plan_slug",
     "adversary_run_id",
+    "active_anchor_id",
     "expansion_execution_id",
     "current_round",
     "max_rounds",
