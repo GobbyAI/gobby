@@ -79,9 +79,7 @@ def _fixture_lines(name: str) -> list[str]:
 
 
 def test_droid_tool_name_adapter() -> None:
-    assert _droid_tool_name_adapter("gobby___list_mcp_servers") == (
-        "mcp__gobby__list_mcp_servers"
-    )
+    assert _droid_tool_name_adapter("gobby___list_mcp_servers") == ("mcp__gobby__list_mcp_servers")
     assert _droid_tool_name_adapter("mcp__gobby__list") == "mcp__gobby__list"
     assert _droid_tool_name_adapter("Read") == "Read"
 
@@ -161,7 +159,9 @@ async def test_eof_before_result_yields_error_event() -> None:
         await backend.attach_session(session)
         events = [event async for event in session.send_message("hello")]
 
-    assert any(isinstance(event, TextChunk) and "Droid stream ended" in event.content for event in events)
+    assert any(
+        isinstance(event, TextChunk) and "Droid stream ended" in event.content for event in events
+    )
     assert isinstance(events[-1], DoneEvent)
 
 

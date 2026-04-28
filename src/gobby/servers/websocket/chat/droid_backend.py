@@ -189,7 +189,9 @@ class DroidManagedChatSession(GeminiWebChatPermissionsMixin, ManagedChatSessionB
                 return ToolCallEvent(
                     tool_call_id=str(call_id),
                     tool_name=str(normalized.get("tool_name") or tool_name),
-                    server_name=str(normalized.get("mcp_server") or event.data.get("server_name") or "droid"),
+                    server_name=str(
+                        normalized.get("mcp_server") or event.data.get("server_name") or "droid"
+                    ),
                     arguments=arguments,
                 )
             if kind == "tool_result":

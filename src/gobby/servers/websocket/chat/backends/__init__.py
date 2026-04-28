@@ -43,6 +43,7 @@ def __getattr__(name: str) -> object:
         return DroidWebChatBackend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 __all__ = [
     "ClaudeWebChatBackend",
     "CodexManagedChatSession",
