@@ -8,9 +8,7 @@ Multi-strategy context gathering:
 1. Current uncommitted changes (staged + unstaged)
 2. Multi-commit window (last N commits, configurable)
 3. File-based analysis (read files mentioned in criteria)
-
-TODO: Add strategy 4 - codebase grep for test files related to the task.
-      Implementation location: get_validation_context_smart() after Strategy 3.
+4. Related test file analysis (read tests whose paths match task terms)
 """
 
 import logging
@@ -32,6 +30,52 @@ logger = logging.getLogger(__name__)
 # Default number of commits to look back when gathering context
 DEFAULT_COMMIT_WINDOW = 10
 DEFAULT_MAX_CHARS = 50000
+RELATED_TEST_MAX_FILES = 5
+
+_RELATED_TEST_STOPWORDS = frozenset(
+    {
+        "add",
+        "added",
+        "all",
+        "and",
+        "are",
+        "assert",
+        "can",
+        "check",
+        "code",
+        "criteria",
+        "description",
+        "ensure",
+        "file",
+        "files",
+        "fix",
+        "for",
+        "from",
+        "has",
+        "have",
+        "include",
+        "includes",
+        "into",
+        "must",
+        "new",
+        "not",
+        "pass",
+        "passes",
+        "read",
+        "related",
+        "should",
+        "src",
+        "that",
+        "task",
+        "the",
+        "this",
+        "test",
+        "tests",
+        "with",
+        "work",
+        "works",
+    }
+)
 
 
 def run_git_command(
@@ -253,6 +297,85 @@ def find_matching_files(
     return found
 
 
+def _iter_search_terms(text: str) -> list[str]:
+    """Split free-form task text or paths into stable lowercase search terms."""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
+    terms: list[str] = []
+    for token in re.split(r"[^A-Za-z0-9]+", text):
+        term = token.strip().lower()
+        if len(term) < 3 or term.isdigit() or term in _RELATED_TEST_STOPWORDS:
+            continue
+        terms.append(term)
+    return terms
+
+
+def derive_related_test_terms(
+    task_title: str,
+    validation_criteria: str | None = None,
+    task_description: str | None = None,
+    *,
+    max_terms: int = 24,
+) -> list[str]:
+    """Derive bounded search terms for finding tests related to a task."""
+    search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
+    candidates = _iter_search_terms(search_text)
+
+    for pattern in extract_file_patterns_from_text(search_text):
+        candidates.extend(_iter_search_terms(pattern))
+        candidates.extend(_iter_search_terms(Path(pattern).stem))
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in candidates:
+        if term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
+def find_related_test_files(
+    search_terms: list[str],
+    base_dir: str | Path = ".",
+    max_files: int = RELATED_TEST_MAX_FILES,
+) -> list[Path]:
+    """Find test files whose path names match derived task search terms."""
+    if not search_terms or max_files <= 0:
+        return []
+
+    base = Path(base_dir)
+    tests_dir = base / "tests"
+    if not tests_dir.is_dir():
+        return []
+
+    candidates: set[Path] = set()
+    try:
+        candidates.update(path for path in tests_dir.rglob("test_*.py") if path.is_file())
+        candidates.update(path for path in tests_dir.rglob("*_test.py") if path.is_file())
+    except Exception as e:
+        logger.debug(f"Failed to search related test files: {e}")
+        return []
+
+    scored: list[tuple[int, str, Path]] = []
+    for path in sorted(candidates):
+        rel_path = path.relative_to(base).as_posix()
+        rel_text = rel_path.lower()
+        path_terms = set(_iter_search_terms(rel_text))
+        score = 0
+        for term in search_terms:
+            if term in path_terms:
+                score += 3
+            elif term in rel_text:
+                score += 1
+        if score > 0:
+            scored.append((score, rel_path, path))
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [path for _score, _rel_path, path in scored[:max_files]]
+
+
 def read_files_content(
     files: list[Path],
     max_chars: int = DEFAULT_MAX_CHARS,
@@ -305,9 +428,7 @@ def get_validation_context_smart(
     1. Current uncommitted changes (staged + unstaged)
     2. Multi-commit window (last N commits, configurable)
     3. File-based analysis (read files mentioned in criteria)
-
-    TODO: Add strategy 4 - codebase grep for test files related to the task.
-          Implementation location: after Strategy 3 below.
+    4. Related test file analysis (read tests whose paths match task terms)
 
     Args:
         task_title: Task title for context
@@ -322,6 +443,7 @@ def get_validation_context_smart(
     """
     context_parts: list[str] = []
     remaining_chars = max_chars
+    seen_files: set[Path] = set()
 
     # Strategy 1: Current uncommitted changes
     staged = run_git_command(["git", "diff", "--cached"], cwd=cwd)
@@ -364,6 +486,35 @@ def get_validation_context_smart(
             if files:
                 file_content = read_files_content(files, remaining_chars)
                 context_parts.append(f"=== RELEVANT FILES ===\n{file_content}")
+                remaining_chars -= len(file_content)
+                seen_files.update(path.resolve() for path in files)
+
+    # Strategy 4: Related test files from task terms
+    if remaining_chars > 1000:
+        search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
+        related_terms = derive_related_test_terms(
+            task_title,
+            validation_criteria=validation_criteria,
+            task_description=task_description,
+        )
+        if related_terms:
+            related_test_files = [
+                path
+                for path in find_related_test_files(
+                    related_terms,
+                    base_dir=cwd or ".",
+                    max_files=RELATED_TEST_MAX_FILES,
+                )
+                if path.resolve() not in seen_files
+            ]
+            if related_test_files:
+                test_content = read_files_content(related_test_files, remaining_chars)
+                context_parts.append(
+                    "=== RELATED TEST FILES ===\n"
+                    f"Search text: {search_text[:500]}\n"
+                    f"Search terms: {', '.join(related_terms)}\n\n"
+                    f"{test_content}"
+                )
 
     if not context_parts:
         return None

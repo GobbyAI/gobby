@@ -144,6 +144,31 @@ class TestSyncBundledAgents:
         assert len(result["errors"]) == 1
 
     @pytest.mark.unit
+    def test_sync_ignores_deprecated_directory(self, tmp_path: Path) -> None:
+        """Deprecated bundled agents are archival and not active install inputs."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        deprecated_dir = agents_dir / "deprecated"
+        deprecated_dir.mkdir(parents=True)
+        (deprecated_dir / "old-agent.yaml").write_text(
+            "name: old-agent\ndescription: Deprecated agent\nmode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["success"] is True
+        assert result["synced"] == 0
+        assert result["updated"] == 0
+        assert result["skipped"] == 0
+        assert result["errors"] == []
+
+        mgr = LocalWorkflowDefinitionManager(db)
+        rows = mgr.list_all(workflow_type="agent")
+        assert rows == []
+
+    @pytest.mark.unit
     def test_sync_invalid_yaml(self, tmp_path: Path) -> None:
         """Test sync handles invalid YAML gracefully."""
         db = _setup_db(tmp_path)
@@ -204,7 +229,8 @@ class TestSyncBundledAgents:
         assert len(rows) > 0
         names = [r.name for r in rows]
         # Check for agents from the new-format bundled definitions
-        assert any(n in names for n in ("default", "developer", "qa-reviewer"))
+        assert "default" in names
+        assert "qa-reviewer" in names
         assert all(
             n in names
             for n in (
@@ -214,3 +240,6 @@ class TestSyncBundledAgents:
                 "test-architect",
             )
         )
+        assert "conductor" not in names
+        assert "developer" not in names
+        assert "pipeline-worker" not in names

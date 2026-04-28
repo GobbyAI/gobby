@@ -134,8 +134,9 @@ next tick
 ## Retired Templates
 
 The legacy LLM-driven conductor tick and overlapping orchestration pipelines
-are retired. Their bundled templates remain in place as disabled tombstones so
-sync preserves installed DB rows:
+are retired. Their bundled templates live under `deprecated/` folders as
+archival tombstones, outside the active top-level install roots that bundled
+sync reads:
 
 - `orchestrator.yaml`
 - `front-half-orchestrator.yaml`
@@ -143,7 +144,8 @@ sync preserves installed DB rows:
 - `delivery-orchestrator.yaml`
 - `conductor.yaml`
 
-Tombstoned templates should have `enabled: false`, `deprecated: true`, a
+Bundled sync soft-deletes installed rows for these retired definitions. Keep
+the archival YAML disabled with `enabled: false`, `deprecated: true`, a
 `deprecated_reason`, and no active steps.
 
 ## PR And Merge Boundary

@@ -272,9 +272,41 @@ class TestSyncBundledPipelines:
 
         rows = manager.list_all(workflow_type="pipeline")
         names = [row.name for row in rows]
-        assert "orchestrator" in names
-        assert "front-half-orchestrator" in names
-        assert "delivery-orchestrator" in names
+        assert "expand-task" in names
+        assert "spawn-developer" in names
+        assert "spawn-qa" in names
+        assert "orchestrator" not in names
+        assert "front-half-orchestrator" not in names
+        assert "delivery-orchestrator" not in names
+
+    def test_ignores_deprecated_pipeline_directory(self, db: LocalDatabase, tmp_path: Path) -> None:
+        from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+        pip_dir = tmp_path / "pipelines"
+        deprecated_dir = pip_dir / "deprecated"
+        deprecated_dir.mkdir(parents=True)
+        (deprecated_dir / "old.yaml").write_text(
+            """
+name: old-pipeline
+type: pipeline
+description: Deprecated pipeline
+steps: []
+"""
+        )
+
+        with patch(
+            "gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=pip_dir
+        ):
+            result = sync_bundled_pipelines(db)
+
+        assert result["success"] is True
+        assert result["synced"] == 0
+        assert result["updated"] == 0
+        assert result["skipped"] == 0
+        assert result["errors"] == []
+
+        rows = LocalWorkflowDefinitionManager(db).list_all(workflow_type="pipeline")
+        assert [row.name for row in rows] == []
 
     def test_skips_yaml_without_name(self, db: LocalDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_pipelines import sync_bundled_pipelines

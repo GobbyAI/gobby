@@ -53,6 +53,7 @@ The dispatcher has a global active-agent slot cap (`max_active_agents`, default 
 Overflow waits for the next heartbeat.
 
 Retired templates such as `orchestrator.yaml`, `front-half-orchestrator.yaml`,
-`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, and `conductor.yaml` remain in
-place only as `enabled: false` tombstones. PR creation and advanced merge/conflict work
-belong to task #12728.
+`dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, and `conductor.yaml` live under
+`workflows/*/deprecated/` as archival tombstones. Active bundled sync reads only top-level
+YAML and soft-deletes installed rows for retired definitions. PR creation and advanced
+merge/conflict work belong to task #12728.

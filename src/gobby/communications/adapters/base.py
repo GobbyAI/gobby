@@ -85,6 +85,20 @@ class BaseChannelAdapter(ABC):
         """
         raise NotImplementedError(f"{self.channel_type} adapter does not support file attachments")
 
+    async def send_proactive(
+        self,
+        conversation_id: str,
+        content: str,
+        content_type: str = "text",
+    ) -> str | None:
+        """Send a proactive message to an existing platform conversation.
+
+        Default raises NotImplementedError. Override in adapters that support proactive sends.
+        """
+        raise NotImplementedError(
+            f"{self.channel_type} adapter does not support proactive messaging"
+        )
+
     async def poll(self) -> list[CommsMessage]:
         """Poll for new messages (default implementation returns empty list)."""
         return []

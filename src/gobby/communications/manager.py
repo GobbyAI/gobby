@@ -798,11 +798,12 @@ class CommunicationsManager:
         if adapter is None:
             raise ValueError(f"Channel {channel_name!r} not found or not active")
 
-        if not hasattr(adapter, "send_proactive"):
-            raise ValueError(f"Channel {channel_name!r} does not support proactive messaging")
-
-        result: str | None = await adapter.send_proactive(conversation_id, content, content_type)  # type: ignore[attr-defined]
-        return result
+        try:
+            return await adapter.send_proactive(conversation_id, content, content_type)
+        except NotImplementedError as exc:
+            raise ValueError(
+                f"Channel {channel_name!r} does not support proactive messaging"
+            ) from exc
 
     def list_messages(
         self,

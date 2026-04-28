@@ -21,6 +21,8 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PIPELINES_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/pipelines"
 AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
+DEPRECATED_PIPELINES_DIR = PIPELINES_DIR / "deprecated"
+DEPRECATED_AGENTS_DIR = AGENTS_DIR / "deprecated"
 
 RETIRED_PIPELINES = (
     "orchestrator",
@@ -29,7 +31,7 @@ RETIRED_PIPELINES = (
     "dev-orchestrator",
     "delivery-orchestrator",
 )
-RETIRED_AGENTS = ("conductor", "developer")
+RETIRED_AGENTS = ("conductor", "developer", "pipeline-worker")
 
 
 def _load_yaml(path: Path) -> dict[str, object]:
@@ -59,10 +61,12 @@ def test_no_external_conductor_imports_remain() -> None:
 
 @pytest.mark.parametrize("name", RETIRED_PIPELINES)
 def test_retired_pipeline_yaml_is_disabled_tombstone(name: str) -> None:
-    path = PIPELINES_DIR / f"{name}.yaml"
-    assert path.exists(), f"missing tombstone pipeline file: {path}"
+    active_path = PIPELINES_DIR / f"{name}.yaml"
+    deprecated_path = DEPRECATED_PIPELINES_DIR / f"{name}.yaml"
+    assert not active_path.exists(), f"retired pipeline remains active: {active_path}"
+    assert deprecated_path.exists(), f"missing deprecated pipeline file: {deprecated_path}"
 
-    data = _load_yaml(path)
+    data = _load_yaml(deprecated_path)
 
     assert data["name"] == name
     assert data["version"] == "2.1"
@@ -80,10 +84,12 @@ def test_retired_pipeline_yaml_is_disabled_tombstone(name: str) -> None:
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
 def test_retired_agent_yaml_is_disabled_tombstone(name: str) -> None:
-    path = AGENTS_DIR / f"{name}.yaml"
-    assert path.exists(), f"missing tombstone agent file: {path}"
+    active_path = AGENTS_DIR / f"{name}.yaml"
+    deprecated_path = DEPRECATED_AGENTS_DIR / f"{name}.yaml"
+    assert not active_path.exists(), f"retired agent remains active: {active_path}"
+    assert deprecated_path.exists(), f"missing deprecated agent file: {deprecated_path}"
 
-    data = _load_yaml(path)
+    data = _load_yaml(deprecated_path)
 
     assert data["name"] == name
     assert data["enabled"] is False
@@ -96,7 +102,7 @@ def test_retired_agent_yaml_is_disabled_tombstone(name: str) -> None:
     assert body.deprecated_reason == data["deprecated_reason"]
 
 
-def test_tombstoned_pipeline_sync_preserves_installed_row(tmp_path: Path) -> None:
+def test_deprecated_pipeline_sync_soft_deletes_installed_row(tmp_path: Path) -> None:
     db = _make_db(tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
@@ -116,8 +122,9 @@ def test_tombstoned_pipeline_sync_preserves_installed_row(tmp_path: Path) -> Non
     )
 
     pipelines_dir = tmp_path / "pipelines"
-    pipelines_dir.mkdir()
-    (pipelines_dir / "orchestrator.yaml").write_text(
+    deprecated_dir = pipelines_dir / "deprecated"
+    deprecated_dir.mkdir(parents=True)
+    (deprecated_dir / "orchestrator.yaml").write_text(
         """
 name: orchestrator
 type: pipeline
@@ -136,16 +143,19 @@ steps: []
         result = sync_bundled_pipelines(db)
 
     assert result["errors"] == []
-    assert result["orphaned"] == 0
+    assert result["orphaned"] == 1
 
-    row = manager.get_by_name("orchestrator")
+    assert manager.get_by_name("orchestrator") is None
+    row = manager.get_by_name("orchestrator", include_deleted=True)
     assert row is not None
-    assert row.deleted_at is None
+    assert row.deleted_at is not None
     assert row.enabled is True
-    assert json.loads(row.definition_json)["deprecated"] is True
+    assert "deprecated" not in json.loads(row.definition_json)
 
 
-def test_tombstoned_agent_sync_preserves_installed_row_and_metadata(tmp_path: Path) -> None:
+def test_deprecated_agent_sync_soft_deletes_installed_row_without_metadata_update(
+    tmp_path: Path,
+) -> None:
     db = _make_db(tmp_path)
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
@@ -164,8 +174,9 @@ def test_tombstoned_agent_sync_preserves_installed_row_and_metadata(tmp_path: Pa
     )
 
     agents_dir = tmp_path / "agents"
-    agents_dir.mkdir()
-    (agents_dir / "developer.yaml").write_text(
+    deprecated_dir = agents_dir / "deprecated"
+    deprecated_dir.mkdir(parents=True)
+    (deprecated_dir / "developer.yaml").write_text(
         """
 name: developer
 description: "[DEPRECATED] Replaced by frontend-developer and backend-developer."
@@ -179,14 +190,16 @@ deprecated_reason: "Replaced by frontend-developer and backend-developer."
         result = sync_bundled_agents(db)
 
     assert result["errors"] == []
-    assert result["orphaned"] == 0
+    assert result["orphaned"] == 1
 
-    row = manager.get_by_name("developer")
+    assert manager.get_by_name("developer") is None
+    row = manager.get_by_name("developer", include_deleted=True)
     assert row is not None
-    assert row.deleted_at is None
+    assert row.deleted_at is not None
     assert row.enabled is True
     definition = json.loads(row.definition_json)
-    assert definition["deprecated"] is True
-    assert (
-        definition["deprecated_reason"] == "Replaced by frontend-developer and backend-developer."
-    )
+    assert definition == {
+        "name": "developer",
+        "description": "old definition",
+        "enabled": True,
+    }

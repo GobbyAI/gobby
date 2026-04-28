@@ -1245,6 +1245,29 @@ class TestGetValidationContextSmartMerged:
 
     @patch("gobby.tasks.validation.run_git_command")
     @patch("gobby.tasks.validation.get_multi_commit_diff")
+    def test_includes_related_test_files(self, mock_diff, mock_run, tmp_path: Path) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        mock_diff.return_value = None
+
+        tests_dir = tmp_path / "tests" / "tasks"
+        tests_dir.mkdir(parents=True)
+        related_test = tests_dir / "test_task_validation.py"
+        related_test.write_text("def test_validation_context_related_files(): pass\n")
+
+        context = get_validation_context_smart(
+            "Improve task validation context",
+            validation_criteria="Task validation includes related test files",
+            cwd=tmp_path,
+            max_chars=5000,
+        )
+
+        assert context is not None
+        assert "=== RELATED TEST FILES ===" in context
+        assert "test_task_validation.py" in context
+        assert "test_validation_context_related_files" in context
+
+    @patch("gobby.tasks.validation.run_git_command")
+    @patch("gobby.tasks.validation.get_multi_commit_diff")
     def test_returns_none_when_no_context(self, mock_diff, mock_run) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         mock_diff.return_value = None
