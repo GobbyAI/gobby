@@ -1,22 +1,15 @@
 @import "tailwindcss";
 @config "../../../../tailwind.config.ts";
 
+/* Chat-surface aliases for shared design tokens. Actual values live in
+   web/src/styles/index.css; this file only maps legacy chat-specific names
+   (--bg-code, --bg-muted, --border-color, --accent-color) onto the tokens
+   from the global layer so chat CSS keeps compiling. The triplet
+   --text-primary / --text-secondary / --text-muted is defined globally —
+   no re-declaration here (recursive var() falls back to invalid → black). */
 :root {
   --bg-code: var(--bg-primary);
-  --bg-muted: var(--bg-primary);
-  --border-color: var(--bg-secondary);
-  --text-muted: var(--text-muted);
-  --text-secondary: var(--text-muted);
-  --text-primary: var(--text-primary);
-  --accent-color: var(--color-info);
-}
-
-[data-theme="light"] {
-  --bg-code: var(--text-primary);
-  --bg-muted: var(--text-primary);
-  --border-color: var(--text-primary);
-  --text-muted: var(--text-muted);
-  --text-secondary: var(--text-muted);
-  --text-primary: var(--bg-primary);
+  --bg-muted: var(--bg-secondary);
+  --border-color: var(--border);
   --accent-color: var(--color-info);
 }
