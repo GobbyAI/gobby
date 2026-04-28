@@ -9,7 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
-from gobby.cli.installers.droid import install_droid, uninstall_droid
+from gobby.cli.installers.droid import (
+    _MIN_GHOOK_VERSION_FOR_DROID,
+    install_droid,
+    uninstall_droid,
+)
 from gobby.install.shared.hooks import validate_settings
 
 pytestmark = pytest.mark.unit
@@ -211,19 +215,25 @@ def test_install_droid_warns_when_ghook_is_outdated(
     project_path: Path,
     droid_env: Path,
 ) -> None:
-    with patch("gobby.cli.installers.droid.get_ghook_version", return_value="0.99.0", create=True):
+    with patch("gobby.cli.installers.droid.get_ghook_version", return_value="0.0.1"):
         result = install_droid(project_path, mode="global")
 
     assert result["success"] is True
     assert (droid_env / ".factory" / "hooks" / "hooks.json").exists()
-    assert any("ghook" in warning and "upgrade" in warning for warning in result["warnings"])
+    assert any(
+        "ghook 0.0.1 does not support droid yet" in warning
+        and f"ghook >= {_MIN_GHOOK_VERSION_FOR_DROID}" in warning
+        for warning in result["warnings"]
+    )
 
 
 def test_install_droid_does_not_warn_when_ghook_meets_minimum(
     project_path: Path,
     droid_env: Path,
 ) -> None:
-    with patch("gobby.cli.installers.droid.get_ghook_version", return_value="1.0.0", create=True):
+    with patch(
+        "gobby.cli.installers.droid.get_ghook_version", return_value=_MIN_GHOOK_VERSION_FOR_DROID
+    ):
         result = install_droid(project_path, mode="global")
 
     assert result["success"] is True
@@ -236,7 +246,7 @@ def test_install_droid_warns_when_ghook_version_cannot_be_checked(
     droid_env: Path,
     version: str | None,
 ) -> None:
-    with patch("gobby.cli.installers.droid.get_ghook_version", return_value=version, create=True):
+    with patch("gobby.cli.installers.droid.get_ghook_version", return_value=version):
         result = install_droid(project_path, mode="global")
 
     assert result["success"] is True

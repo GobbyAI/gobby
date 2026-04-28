@@ -5,16 +5,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
 from copy import deepcopy
 from pathlib import Path
 from shutil import copy2
-from typing import Any
+from typing import Any, Final
 
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.cli.utils import get_install_dir
+from gobby.utils.deps import get_ghook_version
 
 from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
@@ -26,6 +28,9 @@ from .shared import (
 )
 
 logger = logging.getLogger(__name__)
+
+_MIN_GHOOK_VERSION_FOR_DROID: Final[str] = "0.4.0"
+_SEMVER_TOKEN_RE = re.compile(r"\d+(?:\.\d+){0,2}")
 
 _EMPTY_PROJECT_HOOKS_WARNING = (
     "Project-level hooks config at {path} is empty; it overrides user-level and will silently "
@@ -192,6 +197,50 @@ def _warn_empty_project_hooks(project_path: Path) -> list[str]:
     return warnings
 
 
+def _parse_version_token(version: str) -> tuple[int, int, int] | None:
+    """Parse the first semver-shaped token in a CLI version string."""
+    match = _SEMVER_TOKEN_RE.search(version)
+    if not match:
+        return None
+
+    parts = [int(part) for part in match.group(0).split(".")]
+    parts.extend([0] * (3 - len(parts)))
+    return (parts[0], parts[1], parts[2])
+
+
+def _droid_ghook_version_warning() -> str | None:
+    """Return a non-blocking warning when ghook cannot route Droid hooks yet."""
+    minimum = _parse_version_token(_MIN_GHOOK_VERSION_FOR_DROID)
+    if minimum is None:
+        logger.warning("Invalid Droid ghook minimum version: %s", _MIN_GHOOK_VERSION_FOR_DROID)
+        return None
+
+    installed = get_ghook_version()
+    if installed is None:
+        return (
+            "Could not determine ghook version; droid hooks.json written but runtime routing "
+            f"will fail until ghook >= {_MIN_GHOOK_VERSION_FOR_DROID} is installed. "
+            "Run: gobby update"
+        )
+
+    parsed = _parse_version_token(installed)
+    if parsed is None:
+        return (
+            f"Could not parse ghook version {installed!r}; droid hooks.json written but runtime "
+            f"routing will fail until ghook >= {_MIN_GHOOK_VERSION_FOR_DROID} is installed. "
+            "Run: gobby update"
+        )
+
+    if parsed < minimum:
+        return (
+            f"ghook {installed} does not support droid yet; hooks.json written but runtime "
+            f"routing will fail until ghook >= {_MIN_GHOOK_VERSION_FOR_DROID} is installed. "
+            "Run: gobby update"
+        )
+
+    return None
+
+
 def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
     """Install Gobby integration for Factory Droid hooks and MCP registration."""
     hooks_installed: list[str] = []
@@ -225,8 +274,6 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
         return result
 
     warnings = _warn_empty_project_hooks(project_path)
-    if warnings:
-        result["warnings"] = warnings
 
     try:
         gobby_settings = _load_droid_hooks_template(hooks_dir)
@@ -248,6 +295,14 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
             return result
     else:
         result["already_configured"] = True
+
+    if ghook_warning := _droid_ghook_version_warning():
+        print(ghook_warning, file=sys.stderr)
+        logger.warning(ghook_warning)
+        warnings.append(ghook_warning)
+
+    if warnings:
+        result["warnings"] = warnings
 
     shared = install_shared_content(
         droid_path if mode == "project" else project_path / ".factory", project_path
