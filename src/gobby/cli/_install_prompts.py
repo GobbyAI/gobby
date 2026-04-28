@@ -355,6 +355,12 @@ _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
         "~/.qwen/settings.json",
     ),
     "codex": ("Codex", "~/.codex/hooks.json", ".codex/hooks.json", None),
+    "droid": (
+        "Droid CLI",
+        "~/.factory/hooks/hooks.json",
+        ".factory/hooks/hooks.json",
+        "~/.factory/mcp.json",
+    ),
 }
 
 
@@ -818,6 +824,7 @@ _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
     "gemini": ("Gemini CLI", "hooks from settings"),
     "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),
+    "droid": ("Droid CLI", "hooks from settings"),
 }
 
 

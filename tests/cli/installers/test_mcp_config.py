@@ -59,6 +59,23 @@ class TestConfigureMCPServerJSON:
         assert data["mcpServers"]["gobby"]["command"].endswith("gobby")
         assert data["mcpServers"]["gobby"]["args"] == ["mcp-server"]
 
+    def test_creates_new_file_with_extra_server_fields(self, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.json"
+        result = configure_mcp_server_json(settings, extra_server_fields={"type": "stdio"})
+        assert result["success"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"]["type"] == "stdio"
+        assert data["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+
+    def test_merges_extra_server_fields_into_existing_server(self, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"mcpServers": {"gobby": {"command": "gobby"}}}))
+        result = configure_mcp_server_json(settings, extra_server_fields={"type": "stdio"})
+        assert result["success"] is True
+        assert result["updated"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"] == {"command": "gobby", "type": "stdio"}
+
     def test_adds_to_existing_file(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({"mcpServers": {"other": {"command": "node"}}}))

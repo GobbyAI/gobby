@@ -24,6 +24,11 @@ def _is_codex_cli_installed() -> bool:
     return shutil.which("codex") is not None
 
 
+def _is_droid_cli_installed() -> bool:
+    """Return True if Factory droid CLI is available in PATH."""
+    return shutil.which("droid") is not None
+
+
 def _is_lmstudio_available() -> bool:
     """Check if LM Studio server is running via `lms server status`."""
     if not shutil.which("lms"):

@@ -17,6 +17,7 @@ from gobby.storage.secrets import SecretStore
 from ._detectors import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
+    _is_droid_cli_installed,
     _is_gemini_cli_installed,
     _is_qwen_cli_installed,
 )
@@ -41,6 +42,7 @@ from .install_setup import ensure_daemon_config, run_daemon_setup
 from .installers import (
     install_claude,
     install_codex,
+    install_droid,
     install_embedding,
     install_gemini,
     install_git_hooks,
@@ -49,6 +51,7 @@ from .installers import (
     install_qwen,
     uninstall_claude,
     uninstall_codex,
+    uninstall_droid,
     uninstall_gemini,
     uninstall_neo4j,
     uninstall_qwen,
@@ -64,6 +67,7 @@ _ensure_daemon_config = ensure_daemon_config
 __all__ = [
     "_is_claude_code_installed",
     "_is_codex_cli_installed",
+    "_is_droid_cli_installed",
     "_is_gemini_cli_installed",
     "_is_qwen_cli_installed",
     "_echo_install_details",
@@ -94,6 +98,12 @@ __all__ = [
     "codex_flag",
     is_flag=True,
     help="Configure Codex notify integration (interactive Codex)",
+)
+@click.option(
+    "--droid",
+    "droid_flag",
+    is_flag=True,
+    help="Install Droid CLI hooks only",
 )
 @click.option(
     "--qwen",
@@ -157,6 +167,7 @@ def install(
     claude_flag: bool,
     gemini_flag: bool,
     codex_flag: bool,
+    droid_flag: bool,
     qwen_flag: bool,
     hooks_flag: bool,
     all_flag: bool,
@@ -182,6 +193,7 @@ def install(
         and not gemini_flag
         and not qwen_flag
         and not codex_flag
+        and not droid_flag
         and not hooks_flag
         and not all_flag
     ):
@@ -203,6 +215,8 @@ def install(
             clis_to_install.append("qwen")
         if _is_codex_cli_installed():
             clis_to_install.append("codex")
+        if _is_droid_cli_installed():
+            clis_to_install.append("droid")
 
         # Check for git
         if (project_path / ".git").exists():
@@ -215,8 +229,10 @@ def install(
             click.echo("  - Gemini CLI:  npm install -g @google/gemini-cli")
             click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
             click.echo("  - Codex CLI:   npm install -g @openai/codex")
+            click.echo("  - Droid CLI:   curl -fsSL https://app.factory.ai/cli | sh")
             click.echo(
-                "\nYou can still install manually with --claude, --gemini, --qwen, or --codex flags."
+                "\nYou can still install manually with --claude, --gemini, --qwen, --codex, "
+                "or --droid flags."
             )
             sys.exit(1)
     else:
@@ -228,6 +244,8 @@ def install(
             clis_to_install.append("qwen")
         if codex_flag:
             clis_to_install.append("codex")
+        if droid_flag:
+            clis_to_install.append("droid")
 
     # Get install directory info
     install_dir = get_install_dir()
@@ -277,11 +295,12 @@ def install(
 
     try:
         # Standard CLIs (claude, gemini, qwen, codex)
-        _standard_installers = {
+        _standard_installers: dict[str, Callable[..., dict[str, Any]]] = {
             "claude": install_claude,
             "gemini": install_gemini,
             "qwen": install_qwen,
             "codex": install_codex,
+            "droid": install_droid,
         }
         for cli_name, installer_fn in _standard_installers.items():
             if cli_name in clis_to_install:
@@ -352,6 +371,12 @@ def install(
     help="Uninstall Codex notify integration",
 )
 @click.option(
+    "--droid",
+    "droid_flag",
+    is_flag=True,
+    help="Uninstall Droid CLI hooks only",
+)
+@click.option(
     "--qwen",
     "qwen_flag",
     is_flag=True,
@@ -395,6 +420,7 @@ def uninstall(
     claude_flag: bool,
     gemini_flag: bool,
     codex_flag: bool,
+    droid_flag: bool,
     qwen_flag: bool,
     all_flag: bool,
     neo4j_flag: bool,
@@ -416,6 +442,7 @@ def uninstall(
         and not gemini_flag
         and not qwen_flag
         and not codex_flag
+        and not droid_flag
         and not all_flag
         and not neo4j_flag
     ):
@@ -430,11 +457,13 @@ def uninstall(
             gemini_settings = project_path / ".gemini" / "settings.json"
             qwen_settings = project_path / ".qwen" / "settings.json"
             codex_hooks = project_path / ".codex" / "hooks.json"
+            droid_hooks = project_path / ".factory" / "hooks" / "hooks.json"
         else:
             claude_settings = Path.home() / ".claude" / "settings.json"
             gemini_settings = Path.home() / ".gemini" / "settings.json"
             qwen_settings = Path.home() / ".qwen" / "settings.json"
             codex_hooks = Path.home() / ".codex" / "hooks.json"
+            droid_hooks = Path.home() / ".factory" / "hooks" / "hooks.json"
 
         if claude_settings.exists():
             clis_to_uninstall.append("claude")
@@ -444,6 +473,8 @@ def uninstall(
             clis_to_uninstall.append("qwen")
         if codex_hooks.exists():
             clis_to_uninstall.append("codex")
+        if droid_hooks.exists():
+            clis_to_uninstall.append("droid")
 
         if not clis_to_uninstall:
             click.echo("No Gobby hooks found to uninstall.")
@@ -452,11 +483,13 @@ def uninstall(
                 click.echo(f"         {project_path / '.gemini'}")
                 click.echo(f"         {project_path / '.qwen'}")
                 click.echo(f"         {project_path / '.codex'}")
+                click.echo(f"         {project_path / '.factory'}")
             else:
                 click.echo(f"\nChecked: {Path.home() / '.claude'}")
                 click.echo(f"         {Path.home() / '.gemini'}")
                 click.echo(f"         {Path.home() / '.qwen'}")
                 click.echo(f"         {Path.home() / '.codex'}")
+                click.echo(f"         {Path.home() / '.factory'}")
             sys.exit(0)
     else:
         if claude_flag:
@@ -467,6 +500,8 @@ def uninstall(
             clis_to_uninstall.append("qwen")
         if codex_flag:
             clis_to_uninstall.append("codex")
+        if droid_flag:
+            clis_to_uninstall.append("droid")
 
     click.echo("=" * 60)
     click.echo("  Gobby Hooks Uninstallation")
@@ -490,11 +525,12 @@ def uninstall(
         "gemini": uninstall_gemini,
         "qwen": uninstall_qwen,
         "codex": uninstall_codex,
+        "droid": uninstall_droid,
     }
     for cli_name, uninstaller_fn in _standard_uninstallers.items():
         if cli_name in clis_to_uninstall:
             uninstall_kwargs: dict[str, Any] = {}
-            if cli_name == "qwen":
+            if cli_name in {"qwen", "droid"}:
                 uninstall_kwargs["mode"] = "project" if project_flag else "global"
             _run_standard_cli_uninstall(
                 cli_name,

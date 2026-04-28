@@ -7,6 +7,7 @@ using the strangler fig pattern for incremental migration.
 
 from .claude import install_claude, uninstall_claude
 from .codex import install_codex, install_codex_notify, uninstall_codex, uninstall_codex_notify
+from .droid import install_droid, uninstall_droid
 from .embedding import install_embedding
 from .gemini import install_gemini, uninstall_gemini
 from .git_hooks import install_git_hooks
@@ -38,6 +39,9 @@ __all__ = [
     # Qwen
     "install_qwen",
     "uninstall_qwen",
+    # Droid
+    "install_droid",
+    "uninstall_droid",
     # Codex
     "install_codex",
     "uninstall_codex",
