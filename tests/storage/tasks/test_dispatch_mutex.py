@@ -115,8 +115,15 @@ def test_sweep_expired_removes_only_stale_leases(temp_db, sample_project) -> Non
     manager = _manager_class()(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
 
-    manager.acquire_mutex(stale.id, holder="old", kind="field", ttl_seconds=5, now=now)
-    manager.acquire_mutex(fresh.id, holder="new", kind="field", ttl_seconds=60, now=now)
+    manager.acquire_mutex(stale.id, holder="old", kind="field", ttl_seconds=5, now=now, run_id=None)
+    manager.acquire_mutex(
+        fresh.id,
+        holder="new",
+        kind="field",
+        ttl_seconds=60,
+        now=now,
+        run_id=None,
+    )
 
     assert manager.sweep_expired(now=now + timedelta(seconds=10)) == 1
     assert manager.get_mutex(stale.id) is None

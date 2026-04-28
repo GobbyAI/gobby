@@ -41,7 +41,7 @@ function PaginationFooter({
   onOffsetChange,
 }: PaginationFooterProps) {
   if (total <= 0) return null
-  const start = total === 0 ? 0 : offset + 1
+  const start = offset + 1
   const end = Math.min(offset + limit, total)
   const hasPrev = offset > 0
   const hasNext = end < total

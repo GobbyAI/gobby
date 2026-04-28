@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { looksLikeSystemBootstrapText, mapRenderedMessageToChatMessage, normalizeChatRole } from '../chatMessageMapping'
+import {
+  looksLikeSystemBootstrapText,
+  mapRenderedMessageToChatMessage,
+  normalizeChatRole,
+} from '../chatMessageMapping'
 
 describe('chatMessageMapping', () => {
   it('detects Codex bootstrap text as system instructions', () => {
@@ -18,6 +22,24 @@ Stay concise and direct.`
 
   it('does not reclassify ordinary user text', () => {
     expect(normalizeChatRole('user', 'Please read AGENTS.md and summarize it.')).toBe('user')
+  })
+
+  it('does not reclassify ordinary heading-heavy markdown', () => {
+    const content = [
+      '# Release Notes',
+      '',
+      '## Platform Context',
+      'Product-facing notes.',
+      '',
+      '## Capabilities',
+      'Filtering and sorting.',
+      '',
+      '## Interaction Style',
+      'Compact controls.',
+    ].join('\n')
+
+    expect(looksLikeSystemBootstrapText(content)).toBe(false)
+    expect(normalizeChatRole('user', content)).toBe('user')
   })
 
   it('flattens tool chain blocks without dropping earlier entries', () => {

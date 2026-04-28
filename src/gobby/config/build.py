@@ -292,7 +292,13 @@ def _resolve_auto_profile_name(
 
 def _looks_like_plan_file(input_ref: str) -> bool:
     path = Path(input_ref)
-    return path.suffix == ".md" and ".gobby" in path.parts and "plans" in path.parts
+    if path.suffix != ".md":
+        return False
+    parts = path.parts
+    try:
+        return parts.index(".gobby") < parts.index("plans")
+    except ValueError:
+        return False
 
 
 def _copy_profile(profile: BuildProfile) -> BuildProfile:

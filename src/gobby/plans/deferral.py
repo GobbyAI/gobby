@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from gobby.plans.coverage import _artifact_referenced
+from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans.parser import Deferral
 
 type DeferralStatus = Literal[
@@ -71,7 +71,7 @@ def validate_deferral(
 
     validation_criteria = _task_validation_criteria(task)
     for item in deferral.original_acceptance_items:
-        if not _artifact_referenced(item, validation_criteria):
+        if not artifact_referenced(item, validation_criteria):
             return _result(
                 deferral,
                 section_id,
@@ -166,7 +166,7 @@ def _has_valid_cited_parent(
         if not parent_ref or parent_ref in dependency_closure:
             continue
         parent_task = task_store.get_task(parent_ref)
-        if parent_task is None or _task_status(parent_task) == "closed":
+        if parent_task is None or _task_status(parent_task) not in _OPEN_STATUSES:
             continue
         if out_of_scope_label in task_store.get_task_labels(parent_ref):
             return True

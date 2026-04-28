@@ -242,8 +242,12 @@ async def _validate_target_branch(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout_bytes, _ = await proc.communicate()
-    if proc.returncode != 0 or stdout_bytes.decode().strip():
+    stdout_bytes, stderr_bytes = await proc.communicate()
+    if proc.returncode != 0:
+        stderr = stderr_bytes.decode().strip()
+        detail = f": {stderr}" if stderr else ""
+        raise ValueError(f"failed to inspect git branches for {repo_path}{detail}")
+    if stdout_bytes.decode().strip():
         return
 
     list_proc = await asyncio.create_subprocess_exec(

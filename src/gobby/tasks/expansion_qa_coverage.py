@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 CoverageEvaluator = Callable[..., Any]
 ManifestWriter = Callable[..., Path | str | None]
+_SANITIZED_COMPONENT_MAX_BYTES = 64
+_SANITIZED_COMPONENT_HASH_CHARS = 12
 
 
 class ExpansionQaCoverageError(RuntimeError):
@@ -43,7 +45,11 @@ def run_expansion_qa_coverage(
     evaluator: CoverageEvaluator | None = None,
     manifest_writer: ManifestWriter | None = None,
 ) -> dict[str, Any]:
-    """Run A4 coverage for an expansion run and persist QA artifacts."""
+    """Run A4 coverage for an expansion run and persist QA artifacts.
+
+    This integration is intentionally synchronous and performs blocking file I/O.
+    Call it from sync tool paths or explicitly offload it from async code.
+    """
     if task_tree != "db":
         return {"ok": False, "error": "unsupported_task_tree", "task_tree": task_tree}
 
@@ -182,8 +188,15 @@ def _resolve_root_task(
 ) -> Task:
     try:
         return task_manager.get_task(root_task_ref, project_id)
-    except ValueError:
-        return task_manager.get_task(run.parent_task_id)
+    except ValueError as root_error:
+        try:
+            return task_manager.get_task(run.parent_task_id)
+        except ValueError as parent_error:
+            raise ValueError(
+                "Unable to resolve expansion QA root task by "
+                f"root_task_ref={root_task_ref!r} or parent_task_id={run.parent_task_id!r}: "
+                f"{root_error}; {parent_error}"
+            ) from parent_error
 
 
 def _resolve_path(repo_root: Path, path_value: str) -> Path:
@@ -285,7 +298,31 @@ def _sanitize(value: str, *, kind: str) -> str:
     cleaned = cleaned.strip("-._")
     if not cleaned:
         raise ExpansionQaCoverageError(f"{kind} sanitizes to an empty path component")
+    cleaned = _truncate_sanitized_component(cleaned)
+    if not cleaned:
+        raise ExpansionQaCoverageError(f"{kind} sanitizes to an empty path component")
     return cleaned
+
+
+def _truncate_sanitized_component(value: str) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= _SANITIZED_COMPONENT_MAX_BYTES:
+        return value
+
+    digest = hashlib.sha256(encoded).hexdigest()[:_SANITIZED_COMPONENT_HASH_CHARS]
+    suffix = f"-{digest}"
+    budget = _SANITIZED_COMPONENT_MAX_BYTES - len(suffix.encode("utf-8"))
+    prefix_chars: list[str] = []
+    used = 0
+    for char in value:
+        char_size = len(char.encode("utf-8"))
+        if used + char_size > budget:
+            break
+        prefix_chars.append(char)
+        used += char_size
+
+    prefix = "".join(prefix_chars).rstrip("-._")
+    return f"{prefix}{suffix}" if prefix else digest
 
 
 def _write_manifest(

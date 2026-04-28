@@ -82,6 +82,7 @@ def test_matrix_file_rejects_project_id(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.slow
 def test_mypy_overload_rejects_db_without_scope(tmp_path: Path) -> None:
     pytest.importorskip("mypy")
     fixture = tmp_path / "fixture.py"

@@ -1,4 +1,4 @@
-"""Red tests for the build_task MCP tool contract."""
+"""Unit tests for the build_task MCP tool contract."""
 
 from __future__ import annotations
 

@@ -94,4 +94,22 @@ describe('protocolContent', () => {
     expect(segment).toEqual({ type: 'text', content })
     expect(hasProtocolToolContent(content)).toBe(false)
   })
+
+  it('keeps ordinary markdown headings visible', () => {
+    const content = [
+      '# Release Notes',
+      '',
+      '## Platform Context',
+      'A normal product update.',
+      '',
+      '## Capabilities',
+      'Users can filter entries.',
+      '',
+      '## Interaction Style',
+      'The UI stays compact.',
+    ].join('\n')
+
+    expect(splitProtocolContent(content, 'ordinary')).toEqual([{ type: 'text', content }])
+    expect(hasProtocolToolContent(content)).toBe(false)
+  })
 })

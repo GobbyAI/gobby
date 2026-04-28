@@ -9,8 +9,9 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-PLAN_REVIEW = Path("src/gobby/install/shared/skills/plan-review/SKILL.md")
-ADVERSARY = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PLAN_REVIEW = PROJECT_ROOT / "src/gobby/install/shared/skills/plan-review/SKILL.md"
+ADVERSARY = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
 
 MALFORMED_CASES = [
     (

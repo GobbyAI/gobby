@@ -299,7 +299,7 @@ describe('ToolCallCards rendering', () => {
     expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-y-auto')
     expect((jsonBlock as HTMLElement).querySelector('code')).not.toBeNull()
     expect((jsonBlock as HTMLElement).querySelector('span[style]')).not.toBeNull()
-    expect((jsonBlock as HTMLElement).firstElementChild).toHaveStyle({
+    expect(screen.getByTestId('toolcall-json')).toHaveStyle({
       overflowY: 'auto',
       overflowX: 'hidden',
     })

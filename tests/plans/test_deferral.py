@@ -189,6 +189,24 @@ def test_validate_cited_parent_without_out_of_scope_label_rejected() -> None:
     assert result.status == "missing_dependency_or_cited_parent"
 
 
+def test_validate_cited_parent_non_open_status_rejected() -> None:
+    store = FakeStore(
+        tasks={
+            DEFERRED_TASK_REF: _task(),
+            "#parent": _task(status="blocked", criteria="Parent task"),
+        },
+        labels={
+            DEFERRED_TASK_REF: [PROVENANCE_LABEL, "cited-parent:#parent"],
+            "#parent": [f"out-of-scope-for:{RECOVERY_EPIC_REF}"],
+        },
+        dependencies={RECOVERY_EPIC_REF: []},
+    )
+
+    result = _validate(_deferral(), store)
+
+    assert result.status == "missing_dependency_or_cited_parent"
+
+
 def test_validate_cited_parent_inside_dependency_closure_rejected() -> None:
     store = FakeStore(
         tasks={

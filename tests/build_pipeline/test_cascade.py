@@ -1,23 +1,20 @@
-"""Red tests for build-time cascade behavior."""
+"""Tests for build-time cascade behavior."""
 
 from __future__ import annotations
 
 import pytest
 
+from gobby.build.service import BuildOptions, BuildResult, build
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
-async def _build(input_ref: str, opts: object, db: object, project_id: str) -> object:
-    from gobby.build.service import build
-
+async def _build(input_ref: str, opts: BuildOptions, db: object, project_id: str) -> BuildResult:
     return await build(input_ref, opts, db=db, project_id=project_id)
 
 
-def _options(**overrides: object) -> object:
-    from gobby.build.service import BuildOptions
-
+def _options(**overrides: object) -> BuildOptions:
     values = {
         "profile": "full-yolo",
         "skip_stages": ["test_arch", "qa"],

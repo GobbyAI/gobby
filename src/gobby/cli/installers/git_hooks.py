@@ -265,20 +265,23 @@ def _cleanup_legacy_import_hooks(hooks_dir: Path, result: dict[str, Any]) -> Non
         if not hook_path.exists():
             continue
 
-        content = hook_path.read_text()
-        new_content, removed = _remove_legacy_import_section(content)
-        if not removed:
+        try:
+            content = hook_path.read_text()
+            new_content, removed = _remove_legacy_import_section(content)
+            if not removed:
+                continue
+
+            backup_path = _backup_hook(hook_path, hooks_dir)
+            if new_content.strip():
+                hook_path.write_text(new_content)
+            else:
+                hook_path.unlink()
+        except Exception as exc:
+            logger.error("Failed to clean up legacy Gobby import hook %s: %s", hook_name, exc)
             continue
 
-        backup_path = _backup_hook(hook_path, hooks_dir)
         if backup_path:
             result["backups"].append(backup_path)
-
-        if new_content.strip():
-            hook_path.write_text(new_content)
-        else:
-            hook_path.unlink()
-
         result["removed_legacy_imports"].append(hook_name)
         logger.info(f"Removed legacy Gobby JSONL import hook from {hook_name}")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess  # nosec B404 - evidence resolution shells out to local git.
 from dataclasses import asdict, dataclass
 from functools import cached_property
@@ -36,6 +37,8 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.commits import get_task_diff
 
 from .plan_snapshots import grandfathered_refresh_command, legacy_classification_refresh_command
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -203,7 +206,15 @@ class _CliEvidenceContext:
             capture_output=True,
             text=True,
         )
-        return result.stdout if result.returncode == 0 else ""
+        if result.returncode != 0:
+            logger.warning(
+                "git diff failed for range %s with exit code %s: %s",
+                range_,
+                result.returncode,
+                result.stderr.strip(),
+            )
+            return ""
+        return result.stdout
 
     def _resolve_task_id(self, task_ref: str) -> str:
         if self.project_id is None:

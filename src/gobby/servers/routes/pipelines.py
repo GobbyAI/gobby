@@ -126,13 +126,8 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             limit=limit,
             offset=offset,
         )
-        total = execution_manager.count_executions(
+        total, status_summary = execution_manager.execution_metrics(
             status=status_filter,
-            pipeline_name=pipeline_name,
-            session_id=session_id,
-            parent_execution_id=parent_execution_id,
-        )
-        status_summary = execution_manager.status_summary_for_executions(
             pipeline_name=pipeline_name,
             session_id=session_id,
             parent_execution_id=parent_execution_id,

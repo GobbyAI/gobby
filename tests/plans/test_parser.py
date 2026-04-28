@@ -432,6 +432,26 @@ def test_fenced_headings_are_masked(tmp_path: Path) -> None:
     assert len(document.sections[0].acceptance_items) == 1
 
 
+def test_fenced_plan_id_is_masked(tmp_path: Path) -> None:
+    plan = _write_plan(
+        tmp_path,
+        """
+        ```markdown
+        **Plan ID:** example-plan
+        ```
+
+        ## A1
+        `kind: deliverable`
+        **Acceptance:**
+        - A1.1 \u2014 real item. file: a.py.
+        """,
+    )
+
+    document = parse_plan(plan)
+
+    assert document.plan_id is None
+
+
 def test_fenced_acceptance_bullets_are_masked(tmp_path: Path) -> None:
     plan = _write_plan(
         tmp_path,

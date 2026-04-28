@@ -210,8 +210,9 @@ def _agent_selection_fields(
     if category not in AUTOMATED_LEAF_CATEGORIES:
         return None, None, description
 
+    available = _available_agent_names(agent_definitions)
     assigned_agent = task_item.get("assigned_agent")
-    if assigned_agent and str(assigned_agent) in _available_agent_names(agent_definitions):
+    if assigned_agent and str(assigned_agent) in available:
         return (
             str(assigned_agent),
             _additional_skills(task_item.get("additional_skills")),
@@ -219,7 +220,7 @@ def _agent_selection_fields(
         )
 
     selected_agent = _select_agent_from_registry(task_item, agent_definitions)
-    if selected_agent:
+    if selected_agent and selected_agent in available:
         return selected_agent, _additional_skills(task_item.get("additional_skills")), description
 
     return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)

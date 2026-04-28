@@ -19,7 +19,7 @@ def _prepare_manager_for_before_tool(manager: HookManager) -> None:
     )
     manager._session_lookup.resolve.return_value = None
     manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
-    manager._enricher.enrich = MagicMock()
+    manager._enricher.enrich = MagicMock(return_value=HookResponse(decision="allow"))
 
 
 def _assert_no_retry_block(result: dict) -> None:

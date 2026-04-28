@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 
@@ -43,7 +44,7 @@ def test_close_task_skips_verify_when_no_companion(temp_db, tmp_path: Path) -> N
     verify.assert_not_called()
 
 
-def _create_task(temp_db, tmp_path: Path) -> Task:
+def _create_task(temp_db: LocalDatabase, tmp_path: Path) -> Task:
     repo = tmp_path / "repo"
     repo.mkdir()
     project = LocalProjectManager(temp_db).create(name="ledger-gate", repo_path=str(repo))

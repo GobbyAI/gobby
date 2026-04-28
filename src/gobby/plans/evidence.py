@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess  # nosec B404 - resolver shells out to local git.
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -238,7 +239,10 @@ def _resolve_coverage_matrix(path_ref: str, *, ctx: EvidenceContextProtocol) -> 
     path = Path(path_ref)
     if not path.is_absolute():
         path = ctx.repo_root / path
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise InvalidEvidenceError(f"Invalid coverage matrix {path_ref}: {exc}") from exc
     rows_data = _manifest_rows(raw)
     evidence_rows: list[EvidenceRow] = []
     for index, row_data in enumerate(rows_data):
@@ -343,7 +347,7 @@ def _parse_diff_files(diff: str) -> tuple[str, ...]:
     return _dedupe(touched)
 
 
-def _dedupe(values: Any) -> tuple[str, ...]:
+def _dedupe(values: Iterable[str]) -> tuple[str, ...]:
     seen: set[str] = set()
     result: list[str] = []
     for value in values:

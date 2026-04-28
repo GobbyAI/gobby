@@ -42,7 +42,7 @@ vi.mock('recharts', () => ({
     formatter,
   }: {
     formatter: (
-      value: number,
+      value: unknown,
       name: string,
       item: { payload: { tokens_spent: number; tokens_saved: number } },
     ) => [string, string]

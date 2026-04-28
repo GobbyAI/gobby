@@ -651,11 +651,11 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     # 1a-pre. Normalize triple-underscore MCP prefix (Droid CLI) to canonical
     # double-underscore form. Droid sends <server>___<tool>; canonical is
-    # mcp__<server>__<tool>. Server names never contain underscores, so the
-    # first triple-underscore after a bare identifier delimits server/tool.
+    # mcp__<server>__<tool>. The triple separator is unambiguous even when
+    # server names contain underscores.
     if not tool_name.startswith("mcp__") and "___" in tool_name:
         server, _, tool = tool_name.partition("___")
-        if server and tool and "_" not in server:
+        if server and tool:
             canonical = f"mcp__{server}__{tool}"
             data["tool_name"] = canonical
             tool_name = canonical

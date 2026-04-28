@@ -7,12 +7,12 @@ event mapping, and response-shape policy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from gobby.hooks.events import HookEventType
 
 
-class DroidDecisionStyle(str, Enum):
+class DroidDecisionStyle(StrEnum):
     """How a Droid hook event expresses response control."""
 
     TOP_LEVEL_BLOCK = "top_level_block"

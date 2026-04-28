@@ -209,11 +209,13 @@ def test_grandfathered_snapshot_matches_live_db_when_available() -> None:
 
 
 def test_no_unauthorized_grandfathered_additions() -> None:
+    diff_base = _grandfathered_diff_base()
     result = subprocess.run(
         [
             "git",
             "diff",
             "--unified=0",
+            diff_base,
             "HEAD",
             "--",
             str(GRANDFATHERED_PATH.relative_to(PROJECT_ROOT)),
@@ -237,6 +239,43 @@ def test_no_unauthorized_grandfathered_additions() -> None:
     assert not unauthorized, "new .grandfathered entries missing remove-by: " + ", ".join(
         unauthorized
     )
+
+
+def _grandfathered_diff_base() -> str:
+    candidates: list[str] = []
+    base_sha = os.environ.get("GITHUB_BASE_SHA")
+    if base_sha:
+        candidates.append(base_sha)
+    base_ref = os.environ.get("GITHUB_BASE_REF")
+    if base_ref:
+        candidates.extend((f"origin/{base_ref}", base_ref))
+    candidates.extend(("origin/main", "origin/master"))
+
+    for candidate in candidates:
+        if not _git_ref_exists(candidate):
+            continue
+        merge_base = subprocess.run(
+            ["git", "merge-base", candidate, "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if merge_base.returncode == 0 and merge_base.stdout.strip():
+            return merge_base.stdout.strip()
+        return candidate
+    return "HEAD"
+
+
+def _git_ref_exists(ref: str) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", ref],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def test_every_legacy_entry_has_classification_row() -> None:

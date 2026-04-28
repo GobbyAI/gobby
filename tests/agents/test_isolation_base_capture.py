@@ -22,7 +22,11 @@ async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path:
     )
     handler, worktree_path = _worktree_handler(temp_db, tmp_path)
 
-    await _prepare_with_git_head(handler, _config(task.id, sample_project["id"], tmp_path))
+    await _prepare_with_git_head(
+        handler,
+        _config(task.id, sample_project["id"], tmp_path),
+        expected_git_cwd=worktree_path,
+    )
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.worktree_path == worktree_path
@@ -38,7 +42,11 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
     )
     handler, clone_path = _clone_handler(temp_db, tmp_path)
 
-    await _prepare_with_git_head(handler, _config(task.id, sample_project["id"], tmp_path))
+    await _prepare_with_git_head(
+        handler,
+        _config(task.id, sample_project["id"], tmp_path),
+        expected_git_cwd=clone_path,
+    )
 
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.clone_path == clone_path
@@ -73,7 +81,12 @@ async def test_base_captured_before_first_agent_run(
         await handler.prepare_environment(_config(task.id, sample_project["id"], tmp_path))
 
 
-async def _prepare_with_git_head(handler, config: SpawnConfig) -> None:
+async def _prepare_with_git_head(
+    handler,
+    config: SpawnConfig,
+    *,
+    expected_git_cwd: str,
+) -> None:
     with (
         patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
         patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
@@ -82,7 +95,7 @@ async def _prepare_with_git_head(handler, config: SpawnConfig) -> None:
         await handler.prepare_environment(config)
 
     run.assert_called_once()
-    assert run.call_args.args[0][-2:] == ["rev-parse", "HEAD"]
+    assert run.call_args.args[0] == ["git", "-C", expected_git_cwd, "rev-parse", "HEAD"]
 
 
 def _worktree_handler(temp_db, tmp_path: Path) -> tuple[WorktreeIsolationHandler, str]:

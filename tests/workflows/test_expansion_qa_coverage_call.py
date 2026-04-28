@@ -10,7 +10,8 @@ from tests.workflows.expansion_qa_helpers import call_args, covered_report, make
 
 pytestmark = pytest.mark.unit
 
-AGENT_PATH = Path("src/gobby/install/shared/workflows/agents/expansion-qa.yaml")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+AGENT_PATH = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/expansion-qa.yaml"
 
 
 @pytest.mark.asyncio
@@ -54,3 +55,11 @@ def test_expansion_qa_yaml_wires_coverage_gate() -> None:
     assert "--project-id <project_id>" in instructions
     assert "--task-tree db" in instructions
     assert any(hook["tool"] == "run_expansion_qa_coverage" for hook in step["on_mcp_success"])
+
+
+def test_manifest_path_components_are_capped() -> None:
+    sanitized = expansion_qa_coverage._sanitize("x" * 90, kind="plan_id")
+
+    assert len(sanitized.encode("utf-8")) <= 64
+    assert sanitized.startswith("x")
+    assert "-" in sanitized

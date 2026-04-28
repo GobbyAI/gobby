@@ -85,8 +85,7 @@ class TestListExecutions:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             em = MockEM.return_value
             em.list_executions.return_value = []
-            em.count_executions.return_value = 0
-            em.status_summary_for_executions.return_value = {}
+            em.execution_metrics.return_value = (0, {})
             em.get_steps_for_executions.return_value = {}
 
             mock_server.services.database.fetchall.return_value = []
@@ -137,8 +136,7 @@ class TestListExecutions:
 
             em = MockEM.return_value
             em.list_executions.return_value = [mock_exec]
-            em.count_executions.return_value = 7
-            em.status_summary_for_executions.return_value = {"completed": 7}
+            em.execution_metrics.return_value = (7, {"completed": 7})
             em.get_steps_for_executions.return_value = {}
 
             mock_server.services.database.fetchall.return_value = []
@@ -158,8 +156,7 @@ class TestListExecutions:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             em = MockEM.return_value
             em.list_executions.return_value = []
-            em.count_executions.return_value = 3
-            em.status_summary_for_executions.return_value = {"running": 3}
+            em.execution_metrics.return_value = (3, {"running": 3})
             em.get_steps_for_executions.return_value = {}
 
             mock_server.services.database.fetchall.return_value = []
@@ -168,9 +165,8 @@ class TestListExecutions:
             assert response.status_code == 200
             data = response.json()
             assert data["total"] == 3
-            # count_executions called with the status filter applied
-            count_call = em.count_executions.call_args
-            assert count_call.kwargs["status"] == ExecutionStatus.RUNNING
+            metrics_call = em.execution_metrics.call_args
+            assert metrics_call.kwargs["status"] == ExecutionStatus.RUNNING
 
 
 # ═══════════════════════════════════════════════════════════════════════

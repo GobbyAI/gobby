@@ -15,6 +15,8 @@ _RETIRED_PIPELINES = (
     "delivery-orchestrator",
 )
 _RETIRED_AGENTS = ("conductor", "developer", "pipeline-worker")
+_LOCAL_BACKFILL_PROVIDER_NAMES = ("lmstudio", "ollama", "llamacpp", "local")
+_LOCAL_BACKFILL_MODEL_PATTERNS = ("%gpt-oss%",)
 
 
 def _disable_retired_workflow_definitions(db: LocalDatabase) -> None:
@@ -117,7 +119,7 @@ def _add_lifecycle_dispatch_schema(db: LocalDatabase) -> None:
             lease_holder TEXT,
             run_id TEXT,
             action_kind TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
     )
@@ -141,7 +143,7 @@ def _add_lifecycle_dispatch_schema(db: LocalDatabase) -> None:
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
             pr_url TEXT,
             merge_commit_sha TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
                 AND (clone_path IS NULL) = (clone_id IS NULL)
@@ -159,7 +161,7 @@ def _add_lifecycle_dispatch_schema(db: LocalDatabase) -> None:
             to_state TEXT NOT NULL,
             reason TEXT NOT NULL,
             by_actor TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
     )
@@ -181,28 +183,39 @@ def _add_is_local_flags(db: LocalDatabase) -> None:
     if "is_local" not in session_columns:
         db.execute("ALTER TABLE sessions ADD COLUMN is_local INTEGER NOT NULL DEFAULT 0")
 
+    # Keep this heuristic conservative: it only backfills providers/models that
+    # historical Gobby rows used for local runtimes.
+    agent_predicate, agent_params = _local_backfill_predicate("provider", "model")
     db.execute(
-        """
+        f"""
         UPDATE agent_runs
         SET is_local = 1
         WHERE is_local = 0
-          AND (
-            lower(COALESCE(provider, '')) IN ('lmstudio', 'ollama', 'llamacpp', 'local')
-            OR lower(COALESCE(model, '')) LIKE '%gpt-oss%'
-          )
-        """
+          AND {agent_predicate}
+        """,  # nosec B608 - predicate uses static column names and placeholders.
+        tuple(agent_params),
     )
+    session_predicate, session_params = _local_backfill_predicate("source", "model")
     db.execute(
-        """
+        f"""
         UPDATE sessions
         SET is_local = 1
         WHERE is_local = 0
-          AND (
-            lower(COALESCE(source, '')) IN ('lmstudio', 'ollama', 'llamacpp', 'local')
-            OR lower(COALESCE(model, '')) LIKE '%gpt-oss%'
-          )
-        """
+          AND {session_predicate}
+        """,  # nosec B608 - predicate uses static column names and placeholders.
+        tuple(session_params),
     )
+
+
+def _local_backfill_predicate(provider_column: str, model_column: str) -> tuple[str, list[str]]:
+    provider_placeholders = ", ".join("?" for _ in _LOCAL_BACKFILL_PROVIDER_NAMES)
+    model_clauses = " OR ".join(
+        f"lower(COALESCE({model_column}, '')) LIKE ?" for _ in _LOCAL_BACKFILL_MODEL_PATTERNS
+    )
+    predicate = (
+        f"(lower(COALESCE({provider_column}, '')) IN ({provider_placeholders}) OR {model_clauses})"
+    )
+    return predicate, [*_LOCAL_BACKFILL_PROVIDER_NAMES, *_LOCAL_BACKFILL_MODEL_PATTERNS]
 
 
 # Historical SQLite migrations through v219 are folded into baseline_schema.sql.

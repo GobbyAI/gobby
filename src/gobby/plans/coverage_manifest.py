@@ -259,7 +259,7 @@ def _header_payload(header: object) -> dict[str, object]:
         "generated_at": _attr(header, "generated_at"),
         "task_tree_source": _value(_attr(header, "task_tree_source")),
         "task_tree_source_hash": _attr(header, "task_tree_source_hash"),
-        "evidence_summary": list(_iter_attr(header, "evidence_summary")),
+        "evidence_summary": _attr(header, "evidence_summary"),
     }
 
 

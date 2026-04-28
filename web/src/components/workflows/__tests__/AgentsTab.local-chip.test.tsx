@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentsTab } from '../AgentsTab'
+import { createAgentsFetchStub } from './agentsTestUtils'
 
 vi.mock('../../../lib/providerModels', async importOriginal => ({
   ...(await importOriginal<typeof import('../../../lib/providerModels')>()),
@@ -45,31 +46,13 @@ describe('AgentsTab local chip', () => {
   })
 
   it('shows LOCAL only on local agent cards', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        const url = String(input)
-        if (url.includes('/api/agents/definitions')) {
-          return Response.json({
-            status: 'success',
-            definitions: [
-              agentDefinition('local-agent', true),
-              agentDefinition('cloud-agent', false),
-            ],
-          })
-        }
-        if (url.includes('/api/source-control/branches')) {
-          return Response.json({ branches: [] })
-        }
-        if (url.includes('/api/source-control/status')) {
-          return Response.json({ is_git_repo: false })
-        }
-        if (url.includes('/api/workflows')) {
-          return Response.json({ workflows: [] })
-        }
-        return Response.json({})
-      }),
-    )
+    const fetchStub = createAgentsFetchStub({
+      definitions: [
+        agentDefinition('local-agent', true),
+        agentDefinition('cloud-agent', false),
+      ],
+    })
+    vi.stubGlobal('fetch', fetchStub)
 
     render(
       <AgentsTab

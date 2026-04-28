@@ -200,13 +200,16 @@ def test_cli_normalizes_root_task_header(tmp_path: Path, monkeypatch: pytest.Mon
     assert raw["header"]["root_task_ref"] == "12725"
 
 
-def test_cli_exit_codes_for_errors(tmp_path: Path) -> None:
+def test_cli_exit_code_stale_matrix(tmp_path: Path) -> None:
     plan_path, plan_hash = _plan_file(tmp_path)
     stale_matrix = _matrix_file(tmp_path, "covered", plan_hash="old")
     manifest = tmp_path / "out.coverage.yaml"
     stale = CliRunner().invoke(cli, _base_args(plan_path, plan_hash, stale_matrix, manifest))
     assert stale.exit_code == 4
 
+
+def test_cli_exit_code_missing_scope(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
     missing_scope = CliRunner().invoke(
         cli,
         [
@@ -224,6 +227,9 @@ def test_cli_exit_codes_for_errors(tmp_path: Path) -> None:
     )
     assert missing_scope.exit_code == 6
 
+
+def test_cli_exit_code_empty_component(tmp_path: Path) -> None:
+    plan_path, plan_hash = _plan_file(tmp_path)
     empty_component = CliRunner().invoke(
         cli,
         [

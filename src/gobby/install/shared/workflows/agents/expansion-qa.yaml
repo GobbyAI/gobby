@@ -51,6 +51,7 @@ step_variables:
   coverage_result_failed: false
   review_complete: false
   qa_result_saved: false
+  qa_result_failed: false
 
 steps:
   - name: coverage_check

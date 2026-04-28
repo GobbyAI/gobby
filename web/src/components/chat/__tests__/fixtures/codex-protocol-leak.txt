@@ -69,21 +69,21 @@ The following prefix rules have already been approved: - ["ps", "-p"]
 - ["npx", "playwright", "test"]
 - ["git", "restore", "--staged"]
 - ["npx", "playwright", "install"]
-- ["curl", "-sf", "http://localhost:60887/api/providers/models"]
+- ["curl", "-sf", "http://example.test/api/providers/models"]
 - ["/bin/zsh", "-lc", "UV_CACHE_DIR=/tmp/uv-cache uv run gobby stop"]
 - ["/bin/zsh", "-lc", "UV_CACHE_DIR=/tmp/uv-cache uv run gobby start --verbose"]
 - ["/bin/zsh", "-lc", "GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/provider-picker-live.spec.ts --workers 1"]
-- ["curl", "-sf", "http://localhost:60887/api/sessions/1da4651b-c74d-42a2-8380-e188539a27ec/messages?limit=20&offset=0"]
-- ["/bin/zsh", "-lc", "curl -sf http://localhost:60887/api/sessions/1da4651b-c74d-42a2-8380-e188539a27ec/messages?limit=20&offset=0"]
-- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL=http://127.0.0.1:60889 GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/gemini-hi-gobby-live.spec.ts --workers 1"]
-- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL=http://127.0.0.1:60889 GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/provider-picker-live.spec.ts --workers 1"]
-- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL=http://127.0.0.1:60889 GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/web-chat-swap-send-respond-live.spec.ts --workers 1"]
-- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL='https://mbp.tail4125a0.ts.net' GOBBY_LIVE_PROVIDER_E2E=1 GOBBY_LIVE_PROVIDER_E2E_URL='https://mbp.tail4125a0.ts.net/#chat' npx playwright test tests/provider-picker-live.spec.ts --workers 1"]
+- ["curl", "-sf", "http://example.test/api/sessions/<SESSION_ID>/messages?limit=20&offset=0"]
+- ["/bin/zsh", "-lc", "curl -sf http://example.test/api/sessions/<SESSION_ID>/messages?limit=20&offset=0"]
+- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL=http://example.test GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/gemini-hi-gobby-live.spec.ts --workers 1"]
+- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL=http://example.test GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/provider-picker-live.spec.ts --workers 1"]
+- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL=http://example.test GOBBY_LIVE_PROVIDER_E2E=1 npx playwright test tests/web-chat-swap-send-respond-live.spec.ts --workers 1"]
+- ["/bin/zsh", "-lc", "PLAYWRIGHT_BASE_URL='https://example.local' GOBBY_LIVE_PROVIDER_E2E=1 GOBBY_LIVE_PROVIDER_E2E_URL='https://example.local/#chat' npx playwright test tests/provider-picker-live.spec.ts --workers 1"]
 - ["/bin/zsh", "-lc", "for model in gemini-3.1-pro-preview gemini-3-pro-preview gemini-3-flash-preview gemini-2.5-pro; do echo \"MODEL=$model\"; GOBBY_HOOKS_DISABLED=1 gemini --model \"$model\" --prompt 'Reply with exactly ok and nothing else.' || true; echo; done"]
 - ["/bin/zsh", "-lc", "UV_CACHE_DIR=/tmp/uv-cache git add -A && git restore --staged docs/plans/web-chat-fixes.md src/gobby/cli/_install_prompts.py src/gobby/cli/installers/mcp_config.py && UV_CACHE_DIR=/tmp/uv-cache git commit -m \"[gobby-#11543] fix: harden memory sync and chat provider flows\""]
 - ["git", "commit", "-m", "[gobby-#11568] fix: preserve chatterbox mps conditioning audio dtype"]
 - ["git", "commit", "-m", "[gobby-#11568] fix: coerce chatterbox mps conditioning audio to float32"]
- The writable roots are `/Users/josh/.codex/memories`, `/Users/josh/Projects/gobby`, `/tmp`, `/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T`.
+ The writable roots are `<USER_HOME>/.codex/memories`, `<REPO_ROOT>`, `/tmp`, `/tmp/<TMPDIR>`.
 </permissions instructions>
 <collaboration_mode># Collaboration Mode: Default
 
@@ -101,12 +101,12 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 ## Skills
 A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and file path so you can open the source for full instructions when using a specific skill.
 ### Available skills
-- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: /Users/josh/.codex/skills/.system/imagegen/SKILL.md)
-- openai-docs: Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or model upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains. (file: /Users/josh/.codex/skills/.system/openai-docs/SKILL.md)
-- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata. (file: /Users/josh/.codex/skills/.system/plugin-creator/SKILL.md)
-- skill-creator: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations. (file: /Users/josh/.codex/skills/.system/skill-creator/SKILL.md)
-- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: /Users/josh/.codex/skills/.system/skill-installer/SKILL.md)
-- bridge: Setup Drawbridge MCP and process UI annotation tasks (file: /Users/josh/Projects/gobby/.agents/skills/bridge/SKILL.md)
+- imagegen: Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas. (file: <USER_HOME>/.codex/skills/.system/imagegen/SKILL.md)
+- openai-docs: Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or model upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains. (file: <USER_HOME>/.codex/skills/.system/openai-docs/SKILL.md)
+- plugin-creator: Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata. (file: <USER_HOME>/.codex/skills/.system/plugin-creator/SKILL.md)
+- skill-creator: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations. (file: <USER_HOME>/.codex/skills/.system/skill-creator/SKILL.md)
+- skill-installer: Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos). (file: <USER_HOME>/.codex/skills/.system/skill-installer/SKILL.md)
+- bridge: Setup Drawbridge MCP and process UI annotation tasks (file: <REPO_ROOT>/.agents/skills/bridge/SKILL.md)
 ### How to use skills
 - Discovery: The list above is the skills available in this session (name + description + file path). Skill bodies live on disk at the listed paths.
 - Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly matches a skill's description shown above, you must use that skill for that turn. Multiple mentions mean use them all. Do not carry skills across turns unless re-mentioned.
@@ -127,9 +127,9 @@ A skill is a set of local instructions to follow that is stored in a `SKILL.md` 
 - Safety and fallback: If a skill can't be applied cleanly (missing files, unclear instructions), state the issue, pick the next-best approach, and continue.
 </skills_instructions>
 
-Gobby Session ID: #3426 (47bafb0e-c69c-440b-ba8f-890fab976145)
+Gobby Session ID: #3426 (<SESSION_UUID>)
 
-Parent session: bab0b65f-186d-46b5-8768-26abdf427408
+Parent session: <PARENT_SESSION_ID>
 
 ## Claimed Tasks (Persisted)
 
@@ -137,10 +137,10 @@ You have claimed the following tasks from a previous context. These tasks are st
 
 - #12726 [in_progress] Interactive plan for #12725
 
-CLI-Specific Session ID (external_id): 019dbe40-89d2-7e73-a654-326b775e6035
-parent_session_id: bab0b65f-186d-46b5-8768-26abdf427408
-machine_id: 556DCF54-3799-5BA2-88C4-6757761B04E7
-project_id: d45545c5-ded5-4335-b115-0245752edacf
+CLI-Specific Session ID (external_id): <EXTERNAL_SESSION_ID>
+parent_session_id: <PARENT_SESSION_ID>
+machine_id: <MACHINE_ID>
+project_id: <PROJECT_ID>
 terminal: tmux
 parent_pid: 10188
 tmux pane: %1

@@ -256,6 +256,50 @@ class LocalPipelineExecutionManager:
         row = self.db.fetchone(sql, tuple(params))
         return int(row["cnt"]) if row else 0
 
+    def execution_metrics(
+        self,
+        status: ExecutionStatus | None = None,
+        pipeline_name: str | None = None,
+        session_id: str | None = None,
+        parent_execution_id: str | None = None,
+    ) -> tuple[int, dict[str, int]]:
+        """Return filtered total and status summary in one query."""
+        where, params = self._build_executions_filter(
+            pipeline_name=pipeline_name,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+        )
+        status_value = status.value if status is not None else None
+        sql = f"""
+            WITH filtered AS (
+                SELECT status FROM pipeline_executions {where}
+            ),
+            total AS (
+                SELECT COUNT(*) AS cnt
+                FROM filtered
+                WHERE (? IS NULL OR status = ?)
+            ),
+            summary AS (
+                SELECT status, COUNT(*) AS cnt
+                FROM filtered
+                GROUP BY status
+            )
+            SELECT '__total__' AS status, cnt FROM total
+            UNION ALL
+            SELECT status, cnt FROM summary
+        """  # nosec B608 - WHERE fragment built from typed inputs.
+        rows = self.db.fetchall(sql, (*params, status_value, status_value))
+        total = 0
+        summary: dict[str, int] = {}
+        for row in rows:
+            row_status = str(row["status"])
+            count = int(row["cnt"])
+            if row_status == "__total__":
+                total = count
+            else:
+                summary[row_status] = count
+        return total, summary
+
     def status_summary_for_executions(
         self,
         pipeline_name: str | None = None,

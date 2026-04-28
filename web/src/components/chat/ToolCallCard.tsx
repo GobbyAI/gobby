@@ -178,6 +178,7 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
       <JsonBlock
         value={args}
         className="bg-muted rounded p-2 text-foreground max-h-96"
+        testId="toolcall-json"
       />
     </div>
   )

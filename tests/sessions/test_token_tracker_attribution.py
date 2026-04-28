@@ -70,6 +70,8 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
         model="gpt-5-codex",
     )
 
+    # This intentionally exercises the private processor directly so the
+    # attribution behavior stays isolated from lifecycle scheduling.
     with patch("gobby.sessions.lifecycle.CodexTranscriptParser") as parser_cls:
         parser_cls.return_value.parse_lines.return_value = [
             _message(message_id="codex-msg", input_tokens=123, output_tokens=45)
@@ -94,6 +96,8 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
         model="gemini-2.5-pro",
     )
 
+    # Keep this direct call paired with the Codex case above for stable
+    # source/model attribution coverage.
     with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as parser_cls:
         parser_cls.return_value.parse_session_json.return_value = [
             _message(message_id="gemini-msg", input_tokens=200, output_tokens=50)

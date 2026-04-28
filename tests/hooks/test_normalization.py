@@ -150,12 +150,12 @@ class TestTripleUnderscoreNormalization:
         assert "mcp_server" not in result
         assert "mcp_tool" not in result
 
-    def test_server_names_with_underscore_are_not_rewritten(self) -> None:
+    def test_server_names_with_underscore_split_on_triple_separator(self) -> None:
         data = {"tool_name": "gobby_tasks___claim_task"}
         result = normalize_mcp_fields(data)
-        assert result["tool_name"] == "gobby_tasks___claim_task"
-        assert "mcp_server" not in result
-        assert "mcp_tool" not in result
+        assert result["tool_name"] == "mcp__gobby_tasks__claim_task"
+        assert result["mcp_server"] == "gobby_tasks"
+        assert result["mcp_tool"] == "claim_task"
 
 
 class TestCallToolExtraction:

@@ -59,7 +59,10 @@ def _decode_labels(labels_json: str | None) -> list[str]:
     """Decode task labels from storage, tolerating legacy nulls."""
     if not labels_json:
         return []
-    parsed: object = json.loads(labels_json)
+    try:
+        parsed: object = json.loads(labels_json)
+    except json.JSONDecodeError:
+        return []
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, str)]

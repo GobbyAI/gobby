@@ -802,6 +802,22 @@ class TestPagination:
         scoped = manager.status_summary_for_executions(session_id="sess-q")
         assert scoped == {"running": 2}
 
+    def test_execution_metrics_combines_filtered_total_and_status_summary(self, manager) -> None:
+        e1 = manager.create_execution(pipeline_name="deploy")
+        e2 = manager.create_execution(pipeline_name="deploy")
+        e3 = manager.create_execution(pipeline_name="test")
+        manager.update_execution_status(e1.id, ExecutionStatus.RUNNING)
+        manager.update_execution_status(e2.id, ExecutionStatus.COMPLETED)
+        manager.update_execution_status(e3.id, ExecutionStatus.FAILED)
+
+        total, summary = manager.execution_metrics(
+            status=ExecutionStatus.RUNNING,
+            pipeline_name="deploy",
+        )
+
+        assert total == 1
+        assert summary == {"running": 1, "completed": 1}
+
     def test_list_executions_rejects_bad_limit_and_offset(self, manager) -> None:
         """list_executions raises ValueError on bad pagination."""
         with pytest.raises(ValueError):

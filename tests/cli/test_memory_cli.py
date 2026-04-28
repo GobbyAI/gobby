@@ -394,7 +394,11 @@ class TestMemoryRestoreCommand:
         mock_backup_manager.import_sync.return_value = 3
         mock_backup_manager_cls.return_value = mock_backup_manager
 
-        result = runner.invoke(cli, ["memory", "restore"])
+        with runner.isolated_filesystem():
+            restore_path = Path(".gobby/memories.jsonl")
+            restore_path.parent.mkdir()
+            restore_path.write_text("{}", encoding="utf-8")
+            result = runner.invoke(cli, ["memory", "restore"])
 
         assert result.exit_code == 0
         assert "Restored 3 memories" in result.output
@@ -417,17 +421,29 @@ class TestMemoryRestoreCommand:
         mock_backup_manager = MagicMock()
         mock_backup_manager.import_sync.return_value = 0
         mock_backup_manager_cls.return_value = mock_backup_manager
+        restore_path = Path("/tmp/memories.jsonl")
 
-        result = runner.invoke(
-            cli,
-            ["memory", "restore", "--input", "/tmp/memories.jsonl", "--quiet"],
-        )
+        with runner.isolated_filesystem():
+            restore_path = Path("memories.jsonl")
+            restore_path.write_text("{}", encoding="utf-8")
+            result = runner.invoke(
+                cli,
+                ["memory", "restore", "--input", str(restore_path), "--quiet"],
+            )
 
         assert result.exit_code == 0
         assert result.output == ""
         mock_backup_manager.import_sync.assert_called_once_with(force=True)
         config = mock_backup_manager_cls.call_args.kwargs["config"]
-        assert config.export_path == Path("/tmp/memories.jsonl")
+        assert config.export_path == restore_path
+
+    def test_restore_missing_explicit_input_fails(self, runner: CliRunner) -> None:
+        """Explicit --input paths should fail when missing."""
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, ["memory", "restore", "--input", "missing.jsonl"])
+
+        assert result.exit_code != 0
+        assert "Memory backup not found: missing.jsonl" in result.output
 
 
 class TestResolveMemoryId:

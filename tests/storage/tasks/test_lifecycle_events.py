@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, TaskLifecycleEventManager
 
 pytestmark = pytest.mark.unit
 
 
 def _event_manager_class() -> type:
-    import gobby.storage.tasks as task_module
-
-    return task_module.TaskLifecycleEventManager
+    return TaskLifecycleEventManager
 
 
 def test_record_lifecycle_event_requires_reason_and_actor(temp_db, sample_project) -> None:

@@ -403,6 +403,7 @@ class TestWakeDispatch:
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r1"})
         clock[0] += 5.0
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r2"})
+        assert tmux_pane_sender.await_count == 1
         clock[0] += 31.0
         await dispatcher.wake("sess-1", "Done", {"status": "completed", "run_id": "r3"})
 

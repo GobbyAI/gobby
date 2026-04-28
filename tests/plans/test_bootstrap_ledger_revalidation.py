@@ -100,6 +100,7 @@ def _seed_plan_task_tree(
     leaf = task_manager.create_task(
         project.id,
         title=expected_leaf_title,
+        parent_task_id=root.id,
         labels=["covers:task-100-plan:A1:A1.1"],
         validation_criteria="touches src/gobby/plans/bootstrap_ledger.py",
     )

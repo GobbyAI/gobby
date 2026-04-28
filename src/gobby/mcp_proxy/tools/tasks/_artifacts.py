@@ -175,13 +175,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "object",
                     "description": "Artifact fields to set atomically",
                     "properties": _ARTIFACT_FIELD_SCHEMAS,
-                    "additionalProperties": {
-                        "anyOf": [
-                            {"type": "string"},
-                            {"type": "integer"},
-                            {"type": "null"},
-                        ]
-                    },
+                    "additionalProperties": False,
                 },
             },
             "required": ["task_id", "fields"],

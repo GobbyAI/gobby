@@ -9,7 +9,12 @@ from typing import Any
 
 import pytest
 
-from gobby.plans.evidence import EvidenceKind, EvidenceResolveStatus, resolve_evidence
+from gobby.plans.evidence import (
+    EvidenceKind,
+    EvidenceResolveStatus,
+    InvalidEvidenceError,
+    resolve_evidence,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -95,6 +100,14 @@ rows:
     assert bundle.rows[0].status is EvidenceResolveStatus.resolved
     assert bundle.rows[0].artifacts_touched == ("tests/plans/test_evidence.py",)
     assert bundle.rows[1].status is EvidenceResolveStatus.invalid
+
+
+def test_resolve_coverage_matrix_invalid_yaml_raises_invalid_evidence(tmp_path: Path) -> None:
+    manifest = tmp_path / "coverage.yaml"
+    manifest.write_text("rows: [", encoding="utf-8")
+
+    with pytest.raises(InvalidEvidenceError, match="Invalid coverage matrix"):
+        resolve_evidence(f"coverage-matrix:{manifest}", ctx=EvidenceContext(tmp_path))
 
 
 def test_resolve_none_emits_audit_row(tmp_path: Path) -> None:

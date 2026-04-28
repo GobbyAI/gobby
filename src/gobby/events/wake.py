@@ -149,6 +149,12 @@ class WakeDispatcher:
         unconditionally, so the agent still sees every completion when it next
         reads its inbox.
         """
+        now = time.monotonic()
+        stale_before = now - PANE_WAKE_DEBOUNCE_SECONDS
+        for recorded_session_id, (_, recorded_ts) in tuple(self._last_pane_wake.items()):
+            if recorded_ts < stale_before:
+                self._last_pane_wake.pop(recorded_session_id, None)
+
         last = self._last_pane_wake.get(session_id)
         if last is None:
             return True
@@ -156,7 +162,7 @@ class WakeDispatcher:
         current_turn = int(getattr(session, "turn_count", 0) or 0)
         if current_turn > last_turn:
             return True
-        return (time.monotonic() - last_ts) >= PANE_WAKE_DEBOUNCE_SECONDS
+        return (now - last_ts) >= PANE_WAKE_DEBOUNCE_SECONDS
 
     def _record_pane_wake(self, session_id: str, session: Any) -> None:
         """Record that a tmux pane wake was just delivered to this session."""

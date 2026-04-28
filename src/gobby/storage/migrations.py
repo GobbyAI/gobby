@@ -82,7 +82,7 @@ def _task_artifacts_create_sql(table_name: str) -> str:
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
             pr_url TEXT,
             merge_commit_sha TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
                 AND (clone_path IS NULL) = (clone_id IS NULL)
@@ -147,7 +147,7 @@ def _default_task_artifact_column(column: str) -> str:
     if column == "expansion_attempts":
         return "0 AS expansion_attempts"
     if column == "updated_at":
-        return "CURRENT_TIMESTAMP AS updated_at"
+        return "datetime('now') AS updated_at"
     return f"NULL AS {column}"
 
 

@@ -123,7 +123,7 @@ def parse_plan(path: Path, *, plan_kind: PlanKind = PlanKind.implementation) -> 
     lines = source_bytes.decode("utf-8").splitlines()
     mask = _compute_fence_mask(lines)
     headings = _collect_headings(lines, mask)
-    plan_id = _parse_plan_id(lines)
+    plan_id = _parse_plan_id(lines, mask)
 
     errors: list[tuple[int, str]] = []
     sections: list[PlanSection] = []
@@ -293,8 +293,10 @@ def _heading_title(line: str, canonical_match: re.Match[str] | None) -> str:
     return suffix
 
 
-def _parse_plan_id(lines: list[str]) -> str | None:
-    for line in lines:
+def _parse_plan_id(lines: list[str], mask: list[bool]) -> str | None:
+    for index, line in enumerate(lines):
+        if index < len(mask) and mask[index]:
+            continue
         match = _PLAN_ID_RE.match(line)
         if match is None:
             continue

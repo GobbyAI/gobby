@@ -48,3 +48,6 @@ def test_mcp_get_artifacts_includes_plan_file_hash(temp_db, sample_project) -> N
         artifact_fields = schema["inputSchema"]["x-artifact-fields"]
         assert artifact_fields["base_commit_sha"]["type"] == ["string", "null"]
         assert artifact_fields["plan_file_hash"]["type"] == ["string", "null"]
+        if tool_name == "set_artifacts_atomic":
+            fields_schema = schema["inputSchema"]["properties"]["fields"]
+            assert fields_schema["additionalProperties"] is False

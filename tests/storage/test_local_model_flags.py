@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -14,7 +16,7 @@ from gobby.storage.sessions import SessionManager
 pytestmark = pytest.mark.unit
 
 
-def test_baseline_schema_includes_local_flag_columns(tmp_path) -> None:
+def test_baseline_schema_includes_local_flag_columns(tmp_path: Path) -> None:
     db = LocalDatabase(tmp_path / "local-flags.db")
     run_migrations(db)
 
@@ -25,7 +27,7 @@ def test_baseline_schema_includes_local_flag_columns(tmp_path) -> None:
     assert "is_local" in session_columns
 
 
-def test_agent_run_manager_persists_is_local_flag(tmp_path) -> None:
+def test_agent_run_manager_persists_is_local_flag(tmp_path: Path) -> None:
     db = LocalDatabase(tmp_path / "agent-local.db")
     run_migrations(db)
     project = LocalProjectManager(db).create(name="agent-local-project")
@@ -48,7 +50,7 @@ def test_agent_run_manager_persists_is_local_flag(tmp_path) -> None:
     assert run.to_dict()["is_local"] is True
 
 
-def test_session_manager_persists_is_local_flag(tmp_path) -> None:
+def test_session_manager_persists_is_local_flag(tmp_path: Path) -> None:
     db = LocalDatabase(tmp_path / "session-local.db")
     run_migrations(db)
     project = LocalProjectManager(db).create(name="session-local-project")

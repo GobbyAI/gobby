@@ -84,6 +84,8 @@ def test_table_row_decomposition_rule_documented() -> None:
     }
     for name, body in surfaces.items():
         lowered = body.lower()
-        assert "table-row decomposition" in lowered, name
-        assert "one acceptance item per" in lowered, name
-        assert "data row" in lowered, name
+        normalized = re.sub(r"\s+", " ", lowered)
+        snippet = lowered[:150]
+        assert "table-row decomposition" in normalized, f"{name}: {snippet!r}"
+        assert "one acceptance item per" in normalized, f"{name}: {snippet!r}"
+        assert "data row" in normalized, f"{name}: {snippet!r}"

@@ -70,11 +70,27 @@ async def test_contract_plan_dispatches_to_deterministic_compile(
     service: ExpansionService,
     run_manager: LocalExpansionRunManager,
     sample_project,
+    tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
-    plan_file = str(
-        Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch.md"
+    plan = tmp_path / "contract-plan.md"
+    plan.write_text(
+        """# Test Contract Plan
+
+## P1 Phase
+`kind: framing`
+
+### 1.1 Build Leaf [category: code]
+`kind: deliverable`
+
+Implement the behavior.
+
+**Acceptance:**
+- 1.1.1 - Behavior exists. file: `src/example.py`
+""",
+        encoding="utf-8",
     )
+    plan_file = str(plan)
     run = run_manager.create(
         parent_task_id=parent.id,
         project_id=sample_project["id"],

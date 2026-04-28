@@ -10,6 +10,7 @@ interface JsonBlockProps {
   value: unknown
   className?: string
   breakMode?: 'words' | 'all'
+  testId?: string
 }
 
 function formatJsonValue(value: unknown): string {
@@ -28,6 +29,7 @@ export function JsonBlock({
   value,
   className,
   breakMode = 'words',
+  testId,
 }: JsonBlockProps) {
   return (
     <div
@@ -38,6 +40,7 @@ export function JsonBlock({
       )}
     >
       <SyntaxHighlighter
+        data-testid={testId}
         style={oneDark}
         language="json"
         PreTag="div"

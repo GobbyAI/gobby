@@ -152,41 +152,6 @@ class TaskArtifactManager:
 
     def __init__(self, db: DatabaseProtocol):
         self.db = db
-        self._ensure_table()
-
-    def _ensure_table(self) -> None:
-        """Create the table for focused tests before the canonical migration lands."""
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS task_artifacts (
-                    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-                    plan_file_path TEXT,
-                    plan_file_hash TEXT,
-                    worktree_path TEXT,
-                    worktree_id TEXT,
-                    clone_path TEXT,
-                    clone_id TEXT,
-                    base_commit_sha TEXT,
-                    target_branch TEXT,
-                    expansion_run_id TEXT,
-                    expansion_attempts INTEGER NOT NULL DEFAULT 0,
-                    pr_url TEXT,
-                    merge_commit_sha TEXT,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    CHECK (
-                        (worktree_path IS NULL) = (worktree_id IS NULL)
-                        AND (clone_path IS NULL) = (clone_id IS NULL)
-                        AND (worktree_path IS NULL OR clone_path IS NULL)
-                        AND (
-                            base_commit_sha IS NULL
-                            OR worktree_path IS NOT NULL
-                            OR clone_path IS NOT NULL
-                        )
-                    )
-                )
-                """
-            )
 
     def get_artifacts(self, task_id: str) -> TaskArtifacts:
         row = self.db.fetchone("SELECT * FROM task_artifacts WHERE task_id = ?", (task_id,))
@@ -222,10 +187,10 @@ class TaskArtifactManager:
                 INSERT INTO task_artifacts (
                     task_id, {", ".join(columns)}, updated_at
                 )
-                VALUES (?, {placeholders}, CURRENT_TIMESTAMP)
+                VALUES (?, {placeholders}, datetime('now'))
                 ON CONFLICT(task_id) DO UPDATE SET
                     {update_clause},
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = datetime('now')
                 """,  # nosec B608 - columns are validated static allowlist values.
                 tuple(params),
             )

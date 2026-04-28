@@ -109,7 +109,7 @@ function isLocalLegacyFallback(provider: unknown, model: unknown): boolean {
   const normalizedModel = normalizeLocalText(model);
   return (
     LOCAL_LEGACY_PROVIDERS.has(normalizedProvider) ||
-    normalizedModel.includes("gpt-oss")
+    /^gpt-oss(?:\b|[-_:./]|$)/.test(normalizedModel)
   );
 }
 

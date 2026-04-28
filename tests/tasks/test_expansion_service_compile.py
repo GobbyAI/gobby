@@ -28,6 +28,8 @@ def _parent(service: ExpansionService, sample_project):
 
 
 def _canonical_plan_path() -> Path:
+    # This fixture intentionally tracks the canonical lifecycle-dispatch plan
+    # because these tests verify the parser-driven expansion shape for that plan.
     return Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch.md"
 
 

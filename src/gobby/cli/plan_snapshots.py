@@ -27,6 +27,7 @@ LEGACY_GENERATOR = "gobby plan legacy-classification-refresh"
 
 REMOVE_BY_RE = re.compile(r"#\s*remove-by:\s*(?P<ref>#?\d+)\b")
 TARGET_PREFIXES = ("retrofit_target", "non_retrofit_acknowledgment")
+NON_NUMERIC_SORT_KEY = 10**12
 
 
 class TaskManagerLike(Protocol):
@@ -304,7 +305,7 @@ def _ref_sort_key(task_ref: str) -> tuple[int, str]:
     digits = task_ref.removeprefix("#")
     if digits.isdigit():
         return (int(digits), task_ref)
-    return (10**12, task_ref)
+    return (NON_NUMERIC_SORT_KEY, task_ref)
 
 
 def _dump_yaml(data: dict[str, Any]) -> str:

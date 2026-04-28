@@ -30,7 +30,7 @@ def test_hook_rejects_stale_grandfathered_snapshot(
 ) -> None:
     result, calls = _run_hook(tmp_path, monkeypatch, fail_command="grandfathered")
 
-    assert result.returncode == 1
+    assert result.returncode == 1, f"stdout: {result.stdout}\nstderr: {result.stderr}"
     assert calls == EXPECTED_CALLS
 
 
@@ -40,7 +40,7 @@ def test_hook_rejects_stale_legacy_classification_snapshot(
 ) -> None:
     result, calls = _run_hook(tmp_path, monkeypatch, fail_command="legacy")
 
-    assert result.returncode == 1
+    assert result.returncode == 1, f"stdout: {result.stdout}\nstderr: {result.stderr}"
     assert calls == EXPECTED_CALLS
 
 
@@ -53,7 +53,7 @@ def test_hook_passes_when_snapshots_fresh(
 
     result, calls = _run_hook(tmp_path, monkeypatch)
 
-    assert result.returncode == 0
+    assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
     assert calls == EXPECTED_CALLS
     assert hook["pass_filenames"] is False
     assert all(files_pattern.match(path) for path in SCOPED_FILES)
@@ -86,7 +86,8 @@ def _run_hook(
 
 
 def _hook() -> dict[str, object]:
-    config = yaml.safe_load(Path(".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    repo_root = Path(__file__).resolve().parents[2]
+    config = yaml.safe_load((repo_root / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
     hooks = [
         hook
         for repo in config["repos"]
