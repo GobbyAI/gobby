@@ -26,6 +26,17 @@ It is consumed from two places:
 A plan written to this methodology is directly consumable by `/gobby expand`
 (which creates the task tree) and by `plan-review` (which reviews it adversarially).
 
+**Orchestration contract (cross-reference)**: this skill covers *how to write* a
+plan; the *spawn / verdict / wake* orchestration around it lives in `plan` (Step
+7.0a Anchor-task contract) and `plan-review` (Escalation Policy). Key invariants
+that affect drafting authors should know about: the parent session never claims
+a task during plan authoring (`.gobby/plans/*.md` is exempt from
+`require-task-before-edit`); each adversary or planner round spawns against a
+freshly-created per-round anchor task (NOT the planning epic); the parent
+fires-and-forgets after each spawn — daemon-wake on the anchor's terminal state
+is the only wake signal, no polling or `ScheduleWakeup`. See `plan/SKILL.md`
+Step 7 for the full contract.
+
 ---
 
 ## Plan-Coverage Contract Grammar
