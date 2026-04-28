@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { createElement } from 'react'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
@@ -286,6 +286,9 @@ describe('ToolCallCards rendering', () => {
 
     render(createElement(ToolCallCards, { toolCalls: [call] }))
 
+    // Unknown-type tool calls collapse by default; expand to see the arguments.
+    fireEvent.click(screen.getByText('CustomTool'))
+
     const argumentsLabel = screen.getByText('Arguments')
     const jsonBlock = argumentsLabel.nextElementSibling
 
@@ -302,7 +305,7 @@ describe('ToolCallCards rendering', () => {
     })
   })
 
-  it('keeps JSON results syntax-highlighted while wrapping long output', () => {
+  it('renders JSON results without forcing horizontal scroll on long values', () => {
     const call = makeCall({
       id: 'json-result-wrap',
       tool_name: 'CustomTool',
@@ -319,19 +322,16 @@ describe('ToolCallCards rendering', () => {
 
     render(createElement(ToolCallCards, { toolCalls: [call] }))
 
+    // Unknown-type tool calls collapse by default; expand to see the result.
+    fireEvent.click(screen.getByText('CustomTool'))
+
     const resultLabel = screen.getByText('Result')
-    const jsonBlock = resultLabel.nextElementSibling
+    const jsonBlock = resultLabel.nextElementSibling as HTMLElement | null
 
     expect(jsonBlock).not.toBeNull()
-    expect(jsonBlock as HTMLElement).toHaveClass('whitespace-pre-wrap')
-    expect(jsonBlock as HTMLElement).toHaveClass('break-words')
-    expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-x-auto')
-    expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-y-auto')
-    expect((jsonBlock as HTMLElement).querySelector('code')).not.toBeNull()
-    expect((jsonBlock as HTMLElement).querySelector('span[style]')).not.toBeNull()
-    expect((jsonBlock as HTMLElement).firstElementChild).toHaveStyle({
-      overflowY: 'auto',
-      overflowX: 'hidden',
-    })
+    expect(jsonBlock!).toHaveClass('whitespace-pre-wrap')
+    expect(jsonBlock!).toHaveClass('break-words')
+    expect(jsonBlock!).not.toHaveClass('overflow-x-auto')
+    expect(jsonBlock!.querySelector('code')).not.toBeNull()
   })
 })

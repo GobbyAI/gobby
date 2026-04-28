@@ -203,8 +203,21 @@ function ActivityDropdown({
           <span className="activity-panel-tab-icon">{activeTabConfig.icon}</span>
           <span>{activeTabConfig.label}</span>
         </span>
-        <span className="activity-panel-mobile-trigger__caret">
-          {isOpen ? "\u25B2" : "\u25BC"}
+        <span className="activity-panel-mobile-trigger__caret" aria-hidden="true">
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            {isOpen ? (
+              <polyline points="4 10 8 6 12 10" />
+            ) : (
+              <polyline points="4 6 8 10 12 6" />
+            )}
+          </svg>
         </span>
       </button>
       {isOpen && (

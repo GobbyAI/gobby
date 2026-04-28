@@ -7,3 +7,8 @@
 @import './styles/pipelines-tab.css';
 @import './styles/sessions-tab.css';
 @import './styles/empty-state.css';
+
+.tool-result-wrap {
+  text-indent: -2ch;
+  padding-inline-start: 2ch;
+}

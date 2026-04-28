@@ -17,6 +17,7 @@ import {
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
   computeLineDiff,
+  defaultExpandedForCall,
   extractBase64Image,
   extractResultContent,
   extractResultMetadata,
@@ -28,11 +29,19 @@ import {
   getToolSummary,
   groupToolCalls,
   parseGrepOutput,
+  parseGsqzWrapper,
   parseReadOutput,
   pathBasename,
   resolveToolType,
   type ToolCallGroup,
+  unwrapMcpResultEnvelope,
 } from './ToolCallCard.helpers'
+import {
+  GsqzResultBlock,
+  JsonResultBlock,
+  MetadataStrip,
+  ToolResultBody,
+} from './ToolResultBlocks'
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[]
@@ -54,12 +63,6 @@ interface AskUserQuestionItem {
   multiSelect: boolean
 }
 
-// Shared <pre> styles used across tool-result fallbacks and error blocks.
-// Extracted so the long className lists don't drift between call-sites
-// (three result-fallback places and two error-block places).
-const TOOL_RESULT_PRE_CLASS =
-  'bg-muted rounded p-2 text-foreground max-h-96 overflow-y-auto ' +
-  'overflow-x-hidden whitespace-pre-wrap break-words font-mono text-xs'
 const TOOL_ERROR_PRE_CLASS =
   'bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words ' +
   'overflow-x-hidden text-destructive-foreground'
@@ -176,6 +179,21 @@ function ToolArgumentsContent({ args }: { args: Record<string, unknown> }) {
         value={args}
         className="bg-muted rounded p-2 text-foreground max-h-96"
       />
+    </div>
+  )
+}
+
+function ToolErrorBody({ error }: { error: string }) {
+  const cleaned = error.replace(/<\/?tool_use_error>/g, '').trim()
+  const looksLikeJson = cleaned.startsWith('{') || cleaned.startsWith('[')
+  return (
+    <div>
+      <div className="text-destructive-foreground mb-1 font-medium">Error</div>
+      {looksLikeJson ? (
+        <JsonResultBlock value={cleaned} variant="error" />
+      ) : (
+        <pre className={TOOL_ERROR_PRE_CLASS}>{cleaned}</pre>
+      )}
     </div>
   )
 }
@@ -344,14 +362,17 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   // Bash results: show exit code from metadata when available
   if (toolType === 'bash' && metadata?.exit_code != null) {
     const exitCode = metadata.exit_code as number
+    const wrapper = parseGsqzWrapper(resultStr)
     return (
       <div>
         {exitCode !== 0 && (
           <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
         )}
-        <pre className={TOOL_RESULT_PRE_CLASS}>
-          {resultStr}
-        </pre>
+        {wrapper ? (
+          <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
+        ) : (
+          <ToolResultBody body={resultStr} />
+        )}
       </div>
     )
   }
@@ -366,26 +387,35 @@ function ToolResultContent({ call }: { call: ToolCall }) {
     )
   }
 
-  // Detect if result looks like JSON for syntax highlighting
-  const looksLikeJson = resultStr.trimStart().startsWith('{') || resultStr.trimStart().startsWith('[')
+  // MCP-style structured envelope: surface the dominant string field as the
+  // body and the remaining keys as a compact metadata strip.
+  const envelope = unwrapMcpResultEnvelope(rawContent)
+  if (envelope) {
+    const wrapper = parseGsqzWrapper(envelope.primary)
+    return (
+      <div className="overflow-hidden rounded border border-border/40 bg-muted/30">
+        <MetadataStrip meta={envelope.meta} />
+        {wrapper ? (
+          <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
+        ) : (
+          <ToolResultBody body={envelope.primary} />
+        )}
+      </div>
+    )
+  }
 
-  return looksLikeJson ? (
-    <JsonBlock
-      value={resultStr}
-      className="bg-muted rounded p-2 text-foreground max-h-96"
-    />
-  ) : (
-    <pre className={TOOL_RESULT_PRE_CLASS}>
-      {resultStr}
-    </pre>
-  )
+  const wrapper = parseGsqzWrapper(resultStr)
+  if (wrapper) {
+    return <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
+  }
+
+  return <ToolResultBody body={resultStr} />
 }
 
 const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, canvasSurfaces, onCanvasInteraction, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; canvasSurfaces?: Map<string, A2UISurfaceState>; onCanvasInteraction?: (canvasId: string, action: UserAction) => void; nested?: boolean }) {
-  const isActive = call.status === 'calling' || call.status === 'pending_approval'
   const displayName = getToolDisplayName(call)
   const toolType = resolveToolType(call)
-  const [expanded, setExpanded] = useState(isActive || toolType !== 'protocol')
+  const [expanded, setExpanded] = useState(defaultExpandedForCall(call))
   const summary = getToolSummary(call)
   const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
   const isFileHeader = FILE_TOOL_TYPES.has(toolType)
@@ -469,12 +499,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
             </div>
           )}
           {call.status === 'error' && call.error && (
-            <div>
-              <div className="text-destructive-foreground mb-1 font-medium">Error</div>
-              <pre className={TOOL_ERROR_PRE_CLASS}>
-                {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
-              </pre>
-            </div>
+            <ToolErrorBody error={call.error} />
           )}
         </div>
       )}
@@ -794,11 +819,8 @@ function CanvasSurfaceCard({ call, canvasSurfaces, onCanvasInteraction }: { call
             <div className="text-muted-foreground italic">Targeting {canvasId || 'an unknown canvas'}</div>
           )}
           {call.status === 'error' && call.error && (
-            <div>
-              <div className="text-destructive-foreground mb-1 font-medium mt-2">Error</div>
-              <pre className={TOOL_ERROR_PRE_CLASS}>
-                {call.error.replace(/<\/?tool_use_error>/g, '').trim()}
-              </pre>
+            <div className="mt-2">
+              <ToolErrorBody error={call.error} />
             </div>
           )}
         </div>

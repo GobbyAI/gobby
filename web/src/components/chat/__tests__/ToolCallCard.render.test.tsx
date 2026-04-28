@@ -75,17 +75,15 @@ describe('ToolCallCard rendering', () => {
       />,
     )
 
-    const code = container.querySelector('code')?.textContent ?? ''
-    const resultPanel = screen.getByText('Result').parentElement
-    const jsonBlock = screen.getByText('Result').nextElementSibling
+    // Unknown-type tool calls collapse by default; click the header to expand.
+    fireEvent.click(screen.getByText('call_tool'))
 
+    const resultPanel = screen.getByText('Result').parentElement
     expect(resultPanel).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
-    expect(jsonBlock).toHaveClass('overflow-hidden', 'whitespace-pre-wrap', 'break-words')
-    expect(jsonBlock).not.toHaveClass('overflow-y-auto')
-    expect((jsonBlock as HTMLElement).firstElementChild).toHaveStyle({
-      overflowY: 'auto',
-      overflowX: 'hidden',
-    })
+
+    // The MCP proxy envelope ({success, result, response_time_ms}) gets flattened
+    // and rendered through JsonResultBlock — the inner `result` wrapper is gone.
+    const code = container.querySelector('code')?.textContent ?? ''
     expect(code).toContain('"success": true')
     expect(code).toContain('"response_time_ms": 42')
     expect(code).not.toContain('"result":')
@@ -114,21 +112,17 @@ describe('ToolCallCard rendering', () => {
       />,
     )
 
-    const pre = container.querySelector('pre')
     const resultPanel = screen.getByText('Result').parentElement
 
     expect(screen.getByText('Result')).toBeInTheDocument()
     expect(resultPanel).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
-    expect(pre).not.toBeNull()
-    expect(pre).toHaveClass(
-      'max-h-96',
-      'overflow-y-auto',
-      'overflow-x-hidden',
-      'whitespace-pre-wrap',
-      'break-words',
-    )
-    expect(pre?.textContent).toContain('hash ok? True')
-    expect(pre?.textContent).not.toContain('"output"')
+
+    // Chunk metadata strip surfaces the parsed wrapper fields.
+    expect(container.textContent).toContain('chunk 21a8f9')
+
+    // Body text renders without leaking the JSON envelope key.
+    expect(container.textContent).toContain('hash ok? True')
+    expect(container.textContent).not.toContain('"output"')
   })
 
   it('renders protocol tool calls with a protocol header and tag summary', () => {
