@@ -1,27 +1,49 @@
+/* Palette: see .impeccable.md (deutan-safe; brand green pushed to chartreuse, magenta replaces red). */
 :root {
   --font-size-base: 16px;
-  --bg-primary: #0a0a0a;
-  --bg-secondary: #141414;
-  --bg-tertiary: #1a1a1a;
-  --text-primary: #e5e5e5;
-  --text-secondary: #a3a3a3;
-  --text-muted: #737373;
-  --accent: #3b82f6;
-  --accent-soft: rgba(59, 130, 246, 0.18);
-  --accent-hover: #2563eb;
-  --border: #262626;
-  --user-bg: #1e3a5f;
-  --assistant-bg: #1a1a1a;
-  --system-bg: #2d1f1f;
-  --code-bg: #0d0d0d;
-  --accent-foreground: #fff;
-  --color-destructive: #7f1d1d;
-  --color-destructive-foreground: #f87171;
-  --color-error: #f87171;
-  --color-warning: #78350f;
-  --color-warning-foreground: #f59e0b;
-  --color-success: #14532d;
-  --color-success-foreground: #22c55e;
+
+  --bg-primary: oklch(15% 0.005 125);
+  --bg-secondary: oklch(19% 0.006 125);
+  --bg-tertiary: oklch(23% 0.007 125);
+  --code-bg: oklch(13% 0.003 125);
+
+  --text-primary: oklch(92% 0.004 125);
+  --text-secondary: oklch(68% 0.005 125);
+  --text-muted: oklch(48% 0.005 125);
+
+  --border: oklch(28% 0.008 125);
+
+  --accent: oklch(82% 0.20 125);
+  --accent-hover: oklch(75% 0.22 125);
+  --accent-foreground: oklch(15% 0 0);
+  --accent-soft: oklch(82% 0.20 125 / 0.18);
+  --accent-tint: oklch(82% 0.20 125 / 0.10);
+
+  --color-info: oklch(72% 0.16 250);
+  --color-info-bg: oklch(28% 0.08 250);
+  --color-info-soft: oklch(72% 0.16 250 / 0.12);
+
+  --color-warning: oklch(30% 0.08 75);
+  --color-warning-foreground: oklch(78% 0.16 75);
+  --color-warning-soft: oklch(78% 0.16 75 / 0.12);
+
+  --color-destructive: oklch(28% 0.10 350);
+  --color-destructive-foreground: oklch(72% 0.20 350);
+  --color-error: oklch(72% 0.20 350);
+  --color-error-soft: oklch(72% 0.20 350 / 0.12);
+
+  --color-success: oklch(25% 0.05 125);
+  --color-success-foreground: oklch(82% 0.10 125);
+  --color-success-soft: oklch(82% 0.10 125 / 0.12);
+
+  --color-agent: oklch(72% 0.18 320);
+  --color-agent-bg: oklch(28% 0.10 320);
+  --color-agent-soft: oklch(72% 0.18 320 / 0.12);
+
+  --user-bg: oklch(22% 0.06 125);
+  --assistant-bg: oklch(19% 0.006 125);
+  --system-bg: oklch(22% 0.05 350);
+
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -29,28 +51,47 @@
 }
 
 [data-theme="light"] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f5;
-  --bg-tertiary: #e5e5e5;
-  --text-primary: #171717;
-  --text-secondary: #525252;
-  --text-muted: #a3a3a3;
-  --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.18);
-  --accent-hover: #1d4ed8;
-  --border: #d4d4d4;
-  --user-bg: #dbeafe;
-  --assistant-bg: #f5f5f5;
-  --system-bg: #fef2f2;
-  --code-bg: #f0f0f0;
-  --accent-foreground: #fff;
-  --color-destructive: #fecaca;
-  --color-destructive-foreground: #dc2626;
-  --color-error: #dc2626;
-  --color-warning: #fef3c7;
-  --color-warning-foreground: #d97706;
-  --color-success: #dcfce7;
-  --color-success-foreground: #16a34a;
+  --bg-primary: oklch(99% 0.002 125);
+  --bg-secondary: oklch(96% 0.004 125);
+  --bg-tertiary: oklch(92% 0.006 125);
+  --code-bg: oklch(94% 0.005 125);
+
+  --text-primary: oklch(20% 0.005 125);
+  --text-secondary: oklch(40% 0.005 125);
+  --text-muted: oklch(60% 0.005 125);
+
+  --border: oklch(86% 0.008 125);
+
+  --accent: oklch(50% 0.18 125);
+  --accent-hover: oklch(42% 0.18 125);
+  --accent-foreground: oklch(99% 0 0);
+  --accent-soft: oklch(50% 0.18 125 / 0.18);
+  --accent-tint: oklch(50% 0.18 125 / 0.10);
+
+  --color-info: oklch(48% 0.18 250);
+  --color-info-bg: oklch(94% 0.05 250);
+  --color-info-soft: oklch(48% 0.18 250 / 0.10);
+
+  --color-warning: oklch(95% 0.06 75);
+  --color-warning-foreground: oklch(58% 0.16 75);
+  --color-warning-soft: oklch(58% 0.16 75 / 0.10);
+
+  --color-destructive: oklch(95% 0.05 350);
+  --color-destructive-foreground: oklch(52% 0.22 350);
+  --color-error: oklch(52% 0.22 350);
+  --color-error-soft: oklch(52% 0.22 350 / 0.10);
+
+  --color-success: oklch(95% 0.04 125);
+  --color-success-foreground: oklch(48% 0.10 125);
+  --color-success-soft: oklch(48% 0.10 125 / 0.10);
+
+  --color-agent: oklch(48% 0.20 320);
+  --color-agent-bg: oklch(94% 0.05 320);
+  --color-agent-soft: oklch(48% 0.20 320 / 0.10);
+
+  --user-bg: oklch(95% 0.05 125);
+  --assistant-bg: oklch(96% 0.004 125);
+  --system-bg: oklch(95% 0.04 350);
 }
 
 /* Light theme overrides: shared status badges */
@@ -305,7 +346,7 @@ body {
 }
 
 .sidebar-item.active {
-  background: rgba(59, 130, 246, 0.1);
+  background: var(--accent-tint);
   color: var(--text-primary);
 }
 
@@ -458,7 +499,7 @@ body {
 }
 
 .session-item.attached {
-  background: rgba(59, 130, 246, 0.1);
+  background: var(--accent-tint);
   border-left: 2px solid var(--accent);
 }
 
@@ -478,15 +519,15 @@ body {
 }
 
 .session-dot.user {
-  background: #4ade80;
+  background: var(--accent);
 }
 
 .session-dot.agent {
-  background: #c084fc;
+  background: var(--color-agent);
 }
 
 .session-dot.dead {
-  background: #737373;
+  background: var(--text-muted);
 }
 
 .session-name {
@@ -523,13 +564,13 @@ body {
 }
 
 .agent-badge {
-  background: #2e1065;
-  color: #c084fc;
+  background: var(--color-agent-bg);
+  color: var(--color-agent);
 }
 
 .dead-badge {
-  background: #292524;
-  color: #737373;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
 }
 
 .session-item-actions {
@@ -565,8 +606,8 @@ body {
 }
 
 .session-kill-btn:hover {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
+  color: var(--color-error);
+  background: var(--color-error-soft);
 }
 
 .session-delete-btn {
@@ -589,8 +630,8 @@ body {
 }
 
 .session-delete-btn:hover {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
+  color: var(--color-error);
+  background: var(--color-error-soft);
 }
 
 .session-delete-btn:focus,
