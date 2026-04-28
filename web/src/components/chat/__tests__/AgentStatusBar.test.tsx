@@ -66,10 +66,10 @@ describe('AgentStatusBar', () => {
 
     const attachButton = screen.getByRole('button', { name: 'Attach' })
     const resumeButton = screen.getByRole('button', { name: 'Resume' })
-    expect(attachButton).toHaveClass('session-pane-action')
-    expect(attachButton).not.toHaveClass('session-pane-action--primary')
-    expect(resumeButton).toHaveClass('session-pane-action')
-    expect(resumeButton).not.toHaveClass('session-pane-action--primary')
+    expect(attachButton).toHaveClass('btn', 'btn-secondary', 'btn-sm')
+    expect(attachButton).not.toHaveClass('btn-primary')
+    expect(resumeButton).toHaveClass('btn', 'btn-secondary', 'btn-sm')
+    expect(resumeButton).not.toHaveClass('btn-primary')
     expect(screen.queryByText('#88')).toBeNull()
     expect(screen.queryByText('Observed Session')).toBeNull()
 

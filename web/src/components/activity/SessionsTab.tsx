@@ -765,7 +765,7 @@ export const SessionsTab = memo(function SessionsTab({
               {showSummaryButton && (
                 <button
                   type="button"
-                  className="session-pane-action"
+                  className="btn btn-secondary btn-sm"
                   onClick={() =>
                     setContentMode((current) =>
                       current === "summary" ? "transcript" : "summary",
@@ -778,7 +778,7 @@ export const SessionsTab = memo(function SessionsTab({
               {showResumeButton && (
                 <button
                   type="button"
-                  className="session-pane-action"
+                  className="btn btn-secondary btn-sm"
                   onClick={() => {
                     if (selectedSessionId) {
                       void onResumeSession?.(selectedSessionId);
@@ -791,7 +791,7 @@ export const SessionsTab = memo(function SessionsTab({
               {showSwapButton && selectedEntry && (
                 <button
                   type="button"
-                  className="session-pane-action"
+                  className="btn btn-secondary btn-sm"
                   onClick={() => {
                     if (selectedSessionId) {
                       onSwapSession?.({

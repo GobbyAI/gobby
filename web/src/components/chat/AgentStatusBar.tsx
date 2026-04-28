@@ -137,7 +137,7 @@ export function AgentStatusBar({
           {onTogglePanel && (
             <button
               type="button"
-              className="session-pane-action session-pane-action--icon"
+              className="btn btn-ghost btn-icon btn-sm"
               onClick={onTogglePanel}
               aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
               title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
@@ -148,7 +148,7 @@ export function AgentStatusBar({
           {!isAttached && !isAutonomousSession && onAttach && (
             <button
               type="button"
-              className="session-pane-action"
+              className="btn btn-secondary btn-sm"
               onClick={onAttach}
             >
               Attach
@@ -157,7 +157,7 @@ export function AgentStatusBar({
           {!isAttached && !isAutonomousSession && onResume && (
             <button
               type="button"
-              className="session-pane-action"
+              className="btn btn-secondary btn-sm"
               onClick={onResume}
             >
               Resume
@@ -166,7 +166,7 @@ export function AgentStatusBar({
           {isAttached && onDetach && (
             <button
               type="button"
-              className="session-pane-action"
+              className="btn btn-secondary btn-sm"
               onClick={onDetach}
             >
               Detach
