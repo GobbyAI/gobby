@@ -28,15 +28,6 @@ entries:
     non_retrofit_acknowledgment_exists: true
     non_retrofit_acknowledgment_open: true
     non_retrofit_acknowledgment_title: "Lifecycle-state-driven agent dispatch"
-  - plan_id: task-12746-neo4j-falkordb-swap
-    root_task_ref: "12746"
-    root_open: true
-    root_title: "Migrate knowledge graph backend from Neo4j to FalkorDB"
-    legacy_reason: "Pre-contract strategy plan; root epic remains accountable for any later coverage retrofit decision."
-    non_retrofit_acknowledgment: "#12746"
-    non_retrofit_acknowledgment_exists: true
-    non_retrofit_acknowledgment_open: true
-    non_retrofit_acknowledgment_title: "Migrate knowledge graph backend from Neo4j to FalkorDB"
   - plan_id: task-12761-postgres-hub-migration
     root_task_ref: "12761"
     root_open: true
