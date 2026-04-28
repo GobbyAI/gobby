@@ -83,7 +83,7 @@ def test_parses_task_13173_recovery() -> None:
 
 
 def test_parses_task_12725_lifecycle_dispatch() -> None:
-    path = _fixture_plan("task-12725-lifecycle-dispatch.md")
+    path = _fixture_plan("task-12725-lifecycle-dispatch-rev1.md")
 
     document = parse_plan(path)
 

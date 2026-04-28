@@ -26,13 +26,10 @@ COVERAGE_DIR = PLANS_DIR / "coverage"
 
 EXPECTED_PLAN_IDS = {
     "task-12068-skillsmp-install-rewrite",
-    "task-12285-droid-cli",
-    "task-12725-lifecycle-dispatch",
     "task-12725-lifecycle-dispatch-rev1",
     "task-12746-neo4j-falkordb-swap",
     "task-12761-postgres-hub-migration",
     "task-12898-memory-recall-helper",
-    "task-13173-lifecycle-dispatch-recovery",
 }
 PLAN_KINDS = {"implementation", "strategy", "legacy"}
 STATUSES = {"active", "merged", "archived"}
@@ -70,7 +67,7 @@ def test_index_file_present_and_well_formed() -> None:
     index = _load_index()
 
     assert set(index) == EXPECTED_PLAN_IDS
-    assert len(index) == 8
+    assert len(index) == 5
 
 
 def test_index_inventory_matches_repo() -> None:
