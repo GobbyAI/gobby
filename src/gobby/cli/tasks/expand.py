@@ -57,7 +57,7 @@ def expand_cmd() -> None:
 @expand_cmd.command("validate-plan")
 @click.argument("plan_file")
 def validate_plan_cmd(plan_file: str) -> None:
-    """Validate a plan file and list detected phases."""
+    """Validate a Plan-Coverage Contract plan file."""
     service = _build_expansion_service()
     plan_path = Path(plan_file)
     if not plan_path.is_absolute():

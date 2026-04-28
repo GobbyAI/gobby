@@ -96,25 +96,6 @@ _BACKEND_SIGNALS = frozenset(
 _BUNDLED_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "install" / "shared" / "prompts"
 
 
-def _extract_phase_number(subtask: dict[str, Any]) -> int | None:
-    """Extract phase number from '### Plan Section: N.N' in description."""
-    desc = subtask.get("description", "")
-    match = re.search(r"###\s+Plan Section:\s*(\d+)\.", desc)
-    return int(match.group(1)) if match else None
-
-
-def _extract_phase_from_title(subtask: dict[str, Any]) -> int | None:
-    """Extract phase number from TDD-generated titles like '[TEST] Phase 2: ...'."""
-    title = subtask.get("title", "")
-    match = re.search(r"Phase\s+(\d+)", title)
-    return int(match.group(1)) if match else None
-
-
-def _get_subtask_phase(subtask: dict[str, Any]) -> int:
-    """Get a phase number for a legacy subtask, or 0 when unphased."""
-    return _extract_phase_number(subtask) or _extract_phase_from_title(subtask) or 0
-
-
 def _skipped_stages(task: Task) -> set[str]:
     """Return resolved stage skip labels from a task, ignoring profile sugar labels."""
     stages: set[str] = set()
@@ -244,48 +225,9 @@ def _agent_selection_fields(
     return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)
 
 
-_PHASE_HEADING_RE = re.compile(r"##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+)")
-_PHASE_SECTION_RE = re.compile(
-    r"^##\s+Phase\s+(\d+)\s*(?::|[\u2014\u2013-])\s*(.+?)$",
-    flags=re.MULTILINE,
-)
 _CONTRACT_PHASE_ID_RE = re.compile(r"^P(?P<number>\d+)$")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<category>[a-z_]+)\]", flags=re.IGNORECASE)
 _DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
-
-
-def _extract_phase_titles(description: str) -> dict[int, str]:
-    """Extract phase titles from plan document content in task description.
-
-    Accepts `## Phase N: Title`, `## Phase N — Title` (em-dash),
-    `## Phase N – Title` (en-dash), and `## Phase N - Title` (ASCII hyphen).
-    """
-    titles: dict[int, str] = {}
-    for match in _PHASE_HEADING_RE.finditer(description):
-        titles[int(match.group(1))] = match.group(2).strip()
-    return titles
-
-
-def _extract_phase_sections(content: str) -> list[dict[str, Any]]:
-    """Split plan markdown into ordered phase sections.
-
-    Each section spans from its ``## Phase N: Name`` heading to (but not
-    including) the next same-level phase heading or end-of-file. Accepts the
-    same separator characters as :func:`_extract_phase_titles`.
-    """
-    matches = list(_PHASE_SECTION_RE.finditer(content))
-    sections: list[dict[str, Any]] = []
-    for i, match in enumerate(matches):
-        body_start = match.end()
-        body_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-        sections.append(
-            {
-                "number": int(match.group(1)),
-                "title": match.group(2).strip(),
-                "body": content[body_start:body_end].strip(),
-            }
-        )
-    return sections
 
 
 def _clean_contract_section_title(title: str) -> str:
@@ -404,193 +346,6 @@ def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
     }
 
 
-def _prefix_spec_ids(spec: dict[str, Any], *, prefix: str) -> dict[str, Any]:
-    """Prefix stable IDs in a compiled spec so sibling specs can merge without collision."""
-
-    def pfx(value: str) -> str:
-        return f"{prefix}{value}" if value and not value.startswith(prefix) else value
-
-    raw_execution_groups = spec.get("execution_groups") or []
-    group_id_map: dict[str, str] = {}
-    task_fallback_groups: dict[str, str] = {}
-    execution_groups = []
-    for group_index, group in enumerate(raw_execution_groups, start=1):
-        raw_group_id = group.get("id")
-        resolved_group_id = (
-            pfx(raw_group_id) if raw_group_id else pfx(f"execution-group-{group_index}")
-        )
-        prefixed_task_ids = [pfx(tid) for tid in group.get("task_ids") or []]
-        execution_groups.append(
-            {
-                **group,
-                "id": resolved_group_id,
-                "task_ids": prefixed_task_ids,
-            }
-        )
-        if isinstance(raw_group_id, str) and raw_group_id:
-            group_id_map[raw_group_id] = resolved_group_id
-        else:
-            for prefixed_task_id in prefixed_task_ids:
-                task_fallback_groups[prefixed_task_id] = resolved_group_id
-
-    phases = [
-        {
-            **phase,
-            "id": pfx(phase["id"]),
-            "task_ids": [pfx(tid) for tid in phase.get("task_ids") or []],
-        }
-        for phase in spec.get("phases") or []
-    ]
-    tasks = [
-        {
-            **task_item,
-            "id": prefixed_task_id,
-            "phase_id": pfx(task_item["phase_id"]),
-            "execution_group": (
-                group_id_map.get(raw_execution_group, pfx(raw_execution_group))
-                if isinstance(raw_execution_group, str) and raw_execution_group
-                else task_fallback_groups.get(prefixed_task_id, raw_execution_group)
-            ),
-        }
-        for task_item in spec.get("tasks") or []
-        for prefixed_task_id, raw_execution_group in [
-            (pfx(task_item["id"]), task_item.get("execution_group"))
-        ]
-    ]
-    dependencies = [
-        {"task_id": pfx(edge["task_id"]), "depends_on": pfx(edge["depends_on"])}
-        for edge in spec.get("dependencies") or []
-        if edge.get("task_id") and edge.get("depends_on")
-    ]
-    return {
-        **spec,
-        "phases": phases,
-        "tasks": tasks,
-        "dependencies": dependencies,
-        "execution_groups": execution_groups,
-    }
-
-
-def _translate_deps(deps: list[int], old_to_new: dict[int, int]) -> list[int]:
-    """Translate original dependency indices to new indices."""
-    return [old_to_new[d] for d in deps if d in old_to_new]
-
-
-def _apply_tdd_sandwich(subtasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Wrap legacy phased subtask specs with deterministic TEST/REF bookends."""
-    phase_groups: dict[int, list[int]] = {}
-    for i, st in enumerate(subtasks):
-        phase = _get_subtask_phase(st)
-        phase_groups.setdefault(phase, []).append(i)
-
-    if list(phase_groups.keys()) == [0]:
-        phase_groups = {1: phase_groups[0]}
-    elif 0 in phase_groups:
-        max_phase = max(p for p in phase_groups if p > 0)
-        phase_groups[max_phase + 1] = phase_groups.pop(0)
-
-    sorted_phases = sorted(phase_groups.keys())
-
-    new_subtasks: list[dict[str, Any]] = []
-    old_to_new: dict[int, int] = {}
-    phase_ref_idx: dict[int, int] = {}
-
-    for phase_num in sorted_phases:
-        orig_indices = phase_groups[phase_num]
-        orig_set = set(orig_indices)
-
-        has_tdd_tasks = any(subtasks[i].get("category") in _TDD_CATEGORIES for i in orig_indices)
-        if not has_tdd_tasks:
-            for orig_idx in orig_indices:
-                new_idx = len(new_subtasks)
-                old_to_new[orig_idx] = new_idx
-                st = dict(subtasks[orig_idx])
-                st["depends_on"] = _translate_deps(st.get("depends_on", []), old_to_new)
-                new_subtasks.append(st)
-            continue
-
-        cross_deps: set[int] = set()
-        for orig_idx in orig_indices:
-            if subtasks[orig_idx].get("category") not in _TDD_CATEGORIES:
-                continue
-            for dep in subtasks[orig_idx].get("depends_on", []):
-                if dep not in orig_set and dep in old_to_new:
-                    dep_phase = _get_subtask_phase(subtasks[dep])
-                    if dep_phase != 0 and dep_phase in phase_ref_idx:
-                        cross_deps.add(phase_ref_idx[dep_phase])
-                    else:
-                        cross_deps.add(old_to_new[dep])
-
-        impl_titles = [
-            subtasks[i]["title"]
-            for i in orig_indices
-            if subtasks[i].get("category") in _TDD_CATEGORIES
-        ]
-
-        test_new_idx = len(new_subtasks)
-        new_subtasks.append(
-            {
-                "title": f"[TEST] Phase {phase_num}: Write failing tests",
-                "category": "test",
-                "description": (
-                    f"Write failing tests for Phase {phase_num} implementation tasks:\n\n"
-                    + "\n".join(f"- {title}" for title in impl_titles)
-                    + "\n\nTests should cover the expected behavior described in each task."
-                ),
-                "validation": (
-                    "Tests exist and fail with expected assertion errors "
-                    "(not import or syntax errors)"
-                ),
-                "priority": subtasks[orig_indices[0]].get("priority", 2),
-                "depends_on": sorted(cross_deps),
-            }
-        )
-
-        impl_start = len(new_subtasks)
-        for i, orig_idx in enumerate(orig_indices):
-            old_to_new[orig_idx] = impl_start + i
-            new_subtasks.append(dict(subtasks[orig_idx]))
-
-        for orig_idx in orig_indices:
-            st = new_subtasks[old_to_new[orig_idx]]
-            if st.get("category") in _TDD_CATEGORIES:
-                new_deps = [test_new_idx]
-                for dep in st.get("depends_on", []):
-                    if dep in orig_set and dep in old_to_new:
-                        new_deps.append(old_to_new[dep])
-                st["depends_on"] = new_deps
-            else:
-                st["depends_on"] = _translate_deps(st.get("depends_on", []), old_to_new)
-
-        ref_new_idx = len(new_subtasks)
-        phase_ref_idx[phase_num] = ref_new_idx
-        new_subtasks.append(
-            {
-                "title": f"[REF] Phase {phase_num}: Refactor with green tests",
-                "category": "refactor",
-                "description": (
-                    f"Refactor Phase {phase_num} while keeping all tests green.\n\n"
-                    "Review for duplication, naming, complexity, and clarity."
-                ),
-                "validation": "All tests pass and the implementation remains behaviorally correct.",
-                "priority": subtasks[orig_indices[0]].get("priority", 2),
-                "depends_on": [
-                    old_to_new[i]
-                    for i in orig_indices
-                    if subtasks[i].get("category") in _TDD_CATEGORIES
-                ],
-            }
-        )
-
-    return new_subtasks
-
-
-def _slugify(value: str, *, fallback: str) -> str:
-    """Build a stable ASCII-ish identifier slug."""
-    normalized = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return normalized or fallback
-
-
 def _stable_test_id(phase_id: str) -> str:
     return f"{phase_id}::__test"
 
@@ -659,18 +414,33 @@ class ExpansionService:
         self._agent_definition_cache: dict[str | None, list[dict[str, Any]]] = {}
 
     def validate_plan_file(self, plan_path: Path) -> dict[str, Any]:
-        """Validate a plan file exists and identify phase headings."""
+        """Validate a plan file against the Plan-Coverage Contract."""
         if not plan_path.exists():
             return {"valid": False, "errors": [f"Plan file not found: {plan_path}"]}
-        content = _read_text_if_exists(plan_path)
-        if content is None:
-            return {"valid": False, "errors": [f"Could not read plan file: {plan_path}"]}
-        phase_titles = _extract_phase_titles(content)
+        try:
+            plan_doc = parse_plan(plan_path)
+        except (OSError, PlanParseError) as exc:
+            return {"valid": False, "errors": [f"Plan file is not contract-conforming: {exc}"]}
+        deliverables = [
+            section for section in plan_doc.sections if section.kind is Kind.deliverable
+        ]
+        if not deliverables:
+            return {
+                "valid": False,
+                "errors": [f"Plan file has no kind: deliverable sections: {plan_path}"],
+            }
+        phases = {
+            _contract_phase_number(section.section_id): _clean_contract_section_title(section.title)
+            for section in plan_doc.sections
+            if _CONTRACT_PHASE_ID_RE.match(section.section_id)
+        }
         return {
             "valid": True,
             "path": str(plan_path),
-            "phase_count": len(phase_titles),
-            "phases": phase_titles,
+            "phase_count": len(phases),
+            "phases": phases,
+            "deliverable_count": len(deliverables),
+            "contract_plan": True,
         }
 
     def compile_plan_to_spec(self, plan_doc: PlanDocument, task: Task) -> dict[str, Any]:
@@ -871,11 +641,13 @@ class ExpansionService:
         except (OSError, PlanParseError) as exc:
             self.run_manager.append_log(
                 run.id,
-                level="info",
-                message="Plan file did not parse as Plan-Coverage Contract; using LLM compile",
+                level="error",
+                message="Plan file did not parse as Plan-Coverage Contract",
                 extra={"plan_file": str(plan_path), "error": str(exc)},
             )
-            return None
+            raise ValueError(
+                f"Plan file must conform to the Plan-Coverage Contract: {plan_path}"
+            ) from exc
 
     async def compile_run(self, run_id: str) -> ExpansionRun:
         """Compile an expansion run into a normalized compiled spec."""
@@ -891,7 +663,14 @@ class ExpansionService:
             return self._complete_dev_only_run(run_id, task)
 
         plan_doc = self._parse_contract_plan(run, task)
-        if plan_doc and any(section.kind is Kind.deliverable for section in plan_doc.sections):
+        if plan_doc is not None:
+            deliverable_count = sum(
+                1 for section in plan_doc.sections if section.kind is Kind.deliverable
+            )
+            if deliverable_count == 0:
+                raise ValueError(
+                    f"Contract plan file has no kind: deliverable sections: {plan_doc.source_path}"
+                )
             self.run_manager.append_log(
                 run_id,
                 level="info",
@@ -900,19 +679,8 @@ class ExpansionService:
             )
             compiled_spec = self.compile_plan_to_spec(plan_doc, task)
         else:
-            phase_sections = self._load_phase_sections(run.plan_file, task)
-            if len(phase_sections) >= 2:
-                self.run_manager.append_log(
-                    run_id,
-                    level="info",
-                    message=f"Detected {len(phase_sections)} phases; compiling per-phase",
-                )
-                compiled_spec = await self._compile_multi_phase(run, task, phase_sections)
-            else:
-                raw_spec = await self._generate_raw_spec(run, task)
-                compiled_spec = self.normalize_compiled_spec(
-                    raw_spec, task=task, plan_file=run.plan_file
-                )
+            raw_spec = await self._generate_raw_spec(run, task)
+            compiled_spec = self.normalize_compiled_spec(raw_spec, task=task, plan_file=None)
         validation = self.validate_compiled_spec(compiled_spec)
         if not validation["valid"]:
             errors = "; ".join(validation["errors"])
@@ -1249,26 +1017,10 @@ class ExpansionService:
         task: Task,
         plan_file: str | None,
     ) -> dict[str, Any]:
-        """Normalize raw LLM output into the compiled expansion schema."""
-        expansion_config = self._get_expansion_config()
-        max_subtasks = expansion_config.max_subtasks if expansion_config else 50
-
-        if "phases" in raw_spec and "tasks" in raw_spec:
-            normalized = self._normalize_native_compiled_spec(
-                raw_spec, task=task, plan_file=plan_file
-            )
-        elif "subtasks" in raw_spec:
-            normalized = self._normalize_legacy_subtask_spec(
-                raw_spec, task=task, plan_file=plan_file
-            )
-        else:
-            raise ValueError("Expansion compiler must return either {phases,tasks} or {subtasks}")
-
-        if len(normalized["tasks"]) > max_subtasks:
-            raise ValueError(
-                f"Compiled spec exceeds max_subtasks ({len(normalized['tasks'])} > {max_subtasks})"
-            )
-        return normalized
+        """Normalize ad-hoc LLM output into the compiled expansion schema."""
+        if "phases" not in raw_spec or "tasks" not in raw_spec:
+            raise ValueError("Expansion compiler must return {phases,tasks}")
+        return self._normalize_native_compiled_spec(raw_spec, task=task, plan_file=plan_file)
 
     def _list_agent_definitions_for_selection(
         self,
@@ -1379,25 +1131,6 @@ class ExpansionService:
         prompt_context = self._build_prompt_context(run, task)
         return await self._invoke_llm_compile(run, prompt_context)
 
-    async def _generate_raw_spec_for_phase(
-        self,
-        run: ExpansionRun,
-        task: Task,
-        phase_section: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Call the LLM scoped to a single plan-phase section."""
-        prompt_context = self._build_prompt_context(
-            run,
-            task,
-            plan_content_override=phase_section["body"],
-            single_phase_mode=True,
-            phase_title=phase_section["title"],
-            phase_number=phase_section["number"],
-        )
-        return await self._invoke_llm_compile(
-            run, prompt_context, phase_number=phase_section["number"]
-        )
-
     async def _invoke_llm_compile(
         self,
         run: ExpansionRun,
@@ -1452,82 +1185,11 @@ class ExpansionService:
                 raise ValueError("Expansion compiler did not return valid JSON") from e
             return parsed
 
-    async def _compile_multi_phase(
-        self,
-        run: ExpansionRun,
-        task: Task,
-        phase_sections: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Compile a multi-phase plan by issuing one LLM call per phase, then merging."""
-        expansion_config = self._get_expansion_config()
-        max_subtasks = expansion_config.max_subtasks if expansion_config else 50
-
-        merged_phases: list[dict[str, Any]] = []
-        merged_tasks: list[dict[str, Any]] = []
-        merged_deps: list[dict[str, str]] = []
-        merged_exec_groups: list[dict[str, Any]] = []
-
-        for section in phase_sections:
-            self.run_manager.append_log(
-                run.id,
-                level="info",
-                message=f"Compiling phase {section['number']}: {section['title']}",
-            )
-            raw = await self._generate_raw_spec_for_phase(run, task, section)
-            if not (raw.get("tasks") or []):
-                raise ValueError(f"Phase {section['number']} spec produced no tasks")
-            normalized = (
-                self.normalize_compiled_spec(raw, task=task, plan_file=run.plan_file)
-                if "subtasks" in raw
-                else self._normalize_native_compiled_spec(raw, task=task, plan_file=run.plan_file)
-            )
-            if len(normalized["tasks"]) > max_subtasks:
-                raise ValueError(
-                    f"Phase {section['number']} spec exceeds max_subtasks "
-                    f"({len(normalized['tasks'])} > {max_subtasks})"
-                )
-            prefixed = _prefix_spec_ids(normalized, prefix=f"phase-{section['number']}-")
-            merged_phases.extend(prefixed["phases"])
-            merged_tasks.extend(prefixed["tasks"])
-            merged_deps.extend(prefixed["dependencies"])
-            merged_exec_groups.extend(prefixed.get("execution_groups") or [])
-
-        if not merged_tasks:
-            raise ValueError("Multi-phase compile produced no tasks")
-
-        return {
-            "version": 1,
-            "parent_task_id": task.id,
-            "plan_file": run.plan_file,
-            "phases": merged_phases,
-            "tasks": merged_tasks,
-            "dependencies": self._dedupe_dependencies(merged_deps),
-            "execution_groups": merged_exec_groups,
-        }
-
-    def _build_prompt_context(
-        self,
-        run: ExpansionRun,
-        task: Task,
-        *,
-        plan_content_override: str | None = None,
-        single_phase_mode: bool = False,
-        phase_title: str = "",
-        phase_number: int = 0,
-    ) -> dict[str, Any]:
-        """Build prompt context for expansion compilation.
-
-        When ``plan_content_override`` is provided, it replaces the on-disk
-        plan content — used by the per-phase compile path so each LLM call
-        sees only its own phase body.
-        """
+    def _build_prompt_context(self, run: ExpansionRun, task: Task) -> dict[str, Any]:
+        """Build prompt context for ad-hoc expansion compilation."""
         repo_path = self._resolve_repo_path(task)
-        if plan_content_override is not None:
-            plan_content: str | None = plan_content_override
-        else:
-            plan_content = self._load_plan_content(run.plan_file, repo_path)
         verification = self._get_verification_commands(repo_path)
-        file_context = self._build_file_context(task, repo_path, plan_content)
+        file_context = self._build_file_context(task, repo_path)
 
         verification_lines = []
         for name, command in verification.items():
@@ -1539,13 +1201,6 @@ class ExpansionService:
         )
 
         research_sections: list[str] = [f"Project verification commands:\n{verification_str}"]
-        if plan_content:
-            plan_label = (
-                f"Plan file ({run.plan_file}) — Phase {phase_number}: {phase_title}"
-                if single_phase_mode
-                else f"Plan file ({run.plan_file})"
-            )
-            research_sections.append(f"{plan_label}:\n{plan_content[:12000]}")
         if file_context:
             research_sections.append(file_context)
 
@@ -1557,10 +1212,6 @@ class ExpansionService:
             "skipped_stages": skipped_stages,
             "context_str": "\n\n".join(research_sections),
             "research_str": file_context or "No repository files were selected for context.",
-            "plan_file": run.plan_file or "",
-            "single_phase_mode": single_phase_mode,
-            "phase_title": phase_title,
-            "phase_number": phase_number,
         }
 
     def _normalize_native_compiled_spec(
@@ -1677,124 +1328,6 @@ class ExpansionService:
             "execution_groups": execution_groups,
         }
 
-    def _normalize_legacy_subtask_spec(
-        self,
-        raw_spec: dict[str, Any],
-        *,
-        task: Task,
-        plan_file: str | None,
-    ) -> dict[str, Any]:
-        """Convert the legacy `subtasks` array shape into a compiled spec."""
-        legacy_subtasks = list(raw_spec.get("subtasks") or [])
-        if not legacy_subtasks:
-            raise ValueError("Legacy expansion spec contains no subtasks")
-
-        phase_titles = _extract_phase_titles(task.description or "")
-        raw_phase_map: dict[int, list[int]] = defaultdict(list)
-        for i, subtask in enumerate(legacy_subtasks):
-            raw_phase_map[_get_subtask_phase(subtask)].append(i)
-        if list(raw_phase_map.keys()) == [0]:
-            raw_phase_map = {1: raw_phase_map[0]}
-        elif 0 in raw_phase_map:
-            max_phase = max(num for num in raw_phase_map if num > 0)
-            raw_phase_map[max_phase + 1] = raw_phase_map.pop(0)
-
-        normalized_tasks: list[dict[str, Any]] = []
-        dependencies: list[dict[str, str]] = []
-        execution_group_index: dict[str, list[str]] = defaultdict(list)
-        index_to_id: dict[int, str] = {}
-        phases: list[dict[str, Any]] = []
-        phase_num_to_id: dict[int, str] = {}
-        agent_definitions = self._list_agent_definitions_for_selection(task.project_id)
-
-        for phase_num in sorted(raw_phase_map.keys()):
-            phase_id = f"phase-{phase_num}"
-            phase_num_to_id[phase_num] = phase_id
-            phase_indices = raw_phase_map[phase_num]
-            phase_tasks = [legacy_subtasks[i] for i in phase_indices]
-            phase_title = phase_titles.get(phase_num, f"Phase {phase_num}")
-            phase_test_intent = self._build_legacy_phase_test_intent(phase_tasks, phase_num)
-            phase_task_ids: list[str] = []
-            for local_index, global_index in enumerate(phase_indices):
-                subtask = legacy_subtasks[global_index]
-                stable_id = f"{phase_id}-task-{local_index + 1}"
-                index_to_id[global_index] = stable_id
-                phase_task_ids.append(stable_id)
-                affected_files = list(subtask.get("affected_files") or [])
-                assigned_agent, additional_skills, description = _agent_selection_fields(
-                    subtask,
-                    agent_definitions,
-                )
-                normalized_tasks.append(
-                    {
-                        "id": stable_id,
-                        "phase_id": phase_id,
-                        "title": subtask.get("title") or f"Task {global_index + 1}",
-                        "description": description,
-                        "priority": int(subtask.get("priority", 2)),
-                        "task_type": subtask.get("task_type", "task"),
-                        "category": subtask.get("category", "code"),
-                        "validation": subtask.get("validation")
-                        or subtask.get("validation_criteria"),
-                        "affected_files": affected_files,
-                        "execution_group": subtask.get("parallel_group"),
-                        "assigned_agent": assigned_agent,
-                        "additional_skills": additional_skills,
-                    }
-                )
-                if subtask.get("parallel_group"):
-                    execution_group_index[subtask["parallel_group"]].append(stable_id)
-            phases.append(
-                {
-                    "id": phase_id,
-                    "title": phase_title,
-                    "summary": phase_title,
-                    "test_intent": phase_test_intent,
-                    "task_ids": phase_task_ids,
-                }
-            )
-
-        for source_index, subtask in enumerate(legacy_subtasks):
-            task_id = index_to_id[source_index]
-            for blocker_index in subtask.get("depends_on") or []:
-                blocker_id = index_to_id.get(blocker_index)
-                if blocker_id:
-                    dependencies.append({"task_id": task_id, "depends_on": blocker_id})
-
-        execution_groups = [
-            {"id": group_name, "mode": "parallel", "task_ids": task_ids}
-            for group_name, task_ids in execution_group_index.items()
-        ]
-
-        return {
-            "version": 1,
-            "parent_task_id": task.id,
-            "plan_file": plan_file or raw_spec.get("plan_file"),
-            "phases": phases,
-            "tasks": normalized_tasks,
-            "dependencies": self._dedupe_dependencies(dependencies),
-            "execution_groups": execution_groups,
-        }
-
-    def _build_legacy_phase_test_intent(
-        self,
-        phase_tasks: list[dict[str, Any]],
-        phase_num: int,
-    ) -> dict[str, Any]:
-        """Derive explicit phase test metadata from legacy subtask output."""
-        impl_titles = [
-            task.get("title", "") for task in phase_tasks if task.get("category") in _TDD_CATEGORIES
-        ]
-        affected_files = [
-            file_path for task in phase_tasks for file_path in (task.get("affected_files") or [])
-        ]
-        return {
-            "summary": f"Verify Phase {phase_num} implementation behavior",
-            "behaviors": [title for title in impl_titles if title],
-            "suggested_test_files": _find_test_files(affected_files),
-            "entry_criteria": ["Tests should fail before implementation begins."],
-        }
-
     def _render_prompt(self, path: str, context: dict[str, Any]) -> str:
         """Render a prompt from DB-backed prompts with a bundled-file fallback."""
         try:
@@ -1816,37 +1349,6 @@ class ExpansionService:
             return Path(project_ctx["project_path"])
         return None
 
-    def _load_plan_content(
-        self,
-        plan_file: str | None,
-        repo_path: Path | None,
-        *,
-        max_chars: int | None = 20000,
-    ) -> str | None:
-        """Load a plan file relative to the repo when provided."""
-        if not plan_file:
-            return None
-        plan_path = Path(plan_file)
-        if not plan_path.is_absolute() and repo_path is not None:
-            plan_path = repo_path / plan_file
-        return _read_text_if_exists(plan_path, max_chars=max_chars)
-
-    def _load_phase_sections(self, plan_file: str | None, task: Task) -> list[dict[str, Any]]:
-        """Load a plan file and split it into phase sections.
-
-        Returns ``[]`` when ``plan_file`` is unset, unreadable, or contains no
-        ``## Phase N`` headings. Reads the full file (no char cap) so phase
-        splitting works on large plans; each section's body is still
-        truncated in ``_build_prompt_context`` before reaching the LLM.
-        """
-        if not plan_file:
-            return []
-        repo_path = self._resolve_repo_path(task)
-        content = self._load_plan_content(plan_file, repo_path, max_chars=None)
-        if not content:
-            return []
-        return _extract_phase_sections(content)
-
     def _get_verification_commands(self, repo_path: Path | None) -> dict[str, str]:
         """Resolve project verification commands from project.json or daemon defaults."""
         project_ctx = (
@@ -1859,9 +1361,7 @@ class ExpansionService:
             return self.config.get_verification_defaults().all_commands()
         return {}
 
-    def _build_file_context(
-        self, task: Task, repo_path: Path | None, plan_content: str | None
-    ) -> str:
+    def _build_file_context(self, task: Task, repo_path: Path | None) -> str:
         """Build a focused repository context block for expansion prompts."""
         if repo_path is None:
             return ""
@@ -1871,9 +1371,6 @@ class ExpansionService:
             "validation_criteria": task.validation_criteria,
         }
         mentioned_files = extract_mentioned_files(task_payload)
-        if plan_content:
-            plan_payload = {"title": "", "description": plan_content, "validation_criteria": None}
-            mentioned_files.extend(extract_mentioned_files(plan_payload))
 
         unique_files: list[str] = []
         seen: set[str] = set()

@@ -13,25 +13,13 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage as run_qa_coverage
-from gobby.tasks.expansion_service import (
-    ExpansionService,
-    _apply_tdd_sandwich,
-    _extract_phase_from_title,
-    _extract_phase_number,
-    _extract_phase_titles,
-    _get_subtask_phase,
-)
+from gobby.tasks.expansion_service import ExpansionService
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "create_expansion_registry",
-    "_apply_tdd_sandwich",
-    "_extract_phase_from_title",
-    "_extract_phase_number",
-    "_extract_phase_titles",
-    "_get_subtask_phase",
 ]
 
 _background_run_tasks: dict[str, asyncio.Task[None]] = {}
@@ -611,7 +599,7 @@ def create_expansion_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     registry.register(
         name="validate_plan_file",
-        description="Validate a plan file and list detected phase headings.",
+        description="Validate a Plan-Coverage Contract plan file.",
         input_schema={
             "type": "object",
             "properties": {

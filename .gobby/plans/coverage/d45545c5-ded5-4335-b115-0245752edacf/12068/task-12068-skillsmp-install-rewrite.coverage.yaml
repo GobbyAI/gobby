@@ -10,49 +10,75 @@ header:
 rows:
 - section_id: '1.1'
   item_id: 1.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:1.1'
+    validation_criteria_snippet: 'symbol: gobby.skills.hubs.base.HubSkillInfo'
+    matched_artifact_ref: gobby.skills.hubs.base.HubSkillInfo
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:2.1'
+    validation_criteria_snippet: 'symbol: gobby.skills.hubs.skillsmp.SkillsMPProvider.get_skill_details'
+    matched_artifact_ref: gobby.skills.hubs.skillsmp.SkillsMPProvider.get_skill_details
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:2.1'
+    validation_criteria_snippet: 'symbol: gobby.skills.hubs.skillsmp.SkillsMPProvider._skill_to_info'
+    matched_artifact_ref: gobby.skills.hubs.skillsmp.SkillsMPProvider._skill_to_info
   deferral_target: null
   evidence: []
 - section_id: '2.2'
   item_id: 2.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:2.2'
+    validation_criteria_snippet: 'symbol: gobby.skills.hubs.skillsmp.SkillsMPProvider.download_skill'
+    matched_artifact_ref: gobby.skills.hubs.skillsmp.SkillsMPProvider.download_skill
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:2.3'
+    validation_criteria_snippet: 'file: src/gobby/skills/hubs/skillsmp.py'
+    matched_artifact_ref: src/gobby/skills/hubs/skillsmp.py
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:2.3'
+    validation_criteria_snippet: 'file: tests/skills/hubs/test_skillsmp.py'
+    matched_artifact_ref: tests/skills/hubs/test_skillsmp.py
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:2.4'
+    validation_criteria_snippet: 'file: src/gobby/servers/routes/hubs.py'
+    matched_artifact_ref: src/gobby/servers/routes/hubs.py
   deferral_target: null
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12068:3.1'
+    validation_criteria_snippet: 'behavior: "install_skill source=skillsmp:<slug>
+      succeeds end-to-end against the live SkillsMP API" in `src/gobby/skills/hubs/skillsmp.py`'
+    matched_artifact_ref: '"install_skill source=skillsmp:<slug> succeeds end-to-end
+      against the live SkillsMP API" in `src/gobby/skills/hubs/skillsmp.py`'
   deferral_target: null
   evidence: []

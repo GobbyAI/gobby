@@ -1,4 +1,4 @@
-"""Expansion compile dispatch between contract parser and LLM fallback."""
+"""Expansion compile dispatch between contract parser and ad-hoc LLM expansion."""
 
 from __future__ import annotations
 
@@ -100,16 +100,16 @@ async def test_contract_plan_dispatches_to_deterministic_compile(
 
 
 @pytest.mark.asyncio
-async def test_legacy_freeform_plan_dispatches_to_llm_fallback(
+async def test_non_contract_plan_file_is_rejected_without_llm_fallback(
     service: ExpansionService,
     run_manager: LocalExpansionRunManager,
     sample_project,
     tmp_path: Path,
 ) -> None:
     parent = _parent(service, sample_project)
-    legacy_plan = tmp_path / "legacy_freeform.md"
-    legacy_plan.write_text(
-        """# Legacy Expansion Notes
+    plan = tmp_path / "freeform.md"
+    plan.write_text(
+        """# Expansion Notes
 
 ## Phase 1: Build the thing
 
@@ -123,10 +123,65 @@ async def test_legacy_freeform_plan_dispatches_to_llm_fallback(
         project_id=sample_project["id"],
         triggering_session_id=None,
         input_source="plan",
-        plan_file=str(legacy_plan),
+        plan_file=str(plan),
     )
 
-    raw_spec = AsyncMock(return_value=_valid_spec(parent.id, str(legacy_plan)))
+    raw_spec = AsyncMock(return_value=_valid_spec(parent.id, str(plan)))
+    with (
+        patch.object(service, "_generate_raw_spec", raw_spec),
+        patch.object(service, "compile_plan_to_spec") as deterministic_compile,
+    ):
+        with pytest.raises(ValueError, match=r"(Plan file must conform|no kind: deliverable)"):
+            await service.compile_run(run.id)
+
+    assert deterministic_compile.call_count == 0
+    assert raw_spec.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_plan_file_is_rejected_without_llm_fallback(
+    service: ExpansionService,
+    run_manager: LocalExpansionRunManager,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_file = tmp_path / "missing.md"
+    run = run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="plan",
+        plan_file=str(plan_file),
+    )
+
+    raw_spec = AsyncMock(return_value=_valid_spec(parent.id, str(plan_file)))
+    with (
+        patch.object(service, "_generate_raw_spec", raw_spec),
+        patch.object(service, "compile_plan_to_spec") as deterministic_compile,
+    ):
+        with pytest.raises(ValueError, match="Plan file must conform"):
+            await service.compile_run(run.id)
+
+    assert deterministic_compile.call_count == 0
+    assert raw_spec.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_no_plan_file_uses_ad_hoc_llm_path(
+    service: ExpansionService,
+    run_manager: LocalExpansionRunManager,
+    sample_project,
+) -> None:
+    parent = _parent(service, sample_project)
+    run = run_manager.create(
+        parent_task_id=parent.id,
+        project_id=sample_project["id"],
+        triggering_session_id=None,
+        input_source="task",
+    )
+
+    raw_spec = AsyncMock(return_value=_valid_spec(parent.id, None))
     with (
         patch.object(service, "_generate_raw_spec", raw_spec),
         patch.object(service, "compile_plan_to_spec") as deterministic_compile,

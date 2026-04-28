@@ -10,205 +10,309 @@ header:
 rows:
 - section_id: '0.1'
   item_id: 0.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:0.1'
+    validation_criteria_snippet: 'file: src/gobby/storage/migrations/sqlite_baseline.sql'
+    matched_artifact_ref: src/gobby/storage/migrations/sqlite_baseline.sql
   deferral_target: null
   evidence: []
 - section_id: '1.1'
   item_id: 1.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:1.1'
+    validation_criteria_snippet: 'file: src/gobby/data/docker-compose.services.yml'
+    matched_artifact_ref: src/gobby/data/docker-compose.services.yml
   deferral_target: null
   evidence: []
 - section_id: '1.2'
   item_id: 1.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:1.2'
+    validation_criteria_snippet: 'file: src/gobby/install/postgres.py'
+    matched_artifact_ref: src/gobby/install/postgres.py
   deferral_target: null
   evidence: []
 - section_id: '1.3'
   item_id: 1.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:1.3'
+    validation_criteria_snippet: 'symbol: gobby.config.bootstrap.BootstrapConfig'
+    matched_artifact_ref: gobby.config.bootstrap.BootstrapConfig
   deferral_target: null
   evidence: []
 - section_id: '1.4'
   item_id: 1.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:1.4'
+    validation_criteria_snippet: 'file: src/gobby/data/postgres-pgsearch/Dockerfile'
+    matched_artifact_ref: src/gobby/data/postgres-pgsearch/Dockerfile
   deferral_target: null
   evidence: []
 - section_id: '1.5'
   item_id: 1.5.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:1.5'
+    validation_criteria_snippet: 'symbol: gobby.cli.postgres'
+    matched_artifact_ref: gobby.cli.postgres
   deferral_target: null
   evidence: []
 - section_id: '2.1'
   item_id: 2.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:2.1'
+    validation_criteria_snippet: 'file: .github/workflows/test.yml'
+    matched_artifact_ref: .github/workflows/test.yml
   deferral_target: null
   evidence: []
 - section_id: '2.2'
   item_id: 2.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:2.2'
+    validation_criteria_snippet: 'symbol: tests.conftest.postgres_schema_per_worker'
+    matched_artifact_ref: tests.conftest.postgres_schema_per_worker
   deferral_target: null
   evidence: []
 - section_id: '2.3'
   item_id: 2.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:2.3'
+    validation_criteria_snippet: 'file: tests/conftest.py'
+    matched_artifact_ref: tests/conftest.py
   deferral_target: null
   evidence: []
 - section_id: '2.4'
   item_id: 2.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:2.4'
+    validation_criteria_snippet: 'file: tests/storage/test_dialect_parity.py'
+    matched_artifact_ref: tests/storage/test_dialect_parity.py
   deferral_target: null
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.1'
+    validation_criteria_snippet: 'symbol: gobby.storage.hub_database.HubDatabase'
+    matched_artifact_ref: gobby.storage.hub_database.HubDatabase
   deferral_target: null
   evidence: []
 - section_id: '3.2'
   item_id: 3.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.2'
+    validation_criteria_snippet: 'symbol: gobby.storage.hub_database.SqliteHubDatabase'
+    matched_artifact_ref: gobby.storage.hub_database.SqliteHubDatabase
   deferral_target: null
   evidence: []
 - section_id: '3.3'
   item_id: 3.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.3'
+    validation_criteria_snippet: 'symbol: gobby.storage.hub_database.PostgresHubDatabase'
+    matched_artifact_ref: gobby.storage.hub_database.PostgresHubDatabase
   deferral_target: null
   evidence: []
 - section_id: '3.4'
   item_id: 3.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.4'
+    validation_criteria_snippet: 'file: src/gobby/storage/'
+    matched_artifact_ref: src/gobby/storage/
   deferral_target: null
   evidence: []
 - section_id: '3.5'
   item_id: 3.5.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.5'
+    validation_criteria_snippet: 'file: src/gobby/storage/'
+    matched_artifact_ref: src/gobby/storage/
   deferral_target: null
   evidence: []
 - section_id: '3.6'
   item_id: 3.6.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.6'
+    validation_criteria_snippet: 'file: src/gobby/storage/'
+    matched_artifact_ref: src/gobby/storage/
   deferral_target: null
   evidence: []
 - section_id: '3.7'
   item_id: 3.7.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:3.7'
+    validation_criteria_snippet: 'symbol: gobby.storage.migrations.runner'
+    matched_artifact_ref: gobby.storage.migrations.runner
   deferral_target: null
   evidence: []
 - section_id: '4.1'
   item_id: 4.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.1'
+    validation_criteria_snippet: 'behavior: "no Python migration callables in Postgres
+      migration path" in `src/gobby/storage/migrations/`'
+    matched_artifact_ref: '"no Python migration callables in Postgres migration path"
+      in `src/gobby/storage/migrations/`'
   deferral_target: null
   evidence: []
 - section_id: '4.2'
   item_id: 4.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.2'
+    validation_criteria_snippet: 'file: src/gobby/storage/migrations/postgres_baseline_schema.sql'
+    matched_artifact_ref: src/gobby/storage/migrations/postgres_baseline_schema.sql
   deferral_target: null
   evidence: []
 - section_id: '4.3'
   item_id: 4.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.3'
+    validation_criteria_snippet: 'file: src/gobby/storage/'
+    matched_artifact_ref: src/gobby/storage/
   deferral_target: null
   evidence: []
 - section_id: '4.4'
   item_id: 4.4.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.4'
+    validation_criteria_snippet: 'file: src/gobby/storage/migrations/postgres_baseline_schema.sql'
+    matched_artifact_ref: src/gobby/storage/migrations/postgres_baseline_schema.sql
   deferral_target: null
   evidence: []
 - section_id: '4.5'
   item_id: 4.5.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.5'
+    validation_criteria_snippet: 'file: src/gobby/search/'
+    matched_artifact_ref: src/gobby/search/
   deferral_target: null
   evidence: []
 - section_id: '4.6'
   item_id: 4.6.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.6'
+    validation_criteria_snippet: 'file: src/gobby/storage/'
+    matched_artifact_ref: src/gobby/storage/
   deferral_target: null
   evidence: []
 - section_id: '4.7'
   item_id: 4.7.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:4.7'
+    validation_criteria_snippet: 'behavior: "concurrency audit completed" in `.gobby/plans/task-12761-postgres-hub-migration.md`'
+    matched_artifact_ref: '"concurrency audit completed" in `.gobby/plans/task-12761-postgres-hub-migration.md`'
   deferral_target: null
   evidence: []
 - section_id: '5.1'
   item_id: 5.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:5.1'
+    validation_criteria_snippet: 'symbol: gobby.cli.postgres.migrate_from_sqlite'
+    matched_artifact_ref: gobby.cli.postgres.migrate_from_sqlite
   deferral_target: null
   evidence: []
 - section_id: '5.2'
   item_id: 5.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:5.2'
+    validation_criteria_snippet: 'file: src/gobby/install/postgres_migrate.py'
+    matched_artifact_ref: src/gobby/install/postgres_migrate.py
   deferral_target: null
   evidence: []
 - section_id: '5.3'
   item_id: 5.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:5.3'
+    validation_criteria_snippet: 'file: src/gobby/install/postgres_migrate.py'
+    matched_artifact_ref: src/gobby/install/postgres_migrate.py
   deferral_target: null
   evidence: []
 - section_id: '6.0'
   item_id: 6.0.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:6.0'
+    validation_criteria_snippet: 'file: src/gobby/install/postgres_audit.py'
+    matched_artifact_ref: src/gobby/install/postgres_audit.py
   deferral_target: null
   evidence: []
 - section_id: '6.1'
   item_id: 6.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:6.1'
+    validation_criteria_snippet: 'file: docs/postgres-cutover.md'
+    matched_artifact_ref: docs/postgres-cutover.md
   deferral_target: null
   evidence: []
 - section_id: '6.2'
   item_id: 6.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:6.2'
+    validation_criteria_snippet: 'file: docs/postgres-rollback.md'
+    matched_artifact_ref: docs/postgres-rollback.md
   deferral_target: null
   evidence: []
 - section_id: '7.0'
   item_id: 7.0.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:7.0'
+    validation_criteria_snippet: 'file: src/gobby/config/bootstrap.py'
+    matched_artifact_ref: src/gobby/config/bootstrap.py
   deferral_target: null
   evidence: []
 - section_id: '7.1'
   item_id: 7.1.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:7.1'
+    validation_criteria_snippet: 'file: src/gobby/runner_init.py'
+    matched_artifact_ref: src/gobby/runner_init.py
   deferral_target: null
   evidence: []
 - section_id: '7.2'
   item_id: 7.2.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:7.2'
+    validation_criteria_snippet: 'file: src/gobby/storage/'
+    matched_artifact_ref: src/gobby/storage/
   deferral_target: null
   evidence: []
 - section_id: '7.3'
   item_id: 7.3.1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#12761:7.3'
+    validation_criteria_snippet: 'file: README.md'
+    matched_artifact_ref: README.md
   deferral_target: null
   evidence: []
