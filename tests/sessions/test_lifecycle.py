@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,9 @@ from gobby.storage.session_models import Session
 pytestmark = pytest.mark.unit
 
 _SESSION_MANAGER_PATCH = "gobby.sessions.lifecycle.SessionManager"
+DROID_FIXTURE_DIR = Path(__file__).parent / "transcripts" / "fixtures" / "droid"
+DROID_FIXTURE_JSONL = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.jsonl"
+DROID_FIXTURE_SETTINGS = DROID_FIXTURE_DIR / "dbf95187-5fa4-43a0-b207-8c24f412baf7.settings.json"
 
 
 @pytest.fixture
@@ -586,6 +590,60 @@ class TestProcessSessionTranscriptParsers:
                 session_id="s1",
                 transcript_path=str(transcript_path),
             )
+
+    @pytest.mark.asyncio
+    async def test_droid_backfill_records_sidecar_token_usage(self, tmp_path, manager):
+        """Droid lifecycle backfill records TokenUsage from the adjacent settings sidecar."""
+        transcript_path = tmp_path / "droid-session.jsonl"
+        transcript_path.write_text(DROID_FIXTURE_JSONL.read_text(encoding="utf-8"))
+        transcript_path.with_suffix(".settings.json").write_text(
+            DROID_FIXTURE_SETTINGS.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+        session = MagicMock()
+        session.source = "droid"
+        session.transcript_path = str(transcript_path)
+        session.project_id = "project-id"
+        session.context_window = None
+        session.model = None
+        manager.session_manager.get.return_value = session
+
+        zero_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+        }
+        manager.token_event_store = MagicMock()
+        manager.token_event_store.get_session_totals.side_effect = [
+            dict(zero_totals),
+            dict(zero_totals),
+        ]
+        manager.token_event_store.record.return_value = True
+
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        event = manager.token_event_store.record.call_args.args[0]
+        assert event.session_id == "s1"
+        assert event.project_id == "project-id"
+        assert event.source == "droid"
+        assert event.origin == "transcript"
+        assert event.model == "claude-3-7-sonnet-latest"
+        assert event.input_tokens == 22571
+        assert event.output_tokens == 384
+        assert event.cache_creation_tokens == 0
+        assert event.cache_read_tokens == 26112
+        assert event.metadata == {"content_type": "tool_use"}
+        manager.session_manager.update_usage.assert_called_once_with(
+            session_id="s1",
+            input_tokens=22571,
+            output_tokens=384,
+            cache_creation_tokens=0,
+            cache_read_tokens=26112,
+            context_window=None,
+            model="claude-3-7-sonnet-latest",
+        )
 
     @pytest.mark.asyncio
     async def test_session_not_found_returns_early(self, tmp_path, manager):
