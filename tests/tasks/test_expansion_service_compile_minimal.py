@@ -74,7 +74,9 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
         title="Minimal epic",
         task_type="epic",
     )
-    plan_doc = parse_plan(_write_minimal_plan(tmp_path / "minimal-contract.md"))
+    plan_doc = parse_plan(
+        _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="draft"
+    )
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
@@ -116,7 +118,9 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
         title="Minimal epic",
         task_type="epic",
     )
-    plan_doc = parse_plan(_write_minimal_plan(tmp_path / "minimal-contract.md"))
+    plan_doc = parse_plan(
+        _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="draft"
+    )
     spec = service.compile_plan_to_spec(plan_doc, parent)
     run = service.run_manager.create(
         parent_task_id=parent.id,

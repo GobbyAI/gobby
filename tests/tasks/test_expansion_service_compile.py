@@ -131,7 +131,7 @@ def test_compile_12898_contract_plan_accepts_manual_deliverable(
     plan_path = (
         Path(__file__).resolve().parents[2] / ".gobby/plans/task-12898-memory-recall-helper.md"
     )
-    spec = service.compile_plan_to_spec(parse_plan(plan_path), parent)
+    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
 
     assert len(spec["tasks"]) == 39
     assert any(task["category"] == "manual" for task in spec["tasks"])
