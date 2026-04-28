@@ -51,7 +51,7 @@ def sessions() -> None:
 @sessions.command("list")
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
 @click.option("--status", "-s", help="Filter by status (active, completed, handoff_ready)")
-@click.option("--source", help="Filter by source (claude, gemini, qwen, codex)")
+@click.option("--source", help="Filter by source (claude, gemini, qwen, codex, droid)")
 @click.option("--limit", "-n", default=20, help="Max sessions to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_sessions(

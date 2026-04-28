@@ -40,6 +40,12 @@ function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
         ],
         source: "static",
       },
+      {
+        provider: "droid",
+        available: true,
+        models: [{ value: "claude-opus-4-7", label: "Claude Opus 4.7" }],
+        source: "static",
+      },
     ],
   };
 }
@@ -70,7 +76,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "gemini", "qwen", "codex"]}
+        availableProviders={["claude", "gemini", "qwen", "codex", "droid"]}
         onModelChange={vi.fn()}
         onProviderChange={vi.fn()}
         onSwitchProvider={vi.fn()}
@@ -104,7 +110,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "gemini", "qwen", "codex"]}
+        availableProviders={["claude", "gemini", "qwen", "codex", "droid"]}
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}
@@ -135,7 +141,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "gemini", "qwen", "codex"]}
+        availableProviders={["claude", "gemini", "qwen", "codex", "droid"]}
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}

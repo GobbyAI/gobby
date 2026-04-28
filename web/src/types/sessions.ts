@@ -39,7 +39,7 @@ export interface GobbySession {
   commit_count?: number;
 }
 
-export const KNOWN_SOURCES = ["claude", "gemini", "qwen", "codex"] as const;
+export const KNOWN_SOURCES = ["claude", "gemini", "qwen", "codex", "droid"] as const;
 
 export interface SessionFilters {
   source: string | null;

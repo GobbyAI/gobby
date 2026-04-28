@@ -510,6 +510,17 @@ def test_list_sessions_filters(mock_session_manager) -> None:
     )
 
 
+def test_list_sessions_filters_droid_source(mock_session_manager) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(sessions, ["list", "--source", "droid", "--json"])
+
+    assert result.exit_code == 0
+    mock_session_manager.list.assert_called_with(
+        project_id=None, status=None, source="droid", limit=20
+    )
+
+
 def test_list_sessions_project_filter(mock_session_manager) -> None:
     with patch("gobby.cli.sessions.resolve_project_ref", return_value="p1"):
         runner = CliRunner()

@@ -294,7 +294,7 @@ def install(
         )
 
     try:
-        # Standard CLIs (claude, gemini, qwen, codex)
+        # Standard CLIs (claude, gemini, qwen, codex, droid)
         _standard_installers: dict[str, Callable[..., dict[str, Any]]] = {
             "claude": install_claude,
             "gemini": install_gemini,
@@ -519,7 +519,7 @@ def uninstall(
     # Track results
     results: dict[str, dict[str, Any]] = {}
 
-    # Standard CLIs (claude, gemini, qwen, codex)
+    # Standard CLIs (claude, gemini, qwen, codex, droid)
     _standard_uninstallers: dict[str, Callable[..., dict[str, Any]]] = {
         "claude": uninstall_claude,
         "gemini": uninstall_gemini,
