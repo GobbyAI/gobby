@@ -37,6 +37,7 @@ Documentation guides for using Gobby's features.
 | Guide | Description |
 |-------|-------------|
 | [integrations.md](integrations.md) | GitHub and Linear integration |
+| [../cli-integrations/droid.md](../cli-integrations/droid.md) | Factory Droid CLI hooks, MCP, and agent spawning |
 
 ## Extensibility
 
