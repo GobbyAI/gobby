@@ -2,6 +2,12 @@
 
 Documentation guides for using Gobby's features.
 
+## Setup
+
+| Guide | Description |
+|-------|-------------|
+| [system-requirements.md](system-requirements.md) | Hardware and OS requirements for the daemon and backing stack |
+
 ## Core Features
 
 | Guide | Description |
