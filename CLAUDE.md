@@ -36,6 +36,10 @@ The repo has over 11,000 tests. Running the full suite takes over 30 minutes. Do
 
 Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning includes organizing work, not just designing it.
 
+## Design Context
+
+All design / UI / color / typography work — across every Gobby surface (product UI in `./web/`, the gobby.ai marketing site, Gobby Pro, installer, CLI/TUI) — must read `.impeccable.md` at the project root before producing output. It defines the design system, deutan-safe color constraints, WCAG 2.2 AA target, aesthetic references, and per-surface variation rules. Update via the `impeccable` skill's `teach` mode rather than freehand edits.
+
 ## Project Overview
 
 Gobby is a local-first daemon that unifies AI coding assistants (Claude Code, Gemini CLI, Codex CLI) under one persistent, extensible platform. It provides:
