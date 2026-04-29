@@ -22,6 +22,7 @@ import {
 import {
   TasksTabDetailPanel,
   type GobbyTaskDetail,
+  type ParentTaskRef,
 } from "./TasksTabDetailPanel";
 
 interface TasksTabProps {
@@ -572,6 +573,13 @@ export const TasksTab = memo(function TasksTab({
   );
   const headerRef = taskDetail?.ref ?? selectedTaskSummary?.ref ?? null;
   const headerTitle = taskDetail?.title ?? selectedTaskSummary?.title ?? null;
+  let parentTask: ParentTaskRef | null = null;
+  if (taskDetail?.parent_task_id) {
+    const parent = tasks.find((t) => t.id === taskDetail.parent_task_id);
+    if (parent) {
+      parentTask = { id: parent.id, ref: parent.ref, title: parent.title };
+    }
+  }
 
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId;
@@ -900,7 +908,11 @@ export const TasksTab = memo(function TasksTab({
               Loading...
             </p>
           ) : taskDetail ? (
-            <TasksTabDetailPanel task={taskDetail} />
+            <TasksTabDetailPanel
+              task={taskDetail}
+              parentTask={parentTask}
+              onSelectTask={setSelectedTaskId}
+            />
           ) : (
             <p className="activity-task-detail-empty">
               Task not found

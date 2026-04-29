@@ -11,10 +11,20 @@ export interface GobbyTaskDetail extends GobbyTask {
   category: string | null;
   validation_criteria: string | null;
   closed_at: string | null;
+  assigned_agent?: string | null;
+  labels?: string[] | null;
+}
+
+export interface ParentTaskRef {
+  id: string;
+  ref: string;
+  title: string;
 }
 
 interface TasksTabDetailPanelProps {
   task: GobbyTaskDetail;
+  parentTask?: ParentTaskRef | null;
+  onSelectTask?: (id: string) => void;
 }
 
 function formatTaskDetailDate(iso: string | null | undefined): string {
@@ -37,12 +47,17 @@ function formatTaskDetailDate(iso: string | null | undefined): string {
   })}`;
 }
 
-export function TasksTabDetailPanel({ task }: TasksTabDetailPanelProps) {
+export function TasksTabDetailPanel({
+  task,
+  parentTask,
+  onSelectTask,
+}: TasksTabDetailPanelProps) {
   const taskState = getCanonicalTaskState(task);
   const ownerLabel = task.agent_name ?? taskState.owner_session_id ?? "Unassigned";
   const ownerMono = !task.agent_name && Boolean(taskState.owner_session_id);
   const stateLabel = TASK_BUCKET_LABELS[getTaskBucket(task)];
   const categoryLabel = task.category ?? task.task_type;
+  const labels = task.labels?.filter(Boolean) ?? [];
 
   return (
     <div className="activity-task-detail-card">
@@ -53,10 +68,24 @@ export function TasksTabDetailPanel({ task }: TasksTabDetailPanelProps) {
           mono={ownerMono}
           title="Agent or session currently holding this task's claim"
         />
+        {task.assigned_agent && (
+          <TaskDetailMetaRow
+            label="Agent"
+            value={task.assigned_agent}
+            mono
+            title="Agent role assigned to drive this task"
+          />
+        )}
         <TaskDetailMetaRow label="State" value={stateLabel} />
         <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
         <TaskDetailMetaRow label="Updated" value={formatTaskDetailDate(task.updated_at)} />
         <TaskDetailMetaRow label="Category" value={categoryLabel} />
+        {parentTask && (
+          <TaskDetailParentRow
+            parent={parentTask}
+            onSelect={onSelectTask}
+          />
+        )}
         {task.path_cache && <TaskDetailMetaRow label="Path" value={task.path_cache} mono />}
         {task.closed_at && (
           <TaskDetailMetaRow
@@ -65,6 +94,16 @@ export function TasksTabDetailPanel({ task }: TasksTabDetailPanelProps) {
           />
         )}
       </div>
+
+      {labels.length > 0 && (
+        <div className="activity-task-detail-labels">
+          {labels.map((label) => (
+            <span key={label} className="activity-task-detail-label">
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {task.description && (
         <div className="activity-task-detail-section">
@@ -110,6 +149,39 @@ function TaskDetailMetaRow({
         }`}
       >
         {value}
+      </span>
+    </div>
+  );
+}
+
+function TaskDetailParentRow({
+  parent,
+  onSelect,
+}: {
+  parent: ParentTaskRef;
+  onSelect?: (id: string) => void;
+}) {
+  const handleClick = onSelect ? () => onSelect(parent.id) : undefined;
+  return (
+    <div className="activity-task-detail-meta-row" title="Parent task">
+      <span className="activity-task-detail-meta-label">Parent</span>
+      <span className="activity-task-detail-meta-value">
+        {handleClick ? (
+          <button
+            type="button"
+            className="activity-task-detail-parent-link"
+            onClick={handleClick}
+          >
+            <span className="activity-task-detail-parent-ref">{parent.ref}</span>
+            <span className="activity-task-detail-parent-title">{parent.title}</span>
+          </button>
+        ) : (
+          <>
+            <span className="activity-task-detail-parent-ref">{parent.ref}</span>
+            {" "}
+            <span className="activity-task-detail-parent-title">{parent.title}</span>
+          </>
+        )}
       </span>
     </div>
   );
