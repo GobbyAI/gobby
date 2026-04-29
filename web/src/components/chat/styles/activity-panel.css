@@ -321,9 +321,9 @@
 
 .activity-panel-mobile-select-wrap {
   position: relative;
-  flex: 0 1 18rem;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: min(18rem, calc(100% - 2.5rem));
+  max-width: 100%;
 }
 
 /* Activity panel tab trigger — mirrors .command-bar-session shell so it
