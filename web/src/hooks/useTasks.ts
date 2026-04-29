@@ -46,6 +46,7 @@ export interface GobbyTaskDetail extends GobbyTask {
   validation_feedback: string | null
   validation_criteria: string | null
   validation_fail_count: number
+  validation_override_reason: string | null
   closed_at: string | null
   closed_reason: string | null
   closed_commit_sha: string | null
@@ -60,6 +61,13 @@ export interface GobbyTaskDetail extends GobbyTask {
   expansion_status: string
   github_pr_number: number | null
   github_repo: string | null
+  allow_automation?: boolean | null
+  yolo?: boolean | null
+  isolation?: string | null
+  dispatch_failure_count?: number | null
+  additional_skills?: string[] | null
+  assigned_agent?: string | null
+  lifecycle?: string | null
 }
 
 export interface TaskFilters {

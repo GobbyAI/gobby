@@ -31,6 +31,7 @@ const SAMPLE_TASK: GobbyTaskDetail = {
   validation_feedback: null,
   validation_criteria: null,
   validation_fail_count: 0,
+  validation_override_reason: null,
   closed_at: null,
   closed_reason: null,
   closed_commit_sha: null,

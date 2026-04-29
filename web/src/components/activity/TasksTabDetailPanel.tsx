@@ -1,5 +1,5 @@
 import { Markdown } from "../chat/Markdown";
-import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
+import type { DependencyTree, GobbyTask, GobbyTaskDetail } from "../../hooks/useTasks";
 import {
   getCanonicalTaskState,
   getTaskBucket,
@@ -7,15 +7,7 @@ import {
   type TaskBucket,
 } from "../../lib/taskState";
 
-export interface GobbyTaskDetail extends GobbyTask {
-  description: string | null;
-  category: string | null;
-  validation_criteria: string | null;
-  closed_at: string | null;
-  assigned_agent?: string | null;
-  labels?: string[] | null;
-  commits?: string[] | null;
-}
+export type { GobbyTaskDetail };
 
 export interface ParentTaskRef {
   id: string;
@@ -84,6 +76,36 @@ export function TasksTabDetailPanel({
   }
   const subtaskTotal = subtasks?.length ?? 0;
 
+  const validationStatus = task.validation_status?.trim() || null;
+  const validationFailCount = task.validation_fail_count ?? 0;
+  const validationFeedback = task.validation_feedback?.trim() || null;
+  const showValidationFeedback =
+    validationFeedback !== null &&
+    (validationStatus === "failed" || validationFailCount > 0);
+
+  const isolation = task.isolation && task.isolation !== "none" ? task.isolation : null;
+  const dispatchFailures = task.dispatch_failure_count ?? 0;
+  const showAutomationRow =
+    Boolean(task.allow_automation) ||
+    Boolean(task.yolo) ||
+    isolation !== null ||
+    dispatchFailures > 0;
+
+  const prUrl =
+    task.github_pr_number != null && task.github_repo
+      ? `https://github.com/${task.github_repo}/pull/${task.github_pr_number}`
+      : null;
+  const prLabel =
+    task.github_pr_number != null
+      ? task.github_repo
+        ? `${task.github_repo}#${task.github_pr_number}`
+        : `#${task.github_pr_number}`
+      : null;
+
+  const isEscalated = Boolean(task.escalated_at);
+  const escalationReason = task.escalation_reason?.trim() || null;
+  const preEscalationStatus = task.pre_escalation_status?.trim() || null;
+
   return (
     <div className="activity-task-detail-card">
       <div className="activity-task-detail-meta">
@@ -112,10 +134,44 @@ export function TasksTabDetailPanel({
           />
         )}
         {task.path_cache && <TaskDetailMetaRow label="Path" value={task.path_cache} mono />}
+        {validationStatus && (
+          <TaskDetailValidationRow
+            status={validationStatus}
+            failCount={validationFailCount}
+          />
+        )}
+        {prUrl && prLabel && (
+          <TaskDetailMetaRow
+            label="PR"
+            value={prLabel}
+            mono
+            href={prUrl}
+            title="Open PR on GitHub"
+          />
+        )}
         {task.closed_at && (
           <TaskDetailMetaRow
             label="Closed"
             value={formatTaskDetailDate(task.closed_at)}
+          />
+        )}
+        {task.closed_commit_sha && (
+          <TaskDetailMetaRow
+            label="Closing commit"
+            value={task.closed_commit_sha.slice(0, 7)}
+            mono
+            title={task.closed_commit_sha}
+          />
+        )}
+        {task.closed_reason && (
+          <TaskDetailMetaRow label="Close reason" value={task.closed_reason} />
+        )}
+        {task.closed_in_session_id && (
+          <TaskDetailMetaRow
+            label="Closed in"
+            value={task.closed_in_session_id}
+            mono
+            title="Session that closed this task"
           />
         )}
       </div>
@@ -127,6 +183,68 @@ export function TasksTabDetailPanel({
               {label}
             </span>
           ))}
+        </div>
+      )}
+
+      {showAutomationRow && (
+        <div className="activity-task-detail-section">
+          <div className="activity-task-detail-section-title">Automation</div>
+          <div className="activity-task-detail-pillrow">
+            {task.allow_automation && (
+              <span
+                className="activity-task-detail-pill"
+                title="Dispatcher is allowed to drive this task"
+              >
+                Dispatch on
+              </span>
+            )}
+            {isolation && (
+              <span
+                className="activity-task-detail-pill activity-task-detail-pill--mono"
+                title="Isolation kind for automated work"
+              >
+                {isolation}
+              </span>
+            )}
+            {task.yolo && (
+              <span
+                className="activity-task-detail-pill activity-task-detail-pill--warn"
+                title="Dispatcher uses fallback choices instead of escalating"
+              >
+                YOLO
+              </span>
+            )}
+            {dispatchFailures > 0 && (
+              <span
+                className="activity-task-detail-pill activity-task-detail-pill--blocked"
+                title="Consecutive dispatcher failures"
+              >
+                <strong>{dispatchFailures}</strong> dispatch fails
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isEscalated && (
+        <div className="activity-task-detail-section activity-task-detail-section--escalated">
+          <div className="activity-task-detail-section-title">
+            Escalated
+            {task.escalated_at && (
+              <span className="activity-task-detail-section-count">
+                {formatTaskDetailDate(task.escalated_at)}
+              </span>
+            )}
+          </div>
+          {preEscalationStatus && (
+            <div className="activity-task-detail-meta-row">
+              <span className="activity-task-detail-meta-label">From</span>
+              <span className="activity-task-detail-meta-value">{preEscalationStatus}</span>
+            </div>
+          )}
+          {escalationReason && (
+            <div className="activity-task-detail-escalation-reason">{escalationReason}</div>
+          )}
         </div>
       )}
 
@@ -224,6 +342,18 @@ export function TasksTabDetailPanel({
           </div>
         </div>
       )}
+
+      {showValidationFeedback && validationFeedback && (
+        <div className="activity-task-detail-section activity-task-detail-section--failed">
+          <div className="activity-task-detail-section-title">Validation feedback</div>
+          <div className="activity-task-detail-markdown message-content">
+            <Markdown
+              content={validationFeedback}
+              id={`task-vf-${task.id}`}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -233,21 +363,65 @@ function TaskDetailMetaRow({
   value,
   mono = false,
   title,
+  href,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   title?: string;
+  href?: string;
 }) {
+  const valueClass = `activity-task-detail-meta-value${
+    mono ? " activity-task-detail-meta-value--mono" : ""
+  }`;
   return (
     <div className="activity-task-detail-meta-row" title={title}>
       <span className="activity-task-detail-meta-label">{label}</span>
-      <span
-        className={`activity-task-detail-meta-value${
-          mono ? " activity-task-detail-meta-value--mono" : ""
-        }`}
-      >
-        {value}
+      {href ? (
+        <a
+          className={`${valueClass} activity-task-detail-meta-value--link`}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {value}
+        </a>
+      ) : (
+        <span className={valueClass}>{value}</span>
+      )}
+    </div>
+  );
+}
+
+function TaskDetailValidationRow({
+  status,
+  failCount,
+}: {
+  status: string;
+  failCount: number;
+}) {
+  const normalized = status.toLowerCase();
+  const variant =
+    normalized === "passed" || normalized === "approved"
+      ? "ok"
+      : normalized === "failed" || normalized === "rejected"
+        ? "fail"
+        : "neutral";
+  return (
+    <div className="activity-task-detail-meta-row" title="Validation status">
+      <span className="activity-task-detail-meta-label">Validation</span>
+      <span className="activity-task-detail-meta-value">
+        <span
+          className={`activity-task-detail-pill activity-task-detail-pill--${variant}`}
+        >
+          {status}
+        </span>
+        {failCount > 0 && (
+          <span className="activity-task-detail-validation-fails">
+            {" "}
+            {failCount} {failCount === 1 ? "fail" : "fails"}
+          </span>
+        )}
       </span>
     </div>
   );
