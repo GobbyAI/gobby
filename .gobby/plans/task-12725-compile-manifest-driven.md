@@ -81,15 +81,29 @@ _DETERMINISTIC_AGENT_BY_CATEGORY = {
 
 **Edit B — `src/gobby/tasks/expansion_service.py:312-324`** (`_contract_agent_fields`)
 
-Replace the silent backend-developer fallback at lines 320–324:
+Replace ONLY the trailing silent backend-developer fallback (current line
+323: `return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)`).
+**Preserve** the existing `_DETERMINISTIC_FRONTEND_SIGNAL_RE` guard at
+lines 318-320 — frontend-signal titles (react/ui/vue/next.js, per the
+regex at line 64) intentionally route to `frontend-developer` and that
+routing is the correct non-backend behavior, not a fallback to drop.
 
 ```python
 def _contract_agent_fields(
-    *, category: str, title: str, description: str
+    *,
+    category: str,
+    title: str,
+    description: str,
 ) -> tuple[str, list[str], str]:
+    signal_text = f"{title}\n{description}".lower()
+    # Preserved: frontend-signal routing is intentional non-backend work.
+    if _DETERMINISTIC_FRONTEND_SIGNAL_RE.search(signal_text):
+        return "frontend-developer", [], description
     assigned_agent = _DETERMINISTIC_AGENT_BY_CATEGORY.get(category)
     if assigned_agent is not None:
         return assigned_agent, [], description
+    # Replaced: silent `_DEFAULT_AGENT` (= "backend-developer") fallback
+    # is gone. Unmapped categories raise loudly instead.
     raise ValueError(
         f"contract category {category!r} has no specialist agent and is not "
         f"eligible for automated leaf creation; valid categories: "
@@ -97,7 +111,8 @@ def _contract_agent_fields(
     )
 ```
 
-This eliminates the silent fallback to `_DEFAULT_AGENT = "backend-developer"`.
+This eliminates the silent fallback to `_DEFAULT_AGENT = "backend-developer"`
+(at line 323) while preserving the frontend-signal branch (lines 318-320).
 `validate_compiled_spec` at line 1075 remains as a defense-in-depth check
 for any path that bypasses `_contract_agent_fields`.
 
@@ -161,8 +176,12 @@ def resolve_plan_id(plan_id: str | None) -> str:
     return plan_id or MISSING_PLAN_ID_SENTINEL
 ```
 
-Update `parser.py:801` (inside `_compile_expected_labels`) to use
-`resolve_plan_id(plan_id)` when building expected `covers:` labels. Update
+Inside `parser._validate_manifest_invariants` (line ~754ff) the
+expected-labels set is built inline as
+`{f"covers:{plan_id}:{section.section_id}:{item.item_id}" for ...}`. There
+is no separate `_compile_expected_labels` helper — update the inline
+expression at the relevant line (currently around line 794) to use
+`resolve_plan_id(plan_id)` when computing expected covers labels. Update
 `manifest_emitter.py:138` to use the same helper instead of the inline
 `document.plan_id or "unknown"`.
 
@@ -194,7 +213,34 @@ At line 138, replace `plan_id = document.plan_id or "unknown"` with
 `plan_id = resolve_plan_id(document.plan_id)` so emitter and parser agree on
 the fallback when `**Plan ID:**` is absent.
 
-**Edit E — `tests/plans/test_manifest_emitter.py`**
+**Edit E — `src/gobby/plans/manifest_emitter.py:295` (`_append_yolo_fallback`)**
+
+The current audit-append at line 297 writes
+`f"\n## Yolo Fallbacks\n\n- by: {by_actor}\n..."` — a bare `## Yolo Fallbacks`
+heading with no `kind:` annotation. Implementation plans require every
+non-canonical heading to declare `kind:`, so a plan that hits the fallback
+path can't be re-parsed in expansion mode and can't be cleanly re-emitted
+without manual cleanup. Patch the audit body so the appended section is
+parser-safe:
+
+```python
+def _append_yolo_fallback(path: Path, *, by_actor: str, reason: str) -> None:
+    timestamp = datetime.now(UTC).isoformat()
+    audit = (
+        "\n## Yolo Fallbacks\n"
+        "`kind: framing`\n\n"
+        f"- by: {by_actor}\n"
+        f"- at: {timestamp}\n"
+        f"- reason: {reason}\n"
+    )
+    # rest of function unchanged
+```
+
+This makes the emit→fix→re-emit recovery loop in §1.4 Step 4 work without
+operator cleanup of the audit section: re-emit replaces the prior manifest
+and the framing-tagged audit stays parse-clean.
+
+**Edit F — `tests/plans/test_manifest_emitter.py`**
 
 Update existing tests + add new ones:
 
@@ -213,6 +259,17 @@ Update existing tests + add new ones:
   `"fresh"` (not `"fallback_force_approve"`); then call
   `parse_plan(path, parse_mode="expansion")` and assert it returns without
   raising. Locks in that the parser/emitter sentinels stay aligned.
+- `test_yolo_fallback_audit_is_parser_safe` (new): trigger the
+  `fallback_force_approve` path (e.g. by writing a plan with a deliverable
+  that has no acceptance items) so the emitter appends a `## Yolo Fallbacks`
+  audit; then call `parse_plan(path, parse_mode="expansion")` and assert it
+  raises only on the deliverable-acceptance issue, NOT on a noncanonical
+  `## Yolo Fallbacks` heading. Locks in F4's parser-safe fallback fix.
+- `test_yolo_fallback_then_reemit_recovers` (new): write a plan that triggers
+  fallback once, fix the offending deliverable in-place, call
+  `emit_stub_manifest` again, assert the second call returns `"fresh"`, and
+  assert `parse_plan(parse_mode="expansion")` succeeds. Locks in that the
+  fix→re-emit loop works without manual audit-section cleanup.
 
 **Preflight — monolith refactor task (compliance, not refactor work)**
 
@@ -231,8 +288,12 @@ is **not** sub-plan A's work — only the task filing is in scope here.
   → `backend-developer`; `test` → `test-architect`; `config`/`docs`/`manual`/
   `research` → `default`; `planning` is intentionally absent. file:
   `src/gobby/tasks/expansion_service.py`.
-- 1.1.2 — `_contract_agent_fields` raises `ValueError` for any category not
-  in the map (instead of silently defaulting to `backend-developer`). symbol:
+- 1.1.2 — `_contract_agent_fields` preserves the existing
+  `_DETERMINISTIC_FRONTEND_SIGNAL_RE` branch (frontend-signal titles route
+  to `"frontend-developer"`); for any non-frontend category not in
+  `_DETERMINISTIC_AGENT_BY_CATEGORY`, the function raises `ValueError`
+  instead of the prior silent `_DEFAULT_AGENT = "backend-developer"`
+  fallback. symbol:
   `gobby.tasks.expansion_service._contract_agent_fields`.
 - 1.1.3 — `gobby.plans.parser.extract_section_dependencies(title)` returns
   the dependency list parsed from a `(depends: …)` annotation; the
@@ -260,10 +321,10 @@ is **not** sub-plan A's work — only the task filing is in scope here.
   `resolve_plan_id("foo") == "foo"`; `MISSING_PLAN_ID_SENTINEL == "unknown"`
   is exported from the parser module. symbol:
   `gobby.plans.parser.resolve_plan_id`.
-- 1.1.10 — `parser._compile_expected_labels` (line 801) and
-  `manifest_emitter._synthesize_entry` (line 138) both call
-  `resolve_plan_id(plan_id)` instead of inlining their own fallback. symbol:
-  `gobby.plans.parser._compile_expected_labels`.
+- 1.1.10 — `parser._validate_manifest_invariants` (the inline expected-labels
+  comprehension) and `manifest_emitter._synthesize_entry` (line 138) both
+  call `resolve_plan_id(plan_id)` instead of inlining their own fallback.
+  symbol: `gobby.plans.parser._validate_manifest_invariants`.
 - 1.1.11 — `tests/plans/test_manifest_emitter.py::test_emit_and_reparse_round_trips_with_no_plan_id`
   asserts that a synthetic plan with no `**Plan ID:**` round-trips cleanly
   through `emit_stub_manifest` (returns `"fresh"`) and
@@ -274,6 +335,19 @@ is **not** sub-plan A's work — only the task filing is in scope here.
   `#12730` (search first; create if missing). The task is unclaimed and
   `allow_automation: false`. behavior: "monolith preflight task filed for
   expansion_service.py before sub-plan A edits land".
+- 1.1.13 — `manifest_emitter._append_yolo_fallback` writes the audit section
+  with a `\`kind: framing\`` annotation directly under the `## Yolo Fallbacks`
+  heading, so the appended section is parser-safe in implementation plans.
+  symbol: `gobby.plans.manifest_emitter._append_yolo_fallback`.
+- 1.1.14 — `tests/plans/test_manifest_emitter.py::test_yolo_fallback_audit_is_parser_safe`
+  triggers the fallback path and asserts that
+  `parse_plan(parse_mode="expansion")` does not error on the appended
+  `## Yolo Fallbacks` heading itself. test:
+  `tests/plans/test_manifest_emitter.py::test_yolo_fallback_audit_is_parser_safe`.
+- 1.1.15 — `tests/plans/test_manifest_emitter.py::test_yolo_fallback_then_reemit_recovers`
+  asserts the fallback→fix→re-emit loop transitions to `"fresh"` and parses
+  cleanly in expansion mode without manual audit-section cleanup. test:
+  `tests/plans/test_manifest_emitter.py::test_yolo_fallback_then_reemit_recovers`.
 
 ### 1.2 Refactor `compile_plan_to_spec` to be manifest-driven [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -335,12 +409,27 @@ def compile_plan_to_spec(self, plan_doc: PlanDocument, task: Task) -> dict[str, 
         # emitted is (test, impl, ref) when entry.tdd, else (single,)
         tasks.extend(emitted)
         # dependencies wired per Cross-tdd-mode rules below
+
+    # Preserve existing deferred-section handling: deferrals are NOT manifest
+    # entries (per `docs/contracts/plan-coverage.md` § "Typed deferral
+    # object"), they live as `kind: deferred` sections with a typed deferral
+    # block and are surfaced separately in the compiled spec. Today this
+    # loop lives at expansion_service.py:462-469 and uses
+    # `_contract_deferral_record(section)` defined at line 331; the
+    # manifest-driven rewrite must keep it intact.
+    deferrals: list[dict[str, Any]] = []
+    for section in plan_doc.sections:
+        if section.kind is Kind.deferred:
+            record = _contract_deferral_record(section)
+            if record is not None:
+                deferrals.append(record)
+
     return {
         "version": 1, "parent_task_id": task.id,
         "plan_file": str(plan_doc.source_path),
         "phases": phases, "tasks": tasks,
         "dependencies": self._dedupe_dependencies(dependencies),
-        "execution_groups": [], "deferrals": [],
+        "execution_groups": [], "deferrals": deferrals,
         "contract_plan": True, "plan_id": plan_id,
         "deliverable_count": len(plan_doc.manifest_entries),
     }
@@ -454,58 +543,114 @@ manifest entry as primary input, source section as fallback for prose only.
   manifest section to `_parse_contract_plan` and asserts the wrapping
   `ValueError` fires. test:
   `tests/tasks/test_expansion_service_compile_manifest_driven.py::test_missing_manifest_raises`.
+- 1.2.10 — The manifest-driven `compile_plan_to_spec` preserves the
+  existing `kind: deferred` handling: it iterates `plan_doc.sections` for
+  `Kind.deferred` sections and appends `_contract_deferral_record(section)`
+  to `spec["deferrals"]`. A plan with one `kind: deferred` section produces
+  a one-record `spec["deferrals"]`, not `[]`. symbol:
+  `gobby.tasks.expansion_service.ExpansionService.compile_plan_to_spec`.
+- 1.2.11 — Compiled-spec task field name for validation criteria stays
+  `"validation"` (NOT `"validation_criteria"`) to preserve the contract
+  with `apply_run` (which reads `task_item.get("validation")` at
+  `expansion_service.py:874` and `task_item.get("validation") or
+  task_item.get("validation_criteria")` at line 1279). The manifest entry's
+  `validation_criteria` field flows into the compiled task's `validation`
+  field; the field-name asymmetry is intentional and locked in by this
+  acceptance. symbol:
+  `gobby.tasks.expansion_service.ExpansionService._contract_section_tasks`.
+- 1.2.12 — `tests/tasks/test_expansion_service_compile_manifest_driven.py::test_deferrals_preserved`
+  asserts that a synthetic plan with one `kind: deliverable` and one
+  `kind: deferred` section compiles to `len(spec["tasks"]) == 1` (or 3 if
+  tdd) and `len(spec["deferrals"]) == 1` with the deferral's
+  `task_ref`/`reason`/`owner` preserved. test:
+  `tests/tasks/test_expansion_service_compile_manifest_driven.py::test_deferrals_preserved`.
 
-### 1.3 Fix stale fixture path in compile-service tests [category: refactor] (depends: 1.2)
+### 1.3 Migrate compile-service tests to manifest-driven semantics [category: refactor] (depends: 1.2)
 `kind: deliverable`
 
-Target: `tests/tasks/test_expansion_service_compile.py` (line 33);
-`tests/tasks/test_expansion_service_compile_minimal.py` (if same path).
+Target:
+- `tests/fixtures/plans/expansion-compile-regression.md` (regression fixture)
+- `tests/tasks/test_expansion_service_compile.py` (5 tests using
+  `_regression_plan_path()` at line 30 + `_regression_plan_doc()` parsing
+  with `parse_mode="draft"` at line 35)
+- `tests/tasks/test_expansion_service_compile_minimal.py::_write_minimal_plan`
+  (writes inline temp plan with no manifest)
 
-Both files reference `task-12725-lifecycle-dispatch.md` (no `-rev1` suffix).
-That file does not exist; only `task-12725-lifecycle-dispatch-rev1.md` does.
-All compile-service tests currently fail with `FileNotFoundError`.
+These tests do **not** target plan-12725 directly — they exercise compile
+mechanics against a small regression fixture and an inline minimal plan.
+After §1.2 changes `_parse_contract_plan` to `parse_mode="expansion"` and
+makes `compile_plan_to_spec` iterate `manifest_entries`, the existing
+fixture and inline plan would compile to zero tasks (no manifest entries)
+or fail to parse (missing manifest). This deliverable migrates both to the
+manifest-driven shape while preserving each fixture's existing regression
+coverage. Plan-12725's `32`/`74` counts stay scoped to §1.5 only.
 
 **Edits**:
 
-1. Update `_canonical_plan_path()` (line 33 of `test_expansion_service_compile.py`):
+1. **Add a manifest section to the regression fixture**
+   (`tests/fixtures/plans/expansion-compile-regression.md`). The fixture
+   currently has SIX `kind: deliverable` sections: `1.1 Dispatcher Schema`
+   (code), `1.2 Mutex Lease` (code), `1.3a Operator Runbook` (docs),
+   `2.1 Dispatcher React UI` (code), `2.2 CLI Status Command` (config),
+   and `3.1 End-to-End Coverage` (test). Append a `## M1 Task Manifest`
+   section with one YAML entry per deliverable (six entries total).
+   Match the existing categories so the manifest-driven compile produces
+   the same tdd/non-tdd shape the tests already expect. Use
+   `gobby.plans.manifest_emitter.emit_stub_manifest` to generate it
+   deterministically rather than hand-authoring.
 
-   ```python
-   def _canonical_plan_path() -> Path:
-       return (
-           Path(__file__).resolve().parents[2]
-           / ".gobby/plans/task-12725-lifecycle-dispatch-rev1.md"
-       )
-   ```
+2. **Update `_regression_plan_doc()`** (line 35 of
+   `test_expansion_service_compile.py`) to parse with
+   `parse_mode="expansion"` instead of `parse_mode="draft"` so the new
+   manifest's invariants are enforced at parse time. If any of the 5 tests
+   read the doc directly (e.g.
+   `test_compile_contract_plan_emits_tdd_leaves_by_phase`), the parsed doc
+   now exposes `manifest_entries` to read in assertions.
 
-2. Update expected counts to match the manifest-driven semantics shipped in
-   1.2. Plan-12725 has 32 deliverables; 21 are tdd-true (`code`/`refactor`)
-   and 11 are tdd-false (`config`/`docs`/`manual`). Expected:
+3. **Update inline `_write_minimal_plan`**
+   (`test_expansion_service_compile_minimal.py:22`) to append a
+   `## M1 Task Manifest` section covering BOTH non-deferred deliverables.
+   The inline plan currently has THREE sections: `### 1.1 Foundation
+   [category: code]` (deliverable), `### 2.1 Follow-up [category: docs]
+   (depends: 1.1)` (deliverable), and `### 2.2 Deferred work` (deferred).
+   Add YAML manifest entries for `1.1` AND `2.1` (the deferred `2.2` does
+   NOT get a manifest entry — deferrals are typed deferral objects, not
+   manifest entries, and live in `spec["deferrals"]` per §1.2.10).
+   Omitting `2.1` would leave it orphaned, which expansion-mode parsing
+   rejects.
 
-   - `spec["deliverable_count"] == 32`
-   - `len(spec["tasks"]) == 21 * 3 + 11 * 1 == 74`
+4. **Walk every assertion** in both test files and replace any that hardcoded
+   "always 3 tasks per deliverable" with manifest-aware logic: 3 tasks per
+   tdd-true entry, 1 task per tdd-false entry. Preserve each test's existing
+   numeric expectations against its own fixture (do **not** import
+   plan-12725's 32/74 counts here — those belong to §1.5).
 
-3. Apply the same fixture-path update to
-   `tests/tasks/test_expansion_service_compile_minimal.py` if it imports the
-   same helper or hardcodes the path.
-
-4. Walk every assertion in both files; replace any that assumes
-   "always 3 tasks per deliverable" with the manifest-aware shape (3 if tdd
-   else 1).
+5. **Drop the previous round's reference to `_canonical_plan_path()`** —
+   that helper does not exist in the current test files. The regression
+   fixture path stays at `tests/fixtures/plans/expansion-compile-regression.md`
+   via `_regression_plan_path()`.
 
 **Acceptance:**
 
-- 1.3.1 — `_canonical_plan_path()` returns
-  `.gobby/plans/task-12725-lifecycle-dispatch-rev1.md`. symbol:
-  `tests.tasks.test_expansion_service_compile._canonical_plan_path`.
-- 1.3.2 — `tests/tasks/test_expansion_service_compile.py::test_compile_contract_plan_emits_tdd_leaves_by_phase`
-  asserts `deliverable_count == 32` and `len(tasks) == 74`. test:
-  `tests/tasks/test_expansion_service_compile.py::test_compile_contract_plan_emits_tdd_leaves_by_phase`.
-- 1.3.3 — `tests/tasks/test_expansion_service_compile_minimal.py` (if it
-  exists and uses the stale path) is updated parallel to 1.3.1/1.3.2 and
-  passes. file: `tests/tasks/test_expansion_service_compile_minimal.py`.
+- 1.3.1 — `tests/fixtures/plans/expansion-compile-regression.md` carries a
+  `## M1 Task Manifest` section with one YAML entry per `kind: deliverable`
+  section (deferrals excluded), generated via `emit_stub_manifest`. file:
+  `tests/fixtures/plans/expansion-compile-regression.md`.
+- 1.3.2 — `_regression_plan_doc()` parses with `parse_mode="expansion"` and
+  returns a doc whose `manifest_entries` count matches the deliverable count
+  in the regression fixture. symbol:
+  `tests.tasks.test_expansion_service_compile._regression_plan_doc`.
+- 1.3.3 — `_write_minimal_plan` (in
+  `tests/tasks/test_expansion_service_compile_minimal.py`) writes an inline
+  plan that includes a `## M1 Task Manifest` section covering its non-deferred
+  deliverables; the existing tests in that file pass under the new
+  manifest-driven compile. symbol:
+  `tests.tasks.test_expansion_service_compile_minimal._write_minimal_plan`.
 - 1.3.4 — `uv run pytest tests/tasks/test_expansion_service_compile.py
-  tests/tasks/test_expansion_service_compile_minimal.py -v` passes. behavior:
-  "compile-service test suite is green against plan-12725 rev1" in this plan.
+  tests/tasks/test_expansion_service_compile_minimal.py -v` passes after
+  the migration; the existing per-fixture assertions are preserved (no
+  importing of plan-12725's 32/74 counts). behavior: "regression and minimal
+  compile-service tests are green under manifest-driven semantics".
 
 ### 1.4 Emit plan-12725 manifest + bump coverage manifest header [category: config] (depends: 1.2)
 `kind: deliverable`
@@ -522,10 +667,15 @@ the coverage manifest header to match the new plan_hash.
 
 **Sequence**:
 
-0. **Plan-ID preflight** — Add an explicit `**Plan ID: task-12725-lifecycle-dispatch-rev1**`
-   line to the plan header (after `# Lifecycle-state-driven agent dispatch`,
-   before the first framing section). Without this, `parse_plan(...).plan_id`
-   is `None` and the emit→reparse round-trip leans on the §1.1 sentinel
+0. **Plan-ID preflight** — Add an explicit
+   `**Plan ID:** task-12725-lifecycle-dispatch-rev1` line to the plan header
+   (after `# Lifecycle-state-driven agent dispatch`, before the first framing
+   section). The parser regex `_PLAN_ID_RE` at `parser.py:24` is
+   `^\s*>?\s*\*\*Plan ID:\*\*\s*(?P<plan_id>.+?)\s*$`, so the asterisks
+   close around `Plan ID:` only and the value follows on the same line —
+   `**Plan ID: value**` (asterisks around the whole expression) is NOT
+   recognized. Without the correct format, `parse_plan(...).plan_id` is
+   `None` and the emit→reparse round-trip leans on the §1.1 sentinel
    fallback (`"unknown"`) — affirmative IDs are preferred. The plan_hash
    changes after this edit (handled by Step 3 below).
 
@@ -567,8 +717,13 @@ the coverage manifest header to match the new plan_hash.
 4. If `emit_stub_manifest` returns `"fallback_force_approve"` instead of
    `"fresh"`, the `## Yolo Fallbacks` audit appended to the plan names the
    cause. Fix the offending deliverable section in the plan (plan-text edits
-   are allowed; only task-tree edits are off-limits) and re-emit. `emit_stub_manifest`
-   is idempotent — re-emit replaces the bad manifest with a fresh one.
+   are allowed; only task-tree edits are off-limits) and re-emit.
+   `emit_stub_manifest` is idempotent — re-emit replaces the bad manifest
+   with a fresh one. Per §1.1's Edit E, the appended audit section carries
+   `\`kind: framing\`` so the plan stays parse-clean in expansion mode
+   between the fallback and the recovery re-emit; no manual cleanup of the
+   `## Yolo Fallbacks` heading is required (it can be deleted in a follow-up
+   commit if desired, but it does not block the re-emit cycle).
 
 **Acceptance:**
 
@@ -587,8 +742,9 @@ the coverage manifest header to match the new plan_hash.
   passes after the header bump. test:
   `tests/plans/test_plan_coverage_ci.py::test_manifest_plan_hash_matches_on_disk`.
 - 1.4.5 — `.gobby/plans/task-12725-lifecycle-dispatch-rev1.md` carries an
-  explicit `**Plan ID: task-12725-lifecycle-dispatch-rev1**` line in the
-  header so `parse_plan(path, parse_mode="expansion").plan_id ==
+  explicit `**Plan ID:** task-12725-lifecycle-dispatch-rev1` line (matching
+  the `_PLAN_ID_RE` regex with asterisks around `Plan ID:` only) so
+  `parse_plan(path, parse_mode="expansion").plan_id ==
   "task-12725-lifecycle-dispatch-rev1"` (no longer `None`). file:
   `.gobby/plans/task-12725-lifecycle-dispatch-rev1.md`.
 
@@ -640,10 +796,38 @@ def test_plan_12725_compiles_clean(service: ExpansionService, parent_task) -> No
     for task in impl_or_single_tasks:
         section_id = task["source_section_id"]
         entry = by_source[section_id]
-        assert entry.title in task["title"]
-        assert task["category"] == entry.category
-        assert task["assigned_agent"] == entry.assigned_agent
-        assert sorted(task["labels"]) == sorted(entry.labels)
+        # Title: exact match for tdd-false singles; exact-with-prefix for
+        # tdd-true IMPL tasks. No `in` containment fuzz.
+        if entry.tdd:
+            assert task["title"] == f"[IMPL] {entry.title}", (
+                f"IMPL title mismatch for {section_id}: "
+                f"expected {entry.title!r} with [IMPL] prefix, got {task['title']!r}"
+            )
+        else:
+            assert task["title"] == entry.title, (
+                f"single-task title mismatch for {section_id}: "
+                f"expected {entry.title!r}, got {task['title']!r}"
+            )
+        assert task["category"] == entry.category, section_id
+        assert task["task_type"] == entry.task_type, (
+            f"task_type drift for {section_id}: "
+            f"manifest={entry.task_type!r}, compiled={task['task_type']!r}"
+        )
+        # The compiled-spec task field name for validation criteria is
+        # `"validation"` (NOT `"validation_criteria"`) — `apply_run` reads
+        # `task_item.get("validation")` at expansion_service.py:874 and
+        # `task_item.get("validation") or task_item.get("validation_criteria")`
+        # at line 1279, so changing the field name would break apply.
+        # §1.2.11 locks this contract; the harness asserts the manifest
+        # entry's `validation_criteria` flows into the compiled task's
+        # `validation` field.
+        assert task["validation"] == entry.validation_criteria, (
+            f"validation drift for {section_id}: "
+            f"manifest validation_criteria={entry.validation_criteria!r}, "
+            f"compiled validation={task['validation']!r}"
+        )
+        assert task["assigned_agent"] == entry.assigned_agent, section_id
+        assert sorted(task["labels"]) == sorted(entry.labels), section_id
 
     # No deferrals (plan-12725 has zero `kind: deferred`)
     assert spec["deferrals"] == []
@@ -707,9 +891,14 @@ Iterate sub-plan A's compile code (1.2) until the harness passes.
   is marked `@pytest.mark.slow`, and asserts `deliverable_count == 32` +
   `len(tasks) == 74`. file:
   `tests/tasks/test_expansion_service_compile_plan_12725.py`.
-- 1.5.2 — Harness asserts each manifest entry's
-  title/category/task_type/validation_criteria/assigned_agent/labels are
-  preserved verbatim onto the IMPL/single task. test:
+- 1.5.2 — Harness asserts each manifest entry's `category`, `task_type`,
+  `assigned_agent`, and sorted `labels` are preserved verbatim onto the
+  IMPL/single task, and that the manifest entry's `validation_criteria`
+  flows into the compiled task's `"validation"` field (per the contract
+  locked by §1.2.11 — `apply_run` reads `task_item.get("validation")`).
+  Title is checked as an **exact** match: `task["title"] == entry.title`
+  for tdd-false singles, and `task["title"] == f"[IMPL] {entry.title}"`
+  for tdd-true entries — no `in` containment fuzz. test:
   `tests/tasks/test_expansion_service_compile_plan_12725.py::test_plan_12725_compiles_clean`.
 - 1.5.3 — Harness asserts phase nesting yields `phase-p1`, `phase-p2`,
   `phase-p3` exactly. test:
@@ -781,3 +970,107 @@ compiled_spec passes assertions." The following are sub-plan B / C concerns:
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Patch agent routing fallback + emitter depends_on extraction
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: Routing fallback, dependency extraction, plan-id sentinel,
+    yolo audit safety, and monolith preflight tests are implemented as specified.
+  labels:
+  - covers:None:1.1:1.1.1
+  - covers:None:1.1:1.1.2
+  - covers:None:1.1:1.1.3
+  - covers:None:1.1:1.1.4
+  - covers:None:1.1:1.1.5
+  - covers:None:1.1:1.1.6
+  - covers:None:1.1:1.1.7
+  - covers:None:1.1:1.1.8
+  - covers:None:1.1:1.1.9
+  - covers:None:1.1:1.1.10
+  - covers:None:1.1:1.1.11
+  - covers:None:1.1:1.1.12
+  - covers:None:1.1:1.1.13
+  - covers:None:1.1:1.1.14
+  - covers:None:1.1:1.1.15
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.1'
+- title: Refactor compile_plan_to_spec to be manifest-driven
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: compile_plan_to_spec consumes manifest entries as the single
+    source of truth, preserves deferrals, and emits validation fields correctly.
+  labels:
+  - covers:None:1.2:1.2.1
+  - covers:None:1.2:1.2.2
+  - covers:None:1.2:1.2.3
+  - covers:None:1.2:1.2.4
+  - covers:None:1.2:1.2.5
+  - covers:None:1.2:1.2.6
+  - covers:None:1.2:1.2.7
+  - covers:None:1.2:1.2.8
+  - covers:None:1.2:1.2.9
+  - covers:None:1.2:1.2.10
+  - covers:None:1.2:1.2.11
+  - covers:None:1.2:1.2.12
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.2'
+- title: Migrate compile-service tests to manifest-driven semantics
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: Regression and minimal compile-service fixtures include manifests
+    and pass under manifest-driven semantics.
+  labels:
+  - covers:None:1.3:1.3.1
+  - covers:None:1.3:1.3.2
+  - covers:None:1.3:1.3.3
+  - covers:None:1.3:1.3.4
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.3'
+- title: Emit plan-12725 manifest + bump coverage manifest header
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: Plan-12725 has a parser-clean M1 manifest, explicit Plan ID,
+    and matching coverage manifest plan_hash.
+  labels:
+  - covers:None:1.4:1.4.1
+  - covers:None:1.4:1.4.2
+  - covers:None:1.4:1.4.3
+  - covers:None:1.4:1.4.4
+  - covers:None:1.4:1.4.5
+  assigned_agent: default
+  tdd: false
+  source_section: '1.4'
+- title: Dry-run assertion harness against plan-12725
+  category: test
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  validation_criteria: The slow integration harness proves plan-12725 compiles to
+    a manifest-1:1 compiled spec without applying tasks.
+  labels:
+  - covers:None:1.5:1.5.1
+  - covers:None:1.5:1.5.2
+  - covers:None:1.5:1.5.3
+  - covers:None:1.5:1.5.4
+  - covers:None:1.5:1.5.5
+  - covers:None:1.5:1.5.6
+  assigned_agent: test-architect
+  tdd: true
+  source_section: '1.5'
+```
