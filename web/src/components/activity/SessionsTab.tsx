@@ -4,6 +4,10 @@ import { useSessionDetail } from "../../hooks/useSessionDetail";
 import type { GobbySession } from "../../types/sessions";
 import type { ChatMessage, SwappedSessionTarget } from "../../types/chat";
 import { getSessionTitleText } from "../../lib/sessionTitle";
+import {
+  fetchProviderModelCatalog,
+  type ProviderModelEntry,
+} from "../../lib/providerModels";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
@@ -20,6 +24,17 @@ import {
   SessionInteractionModal,
   type InteractionMode,
 } from "./SessionInteractionModal";
+import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
+import {
+  countActiveFilters,
+  defaultSessionsFilters,
+  deserializeFromStorage,
+  matchesSessionsFilters,
+  serializeForStorage,
+  type SessionsFilters,
+} from "./sessionsFilters";
+
+const FILTERS_STORAGE_KEY = "gobby-sessions-filters";
 
 interface RunningAgent {
   run_id: string;
@@ -232,6 +247,73 @@ export const SessionsTab = memo(function SessionsTab({
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
+  const [filters, setFilters] = useState<SessionsFilters>(() => {
+    try {
+      return deserializeFromStorage(localStorage.getItem(FILTERS_STORAGE_KEY));
+    } catch {
+      return defaultSessionsFilters();
+    }
+  });
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([]);
+
+  // Persist filter state to localStorage so a reload restores the user's
+  // narrowed view. Active-filter badge on the funnel button is the visible
+  // cue that something is filtering after reload.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        FILTERS_STORAGE_KEY,
+        JSON.stringify(serializeForStorage(filters)),
+      );
+    } catch {
+      // Best-effort — a full storage quota or disabled localStorage just
+      // means the filter state is per-tab-load.
+    }
+  }, [filters]);
+
+  // Provider/Model catalog drives the dropdown's checkbox lists. One fetch
+  // per mount; the helper has its own 5-minute cache.
+  useEffect(() => {
+    let cancelled = false;
+    fetchProviderModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) setProviderCatalog(catalog);
+      })
+      .catch(() => {
+        if (!cancelled) setProviderCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const providerOptions = useMemo(
+    () => providerCatalog.filter((p) => p.available).map((p) => p.provider),
+    [providerCatalog],
+  );
+
+  const modelOptions = useMemo(() => {
+    // When providers are selected, intersect with their model lists.
+    // Otherwise, show all available models across providers.
+    const sourceProviders =
+      filters.providers.size > 0
+        ? providerCatalog.filter((p) => filters.providers.has(p.provider))
+        : providerCatalog.filter((p) => p.available);
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const provider of sourceProviders) {
+      for (const model of provider.models) {
+        if (!seen.has(model.value)) {
+          seen.add(model.value);
+          out.push(model.value);
+        }
+      }
+    }
+    return out;
+  }, [providerCatalog, filters.providers]);
+
+  const activeFilterCount = countActiveFilters(filters);
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
@@ -289,18 +371,21 @@ export const SessionsTab = memo(function SessionsTab({
   }, [sessions]);
 
   const visibleSessions = useMemo(
-    () =>
-      sessions
+    () => {
+      const now = new Date();
+      return sessions
         .filter((session) => session.id !== chatSessionId)
         .filter((session) => !expiringIds.has(session.id))
         .filter((session) => !HIDDEN_SOURCES.has(session.source))
         .filter((session) => matchesStatusFilter(session, statusFilter))
         .filter((session) => matchesSearch(session, search))
+        .filter((session) => matchesSessionsFilters(session, filters, now))
         .sort(
           (a, b) =>
             new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-        ),
-    [chatSessionId, expiringIds, search, sessions, statusFilter],
+        );
+    },
+    [chatSessionId, expiringIds, search, sessions, statusFilter, filters],
   );
 
   const entries: WatchingSessionEntry[] = useMemo(() => {
@@ -649,12 +734,16 @@ export const SessionsTab = memo(function SessionsTab({
     setModalEntry(null);
   }, []);
 
-  const emptyListMessage =
-    statusFilter === "expired" ? "No expired sessions" : "No live sessions";
+  const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
+  const emptyListMessage = hasActiveFilters
+    ? "No sessions match these filters."
+    : statusFilter === "expired"
+      ? "No expired sessions"
+      : "No live sessions";
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 relative">
         <input
           type="search"
           value={searchInput}
@@ -662,6 +751,31 @@ export const SessionsTab = memo(function SessionsTab({
           placeholder="Search sessions"
           className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
         />
+        <button
+          type="button"
+          className="activity-filter-button"
+          onClick={() => setShowFilterDropdown((v) => !v)}
+          title="Filter sessions"
+          aria-label="Filter sessions"
+          aria-expanded={showFilterDropdown}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+          {activeFilterCount > 0 && (
+            <span className="activity-filter-badge">{activeFilterCount}</span>
+          )}
+        </button>
         <SegmentedControl<SessionStatusFilter>
           value={statusFilter}
           onChange={setStatusFilter}
@@ -671,6 +785,15 @@ export const SessionsTab = memo(function SessionsTab({
           ]}
           ariaLabel="Session status filter"
         />
+        {showFilterDropdown && (
+          <SessionsFilterDropdown
+            filters={filters}
+            onChange={setFilters}
+            providerOptions={providerOptions}
+            modelOptions={modelOptions}
+            onClose={() => setShowFilterDropdown(false)}
+          />
+        )}
       </div>
 
       <div
@@ -688,9 +811,19 @@ export const SessionsTab = memo(function SessionsTab({
         ) : entries.length === 0 ? (
           <div className="activity-tab-empty">
             <p>{emptyListMessage}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Matching sessions will appear here.
-            </p>
+            {hasActiveFilters && activeFilterCount > 0 ? (
+              <button
+                type="button"
+                className="text-xs text-accent hover:underline mt-1"
+                onClick={() => setFilters(defaultSessionsFilters())}
+              >
+                Clear filters
+              </button>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1">
+                Matching sessions will appear here.
+              </p>
+            )}
           </div>
         ) : (
           entries.map((entry) => {

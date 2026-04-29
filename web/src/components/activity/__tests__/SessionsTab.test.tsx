@@ -256,9 +256,7 @@ describe("SessionsTab", () => {
     fireEvent.change(screen.getByPlaceholderText("Search sessions"), {
       target: { value: "" },
     });
-    fireEvent.change(screen.getByLabelText("Session status filter"), {
-      target: { value: "expired" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(screen.getByText("#203: Expired Terminal")).toBeInTheDocument();
@@ -267,17 +265,21 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#205: Handoff Terminal")).toBeNull();
   });
 
-  it("styles the collapsed status filter trigger with the accent treatment", async () => {
+  it("renders the Live | Expired status filter as a SegmentedControl", async () => {
     render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
 
     await waitFor(() => {
       expect(screen.getByText("#201: Live Terminal")).toBeInTheDocument();
     });
 
-    const statusFilter = screen.getByLabelText("Session status filter");
-    expect(statusFilter).toHaveClass("bg-accent");
-    expect(statusFilter).toHaveClass("text-accent-foreground");
-    expect(statusFilter).not.toHaveClass("bg-background");
+    const liveRadio = screen.getByRole("radio", { name: "Live" });
+    const expiredRadio = screen.getByRole("radio", { name: "Expired" });
+    expect(liveRadio).toHaveAttribute("aria-checked", "true");
+    expect(expiredRadio).toHaveAttribute("aria-checked", "false");
+    // Active uses the subdued tint, not the saturated bg-accent fill —
+    // the SegmentedControl primitive deliberately does not expose the
+    // saturated variant. See impeccable §absolute_bans / Pass 6.
+    expect(liveRadio).toHaveClass("bg-accent/15");
   });
 
   it("shows active/paused agent sessions in Live but excludes terminal agent statuses", async () => {
@@ -303,9 +305,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByText("#209: Errored Agent Terminal")).toBeNull();
     expect(screen.queryByText("#210: Cancelled Agent Terminal")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Session status filter"), {
-      target: { value: "expired" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(screen.queryByText("#206: Running Agent Terminal")).toBeNull();
@@ -478,9 +478,7 @@ describe("SessionsTab", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Session status filter"), {
-      target: { value: "expired" },
-    });
+    fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
       expect(screen.getByText("Session has no transcript")).toBeInTheDocument();

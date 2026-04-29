@@ -4,10 +4,33 @@ import {
   countActiveFilters,
   defaultSessionsFilters,
   deserializeFromStorage,
+  matchesSessionsFilters,
   resolveDateRange,
   serializeForStorage,
   serializeSessionsFilters,
 } from "../sessionsFilters";
+
+interface TestSession {
+  source: string;
+  model: string | null;
+  agent_depth: number;
+  seq_num: number | null;
+  created_at: string;
+  claimed_task_refs?: number[];
+  created_task_refs?: number[];
+  closed_task_refs?: number[];
+}
+
+function makeSession(overrides: Partial<TestSession> = {}): TestSession {
+  return {
+    source: "claude",
+    model: "claude-opus-4-7",
+    agent_depth: 0,
+    seq_num: 1,
+    created_at: "2026-04-29T12:00:00.000Z",
+    ...overrides,
+  };
+}
 
 const NOW = new Date("2026-04-29T12:00:00.000Z");
 
@@ -142,6 +165,76 @@ describe("resolveDateRange", () => {
     const { after, before } = resolveDateRange(f, NOW);
     expect(after).toBe("2026-04-28T12:00:00.000Z");
     expect(before).toBeNull();
+  });
+});
+
+describe("matchesSessionsFilters", () => {
+  it("default filters match every session", () => {
+    expect(matchesSessionsFilters(makeSession(), defaultSessionsFilters(), NOW)).toBe(true);
+  });
+
+  it("mode interactive narrows to agent_depth 0", () => {
+    const f = defaultSessionsFilters();
+    f.modes.add("interactive");
+    expect(matchesSessionsFilters(makeSession({ agent_depth: 0 }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ agent_depth: 2 }), f, NOW)).toBe(false);
+  });
+
+  it("provider narrows to matching source", () => {
+    const f = defaultSessionsFilters();
+    f.providers.add("codex");
+    expect(matchesSessionsFilters(makeSession({ source: "codex" }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ source: "claude" }), f, NOW)).toBe(false);
+  });
+
+  it("model excludes sessions with null model when models filter is set", () => {
+    const f = defaultSessionsFilters();
+    f.models.add("claude-opus-4-7");
+    expect(matchesSessionsFilters(makeSession({ model: null }), f, NOW)).toBe(false);
+  });
+
+  it("session ref range filters by seq_num", () => {
+    const f = defaultSessionsFilters();
+    f.sessionRefMin = 100;
+    f.sessionRefMax = 200;
+    expect(matchesSessionsFilters(makeSession({ seq_num: 150 }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ seq_num: 50 }), f, NOW)).toBe(false);
+    expect(matchesSessionsFilters(makeSession({ seq_num: 250 }), f, NOW)).toBe(false);
+    expect(matchesSessionsFilters(makeSession({ seq_num: null }), f, NOW)).toBe(false);
+  });
+
+  it("task ref range matches when any selected role overlaps", () => {
+    const f = defaultSessionsFilters();
+    f.taskRefMin = 1000;
+    f.taskRefMax = 2000;
+    f.taskRefRoles = new Set(["claimed", "created"]);
+
+    expect(
+      matchesSessionsFilters(makeSession({ claimed_task_refs: [1500] }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ created_task_refs: [1500] }), f, NOW),
+    ).toBe(true);
+    // closed is not in selected roles → match fails
+    expect(
+      matchesSessionsFilters(makeSession({ closed_task_refs: [1500] }), f, NOW),
+    ).toBe(false);
+    expect(
+      matchesSessionsFilters(makeSession({ claimed_task_refs: [3000] }), f, NOW),
+    ).toBe(false);
+    // No task refs at all
+    expect(matchesSessionsFilters(makeSession(), f, NOW)).toBe(false);
+  });
+
+  it("date preset 24h excludes older sessions", () => {
+    const f = defaultSessionsFilters();
+    f.datePreset = "24h";
+    expect(
+      matchesSessionsFilters(makeSession({ created_at: NOW.toISOString() }), f, NOW),
+    ).toBe(true);
+    expect(
+      matchesSessionsFilters(makeSession({ created_at: "2026-04-01T00:00:00.000Z" }), f, NOW),
+    ).toBe(false);
   });
 });
 

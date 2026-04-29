@@ -95,6 +95,81 @@ export function resolveDateRange(
   }
 }
 
+interface FilterableSession {
+  source: string;
+  model: string | null;
+  agent_depth: number;
+  seq_num: number | null;
+  created_at: string;
+  claimed_task_refs?: number[];
+  created_task_refs?: number[];
+  closed_task_refs?: number[];
+}
+
+/**
+ * Client-side equivalent of the backend filter predicates. Used while the
+ * dropdown lives in SessionsTab and filters narrow the loaded session window.
+ * Once filters are pushed up to App-level useSessionCatalog, this becomes a
+ * fallback for the remaining client-only predicates.
+ */
+export function matchesSessionsFilters(
+  session: FilterableSession,
+  filters: SessionsFilters,
+  now: Date,
+): boolean {
+  if (filters.modes.size > 0) {
+    const isInteractive = session.agent_depth === 0;
+    const isAuto = session.agent_depth >= 1;
+    const matchesMode =
+      (filters.modes.has("interactive") && isInteractive) ||
+      (filters.modes.has("auto") && isAuto);
+    if (!matchesMode) return false;
+  }
+
+  if (filters.providers.size > 0 && !filters.providers.has(session.source)) {
+    return false;
+  }
+
+  if (filters.models.size > 0) {
+    if (session.model === null || !filters.models.has(session.model)) return false;
+  }
+
+  if (filters.sessionRefMin !== null) {
+    if (session.seq_num === null || session.seq_num < filters.sessionRefMin) return false;
+  }
+  if (filters.sessionRefMax !== null) {
+    if (session.seq_num === null || session.seq_num > filters.sessionRefMax) return false;
+  }
+
+  if (filters.taskRefMin !== null || filters.taskRefMax !== null) {
+    const min = filters.taskRefMin ?? -Infinity;
+    const max = filters.taskRefMax ?? Infinity;
+    const roleColumns: Record<TaskRefRole, number[]> = {
+      claimed: session.claimed_task_refs ?? [],
+      created: session.created_task_refs ?? [],
+      closed: session.closed_task_refs ?? [],
+    };
+    let anyMatch = false;
+    for (const role of filters.taskRefRoles) {
+      if (roleColumns[role].some((ref) => ref >= min && ref <= max)) {
+        anyMatch = true;
+        break;
+      }
+    }
+    if (!anyMatch) return false;
+  }
+
+  const { after, before } = resolveDateRange(filters, now);
+  if (after) {
+    if (session.created_at < after) return false;
+  }
+  if (before) {
+    if (session.created_at >= before) return false;
+  }
+
+  return true;
+}
+
 /**
  * Build URLSearchParams matching the backend /api/sessions filter contract.
  * Empty Sets and null bounds drop out (the server treats absence as "no filter").
