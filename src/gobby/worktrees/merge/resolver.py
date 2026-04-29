@@ -270,9 +270,7 @@ class MergeResolver:
         result = await self._resolve_full_file([conflict])
         if result["success"]:
             content_by_file = {
-                r["file"]: r["content"]
-                for r in result.get("resolutions", [])
-                if r.get("content")
+                r["file"]: r["content"] for r in result.get("resolutions", []) if r.get("content")
             }
             return ResolutionResult(
                 success=True,
@@ -513,8 +511,7 @@ class MergeResolver:
                     return {"success": False, "resolutions": []}
 
                 resolved_hunks = [
-                    chunk.strip("\n")
-                    for chunk in response.split("---HUNK SEPARATOR---")
+                    chunk.strip("\n") for chunk in response.split("---HUNK SEPARATOR---")
                 ]
                 resolved_hunks = [h for h in resolved_hunks if h]
                 if not resolved_hunks:
@@ -523,14 +520,10 @@ class MergeResolver:
                 try:
                     file_with_markers = Path(file_path).read_text()
                 except OSError as read_err:
-                    logger.error(
-                        f"Failed to read {file_path} for hunk splicing: {read_err}"
-                    )
+                    logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
                     return {"success": False, "resolutions": []}
 
-                spliced = splice_resolutions_into_file(
-                    file_with_markers, resolved_hunks
-                )
+                spliced = splice_resolutions_into_file(file_with_markers, resolved_hunks)
                 if spliced is None:
                     logger.warning(
                         f"Hunk count mismatch splicing {file_path}: "

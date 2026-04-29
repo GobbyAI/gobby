@@ -131,9 +131,7 @@ async def test_idle_reprompt_logs_codex_response_items(
     state.first_idle_at = time.monotonic() - 120
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
-        ),
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
         patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
         patch("gobby.agents.lifecycle_monitor.logger.warning") as mock_warning,
     ):
@@ -194,9 +192,7 @@ async def test_idle_failure_logs_codex_response_items(
     state.reprompt_count = 2
 
     with (
-        patch.object(
-            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"
-        ),
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
         patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
         patch("gobby.agents.lifecycle_monitor.logger.warning") as mock_warning,
     ):

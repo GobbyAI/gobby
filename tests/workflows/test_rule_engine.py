@@ -2754,8 +2754,7 @@ class TestVerboseOnceBlockReason:
 
         assert second.decision == "block"
         assert second.reason == (
-            "Rule enforced by Gobby: [block-and-teach-code-index] "
-            f"{self._TERSE_HINT}"
+            f"Rule enforced by Gobby: [block-and-teach-code-index] {self._TERSE_HINT}"
         )
 
     @pytest.mark.asyncio

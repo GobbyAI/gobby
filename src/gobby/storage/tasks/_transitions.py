@@ -72,6 +72,7 @@ def release_task_claim(
     escalated_at: MaybeUnset[str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
+    labels: MaybeUnset[list[str] | None] = UNSET,
 ) -> Task:
     """Clear canonical and legacy ownership while optionally changing lifecycle state."""
     update_task(
@@ -86,6 +87,7 @@ def release_task_claim(
         escalated_at=escalated_at,
         escalation_reason=escalation_reason,
         validation_override_reason=validation_override_reason,
+        labels=labels,
     )
     return get_task(db, task_id)
 
@@ -204,12 +206,16 @@ def mark_task_needs_review(
     description: MaybeUnset[str | None] = UNSET
     if review_notes:
         description = (task.description or "") + f"\n\n[Review Notes]\n{review_notes}"
+    labels = [
+        label for label in (task.labels or []) if label != "planning-current-verdict:rejected"
+    ]
 
     return release_task_claim(
         db,
         task_id,
         status="needs_review",
         description=description,
+        labels=labels,
     )
 
 

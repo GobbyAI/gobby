@@ -982,9 +982,7 @@ class TestLocalTaskManager:
         task = task_manager.create_task(project_id, "Multi-round target")
         task_manager.claim_task(task.id, session.id)
         task_manager.mark_task_needs_review(task.id, review_notes="r6 ready")
-        task_manager.mark_task_review_rejected(
-            task.id, rejection_notes="round six body", round=6
-        )
+        task_manager.mark_task_review_rejected(task.id, rejection_notes="round six body", round=6)
 
         task_manager.claim_task(task.id, session.id)
         task_manager.mark_task_needs_review(task.id, review_notes="r7 ready")

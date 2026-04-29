@@ -325,9 +325,7 @@ def create_merge_registry(
             if not worktree or not worktree.worktree_path:
                 return {
                     "success": False,
-                    "error": (
-                        f"Worktree '{resolution.worktree_id}' not found or has no path"
-                    ),
+                    "error": (f"Worktree '{resolution.worktree_id}' not found or has no path"),
                 }
             wt_path = worktree.worktree_path
 
@@ -355,8 +353,7 @@ def create_merge_registry(
                     return {
                         "success": False,
                         "error": (
-                            f"git add failed for {conflict.file_path}: "
-                            f"{add_result.stderr.strip()}"
+                            f"git add failed for {conflict.file_path}: {add_result.stderr.strip()}"
                         ),
                     }
                 written.append(conflict.file_path)
@@ -368,9 +365,7 @@ def create_merge_registry(
                 timeout=10,
             )
             unmerged = [
-                line.strip()
-                for line in unmerged_check.stdout.strip().split("\n")
-                if line.strip()
+                line.strip() for line in unmerged_check.stdout.strip().split("\n") if line.strip()
             ]
             if unmerged:
                 return {

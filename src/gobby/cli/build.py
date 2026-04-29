@@ -61,6 +61,10 @@ def _echo_build_result(result: BuildResult) -> None:
     help="Maximum review rounds before stopping.",
 )
 @click.option("--target-branch", help="Target branch for the build.")
+@click.option("--max-expansion-attempts", type=int, help="Expansion retry cap.")
+@click.option("--max-qa-rounds", type=int, help="Per-leaf QA retry cap.")
+@click.option("--max-merge-attempts", type=int, help="Merge retry cap.")
+@click.option("--max-holistic-rounds", type=int, help="Holistic-review retry cap.")
 @click.option("--agent", "assigned_agent", help="Agent to assign to build work.")
 def build_command(
     input_ref: str | None,
@@ -70,6 +74,10 @@ def build_command(
     yolo: bool,
     max_review_rounds: int,
     target_branch: str | None,
+    max_expansion_attempts: int | None,
+    max_qa_rounds: int | None,
+    max_merge_attempts: int | None,
+    max_holistic_rounds: int | None,
     assigned_agent: str | None,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
@@ -83,6 +91,10 @@ def build_command(
         isolation=cast(Isolation, isolation),
         yolo=yolo,
         max_review_rounds=max_review_rounds,
+        max_expansion_attempts=max_expansion_attempts,
+        max_qa_rounds=max_qa_rounds,
+        max_merge_attempts=max_merge_attempts,
+        max_holistic_rounds=max_holistic_rounds,
         target_branch=target_branch,
         assigned_agent=assigned_agent,
     )

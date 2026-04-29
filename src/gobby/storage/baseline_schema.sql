@@ -331,6 +331,23 @@ CREATE UNIQUE INDEX idx_tasks_seq_num ON tasks(project_id, seq_num);
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
 CREATE INDEX idx_tasks_dispatch_scan ON tasks(allow_automation, lifecycle, status);
 
+CREATE TABLE plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    plan_id TEXT NOT NULL,
+    plan_path TEXT NOT NULL,
+    plan_hash TEXT,
+    plan_kind TEXT NOT NULL CHECK(plan_kind IN ('implementation', 'strategy')),
+    state TEXT NOT NULL CHECK(state IN ('active', 'archived')),
+    root_task_ref TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    archived_at TEXT,
+    UNIQUE (project_id, plan_id)
+);
+CREATE INDEX idx_plans_root_task ON plans(root_task_ref);
+CREATE INDEX idx_plans_state ON plans(state);
+
 CREATE TABLE task_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -364,6 +381,11 @@ CREATE TABLE task_artifacts (
     target_branch TEXT,
     expansion_run_id TEXT,
     expansion_attempts INTEGER NOT NULL DEFAULT 0,
+    max_expansion_attempts INTEGER,
+    max_qa_rounds INTEGER,
+    max_merge_attempts INTEGER,
+    max_holistic_rounds INTEGER,
+    max_review_rounds INTEGER,
     pr_url TEXT,
     merge_commit_sha TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),

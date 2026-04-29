@@ -31,7 +31,7 @@ _ARTIFACT_MUTATION_FIELDS = frozenset(TaskArtifacts.__dataclass_fields__) - {
 
 
 def _artifact_field_schema(field: str) -> dict[str, Any]:
-    if field == "expansion_attempts":
+    if field == "expansion_attempts" or field.startswith("max_"):
         return {"type": ["integer", "null"]}
     return {"type": ["string", "null"]}
 
