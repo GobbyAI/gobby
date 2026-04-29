@@ -855,7 +855,7 @@ export const TasksTab = memo(function TasksTab({
         />
         <button
           type="button"
-          className="activity-task-filter-button"
+          className="activity-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
         >

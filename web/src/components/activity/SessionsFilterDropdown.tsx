@@ -1,0 +1,358 @@
+import { useEffect, useRef, useState } from "react";
+
+import { SegmentedControl } from "../ui/SegmentedControl";
+import {
+  countActiveFilters,
+  defaultSessionsFilters,
+  type DatePreset,
+  type SessionMode,
+  type SessionsFilters,
+  type TaskRefRole,
+} from "./sessionsFilters";
+
+interface SessionsFilterDropdownProps {
+  filters: SessionsFilters;
+  onChange: (next: SessionsFilters) => void;
+  providerOptions: readonly string[];
+  modelOptions: readonly string[];
+  onClose: () => void;
+}
+
+const MODE_OPTIONS: ReadonlyArray<{ value: SessionMode; label: string }> = [
+  { value: "interactive", label: "Interactive" },
+  { value: "auto", label: "Auto" },
+];
+
+const TASK_REF_ROLES: ReadonlyArray<{ value: TaskRefRole; label: string }> = [
+  { value: "claimed", label: "Claimed" },
+  { value: "created", label: "Created" },
+  { value: "closed", label: "Closed" },
+];
+
+const DATE_PRESET_OPTIONS = [
+  { value: "all" as const, label: "All" },
+  { value: "24h" as const, label: "24h" },
+  { value: "7d" as const, label: "7d" },
+  { value: "30d" as const, label: "30d" },
+] as const;
+
+function toggleSetMember<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+  return next;
+}
+
+function parseRefBound(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function SessionsFilterDropdown({
+  filters,
+  onChange,
+  providerOptions,
+  modelOptions,
+  onClose,
+}: SessionsFilterDropdownProps) {
+  const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Escape closes the dropdown — small a11y improvement over the Tasks-tab
+  // pattern, which leaves Esc as a browser-default no-op.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  function update(patch: Partial<SessionsFilters>): void {
+    onChange({ ...filters, ...patch });
+  }
+
+  function handleModeToggle(mode: SessionMode): void {
+    update({ modes: toggleSetMember(filters.modes, mode) });
+  }
+
+  function handleProviderToggle(provider: string): void {
+    const nextProviders = toggleSetMember(filters.providers, provider);
+    // When the provider set narrows, drop selected models that no longer
+    // belong to any selected provider — but the dropdown doesn't know
+    // provider-to-model mapping, so we delegate that to the caller via the
+    // narrowed modelOptions prop. Selected models that vanish from the
+    // option list still serialize but the user cannot toggle them, so we
+    // also prune them here as a guard.
+    const nextModels = new Set<string>(
+      [...filters.models].filter((m) => modelOptions.includes(m)),
+    );
+    update({ providers: nextProviders, models: nextModels });
+  }
+
+  function handleModelToggle(model: string): void {
+    update({ models: toggleSetMember(filters.models, model) });
+  }
+
+  function handleTaskRefRoleToggle(role: TaskRefRole): void {
+    update({ taskRefRoles: toggleSetMember(filters.taskRefRoles, role) });
+  }
+
+  function handleDatePresetChange(preset: DatePreset): void {
+    update({ datePreset: preset });
+  }
+
+  function handleReset(): void {
+    onChange(defaultSessionsFilters());
+    setShowCustomDate(false);
+  }
+
+  const activeCount = countActiveFilters(filters);
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[99]"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        ref={panelRef}
+        className="absolute top-full right-2 z-[100] w-[280px] max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
+        style={{ background: "var(--bg-secondary)" }}
+        role="dialog"
+        aria-label="Session filters"
+      >
+        <div className="flex flex-col p-1.5 gap-0.5">
+          {/* Mode */}
+          <Section label="Mode">
+            {MODE_OPTIONS.map((option) => (
+              <CheckboxRow
+                key={option.value}
+                label={option.label}
+                checked={filters.modes.has(option.value)}
+                onToggle={() => handleModeToggle(option.value)}
+              />
+            ))}
+          </Section>
+
+          {/* Provider */}
+          <Section label="Provider">
+            {providerOptions.length === 0 ? (
+              <EmptyHint>No providers available</EmptyHint>
+            ) : (
+              providerOptions.map((provider) => (
+                <CheckboxRow
+                  key={provider}
+                  label={provider}
+                  checked={filters.providers.has(provider)}
+                  onToggle={() => handleProviderToggle(provider)}
+                />
+              ))
+            )}
+          </Section>
+
+          {/* Model */}
+          <Section label="Model">
+            {modelOptions.length === 0 ? (
+              <EmptyHint>No models for current providers</EmptyHint>
+            ) : (
+              <div className="max-h-32 overflow-y-auto flex flex-col gap-0.5">
+                {modelOptions.map((model) => (
+                  <CheckboxRow
+                    key={model}
+                    label={model}
+                    checked={filters.models.has(model)}
+                    onToggle={() => handleModelToggle(model)}
+                  />
+                ))}
+              </div>
+            )}
+          </Section>
+
+          {/* Session ref */}
+          <Section label="Session ref">
+            <RefRangeInputs
+              minValue={filters.sessionRefMin}
+              maxValue={filters.sessionRefMax}
+              onChangeMin={(value) => update({ sessionRefMin: value })}
+              onChangeMax={(value) => update({ sessionRefMax: value })}
+              ariaLabelPrefix="Session ref"
+            />
+          </Section>
+
+          {/* Task ref */}
+          <Section label="Task ref">
+            <div className="flex items-center gap-2 px-2 py-1">
+              {TASK_REF_ROLES.map((role) => (
+                <label
+                  key={role.value}
+                  className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    className="w-3 h-3"
+                    checked={filters.taskRefRoles.has(role.value)}
+                    onChange={() => handleTaskRefRoleToggle(role.value)}
+                  />
+                  <span>{role.label}</span>
+                </label>
+              ))}
+            </div>
+            <RefRangeInputs
+              minValue={filters.taskRefMin}
+              maxValue={filters.taskRefMax}
+              onChangeMin={(value) => update({ taskRefMin: value })}
+              onChangeMax={(value) => update({ taskRefMax: value })}
+              ariaLabelPrefix="Task ref"
+            />
+          </Section>
+
+          {/* Date range */}
+          <Section label="Date range">
+            <div className="px-2 py-1">
+              <SegmentedControl<DatePreset>
+                value={filters.datePreset === "custom" ? "all" : filters.datePreset}
+                onChange={handleDatePresetChange}
+                options={DATE_PRESET_OPTIONS}
+                ariaLabel="Date preset"
+              />
+            </div>
+            <button
+              type="button"
+              className="px-2 py-1 text-xs text-muted-foreground hover:text-foreground text-left"
+              onClick={() => {
+                const next = !showCustomDate;
+                setShowCustomDate(next);
+                if (next) {
+                  update({ datePreset: "custom" });
+                } else if (filters.datePreset === "custom") {
+                  update({ datePreset: "all" });
+                }
+              }}
+              aria-expanded={showCustomDate}
+            >
+              {showCustomDate ? "▾" : "▸"} Custom range
+            </button>
+            {showCustomDate && (
+              <div className="flex items-center gap-1 px-2 py-1">
+                <input
+                  type="date"
+                  className="w-[7.5rem] px-1.5 py-0.5 text-xs bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                  value={filters.dateCustomFrom ?? ""}
+                  onChange={(e) =>
+                    update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
+                  }
+                  aria-label="Custom date from"
+                />
+                <span className="text-xs text-muted-foreground">→</span>
+                <input
+                  type="date"
+                  className="w-[7.5rem] px-1.5 py-0.5 text-xs bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+                  value={filters.dateCustomTo ?? ""}
+                  onChange={(e) =>
+                    update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
+                  }
+                  aria-label="Custom date to"
+                />
+              </div>
+            )}
+          </Section>
+        </div>
+
+        <div
+          className="flex items-center justify-between border-t border-border px-2 py-1.5"
+          style={{ background: "var(--bg-secondary)" }}
+        >
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            onClick={handleReset}
+            disabled={activeCount === 0}
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            className="text-xs text-accent hover:underline"
+            onClick={onClose}
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5 py-0.5">
+      <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function CheckboxRow({
+  label,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50">
+      <input type="checkbox" className="w-3 h-3" checked={checked} onChange={onToggle} />
+      <span className="truncate">{label}</span>
+    </label>
+  );
+}
+
+function EmptyHint({ children }: { children: React.ReactNode }) {
+  return <div className="px-2 py-1 text-xs text-muted-foreground">{children}</div>;
+}
+
+function RefRangeInputs({
+  minValue,
+  maxValue,
+  onChangeMin,
+  onChangeMax,
+  ariaLabelPrefix,
+}: {
+  minValue: number | null;
+  maxValue: number | null;
+  onChangeMin: (value: number | null) => void;
+  onChangeMax: (value: number | null) => void;
+  ariaLabelPrefix: string;
+}) {
+  return (
+    <div className="flex items-center gap-1 px-2 py-1">
+      <input
+        type="number"
+        className="w-16 px-1.5 py-0.5 text-xs font-mono bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+        placeholder="from #"
+        value={minValue !== null ? String(minValue) : ""}
+        onChange={(e) => onChangeMin(parseRefBound(e.target.value))}
+        aria-label={`${ariaLabelPrefix} minimum`}
+      />
+      <span className="text-xs text-muted-foreground">→</span>
+      <input
+        type="number"
+        className="w-16 px-1.5 py-0.5 text-xs font-mono bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
+        placeholder="to #"
+        value={maxValue !== null ? String(maxValue) : ""}
+        onChange={(e) => onChangeMax(parseRefBound(e.target.value))}
+        aria-label={`${ariaLabelPrefix} maximum`}
+      />
+    </div>
+  );
+}
