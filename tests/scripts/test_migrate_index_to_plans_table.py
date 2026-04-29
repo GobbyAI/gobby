@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import textwrap
 from pathlib import Path
 
@@ -48,8 +49,8 @@ def test_migrates_active_and_completed_plans_then_deletes_index(temp_db, tmp_pat
 
     rows = temp_db.fetchall("SELECT plan_id, root_task_ref, state FROM plans ORDER BY plan_id")
     assert [(row["plan_id"], row["root_task_ref"], row["state"]) for row in rows] == [
-        ("task-100-active", "100", "active"),
-        ("task-101-done", "101", "archived"),
+        ("task-100-active", "#100", "active"),
+        ("task-101-done", "#101", "archived"),
     ]
 
 
@@ -63,6 +64,48 @@ def test_keep_index_preserves_source_file(temp_db, tmp_path: Path) -> None:
     migrate(tmp_path, temp_db, delete_index=False)
 
     assert index.exists()
+
+
+def test_migration_infers_hash_root_ref_without_index(temp_db, tmp_path: Path) -> None:
+    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    _write_project(tmp_path, project_id)
+    _write_plan(tmp_path / ".gobby" / "plans", "task-100-active")
+
+    assert migrate(tmp_path, temp_db) == 1
+
+    row = temp_db.fetchone(
+        "SELECT root_task_ref FROM plans WHERE plan_id = ?",
+        ("task-100-active",),
+    )
+    assert row["root_task_ref"] == "#100"
+
+
+def test_migration_rejects_project_json_missing_id(temp_db, tmp_path: Path) -> None:
+    LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path))
+    _write_plan(tmp_path / ".gobby" / "plans", "task-100-active")
+    project_dir = tmp_path / ".gobby"
+    project_dir.mkdir(exist_ok=True)
+    (project_dir / "project.json").write_text(json.dumps({"name": "plans"}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="project.json.*missing id"):
+        migrate(tmp_path, temp_db)
+
+
+def test_migration_logs_skipped_plan_without_root_ref(
+    temp_db,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    _write_project(tmp_path, project_id)
+    _write_plan(tmp_path / ".gobby" / "plans", "manual-plan")
+
+    with caplog.at_level(logging.WARNING):
+        assert migrate(tmp_path, temp_db) == 0
+
+    assert "Skipping plan without root_task_ref" in caplog.text
+    assert project_id in caplog.text
+    assert "manual-plan.md" in caplog.text
 
 
 def _write_project(root: Path, project_id: str) -> None:

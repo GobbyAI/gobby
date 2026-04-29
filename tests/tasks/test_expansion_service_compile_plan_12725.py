@@ -13,6 +13,11 @@ from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
+MIN_DELIVERABLE_COUNT = 32
+MIN_COMPILED_TASK_COUNT = 74
+MIN_IMPL_OR_SINGLE_TASK_COUNT = 32
+MIN_ANNOTATED_DEPENDENCY_COUNT = 24
+
 PLAN_PATH = (
     Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch-rev1.md"
 )
@@ -42,8 +47,9 @@ def test_plan_12725_compiles_clean(
 
     assert spec["contract_plan"] is True
     assert spec["plan_id"] == "task-12725-lifecycle-dispatch-rev1"
-    assert spec["deliverable_count"] == 32
-    assert len(spec["tasks"]) == 74
+    # These minimums catch accidental manifest shrinkage without making additive plan work brittle.
+    assert spec["deliverable_count"] >= MIN_DELIVERABLE_COUNT
+    assert len(spec["tasks"]) >= MIN_COMPILED_TASK_COUNT
     assert {phase["id"] for phase in spec["phases"]} == {
         "phase-p1",
         "phase-p2",
@@ -54,7 +60,7 @@ def test_plan_12725_compiles_clean(
     impl_or_single_tasks = [
         task for task in spec["tasks"] if not task["title"].startswith(("[TEST]", "[REF]"))
     ]
-    assert len(impl_or_single_tasks) == 32
+    assert len(impl_or_single_tasks) >= MIN_IMPL_OR_SINGLE_TASK_COUNT
     for task in impl_or_single_tasks:
         section_id = task["source_section_id"]
         entry = manifest_by_source[section_id]
@@ -78,8 +84,8 @@ def test_plan_12725_compiles_clean(
         edges_by_caller.setdefault(edge["task_id"], set()).add(edge["depends_on"])
 
     annotated_entries = [entry for entry in doc.manifest_entries if entry.depends_on]
-    assert len(annotated_entries) == 24, (
-        "plan-12725 must have exactly 24 depends-on annotated deliverables; "
+    assert len(annotated_entries) >= MIN_ANNOTATED_DEPENDENCY_COUNT, (
+        "plan-12725 must keep at least 24 depends-on annotated deliverables; "
         f"got {len(annotated_entries)}"
     )
 

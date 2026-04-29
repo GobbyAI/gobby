@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gobby.servers.provider_models import ProviderModelCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,7 @@ def _registry_lookup_candidates(provider: str | None, model: str) -> list[str]:
     return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
-def _get_provider_model_catalog() -> Any | None:
+def _get_provider_model_catalog() -> ProviderModelCatalog | None:
     try:
         from gobby.app_context import get_app_context
 

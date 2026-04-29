@@ -35,3 +35,17 @@ def test_root_ref_from_file_reads_top_level_metadata(tmp_path: Path) -> None:
     )
 
     assert _root_ref_from_file(plan) == "#123"
+
+
+def test_root_ref_from_file_only_strips_matching_quote_pairs(tmp_path: Path) -> None:
+    plan = tmp_path / "manual-plan.md"
+    plan.write_text(
+        """root_task_ref: '#123"
+
+# Planning Notes
+""",
+        encoding="utf-8",
+    )
+
+    expected = "'#123" + '"'
+    assert _root_ref_from_file(plan) == expected

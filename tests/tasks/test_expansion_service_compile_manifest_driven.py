@@ -5,13 +5,14 @@ from __future__ import annotations
 import textwrap
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
 
@@ -27,7 +28,7 @@ def service(temp_db) -> ExpansionService:
     )
 
 
-def _parent(service: ExpansionService, sample_project):
+def _parent(service: ExpansionService, sample_project: dict[str, Any]) -> Task:
     return service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Manifest-driven epic",
@@ -45,7 +46,7 @@ def _parse_manifest_plan(tmp_path: Path) -> PlanDocument:
     return parse_plan(_write_plan(tmp_path, _MANIFEST_PLAN), parse_mode="expansion")
 
 
-def _deps_for(spec: dict, task_id: str) -> set[str]:
+def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
 
 

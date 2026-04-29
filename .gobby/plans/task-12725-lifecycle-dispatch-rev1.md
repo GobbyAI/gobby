@@ -1,3 +1,5 @@
+<!-- markdownlint-disable-file MD013 MD022 MD029 MD032 MD033 MD036 MD038 MD040 MD060 -->
+
 # Lifecycle-State-Driven Agent Dispatch
 
 > **Plan ID:** task-12725-lifecycle-dispatch-rev1
@@ -3233,7 +3235,7 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
   depends_on:
   - '1.7'
   - '3.2'
-  validation_criteria: src/gobby/config/build.py`, `src/gobby/build/service.py`, `src/gobby/cli/build.py
+  validation_criteria: src/gobby/config/build.py, src/gobby/build/service.py, src/gobby/cli/build.py
   labels:
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.1
   - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.2

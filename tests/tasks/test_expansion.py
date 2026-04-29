@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
@@ -20,7 +21,12 @@ def service(temp_db) -> ExpansionService:
     return ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
 
 
-def _parent(service: ExpansionService, sample_project, *, labels: list[str] | None = None):
+def _parent(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    *,
+    labels: list[str] | None = None,
+) -> Task:
     return service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Lifecycle epic",

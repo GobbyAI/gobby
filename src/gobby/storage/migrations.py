@@ -208,7 +208,7 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
             UNIQUE (project_id, plan_id)
         );
         CREATE INDEX IF NOT EXISTS idx_plans_root_task ON plans(root_task_ref);
-        CREATE INDEX IF NOT EXISTS idx_plans_state ON plans(state)
+        CREATE INDEX IF NOT EXISTS idx_plans_state ON plans(state);
         """,
     ),
     (

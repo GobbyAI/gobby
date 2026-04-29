@@ -81,6 +81,7 @@ async def build(
 
     _validate_profile_for_input(opts.profile, input_kind)
     _validate_clones_dir(opts)
+    _validate_retry_caps(opts)
     await _validate_target_branch(db, project_id, opts.target_branch)
 
     if input_kind == "plan_file":
@@ -242,6 +243,19 @@ def _validate_clones_dir(opts: BuildOptions) -> None:
         raise ValueError(f"clones_dir must be writable for clone isolation: {opts.clones_dir}")
 
 
+def _validate_retry_caps(opts: BuildOptions) -> None:
+    for field in (
+        "max_review_rounds",
+        "max_expansion_attempts",
+        "max_qa_rounds",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+    ):
+        value = getattr(opts, field)
+        if value is not None and value < 1:
+            raise ValueError(f"{field} must be greater than or equal to 1")
+
+
 async def _validate_target_branch(
     db: DatabaseProtocol,
     project_id: str,
@@ -349,4 +363,4 @@ def _looks_like_task_ref(input_ref: str) -> bool:
     return input_ref.startswith("#") or input_ref.isdigit()
 
 
-__all__ = ["AUTOMATED_LEAF_CATEGORIES", "BuildOptions", "BuildResult", "build"]
+__all__ = ["AUTOMATED_LEAF_CATEGORIES", "BuildOptions", "BuildResult", "RetryCaps", "build"]

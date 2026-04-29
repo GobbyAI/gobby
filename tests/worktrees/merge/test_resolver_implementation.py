@@ -19,7 +19,7 @@ def mock_llm_service():
 def resolver(mock_llm_service):
     """MergeResolver instance with mocked LLM service."""
     res = MergeResolver()
-    res._llm_service = mock_llm_service
+    res.llm_service = mock_llm_service
     return res
 
 

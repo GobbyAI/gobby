@@ -1872,6 +1872,19 @@ class TestWorktreeGitManagerMergeBranch:
         assert "src/bar.py" in result.output
 
     @patch("subprocess.run")
+    def test_get_unmerged_files_raises_on_git_failure(self, mock_run, manager) -> None:
+        """Unmerged-file inspection surfaces git failures with stderr context."""
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "diff"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+
+        with pytest.raises(RuntimeError, match="failed to list unmerged files.*not a git"):
+            manager.get_unmerged_files()
+
+    @patch("subprocess.run")
     def test_merge_non_conflict_failure(self, mock_run, manager) -> None:
         """Merge fails with non-conflict error."""
         mock_run.side_effect = [

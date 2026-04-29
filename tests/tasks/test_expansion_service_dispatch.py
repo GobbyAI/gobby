@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -36,7 +37,7 @@ def service(
     )
 
 
-def _parent(service: ExpansionService, sample_project):
+def _parent(service: ExpansionService, sample_project: dict[str, Any]) -> Task:
     return service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Expansion parent",
@@ -44,7 +45,7 @@ def _parent(service: ExpansionService, sample_project):
     )
 
 
-def _valid_spec(parent_id: str, plan_file: str | None) -> dict:
+def _valid_spec(parent_id: str, plan_file: str | None) -> dict[str, Any]:
     return {
         "version": 1,
         "parent_task_id": parent_id,
@@ -75,7 +76,9 @@ async def test_contract_plan_dispatches_to_deterministic_compile(
     parent = _parent(service, sample_project)
     plan = tmp_path / "contract-plan.md"
     plan.write_text(
-        """# Test Contract Plan
+        """> **Plan ID:** test-contract-plan
+
+# Test Contract Plan
 
 ## P1 Phase
 `kind: framing`
@@ -87,6 +90,22 @@ Implement the behavior.
 
 **Acceptance:**
 - 1.1.1 - Behavior exists. file: `src/example.py`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Build Leaf
+  category: code
+  task_type: task
+  depends_on: []
+  validation_criteria: Behavior exists.
+  labels:
+    - covers:test-contract-plan:1.1:1.1.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.1"
+```
 """,
         encoding="utf-8",
     )

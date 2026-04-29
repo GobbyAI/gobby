@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 -->
+
 # Plan-Coverage Contract
 
 This page is the canonical reading order for the plan-coverage contract:
@@ -89,7 +91,7 @@ sections and the leaves the deterministic compiler emits at expansion time. The
 section heading uses the canonical ID `M1` so it satisfies the section-ID
 regex; `kind: manifest` exempts it from the `**Acceptance:**` requirement.
 
-~~~markdown
+````markdown
 ## M1 Task Manifest
 `kind: manifest`
 
@@ -105,7 +107,7 @@ regex; `kind: manifest` exempts it from the `**Acceptance:**` requirement.
   tdd: <true|false>
   source_section: <section-id>
 ```
-~~~
+````
 
 Entry schema (one entry per `kind: deliverable` section):
 

@@ -43,6 +43,13 @@ class TestMergeResolverImport:
         assert hasattr(ResolutionTier, "FULL_FILE_AI")
         assert hasattr(ResolutionTier, "HUMAN_REVIEW")
 
+    def test_splice_accepts_separator_with_trailing_spaces(self) -> None:
+        from gobby.worktrees.merge.resolver import splice_resolutions_into_file
+
+        content = "<<<<<<< HEAD\nours\n=======   \ntheirs\n>>>>>>> feature\n"
+
+        assert splice_resolutions_into_file(content, ["resolved"]) == "resolved\n"
+
 
 # =============================================================================
 # Tier 1: Git Auto-Merge Tests

@@ -73,7 +73,7 @@ Produce an ordered merge plan. The ordering rubric, in priority order:
    without resolution and reduce the conflict surface for the rest.
 4. **Smallest diff next.** Among the still-conflicting worktrees, prefer the
    smaller `divergence_commits` × `len(files_touched)` because a smaller
-   change is easier for the AI resolver and easier to verify.
+   symmetric change is easier for the AI resolver and easier to verify.
 5. **Freshness as a tiebreaker.** Newer `last_commit_at` ahead of older when
    everything else is equal — newer code reflects current intent better.
 

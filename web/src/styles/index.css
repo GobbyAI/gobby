@@ -49,10 +49,12 @@
   --color-destructive-foreground: oklch(72% 0.20 350);
   --color-error: oklch(72% 0.20 350);
   --color-error-soft: oklch(72% 0.20 350 / 0.12);
+  --text-on-error: oklch(15% 0 0);
 
   --color-success: oklch(25% 0.05 125);
   --color-success-foreground: oklch(82% 0.10 125);
   --color-success-soft: oklch(82% 0.10 125 / 0.12);
+  --text-on-success: oklch(15% 0 0);
 
   --color-agent: oklch(72% 0.18 320);
   --color-agent-bg: oklch(28% 0.10 320);
@@ -99,10 +101,12 @@
   --color-destructive-foreground: oklch(52% 0.22 350);
   --color-error: oklch(52% 0.22 350);
   --color-error-soft: oklch(52% 0.22 350 / 0.10);
+  --text-on-error: oklch(99% 0 0);
 
   --color-success: oklch(95% 0.04 125);
   --color-success-foreground: oklch(48% 0.10 125);
   --color-success-soft: oklch(48% 0.10 125 / 0.10);
+  --text-on-success: oklch(99% 0 0);
 
   --color-agent: oklch(48% 0.20 320);
   --color-agent-bg: oklch(94% 0.05 320);

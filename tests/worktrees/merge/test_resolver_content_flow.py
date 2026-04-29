@@ -101,7 +101,8 @@ async def test_resolve_file_tier2_populates_content(
 
     provider = MagicMock()
     provider.generate_text = AsyncMock(return_value="y = 2 + 3")
-    resolver_with_llm._llm_service.get_default_provider.return_value = provider  # type: ignore[union-attr]
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.get_default_provider.return_value = provider
 
     hunks = [{"ours": "y_ours = 2", "theirs": "y_theirs = 3"}]
     result = await resolver_with_llm.resolve_file(file_path, hunks)
@@ -126,7 +127,8 @@ async def test_resolve_file_uses_worktree_path_for_relative_file(
 
     provider = MagicMock()
     provider.generate_text = AsyncMock(return_value="y = 2 + 3")
-    resolver_with_llm._llm_service.get_default_provider.return_value = provider  # type: ignore[union-attr]
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.get_default_provider.return_value = provider
 
     hunks = [{"ours": "y_ours = 2", "theirs": "y_theirs = 3"}]
     result = await resolver_with_llm.resolve_file("src/small.py", hunks, worktree_path=tmp_path)
@@ -148,7 +150,8 @@ async def test_resolve_file_tier3_populates_content_when_tier2_fails(
     tier2_response = "chunk1\n---HUNK SEPARATOR---\nchunk2\n"
     provider = MagicMock()
     provider.generate_text = AsyncMock(side_effect=[tier2_response, full_file_response])
-    resolver_with_llm._llm_service.get_default_provider.return_value = provider  # type: ignore[union-attr]
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.get_default_provider.return_value = provider
 
     hunks = [{"ours": "ours", "theirs": "theirs"}]
     result = await resolver_with_llm.resolve_file(file_path, hunks)
@@ -166,7 +169,8 @@ async def test_resolve_file_human_review_has_empty_content(
     file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")
     provider = MagicMock()
     provider.generate_text = AsyncMock(return_value=None)
-    resolver_with_llm._llm_service.get_default_provider.return_value = provider  # type: ignore[union-attr]
+    assert resolver_with_llm.llm_service is not None
+    resolver_with_llm.llm_service.get_default_provider.return_value = provider
 
     hunks = [{"ours": "ours", "theirs": "theirs"}]
     result = await resolver_with_llm.resolve_file(file_path, hunks)

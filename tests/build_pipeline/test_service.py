@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 
@@ -38,7 +39,7 @@ def _options(**overrides: object) -> BuildOptions:
     return BuildOptions(**values)
 
 
-def _project(temp_db, tmp_path: Path) -> tuple[str, Path]:
+def _project(temp_db: LocalDatabase, tmp_path: Path) -> tuple[str, Path]:
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
     project = LocalProjectManager(temp_db).create(name="phase-3", repo_path=str(repo_path))
@@ -242,6 +243,21 @@ async def test_build_persists_retry_caps_in_artifacts(temp_db, tmp_path: Path) -
         "max_holistic_rounds": 5,
         "max_review_rounds": 7,
     }
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_retry_caps_below_one(temp_db, tmp_path: Path) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    with pytest.raises(ValueError, match="max_qa_rounds.*greater than or equal to 1"):
+        await _build(
+            str(plan_file),
+            _options(max_qa_rounds=0),
+            db=temp_db,
+            project_id=project_id,
+        )
 
 
 @pytest.mark.asyncio

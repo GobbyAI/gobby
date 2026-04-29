@@ -460,7 +460,8 @@
   width: 100%;
   padding: 6px 8px;
   font-size: var(--text-md);
-  border: 1px solid color-mix(in srgb, var(--border-color) 100%, var(--text-secondary) 30%);
+  /* Keep form chrome on the shared border token; focus owns the contrast change. */
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);

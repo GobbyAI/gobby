@@ -138,6 +138,7 @@ class CloneGitManager:
         check: bool = False,
         env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        """Run a git command in a clone and return the completed process."""
         return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
     def get_remote_url(self, remote: str = "origin") -> str | None:

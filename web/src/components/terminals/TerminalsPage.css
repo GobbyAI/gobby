@@ -4,7 +4,7 @@
   color: var(--color-agent);
 }
 [data-theme="light"] .dead-badge {
-  background: rgba(0, 0, 0, 0.06);
+  background: color-mix(in srgb, black 6%, transparent);
   color: var(--text-muted);
 }
 [data-theme="light"] .session-kill-btn:hover,

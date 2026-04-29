@@ -85,6 +85,7 @@
 }
 
 .trace-item.selected {
+  background: var(--color-info-soft);
   background: var(--bg-selected, color-mix(in srgb, var(--color-info) 10%, transparent));
   border-left: 3px solid var(--accent);
   padding-left: 13px;
@@ -218,6 +219,7 @@
 .trace-waterfall-bar--unset { fill: var(--text-muted); }
 .trace-waterfall-bar--llm { fill: var(--color-warning-foreground); }
 .trace-waterfall-bar--llm:hover {
+  fill: var(--color-warning-foreground);
   fill: color-mix(in srgb, var(--color-warning-foreground) 82%, var(--text-primary));
 }
 
@@ -374,6 +376,7 @@
   font-size: var(--text-2xs);
   padding: 1px 4px;
   border-radius: 3px;
+  background: var(--color-warning-soft);
   background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
   color: var(--color-warning-foreground);
   font-weight: 600;

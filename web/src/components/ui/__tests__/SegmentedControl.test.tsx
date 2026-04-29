@@ -93,11 +93,12 @@ describe('SegmentedControl', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('active option carries the subdued accent classes (regression guard)', () => {
+  it('active option is the roving tab stop', () => {
     renderControl({ value: 'b' })
     const active = screen.getByRole('radio', { name: 'B' })
-    expect(active.className).toContain('bg-accent/15')
-    expect(active.className).toContain('text-accent')
-    expect(active.className).not.toContain('bg-accent text-accent-foreground')
+    expect(active).toHaveAttribute('aria-checked', 'true')
+    expect(active).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('radio', { name: 'A' })).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByRole('radio', { name: 'C' })).toHaveAttribute('tabindex', '-1')
   })
 })

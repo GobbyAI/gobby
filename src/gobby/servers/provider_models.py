@@ -24,11 +24,7 @@ logger = logging.getLogger(__name__)
 _PROVIDERS = ("claude", "gemini", "qwen", "codex", "droid")
 _CACHE_VERSION = 3
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
-_CLAUDE_ALIASES: tuple[tuple[str, str], ...] = (
-    ("haiku", "Haiku"),
-    ("sonnet", "Sonnet"),
-    ("opus", "Opus"),
-)
+_CLAUDE_ALIASES = (("haiku", "Haiku"), ("sonnet", "Sonnet"), ("opus", "Opus"))
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 _KNOWN_PROVIDER_PREFIXES = (
@@ -188,9 +184,15 @@ def with_context_lengths(provider: str, models: list[dict[str, Any]]) -> list[di
     return [_normalize_model_entry(provider, model) for model in models if isinstance(model, dict)]
 
 
+def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
+    if not isinstance(models, list):
+        return []
+    if all(isinstance(model, dict) and _extract_context_length(model) for model in models):
+        return copy.deepcopy(models)
+    return with_context_lengths(provider, models)
+
+
 # Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
-# Droid does not expose a machine-readable model catalog yet, so this static
-# list is the source of truth for API/model-picker consumers.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths(
     "droid",
     [
@@ -477,9 +479,7 @@ class ProviderModelCatalog:
                 "source": str(entry.get("source") or "cache"),
                 "cli_version": entry.get("cli_version"),
                 "error": entry.get("error"),
-                "models": with_context_lengths(provider, models)
-                if isinstance(models, list)
-                else [],
+                "models": _cached_models(provider, models),
                 "generated_at": entry.get("generated_at"),
             }
 

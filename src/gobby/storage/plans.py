@@ -306,6 +306,8 @@ class LocalPlanManager:
 
 def _normalize_ref(ref: str) -> str:
     stripped = ref.strip()
+    if not stripped:
+        raise ValueError("plan ref must not be blank")
     if stripped.isdecimal():
         return f"#{stripped}"
     return stripped

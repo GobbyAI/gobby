@@ -145,12 +145,12 @@ def setup_internal_registries(
             manager.add_registry(ops_registry)
             logger.debug("Tasks-ops registry initialized")
 
-            if db is not None:
-                from gobby.mcp_proxy.tools.plans import create_plan_registry
+    if db is not None:
+        from gobby.mcp_proxy.tools.plans import create_plan_registry
 
-                plan_registry = create_plan_registry(db, default_project_id=project_id)
-                manager.add_registry(plan_registry)
-                logger.debug("Plans registry initialized")
+        plan_registry = create_plan_registry(db, default_project_id=project_id)
+        manager.add_registry(plan_registry)
+        logger.debug("Plans registry initialized")
 
     # Initialize sessions registry (messages + session CRUD)
     if session_manager is not None:

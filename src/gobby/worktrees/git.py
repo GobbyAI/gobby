@@ -125,6 +125,9 @@ class WorktreeGitManager:
 
     def get_unmerged_files(self, *, cwd: str | Path | None = None) -> list[str]:
         result = self.run_git_command(_UNMERGED_ARGS, cwd=cwd, timeout=10)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+            raise RuntimeError(f"failed to list unmerged files: {detail}")
         return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
 
     def create_worktree(

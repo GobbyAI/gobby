@@ -203,10 +203,9 @@ class TestResetPlanModeOnSessionStart:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "session_start"
-        assert body.effects[0].variable == "plan_mode"
-        assert body.effects[0].value is False
-        assert body.effects[2].variable == "gemini_qwen_gcode_plan_hint_shown"
-        assert body.effects[2].value is False
+        effects_by_variable = {effect.variable: effect for effect in body.effects}
+        assert effects_by_variable["plan_mode"].value is False
+        assert effects_by_variable["gemini_qwen_gcode_plan_hint_shown"].value is False
 
     def test_when_condition_covers_clear_compact_startup(self, db, manager) -> None:
         """Should fire on clear, compact, and startup sources."""

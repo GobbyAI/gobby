@@ -1,3 +1,5 @@
+<!-- markdownlint-disable-file MD013 MD022 MD029 MD032 MD033 MD036 MD038 MD040 MD060 -->
+
 # Compile manifest-driven (sub-plan A of §2.20 cleanup)
 
 ## Overview

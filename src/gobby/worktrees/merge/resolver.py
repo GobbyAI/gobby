@@ -109,7 +109,7 @@ async def auto_resolve_trivial_conflicts(
 
 
 _CONFLICT_BLOCK_RE = re.compile(
-    r"<<<<<<< [^\n]*\n.*?\n=======\n.*?\n>>>>>>> [^\n]*\n",
+    r"<<<<<<< [^\n]*\n.*?\n=======[ \t]*\n.*?\n>>>>>>> [^\n]*\n",
     re.DOTALL,
 )
 
@@ -225,6 +225,14 @@ class MergeResolver:
         self.max_parallel_files = max_parallel_files
         self._llm_service: LLMService | None = llm_service
         self._config: Any | None = config
+
+    @property
+    def llm_service(self) -> "LLMService | None":
+        return self._llm_service
+
+    @llm_service.setter
+    def llm_service(self, service: "LLMService | None") -> None:
+        self._llm_service = service
 
     async def resolve_file(
         self,

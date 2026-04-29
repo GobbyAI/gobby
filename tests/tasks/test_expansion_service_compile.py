@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.plans.parser import Kind, PlanDocument, parse_plan
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -19,7 +20,7 @@ def service(temp_db) -> ExpansionService:
     return ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
 
 
-def _parent(service: ExpansionService, sample_project):
+def _parent(service: ExpansionService, sample_project: dict[str, Any]) -> Task:
     return service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Lifecycle dispatch",
@@ -35,7 +36,7 @@ def _regression_plan_doc() -> PlanDocument:
     return parse_plan(_regression_plan_path(), parse_mode="expansion")
 
 
-def _deps_for(spec: dict, task_id: str) -> set[str]:
+def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
 
 
@@ -52,9 +53,9 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
     assert len(plan_doc.manifest_entries) == deliverable_count
     assert spec["contract_plan"] is True
     assert spec["deliverable_count"] == 6
-    assert len(spec["tasks"]) == 18
+    assert len(spec["tasks"]) == 16
     assert {phase["id"]: len(phase["task_ids"]) for phase in spec["phases"]} == {
-        "phase-p1": 9,
+        "phase-p1": 7,
         "phase-p2": 6,
         "phase-p3": 3,
     }
@@ -95,8 +96,8 @@ def test_compile_contract_plan_translates_section_dependencies(
     assert _deps_for(spec, "1.2::test") == {"1.1::ref"}
     assert _deps_for(spec, "1.2::impl") == {"1.2::test"}
     assert _deps_for(spec, "1.2::ref") == {"1.2::impl"}
-    assert _deps_for(spec, "1.3a::test") == {"1.2::ref"}
-    assert _deps_for(spec, "2.1::test") == {"1.3a::ref"}
+    assert _deps_for(spec, "1.3a::single") == {"1.2::ref"}
+    assert _deps_for(spec, "2.1::test") == {"1.3a::single"}
     assert _deps_for(spec, "2.2::test") == {"1.2::ref"}
     assert _deps_for(spec, "3.1::test") == {"2.1::ref", "2.2::ref"}
 

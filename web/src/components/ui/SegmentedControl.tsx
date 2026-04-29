@@ -81,7 +81,8 @@ export function SegmentedControl<T extends string>({
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
               sizePad,
-              'transition-colors',
+              'transition-colors motion-reduce:transition-none',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               index === 0 && 'rounded-l-md',
               index === options.length - 1 && 'rounded-r-md',
               isActive

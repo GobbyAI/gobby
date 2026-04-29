@@ -31,10 +31,21 @@ def granularity_pattern() -> str:
     register_token_timeseries_routes(router, server_mock)
     app.include_router(router)
 
-    route = next(
-        r for r in app.routes if isinstance(r, APIRoute) and r.path.endswith("/tokens/timeseries")
-    )
-    granularity_param = next(p for p in route.dependant.query_params if p.name == "granularity")
+    route = None
+    for candidate in app.routes:
+        if isinstance(candidate, APIRoute) and candidate.path.endswith("/tokens/timeseries"):
+            route = candidate
+            break
+    if route is None:
+        raise AssertionError("tokens timeseries route was not registered")
+
+    granularity_param = None
+    for candidate in route.dependant.query_params:
+        if candidate.name == "granularity":
+            granularity_param = candidate
+            break
+    if granularity_param is None:
+        raise AssertionError("tokens timeseries route is missing `granularity` query param")
     metadata = getattr(granularity_param.field_info, "metadata", []) or []
     for entry in metadata:
         pattern = getattr(entry, "pattern", None)

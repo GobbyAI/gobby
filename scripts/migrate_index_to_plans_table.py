@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ import yaml
 from gobby.plans.parser import parse_plan
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> int:
@@ -44,6 +47,11 @@ def migrate(repo_root: Path, db: LocalDatabase, *, delete_index: bool = True) ->
         project_id = str(entry.get("project_id") or _project_id(repo_root))
         root_task_ref = str(entry.get("root_task_ref") or _root_ref(path) or "")
         if not root_task_ref:
+            logger.warning(
+                "Skipping plan without root_task_ref (project_id=%s, path=%s)",
+                project_id,
+                path,
+            )
             continue
         state = "archived" if path.parent.name == "completed" else "active"
         _upsert_plan(
@@ -137,8 +145,16 @@ def _index_entries(index_path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _project_id(repo_root: Path) -> str:
-    raw = json.loads((repo_root / ".gobby" / "project.json").read_text(encoding="utf-8"))
-    return str(raw["id"])
+    path = repo_root / ".gobby" / "project.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"Missing project config: {path}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Malformed project config: {path}: {exc}") from exc
+    if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
+        raise ValueError(f"Malformed project config: {path}: missing id")
+    return str(raw["id"]).strip()
 
 
 def _root_ref(path: Path) -> str | None:
@@ -146,7 +162,7 @@ def _root_ref(path: Path) -> str | None:
     if stem.startswith("task-"):
         token = stem.split("-", 2)[1]
         if token.isdecimal():
-            return token
+            return f"#{token}"
     return None
 
 

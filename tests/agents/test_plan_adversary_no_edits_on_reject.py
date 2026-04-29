@@ -17,10 +17,15 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-ADVERSARY_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
-)
+
+def _repo_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    raise AssertionError("repo root not found from test file path")
+
+
+ADVERSARY_PATH = _repo_root() / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
 
 
 @pytest.fixture(scope="module")

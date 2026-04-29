@@ -129,7 +129,7 @@ class HTTPServer:
 
             merge_storage = MergeResolutionManager(self.services.mcp_db_manager.db)
             merge_resolver = MergeResolver()
-            merge_resolver._llm_service = services.llm_service
+            merge_resolver.llm_service = services.llm_service
             merge_resolver._config = services.config.merge_resolution if services.config else None
             inter_session_message_manager = InterSessionMessageManager(
                 self.services.mcp_db_manager.db

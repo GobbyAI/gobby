@@ -121,7 +121,7 @@ async def test_merge_worktree_local_only_target_uses_local_branch():
     merge_calls = [
         call
         for call in ctx.git_manager._run_git.call_args_list
-        if call[0][0][:1] == ["merge"] and "--no-edit" in call[0][0]
+        if call[0][0][0] == "merge" and "--no-edit" in call[0][0]
     ]
     assert len(merge_calls) == 1
     assert merge_calls[0][0][0] == ["merge", "develop", "--no-edit"]
@@ -156,7 +156,7 @@ async def test_merge_worktree_prefer_remote_uses_remote_ref():
     merge_calls = [
         call
         for call in ctx.git_manager._run_git.call_args_list
-        if call[0][0][:1] == ["merge"] and "--no-edit" in call[0][0]
+        if call[0][0][0] == "merge" and "--no-edit" in call[0][0]
     ]
     assert len(merge_calls) == 1
     assert merge_calls[0][0][0] == ["merge", "origin/develop", "--no-edit"]

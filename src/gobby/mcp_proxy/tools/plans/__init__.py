@@ -68,6 +68,8 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_ref", "message": str(exc)}
         return {"ok": True, "plan": record.to_dict()}
 
     registry.register(
@@ -127,8 +129,8 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
-        except Exception as exc:
-            return {"ok": False, "error": "archive_plan_failed", "message": str(exc)}
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            return _known_error_payload(exc, "archive_plan_failed")
         return {"ok": True, "plan": record.to_dict()}
 
     registry.register(
@@ -152,8 +154,10 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
                 plan_id,
                 project_id=_optional_project_id(db, project, default_project_id),
             )
-        except Exception as exc:
-            return {"ok": False, "error": "update_plan_hash_failed", "message": str(exc)}
+        except PlanNotFoundError as exc:
+            return {"ok": False, "error": "plan_not_found", "message": str(exc)}
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            return _known_error_payload(exc, "update_plan_hash_failed")
         return {"ok": True, "plan": record.to_dict()}
 
     registry.register(
@@ -173,8 +177,10 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
                 plan_id,
                 project_id=_optional_project_id(db, project, default_project_id),
             )
-        except Exception as exc:
-            return {"ok": False, "error": "regenerate_manifest_failed", "message": str(exc)}
+        except PlanNotFoundError as exc:
+            return {"ok": False, "error": "plan_not_found", "message": str(exc)}
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            return _known_error_payload(exc, "regenerate_manifest_failed")
         return {"ok": True, "manifest_path": str(path)}
 
     registry.register(
@@ -196,6 +202,8 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
             )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_ref", "message": str(exc)}
         return {"ok": True, "deleted": deleted}
 
     registry.register(
@@ -228,6 +236,11 @@ def _optional_project_id(
         resolved = LocalProjectManager(db).resolve_ref(project)
         return resolved.id if resolved is not None else None
     return default_project_id
+
+
+def _known_error_payload(exc: Exception, fallback_error: str) -> dict[str, Any]:
+    error = "invalid_ref" if "ref must not be blank" in str(exc) else fallback_error
+    return {"ok": False, "error": error, "message": str(exc)}
 
 
 def _root_task_from_path(plan_path: str) -> str | None:

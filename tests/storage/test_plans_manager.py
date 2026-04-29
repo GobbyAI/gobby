@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
+from gobby.storage.database import LocalDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -42,7 +43,7 @@ def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
     return path
 
 
-def _project(temp_db, root: Path) -> str:
+def _project(temp_db: LocalDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name="plans", repo_path=str(root)).id
 
 

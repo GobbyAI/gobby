@@ -193,8 +193,9 @@ def _root_ref_from_line(line: str) -> str | None:
     match = _ROOT_TASK_REF_RE.match(line)
     if match is None:
         return None
-    value = match.group("value").strip().removeprefix("'").removesuffix("'")
-    value = value.removeprefix('"').removesuffix('"')
+    value = match.group("value").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
     return value or None
 
 

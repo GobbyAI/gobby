@@ -10,6 +10,8 @@ metadata:
     depth: 0
 ---
 
+<!-- markdownlint-disable MD013 -->
+
 # /gobby merge
 
 You have been invoked as `/gobby merge`. Survey what is unmerged, then
@@ -21,6 +23,8 @@ Call `gobby-merge:analyze_merge_landscape` (no args, or pass
 `project_id` if the user named one). The result is a list of
 `{worktree_id, branch, base, divergence_commits, files_touched,
 last_commit_at, merge_state, task_ref}`.
+`divergence_commits` is symmetric divergence (`base..HEAD` plus `HEAD..base`),
+not just commits ahead.
 
 Then call `gobby-merge:predict_conflicts` with the surveyed
 `worktree_ids` and the user's target branch (default `main`). Use the

@@ -96,5 +96,6 @@ def test_step_7_3a_dispatch_failure_falls_through(body: str) -> None:
     the pre-flight failure mode falls through to the adversary round, not
     aborts."""
     assert "fails to dispatch" in body
-    assert "proceed directly to Step 7.4" in body
+    assert "host CLI does not expose" in body
+    assert "The adversary round will still run" in body
     assert "non-terminal review rejections" in body

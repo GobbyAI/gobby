@@ -225,6 +225,16 @@ def test_setup_tasks_disabled_by_config() -> None:
     assert "gobby-tasks" not in registry_names
 
 
+def test_setup_plans_registry_when_db_exists_even_without_tasks(temp_db) -> None:
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+
+    manager = setup_internal_registries(_config=mock_config, db=temp_db)
+
+    registry_names = [r.name for r in manager.get_all_registries()]
+    assert "gobby-plans" in registry_names
+
+
 def test_setup_tasks_missing_task_manager() -> None:
     """Test tasks registry is not created when task_manager is None."""
     mock_config = MagicMock()

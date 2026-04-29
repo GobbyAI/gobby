@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
@@ -23,6 +24,18 @@ if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
+
+
+class WorktreeManagerProtocol(Protocol):
+    def get(self, worktree_id: str) -> Any | None: ...
+
+    def list_worktrees(
+        self,
+        *,
+        project_id: str | None = None,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> list[Any]: ...
 
 
 def _git(
@@ -46,7 +59,7 @@ async def _git_async(
 
 
 def _resolve_worktree_path(
-    worktree_manager: Any | None,
+    worktree_manager: WorktreeManagerProtocol | None,
     worktree_id: str,
 ) -> tuple[str | None, str | None, str | None]:
     """Return (worktree_path, branch_name, error). On error, the others are None."""
@@ -63,7 +76,7 @@ def _resolve_worktree_path(
 def register_merge_landscape_tools(
     registry: InternalToolRegistry,
     *,
-    worktree_manager: Any | None,
+    worktree_manager: WorktreeManagerProtocol | None,
     git_manager: WorktreeGitManager | None,
 ) -> None:
     """Add merge-landscape analytics tools to an existing registry.
@@ -145,7 +158,11 @@ def register_merge_landscape_tools(
                     stderr.strip(),
                 )
                 entry["commits_behind"] = None
-            entry["divergence_commits"] = entry["commits_ahead"]
+            ahead = entry["commits_ahead"]
+            behind = entry["commits_behind"]
+            entry["divergence_commits"] = (
+                ahead + behind if isinstance(ahead, int) and isinstance(behind, int) else None
+            )
 
             rc, stdout, _ = await _git_async(
                 git_manager,
@@ -378,7 +395,13 @@ def register_merge_landscape_tools(
         command: str,
         timeout: int = 300,
     ) -> dict[str, Any]:
-        if not command:
+        if not command.strip():
+            return {"success": False, "error": "command is required"}
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            return {"success": False, "error": f"failed to parse command: {exc}"}
+        if not argv:
             return {"success": False, "error": "command is required"}
 
         wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
@@ -386,8 +409,8 @@ def register_merge_landscape_tools(
             return {"success": False, "error": err}
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
                 cwd=wt_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -412,7 +435,7 @@ def register_merge_landscape_tools(
             }
         except (OSError, ValueError) as e:
             logger.exception("verify_in_worktree subprocess failed for %s", worktree_id)
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"failed to start command: {e}"}
 
     @registry.tool(
         name="inspect_merge_state",

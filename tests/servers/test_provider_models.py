@@ -153,6 +153,34 @@ class TestProviderModelCatalog:
         assert codex["context_length"] == 200_000
         assert gemini["context_length"] == 123_456
 
+    def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
+        cache_path = temp_dir / "provider-model-catalog.json"
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": None,
+                    "providers": {
+                        "codex": {
+                            "source": "cache",
+                            "models": [
+                                {
+                                    "value": "gpt-5.4",
+                                    "label": "GPT-5.4",
+                                    "context_length": 123_000,
+                                }
+                            ],
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+
+        model = catalog.get_provider_snapshot("codex")["models"][0]
+        assert model["context_length"] == 123_000
+
     def test_get_context_window_matches_aliases_suffixes_and_droid_core(
         self, temp_dir: Path
     ) -> None:

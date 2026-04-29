@@ -41,6 +41,8 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
     assert schema["properties"]["yolo"]["type"] == "boolean"
     assert schema["properties"]["max_review_rounds"]["type"] == "integer"
+    assert schema["properties"]["max_review_rounds"]["minimum"] == 1
+    assert schema["properties"]["max_qa_rounds"]["minimum"] == 1
     assert schema["properties"]["target_branch"]["type"] == "string"
     assert schema["properties"]["agent"]["type"] == "string"
 
@@ -80,6 +82,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
         "initial_lifecycle": "in_development",
         "applied_stages_skipped": ["qa"],
         "tick_dispatched": 1,
+        "retry_caps": None,
     }
     call = build.call_args
     assert call.args[0] == "#42"

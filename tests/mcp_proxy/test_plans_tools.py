@@ -74,3 +74,13 @@ async def test_plan_tool_schemas_and_happy_path(temp_db, tmp_path: Path) -> None
     archived = await registry.call("archive_plan", {"plan_id": "task-100-demo"})
     assert archived["ok"] is True
     assert archived["plan"]["state"] == "archived"
+
+
+@pytest.mark.asyncio
+async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(temp_db) -> None:
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    result = await registry.call("get_plan", {"plan_id_or_ref": "   "})
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_ref"

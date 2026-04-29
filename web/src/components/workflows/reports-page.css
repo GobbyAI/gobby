@@ -469,13 +469,13 @@
 
 .reports-btn--approve {
   background: var(--color-success-foreground);
-  color: #fff;
+  color: var(--text-on-success);
 }
 
 .reports-btn--reject,
 .reports-btn--cancel {
   background: var(--color-error);
-  color: #fff;
+  color: var(--text-on-error);
 }
 
 /* Error block */
