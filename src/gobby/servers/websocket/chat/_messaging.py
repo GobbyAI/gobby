@@ -234,6 +234,20 @@ class ChatMessagingMixin:
         # Track which conversation this client is in (for scoped broadcasts)
         client_info["conversation_id"] = conversation_id
 
+        # The chat request carries the client's TTS toggle snapshot for this response.
+        # Apply it before scheduling the stream so pipeline creation cannot race
+        # the separate voice_mode_toggle frame.
+        tts_enabled = data.get("tts_enabled")
+        voice_enabled = getattr(self, "_voice_enabled", None)
+        if isinstance(tts_enabled, bool) and isinstance(voice_enabled, dict):
+            voice_enabled[conversation_id] = tts_enabled
+            start_voice_warmup = getattr(self, "start_voice_warmup", None)
+            if tts_enabled and callable(start_voice_warmup):
+                try:
+                    start_voice_warmup()
+                except Exception:
+                    logger.debug("TTS warmup start from chat intent failed", exc_info=True)
+
         # Extract inject_context for tool result injection into LLM conversation
         pending_inject_contexts = getattr(self, "_pending_inject_contexts", {})
         pending_inject_context = pending_inject_contexts.get(conversation_id)
@@ -260,6 +274,7 @@ class ChatMessagingMixin:
                 inject_context=inject_context,
                 provider=provider,
                 reasoning_effort=reasoning_effort,
+                tts_enabled=tts_enabled if isinstance(tts_enabled, bool) else None,
             )
         )
         task.add_done_callback(self._on_chat_task_done)
@@ -284,6 +299,7 @@ class ChatMessagingMixin:
         inject_context: str | None = None,
         provider: str | None = None,
         reasoning_effort: str | None = None,
+        tts_enabled: bool | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
         from gobby.llm.claude_models import (
@@ -303,7 +319,11 @@ class ChatMessagingMixin:
         # Errors here are non-fatal — TTS is optional enhancement.
         tts_pipeline = None
         try:
-            if hasattr(self, "_create_tts_pipeline"):
+            if tts_enabled is not False and hasattr(self, "_create_tts_pipeline"):
+                if tts_enabled is True:
+                    voice_enabled = getattr(self, "_voice_enabled", None)
+                    if isinstance(voice_enabled, dict):
+                        voice_enabled[conversation_id] = True
                 tts_pipeline = self._create_tts_pipeline(conversation_id)
         except Exception:
             logger.debug("TTS pipeline creation failed", exc_info=True)

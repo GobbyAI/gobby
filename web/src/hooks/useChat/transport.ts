@@ -156,6 +156,7 @@ const connect = useCallback(() => {
             msg.projectId,
             undefined,
             msg.reasoningEffort,
+            msg.ttsEnabled,
           );
         }
       }, 500);

@@ -249,12 +249,23 @@ export function ChatInput({
     if ((trimmed || hasFiles) && !disabled) {
       onSend(trimmed, hasFiles ? filesToSend : undefined, {
         reasoningEffort: currentReasoning,
+        ttsEnabled,
       })
       setInput('')
       clearQueuedFiles()
       onScrollToBottom?.()
     }
-  }, [attachmentsDisabled, clearQueuedFiles, currentReasoning, disabled, input, onScrollToBottom, onSend, queuedFiles])
+  }, [
+    attachmentsDisabled,
+    clearQueuedFiles,
+    currentReasoning,
+    disabled,
+    input,
+    onScrollToBottom,
+    onSend,
+    queuedFiles,
+    ttsEnabled,
+  ])
 
   const handleChange = useCallback((value: string) => {
     setInput(value)

@@ -30,6 +30,10 @@ class DummyMessagingMixin(ChatMessagingMixin):
         self._pending_agents: dict = {}
         self.session_manager = None
         self.inter_session_msg_manager = None
+        self._voice_enabled: dict[str, bool] = {}
+        self._created_tts_pipelines = 0
+        self._last_tts_pipeline = None
+        self.start_voice_warmup = MagicMock()
 
     async def _send_error(
         self, ws: object, msg: str, request_id: str | None = None, code: str = "ERROR"
@@ -38,6 +42,16 @@ class DummyMessagingMixin(ChatMessagingMixin):
 
     async def _cancel_active_chat(self, cid: str) -> None:
         pass
+
+    def _create_tts_pipeline(self, conversation_id: str) -> MagicMock | None:
+        if not self._voice_enabled.get(conversation_id, False):
+            return None
+        self._created_tts_pipelines += 1
+        pipeline = MagicMock()
+        pipeline.feed_text = MagicMock()
+        pipeline.flush = AsyncMock()
+        self._last_tts_pipeline = pipeline
+        return pipeline
 
     async def _create_chat_session(
         self,
@@ -157,6 +171,65 @@ class TestHandleChatMessage:
             assert call_args[0][1] == "c1"
             assert call_args[0][2] == "hi"
             assert call_args[0][3] is None  # model
+
+    @pytest.mark.asyncio
+    async def test_tts_intent_enabled_arms_voice_before_stream(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ):
+        mixin.clients[ws] = {"connected": True}
+        session = AsyncMock()
+        session.model = "opus"
+        session.db_session_id = "db-id"
+        mixin._chat_sessions["c1"] = session
+
+        async def dummy_generator(text):
+            yield TextChunk(content="spoken response.")
+            yield DoneEvent(
+                sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
+            )
+
+        session.send_message = lambda content: dummy_generator(content)
+
+        await mixin._handle_chat_message(
+            ws,
+            {"content": "hi", "conversation_id": "c1", "tts_enabled": True},
+        )
+        await mixin._active_chat_tasks["c1"]
+
+        assert mixin._voice_enabled["c1"] is True
+        mixin.start_voice_warmup.assert_called_once()
+        assert mixin._created_tts_pipelines == 1
+        assert mixin._last_tts_pipeline is not None
+        mixin._last_tts_pipeline.feed_text.assert_called_once_with("spoken response.")
+
+    @pytest.mark.asyncio
+    async def test_tts_intent_disabled_suppresses_pipeline_for_turn(
+        self, mixin: DummyMessagingMixin, ws: AsyncMock
+    ):
+        mixin.clients[ws] = {"connected": True}
+        mixin._voice_enabled["c1"] = True
+        session = AsyncMock()
+        session.model = "opus"
+        session.db_session_id = "db-id"
+        mixin._chat_sessions["c1"] = session
+
+        async def dummy_generator(text):
+            yield TextChunk(content="text only.")
+            yield DoneEvent(
+                sdk_session_id="sdk", input_tokens=10, output_tokens=5, tool_calls_count=0
+            )
+
+        session.send_message = lambda content: dummy_generator(content)
+
+        await mixin._handle_chat_message(
+            ws,
+            {"content": "hi", "conversation_id": "c1", "tts_enabled": False},
+        )
+        await mixin._active_chat_tasks["c1"]
+
+        assert mixin._voice_enabled["c1"] is False
+        mixin.start_voice_warmup.assert_not_called()
+        assert mixin._created_tts_pipelines == 0
 
 
 class TestStreamChatResponse:

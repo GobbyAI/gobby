@@ -482,9 +482,10 @@ export default function App() {
     async (
       content: string,
       files?: QueuedFile[],
-      options?: { reasoningEffort?: string | null },
+      options?: { reasoningEffort?: string | null; ttsEnabled?: boolean },
     ) => {
       const reasoningEffort = options?.reasoningEffort ?? currentMainReasoning;
+      const ttsEnabled = options?.ttsEnabled ?? settings.ttsEnabled;
       const parsed = parseColonCommand(content);
       if (parsed) {
         const ctx = await resolveInjectContext(parsed);
@@ -497,6 +498,7 @@ export default function App() {
           effectiveProjectId,
           ctx ?? undefined,
           reasoningEffort,
+          ttsEnabled,
         );
       } else {
         sendMessage(
@@ -506,6 +508,7 @@ export default function App() {
           effectiveProjectId,
           undefined,
           reasoningEffort,
+          ttsEnabled,
         );
       }
     },
@@ -513,6 +516,7 @@ export default function App() {
       currentMainReasoning,
       sendMessage,
       settings.model,
+      settings.ttsEnabled,
       effectiveProjectId,
       parseColonCommand,
       resolveInjectContext,
@@ -1003,6 +1007,7 @@ export default function App() {
             effectiveProjectId,
             context,
             currentMainReasoning,
+            settings.ttsEnabled,
           );
         }}
       />

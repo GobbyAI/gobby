@@ -252,6 +252,20 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('Hello world', undefined, {
       reasoningEffort: 'auto',
+      ttsEnabled: false,
+    })
+  })
+
+  it('includes enabled TTS intent when sending a message', async () => {
+    const onSend = vi.fn()
+    render(<ChatInput {...defaultProps} onSend={onSend} ttsEnabled={true} />)
+
+    await userEvent.type(screen.getByRole('textbox'), 'Speak this')
+    await userEvent.keyboard('{Enter}')
+
+    expect(onSend).toHaveBeenCalledWith('Speak this', undefined, {
+      reasoningEffort: 'auto',
+      ttsEnabled: true,
     })
   })
 
@@ -552,6 +566,7 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('Hello', undefined, {
       reasoningEffort: 'auto',
+      ttsEnabled: false,
     })
   })
 
@@ -610,6 +625,7 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith('/plan', undefined, {
       reasoningEffort: 'auto',
+      ttsEnabled: false,
     })
     expect(onPaletteSelect).not.toHaveBeenCalled()
   })

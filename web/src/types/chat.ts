@@ -155,6 +155,7 @@ export interface QueuedFile {
 
 export interface ChatSendOptions {
   reasoningEffort?: string | null;
+  ttsEnabled?: boolean;
 }
 
 export interface ProjectOption {

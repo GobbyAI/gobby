@@ -20,13 +20,17 @@ type SendMessage = (
   projectId?: string | null,
   injectContext?: string,
   reasoningEffort?: string | null,
+  ttsEnabled?: boolean,
 ) => boolean;
 
 interface UseAppCommandPaletteArgs {
   startNewChat: () => void;
   clearHistory: () => void;
   sendMessage: SendMessage;
-  settings: Pick<Settings, "model" | "chatMode" | "postPlanChatMode">;
+  settings: Pick<
+    Settings,
+    "model" | "chatMode" | "postPlanChatMode" | "ttsEnabled"
+  >;
   effectiveProjectId: string | null;
   currentMainReasoning: string | null;
   updateChatMode: (mode: ChatMode) => void;
@@ -63,8 +67,15 @@ export function useAppCommandPalette({
       effectiveProjectId,
       undefined,
       currentMainReasoning,
+      settings.ttsEnabled,
     );
-  }, [currentMainReasoning, effectiveProjectId, sendMessage, settings.model]);
+  }, [
+    currentMainReasoning,
+    effectiveProjectId,
+    sendMessage,
+    settings.model,
+    settings.ttsEnabled,
+  ]);
 
   const restartDaemon = useCallback(
     (showFailureMessage: boolean) => {

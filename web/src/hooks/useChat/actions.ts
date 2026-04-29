@@ -568,6 +568,7 @@ const sendMessage = useCallback(
     projectId?: string | null,
     injectContext?: string,
     reasoningEffort?: string | null,
+    ttsEnabled?: boolean,
   ): boolean => {
     console.log(
       "sendMessage called:",
@@ -605,6 +606,7 @@ const sendMessage = useCallback(
           projectId,
           injectContext,
           normalizedReasoningEffort,
+          ttsEnabled,
         );
       });
       return true;
@@ -618,6 +620,7 @@ const sendMessage = useCallback(
         model,
         projectId,
         reasoningEffort: normalizedReasoningEffort,
+        ttsEnabled,
       });
       // Still add the user message to the UI so it's visible
       const queuedId = `user-${uuid()}`;
@@ -711,6 +714,10 @@ const sendMessage = useCallback(
 
     if (normalizedReasoningEffort) {
       payload.reasoning_effort = normalizedReasoningEffort;
+    }
+
+    if (typeof ttsEnabled === "boolean") {
+      payload.tts_enabled = ttsEnabled;
     }
 
     if (selectedProviderRef.current) {
