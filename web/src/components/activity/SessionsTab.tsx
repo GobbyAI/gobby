@@ -9,6 +9,7 @@ import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
 import { MessageItem } from "../chat/MessageItem";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import {
   SessionInteractionModal,
   type InteractionMode,
@@ -655,17 +656,15 @@ export const SessionsTab = memo(function SessionsTab({
           placeholder="Search sessions"
           className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
         />
-        <select
-          aria-label="Session status filter"
+        <SegmentedControl<SessionStatusFilter>
           value={statusFilter}
-          onChange={(event) =>
-            setStatusFilter(event.target.value as SessionStatusFilter)
-          }
-          className="rounded-md border border-border bg-accent px-2 py-1.5 text-sm text-accent-foreground outline-none"
-        >
-          <option value="live">Live</option>
-          <option value="expired">Expired</option>
-        </select>
+          onChange={setStatusFilter}
+          options={[
+            { value: "live", label: "Live" },
+            { value: "expired", label: "Expired" },
+          ]}
+          ariaLabel="Session status filter"
+        />
       </div>
 
       <div

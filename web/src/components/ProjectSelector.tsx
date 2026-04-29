@@ -2,6 +2,9 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
+import { SegmentedControl } from "./ui/SegmentedControl";
+
+type ProjectMode = "personal" | "project";
 
 /** Width of the project dropdown in pixels (matches Tailwind w-48). */
 const DROPDOWN_WIDTH = 192;
@@ -93,43 +96,31 @@ export function ProjectSelector({
     };
   }, [showProjectSearch, updatePosition]);
 
+  const handleModeChange = (next: ProjectMode) => {
+    if (next === "personal") {
+      if (personalProject) onProjectChange(personalProject.id);
+      setShowProjectSearch(false);
+      return;
+    }
+    if (nonPersonalProjects.length === 1) {
+      onProjectChange(nonPersonalProjects[0].id);
+    } else {
+      setShowProjectSearch((prev) => !prev);
+    }
+  };
+
   return (
     <div className="relative" ref={triggerRef}>
-      <div className="flex rounded-md border border-border text-xs">
-        <button
-          className={cn(
-            "px-2 py-1 rounded-l-md transition-colors",
-            isPersonal
-              ? "bg-accent/15 text-accent"
-              : "text-muted-foreground hover:bg-muted",
-          )}
-          onClick={() => {
-            if (personalProject) onProjectChange(personalProject.id);
-            setShowProjectSearch(false);
-          }}
-          disabled={disabled}
-        >
-          Personal
-        </button>
-        <button
-          className={cn(
-            "px-2 py-1 rounded-r-md transition-colors",
-            !isPersonal
-              ? "bg-accent/15 text-accent"
-              : "text-muted-foreground hover:bg-muted",
-          )}
-          onClick={() => {
-            if (nonPersonalProjects.length === 1)
-              onProjectChange(nonPersonalProjects[0].id);
-            else setShowProjectSearch(!showProjectSearch);
-          }}
-          disabled={disabled}
-          aria-haspopup="listbox"
-          aria-expanded={showProjectSearch}
-        >
-          {selectedName ?? "Project"}
-        </button>
-      </div>
+      <SegmentedControl<ProjectMode>
+        value={isPersonal ? "personal" : "project"}
+        onChange={handleModeChange}
+        options={[
+          { value: "personal", label: "Personal" },
+          { value: "project", label: selectedName ?? "Project" },
+        ]}
+        ariaLabel="Project scope"
+        disabled={disabled}
+      />
       {showProjectSearch &&
         dropdownPos &&
         createPortal(
