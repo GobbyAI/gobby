@@ -482,6 +482,44 @@ def register_core_routes(
             None,
             description="Compound-cursor session id from a prior page's next_cursor",
         ),
+        sources: list[str] | None = Query(
+            None, description="Repeatable: filter by multiple sources (source IN ...)"
+        ),
+        mode: list[str] | None = Query(
+            None,
+            description=(
+                "Repeatable: 'interactive' (agent_depth=0) or 'auto' (agent_depth>=1). "
+                "Both/neither = no filter."
+            ),
+        ),
+        model: list[str] | None = Query(
+            None, description="Repeatable: filter by model (model IN ...)"
+        ),
+        session_seq_min: int | None = Query(
+            None, description="Lower bound (inclusive) on sessions.seq_num"
+        ),
+        session_seq_max: int | None = Query(
+            None, description="Upper bound (inclusive) on sessions.seq_num"
+        ),
+        task_ref_min: int | None = Query(
+            None, description="Lower bound (inclusive) on linked task seq_num"
+        ),
+        task_ref_max: int | None = Query(
+            None, description="Upper bound (inclusive) on linked task seq_num"
+        ),
+        task_ref_role: list[str] | None = Query(
+            None,
+            description=(
+                "Repeatable subset of {claimed, created, closed} for task ref filter. "
+                "Defaults to claimed when min/max is set without roles."
+            ),
+        ),
+        created_after: str | None = Query(
+            None, description="Inclusive lower bound on created_at (ISO timestamp)"
+        ),
+        created_before: str | None = Query(
+            None, description="Exclusive upper bound on created_at (ISO timestamp)"
+        ),
     ) -> dict[str, Any]:
         """
         List sessions with optional filtering and message counts.
@@ -520,6 +558,16 @@ def register_core_routes(
                 exclude_subagents=exclude_subagents,
                 cursor_updated_at=cursor_updated_at,
                 cursor_id=cursor_id,
+                sources=sources,
+                modes=mode,
+                models=model,
+                session_seq_min=session_seq_min,
+                session_seq_max=session_seq_max,
+                task_ref_min=task_ref_min,
+                task_ref_max=task_ref_max,
+                task_ref_roles=task_ref_role,
+                created_after=created_after,
+                created_before=created_before,
             )
 
             # Build resumability info if requested

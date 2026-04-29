@@ -20,10 +20,28 @@ class _ManagerState(Protocol):
 _TaskRefsByRole = dict[str, list[int]]
 
 
+_TASK_REF_ROLE_COLUMNS: dict[str, str] = {
+    "claimed": "claimed_by_session_id",
+    "created": "created_in_session_id",
+    "closed": "closed_in_session_id",
+}
+
+
 def _build_session_filters(
     project_id: str | None,
     status: str | None,
     source: str | None,
+    *,
+    sources: Sequence[str] | None = None,
+    modes: Sequence[str] | None = None,
+    models: Sequence[str] | None = None,
+    session_seq_min: int | None = None,
+    session_seq_max: int | None = None,
+    task_ref_min: int | None = None,
+    task_ref_max: int | None = None,
+    task_ref_roles: Sequence[str] | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
 ) -> tuple[list[str], list[Any]]:
     conditions: list[str] = []
     params: list[Any] = []
@@ -42,6 +60,65 @@ def _build_session_filters(
     if source:
         conditions.append("source = ?")
         params.append(source)
+    if sources:
+        placeholders = ",".join(["?"] * len(sources))
+        conditions.append(f"source IN ({placeholders})")
+        params.extend(sources)
+
+    # Mode resolves to agent_depth: interactive = depth 0, auto = depth >= 1.
+    # Empty / both = no filter (the user wants everything).
+    if modes:
+        unique_modes = set(modes)
+        if "interactive" in unique_modes and "auto" not in unique_modes:
+            conditions.append("agent_depth = 0")
+        elif "auto" in unique_modes and "interactive" not in unique_modes:
+            conditions.append("agent_depth >= 1")
+        # "both selected" or "neither selected" → no filter
+
+    if models:
+        placeholders = ",".join(["?"] * len(models))
+        conditions.append(f"model IN ({placeholders})")
+        params.extend(models)
+
+    if session_seq_min is not None:
+        conditions.append("seq_num >= ?")
+        params.append(session_seq_min)
+    if session_seq_max is not None:
+        conditions.append("seq_num <= ?")
+        params.append(session_seq_max)
+
+    # Task-ref overlap: a session matches if any task with seq_num in
+    # [min, max] is linked to it via any of the selected roles. Default role
+    # is "claimed" — the most useful axis ("which sessions worked on tasks
+    # in range X").
+    if task_ref_min is not None or task_ref_max is not None:
+        roles = list(task_ref_roles) if task_ref_roles else ["claimed"]
+        role_clauses: list[str] = []
+        for role in roles:
+            col = _TASK_REF_ROLE_COLUMNS.get(role)
+            if col is None:
+                continue
+            bounds: list[str] = []
+            if task_ref_min is not None:
+                bounds.append("seq_num >= ?")
+                params.append(task_ref_min)
+            if task_ref_max is not None:
+                bounds.append("seq_num <= ?")
+                params.append(task_ref_max)
+            bound_sql = " AND ".join(bounds)
+            role_clauses.append(
+                f"EXISTS (SELECT 1 FROM tasks "
+                f"WHERE {col} = sessions.id AND {bound_sql})"  # nosec B608
+            )
+        if role_clauses:
+            conditions.append(f"({' OR '.join(role_clauses)})")
+
+    if created_after:
+        conditions.append("created_at >= ?")
+        params.append(created_after)
+    if created_before:
+        conditions.append("created_at < ?")
+        params.append(created_before)
 
     return conditions, params
 
@@ -56,6 +133,16 @@ class _QueryMixin:
         exclude_subagents: bool = False,
         cursor_updated_at: str | None = None,
         cursor_id: str | None = None,
+        sources: Sequence[str] | None = None,
+        modes: Sequence[str] | None = None,
+        models: Sequence[str] | None = None,
+        session_seq_min: int | None = None,
+        session_seq_max: int | None = None,
+        task_ref_min: int | None = None,
+        task_ref_max: int | None = None,
+        task_ref_roles: Sequence[str] | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ) -> list[Session]:
         """
         List sessions with optional filters.
@@ -63,7 +150,7 @@ class _QueryMixin:
         Args:
             project_id: Filter by project
             status: Filter by status
-            source: Filter by CLI source
+            source: Filter by CLI source (single value)
             limit: Maximum number of results
             exclude_subagents: If True, only return top-level sessions (agent_depth = 0)
             cursor_updated_at: Compound-cursor timestamp from a prior page's last row.
@@ -71,11 +158,37 @@ class _QueryMixin:
                 cursor in the (updated_at, id) DESC ordering.
             cursor_id: Compound-cursor session id paired with cursor_updated_at.
                 Both must be supplied together; supplying one without the other is ignored.
+            sources: Multi-value source filter (source IN ...). Combined with `source` via AND
+                if both are supplied — most callers use one or the other.
+            modes: "interactive" / "auto" → agent_depth predicate. Empty/both = no filter.
+            models: Multi-value model filter (model IN ...).
+            session_seq_min / session_seq_max: Inclusive range on sessions.seq_num.
+            task_ref_min / task_ref_max: Inclusive range matched against task.seq_num
+                via task_ref_roles linkages (default role: claimed). A session matches
+                when any linked task in any selected role has seq_num in the range.
+            task_ref_roles: Subset of {"claimed", "created", "closed"}. Empty/None
+                defaults to {"claimed"} when a range is set.
+            created_after / created_before: ISO timestamp range on sessions.created_at.
+                created_after is inclusive, created_before is exclusive.
 
         Returns:
             List of Session instances
         """
-        conditions, params = _build_session_filters(project_id, status, source)
+        conditions, params = _build_session_filters(
+            project_id,
+            status,
+            source,
+            sources=sources,
+            modes=modes,
+            models=models,
+            session_seq_min=session_seq_min,
+            session_seq_max=session_seq_max,
+            task_ref_min=task_ref_min,
+            task_ref_max=task_ref_max,
+            task_ref_roles=task_ref_roles,
+            created_after=created_after,
+            created_before=created_before,
+        )
 
         if exclude_subagents:
             conditions.append(

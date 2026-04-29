@@ -595,15 +595,14 @@ class TestListSessions:
         )
 
         assert response.status_code == 200
-        mock_server.session_manager.list.assert_called_once_with(
-            project_id="proj-1",
-            status="active",
-            source="Claude Code",
-            limit=50,
-            exclude_subagents=False,
-            cursor_updated_at=None,
-            cursor_id=None,
-        )
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["project_id"] == "proj-1"
+        assert kwargs["status"] == "active"
+        assert kwargs["source"] == "Claude Code"
+        assert kwargs["limit"] == 50
+        assert kwargs["exclude_subagents"] is False
+        assert kwargs["cursor_updated_at"] is None
+        assert kwargs["cursor_id"] is None
 
     def test_list_emits_task_refs_per_session(self, client, mock_server) -> None:
         """The route enriches each session with claimed/created/closed task refs."""
@@ -676,6 +675,41 @@ class TestListSessions:
 
         assert response.status_code == 200
         assert response.json()["next_cursor"] is None
+
+    def test_list_passes_filter_params_to_storage(self, client, mock_server) -> None:
+        """All new query params reach storage with the right kwarg names."""
+        mock_server.session_manager.list.return_value = []
+
+        response = client.get(
+            "/api/sessions",
+            params=[
+                ("sources", "claude"),
+                ("sources", "codex"),
+                ("mode", "interactive"),
+                ("model", "claude-opus-4-7"),
+                ("session_seq_min", "10"),
+                ("session_seq_max", "100"),
+                ("task_ref_min", "5000"),
+                ("task_ref_max", "5500"),
+                ("task_ref_role", "claimed"),
+                ("task_ref_role", "created"),
+                ("created_after", "2026-04-01T00:00:00+00:00"),
+                ("created_before", "2026-04-30T00:00:00+00:00"),
+            ],
+        )
+
+        assert response.status_code == 200
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["sources"] == ["claude", "codex"]
+        assert kwargs["modes"] == ["interactive"]
+        assert kwargs["models"] == ["claude-opus-4-7"]
+        assert kwargs["session_seq_min"] == 10
+        assert kwargs["session_seq_max"] == 100
+        assert kwargs["task_ref_min"] == 5000
+        assert kwargs["task_ref_max"] == 5500
+        assert kwargs["task_ref_roles"] == ["claimed", "created"]
+        assert kwargs["created_after"] == "2026-04-01T00:00:00+00:00"
+        assert kwargs["created_before"] == "2026-04-30T00:00:00+00:00"
 
     def test_list_passes_cursor_to_storage(self, client, mock_server) -> None:
         """cursor_updated_at and cursor_id reach the storage layer verbatim."""
