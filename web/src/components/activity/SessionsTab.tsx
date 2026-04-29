@@ -11,6 +11,12 @@ import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import { SourceIcon } from "../shared/SourceIcon";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import {
+  ClipboardListIcon,
+  PlayIcon,
+  SwapIcon,
+  TranscriptIcon,
+} from "../icons";
+import {
   SessionInteractionModal,
   type InteractionMode,
 } from "./SessionInteractionModal";
@@ -771,7 +777,17 @@ export const SessionsTab = memo(function SessionsTab({
                     )
                   }
                 >
-                  {contentMode === "summary" ? "Transcript" : "Summary"}
+                  {contentMode === "summary" ? (
+                    <>
+                      <TranscriptIcon />
+                      Transcript
+                    </>
+                  ) : (
+                    <>
+                      <ClipboardListIcon />
+                      Summary
+                    </>
+                  )}
                 </button>
               )}
               {showResumeButton && (
@@ -784,6 +800,7 @@ export const SessionsTab = memo(function SessionsTab({
                     }
                   }}
                 >
+                  <PlayIcon />
                   Resume
                 </button>
               )}
@@ -801,6 +818,7 @@ export const SessionsTab = memo(function SessionsTab({
                     }
                   }}
                 >
+                  <SwapIcon />
                   Swap
                 </button>
               )}
