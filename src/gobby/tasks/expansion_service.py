@@ -20,7 +20,9 @@ from gobby.plans.parser import (
     PlanDocument,
     PlanParseError,
     PlanSection,
+    extract_section_dependencies,
     parse_plan,
+    strip_section_dependencies,
 )
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.models import parse_frontmatter
@@ -73,12 +75,12 @@ _DETERMINISTIC_FRONTEND_SIGNAL_RE = re.compile(
 )
 _DETERMINISTIC_AGENT_BY_CATEGORY = {
     "code": "backend-developer",
-    "config": "backend-developer",
-    "docs": "backend-developer",
-    "manual": "backend-developer",
-    "research": "backend-developer",
-    "test": "backend-developer",
     "refactor": "backend-developer",
+    "test": "test-architect",
+    "config": "default",
+    "docs": "default",
+    "manual": "default",
+    "research": "default",
 }
 _BACKEND_SIGNALS = frozenset(
     {
@@ -235,13 +237,12 @@ def _agent_selection_fields(
 
 _CONTRACT_PHASE_ID_RE = re.compile(r"^P(?P<number>\d+)$")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<category>[a-z_]+)\]", flags=re.IGNORECASE)
-_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
 
 
 def _clean_contract_section_title(title: str) -> str:
     """Remove plan-contract metadata annotations from a section title."""
     title = _CATEGORY_RE.sub("", title)
-    title = _DEPENDS_RE.sub("", title)
+    title = strip_section_dependencies(title)
     return re.sub(r"\s+", " ", title).strip()
 
 
@@ -253,11 +254,7 @@ def _contract_section_category(section: PlanSection) -> str:
 
 
 def _contract_section_depends(section: PlanSection) -> list[str]:
-    match = _DEPENDS_RE.search(section.title)
-    if match is None:
-        return []
-    raw_deps = re.split(r"[, ]+", match.group("depends"))
-    return [dep.strip() for dep in raw_deps if dep.strip()]
+    return list(extract_section_dependencies(section.title))
 
 
 def _contract_phase_number(phase_id: str) -> int:
@@ -328,7 +325,10 @@ def _contract_agent_fields(
     assigned_agent = _DETERMINISTIC_AGENT_BY_CATEGORY.get(category)
     if assigned_agent is not None:
         return assigned_agent, [], description
-    return _DEFAULT_AGENT, [], _append_agent_selection_marker(description)
+    raise ValueError(
+        f"contract category {category!r} has no specialist agent and is not eligible for "
+        f"automated leaf creation; valid categories: {sorted(_DETERMINISTIC_AGENT_BY_CATEGORY)}"
+    )
 
 
 def _contract_task_ids(section_id: str) -> tuple[str, str, str]:

@@ -20,7 +20,9 @@ from gobby.plans.parser import (
     PlanKind,
     PlanParseError,
     PlanSection,
+    extract_section_dependencies,
     parse_plan,
+    resolve_plan_id,
 )
 
 EmitOutcome = Literal[
@@ -39,7 +41,12 @@ _TITLE_BRACKET_RE = re.compile(r"\s*(?:\[category:[^\]]+\]|\(depends:[^)]+\))")
 _FENCE_OPEN_RE = re.compile(r"^\s*(?P<marker>`{3,}|~{3,})")
 _TDD_CATEGORIES: frozenset[str] = frozenset({"code", "test", "refactor"})
 _DEFAULT_CATEGORY = "code"
-_DEFAULT_AGENT = "backend-developer"
+_AGENT_BY_CATEGORY: dict[str, str] = {
+    "code": "backend-developer",
+    "refactor": "backend-developer",
+    "test": "test-architect",
+}
+_DEFAULT_AGENT_FALLBACK = "default"
 _DEFAULT_TASK_TYPE = "feature"
 
 
@@ -135,7 +142,7 @@ def _emit_fresh(
     by_actor: str,
     plan_kind: PlanKind,
 ) -> EmitOutcome:
-    plan_id = document.plan_id or "unknown"
+    plan_id = resolve_plan_id(document.plan_id)
     deliverables = [section for section in document.sections if section.kind is Kind.deliverable]
     if not deliverables:
         _append_yolo_fallback(
@@ -177,13 +184,17 @@ def _synthesize_entry(plan_id: str, section: PlanSection) -> dict[str, object]:
         "title": title,
         "category": category,
         "task_type": _DEFAULT_TASK_TYPE,
-        "depends_on": [],
+        "depends_on": list(extract_section_dependencies(section.title)),
         "validation_criteria": validation,
         "labels": labels,
-        "assigned_agent": _DEFAULT_AGENT,
+        "assigned_agent": _agent_for(category),
         "tdd": category in _TDD_CATEGORIES,
         "source_section": section.section_id,
     }
+
+
+def _agent_for(category: str) -> str:
+    return _AGENT_BY_CATEGORY.get(category, _DEFAULT_AGENT_FALLBACK)
 
 
 def _extract_category(title: str) -> str:
@@ -294,7 +305,13 @@ def _next_kind_directive(lines: list[str], start_index: int) -> str | None:
 
 def _append_yolo_fallback(path: Path, *, by_actor: str, reason: str) -> None:
     timestamp = datetime.now(UTC).isoformat()
-    audit = f"\n## Yolo Fallbacks\n\n- by: {by_actor}\n- at: {timestamp}\n- reason: {reason}\n"
+    audit = (
+        "\n## Yolo Fallbacks\n"
+        "`kind: framing`\n\n"
+        f"- by: {by_actor}\n"
+        f"- at: {timestamp}\n"
+        f"- reason: {reason}\n"
+    )
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
     except OSError:
