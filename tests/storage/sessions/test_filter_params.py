@@ -107,6 +107,74 @@ class TestSourcesFilter:
         assert kept_sources == ["claude", "codex"]
 
 
+class TestStatusesFilter:
+    def _set_status(
+        self,
+        session_manager: SessionManager,
+        session_id: str,
+        status: str,
+    ) -> None:
+        session_manager.db.execute(
+            "UPDATE sessions SET status = ? WHERE id = ?",
+            (status, session_id),
+        )
+
+    def test_statuses_in_clause_narrows_to_live(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        sid_active = _register(session_manager, sample_project, external_id="a")
+        sid_paused = _register(session_manager, sample_project, external_id="b")
+        sid_expired = _register(session_manager, sample_project, external_id="c")
+        self._set_status(session_manager, sid_paused, "paused")
+        self._set_status(session_manager, sid_expired, "expired")
+
+        results = session_manager.list(
+            project_id=sample_project["id"],
+            statuses=["active", "paused"],
+        )
+        kept_ids = {s.id for s in results}
+
+        assert kept_ids == {sid_active, sid_paused}
+
+    def test_statuses_in_clause_narrows_to_expired(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        _register(session_manager, sample_project, external_id="a")
+        sid_expired = _register(session_manager, sample_project, external_id="b")
+        self._set_status(session_manager, sid_expired, "expired")
+
+        results = session_manager.list(
+            project_id=sample_project["id"],
+            statuses=["expired"],
+        )
+        kept_ids = {s.id for s in results}
+
+        assert kept_ids == {sid_expired}
+
+    def test_statuses_excludes_deleted_even_when_listed(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        # The base predicate (status != 'deleted') stays in force; passing
+        # 'deleted' inside statuses must not bypass it.
+        sid_active = _register(session_manager, sample_project, external_id="a")
+        sid_deleted = _register(session_manager, sample_project, external_id="b")
+        self._set_status(session_manager, sid_deleted, "deleted")
+
+        results = session_manager.list(
+            project_id=sample_project["id"],
+            statuses=["active", "deleted"],
+        )
+        kept_ids = {s.id for s in results}
+
+        assert kept_ids == {sid_active}
+
+
 class TestModeFilter:
     def test_mode_interactive_keeps_only_depth_zero(
         self,

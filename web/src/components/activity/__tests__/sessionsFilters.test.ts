@@ -12,6 +12,7 @@ import {
 
 interface TestSession {
   source: string;
+  status: string;
   model: string | null;
   agent_depth: number;
   seq_num: number | null;
@@ -24,6 +25,7 @@ interface TestSession {
 function makeSession(overrides: Partial<TestSession> = {}): TestSession {
   return {
     source: "claude",
+    status: "active",
     model: "claude-opus-4-7",
     agent_depth: 0,
     seq_num: 1,
@@ -72,9 +74,14 @@ describe("countActiveFilters", () => {
 });
 
 describe("serializeSessionsFilters", () => {
-  it("emits no params for the default state", () => {
+  it("emits status_in=active,paused for the default Live state", () => {
     const params = serializeSessionsFilters(defaultSessionsFilters(), NOW);
-    expect([...params.entries()]).toEqual([]);
+    // The Live | Expired SegmentedControl is always set to one of two values,
+    // so the status filter is always emitted. Default = Live = {active, paused}.
+    expect(params.getAll("status_in").sort()).toEqual(["active", "paused"]);
+    // No other filter params for the default state.
+    const nonStatus = [...params.entries()].filter(([k]) => k !== "status_in");
+    expect(nonStatus).toEqual([]);
   });
 
   it("serializes modes as repeated mode= entries", () => {
@@ -138,6 +145,27 @@ describe("serializeSessionsFilters", () => {
     // 7 days before NOW
     const after = params.get("created_after")!;
     expect(after).toBe("2026-04-22T12:00:00.000Z");
+  });
+
+  it("serializes Expired as status_in=expired only", () => {
+    const f = defaultSessionsFilters();
+    f.statuses = new Set(["expired"]);
+    const params = serializeSessionsFilters(f, NOW);
+    expect(params.getAll("status_in")).toEqual(["expired"]);
+  });
+
+  it("emits multi-status status_in when caller forces all three", () => {
+    const f = defaultSessionsFilters();
+    f.statuses = new Set(["active", "paused", "expired"]);
+    const params = serializeSessionsFilters(f, NOW);
+    expect(params.getAll("status_in").sort()).toEqual(["active", "expired", "paused"]);
+  });
+
+  it("omits status_in when statuses set is empty", () => {
+    const f = defaultSessionsFilters();
+    f.statuses = new Set();
+    const params = serializeSessionsFilters(f, NOW);
+    expect(params.has("status_in")).toBe(false);
   });
 
   it("resolves a custom date range to inclusive-after / exclusive-before", () => {
@@ -226,6 +254,28 @@ describe("matchesSessionsFilters", () => {
     expect(matchesSessionsFilters(makeSession(), f, NOW)).toBe(false);
   });
 
+  it("status filter narrows to selected statuses", () => {
+    const f = defaultSessionsFilters();
+    f.statuses = new Set(["expired"]);
+    expect(matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ status: "active" }), f, NOW)).toBe(false);
+    expect(matchesSessionsFilters(makeSession({ status: "paused" }), f, NOW)).toBe(false);
+  });
+
+  it("default Live status filter excludes expired sessions", () => {
+    const f = defaultSessionsFilters();
+    expect(matchesSessionsFilters(makeSession({ status: "active" }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ status: "paused" }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW)).toBe(false);
+  });
+
+  it("empty statuses set acts as no filter", () => {
+    const f = defaultSessionsFilters();
+    f.statuses = new Set();
+    expect(matchesSessionsFilters(makeSession({ status: "active" }), f, NOW)).toBe(true);
+    expect(matchesSessionsFilters(makeSession({ status: "expired" }), f, NOW)).toBe(true);
+  });
+
   it("date preset 24h excludes older sessions", () => {
     const f = defaultSessionsFilters();
     f.datePreset = "24h";
@@ -273,10 +323,28 @@ describe("storage round-trip", () => {
       modes: ["interactive", "bogus"],
       taskRefRoles: ["claimed", "fake"],
       datePreset: "made-up",
+      statuses: ["active", "ghost"],
     });
     const restored = deserializeFromStorage(stored);
     expect([...restored.modes]).toEqual(["interactive"]);
     expect([...restored.taskRefRoles]).toEqual(["claimed"]);
     expect(restored.datePreset).toBe("all"); // fell back to default
+    expect([...restored.statuses]).toEqual(["active"]);
+  });
+
+  it("falls back to default Live when statuses field is missing", () => {
+    const stored = JSON.stringify({
+      modes: ["interactive"],
+    });
+    const restored = deserializeFromStorage(stored);
+    expect([...restored.statuses].sort()).toEqual(["active", "paused"]);
+  });
+
+  it("round-trips a non-default Expired status filter", () => {
+    const original = defaultSessionsFilters();
+    original.statuses = new Set(["expired"]);
+    const stored = JSON.stringify(serializeForStorage(original));
+    const restored = deserializeFromStorage(stored);
+    expect([...restored.statuses]).toEqual(["expired"]);
   });
 });

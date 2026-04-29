@@ -27,8 +27,10 @@ import {
 import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
 import {
   countActiveFilters,
+  DEFAULT_LIVE_STATUSES,
   defaultSessionsFilters,
   matchesSessionsFilters,
+  type SessionStatus,
   type SessionsFilters,
 } from "./sessionsFilters";
 
@@ -84,11 +86,9 @@ interface SessionContextMenu {
   entry: WatchingSessionEntry;
 }
 
-type SessionStatusFilter = "live" | "expired";
 type WatchingContentMode = "transcript" | "summary";
 
 const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
-const LIVE_SESSION_STATUSES = new Set(["active", "paused"]);
 const HIDDEN_SOURCES = new Set(["pipeline", "cron", "system"]);
 const LOCAL_LEGACY_PROVIDERS = new Set(["lmstudio", "ollama", "llamacpp", "local"]);
 
@@ -189,16 +189,6 @@ function renderBadges(entry: WatchingSessionEntry) {
   );
 }
 
-function matchesStatusFilter(
-  session: GobbySession,
-  statusFilter: SessionStatusFilter,
-): boolean {
-  if (statusFilter === "expired") {
-    return session.status === "expired";
-  }
-  return LIVE_SESSION_STATUSES.has(session.status);
-}
-
 function matchesSearch(session: GobbySession, search: string): boolean {
   if (!search.trim()) {
     return true;
@@ -214,6 +204,27 @@ function matchesSearch(session: GobbySession, search: string): boolean {
 function entryTimestamp(entry: WatchingSessionEntry): number {
   const raw = entry.updatedAt ?? entry.startedAt ?? null;
   return raw ? new Date(raw).getTime() : 0;
+}
+
+function modelOptionsForProviders(
+  providerCatalog: readonly ProviderModelEntry[],
+  providers: ReadonlySet<string>,
+): string[] {
+  const sourceProviders =
+    providers.size > 0
+      ? providerCatalog.filter((provider) => providers.has(provider.provider))
+      : providerCatalog.filter((provider) => provider.available);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const provider of sourceProviders) {
+    for (const model of provider.models) {
+      if (!seen.has(model.value)) {
+        seen.add(model.value);
+        out.push(model.value);
+      }
+    }
+  }
+  return out;
 }
 
 export const SessionsTab = memo(function SessionsTab({
@@ -234,7 +245,6 @@ export const SessionsTab = memo(function SessionsTab({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [statusFilter, setStatusFilter] = useState<SessionStatusFilter>("live");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
     try {
@@ -292,22 +302,13 @@ export const SessionsTab = memo(function SessionsTab({
   const modelOptions = useMemo(() => {
     // When providers are selected, intersect with their model lists.
     // Otherwise, show all available models across providers.
-    const sourceProviders =
-      filters.providers.size > 0
-        ? providerCatalog.filter((p) => filters.providers.has(p.provider))
-        : providerCatalog.filter((p) => p.available);
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const provider of sourceProviders) {
-      for (const model of provider.models) {
-        if (!seen.has(model.value)) {
-          seen.add(model.value);
-          out.push(model.value);
-        }
-      }
-    }
-    return out;
+    return modelOptionsForProviders(providerCatalog, filters.providers);
   }, [providerCatalog, filters.providers]);
+
+  const getModelOptionsForProviders = useCallback(
+    (providers: ReadonlySet<string>) => modelOptionsForProviders(providerCatalog, providers),
+    [providerCatalog],
+  );
 
   const activeFilterCount = countActiveFilters(filters);
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
@@ -366,6 +367,28 @@ export const SessionsTab = memo(function SessionsTab({
     });
   }, [sessions]);
 
+  // Status (Live | Expired) is part of SessionsFilters now; the SegmentedControl
+  // writes filters.statuses and matchesSessionsFilters runs the predicate. The
+  // agent-entries block below also gates on this — agents are by definition
+  // live, so hide them when the user is looking at Expired only.
+  const statusMode: "live" | "expired" =
+    filters.statuses.size === 1 && filters.statuses.has("expired")
+      ? "expired"
+      : "live";
+
+  const setStatusMode = useCallback(
+    (mode: "live" | "expired") => {
+      setFilters({
+        ...filters,
+        statuses:
+          mode === "expired"
+            ? new Set<SessionStatus>(["expired"])
+            : new Set<SessionStatus>(DEFAULT_LIVE_STATUSES),
+      });
+    },
+    [filters, setFilters],
+  );
+
   const visibleSessions = useMemo(
     () => {
       const now = new Date();
@@ -373,7 +396,6 @@ export const SessionsTab = memo(function SessionsTab({
         .filter((session) => session.id !== chatSessionId)
         .filter((session) => !expiringIds.has(session.id))
         .filter((session) => !HIDDEN_SOURCES.has(session.source))
-        .filter((session) => matchesStatusFilter(session, statusFilter))
         .filter((session) => matchesSearch(session, search))
         .filter((session) => matchesSessionsFilters(session, filters, now))
         .sort(
@@ -381,12 +403,12 @@ export const SessionsTab = memo(function SessionsTab({
             new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
         );
     },
-    [chatSessionId, expiringIds, search, sessions, statusFilter, filters],
+    [chatSessionId, expiringIds, search, sessions, filters],
   );
 
   const entries: WatchingSessionEntry[] = useMemo(() => {
     const agentEntries: WatchingSessionEntry[] =
-      statusFilter === "live"
+      statusMode === "live"
         ? agents.reduce<WatchingSessionEntry[]>((nextEntries, agent) => {
             const matchedSession = agent.session_id
               ? visibleSessions.find((session) => session.id === agent.session_id)
@@ -455,7 +477,7 @@ export const SessionsTab = memo(function SessionsTab({
     return [...agentEntries, ...sessionEntries].sort(
       (a, b) => entryTimestamp(b) - entryTimestamp(a),
     );
-  }, [agents, statusFilter, visibleSessions]);
+  }, [agents, statusMode, visibleSessions]);
 
   const isLoading = isLoadingSessions || agentsLoading;
 
@@ -528,7 +550,6 @@ export const SessionsTab = memo(function SessionsTab({
     onFocusHandled,
     selectedSessionId,
   ]);
-
   useEffect(() => {
     try {
       if (selectedSessionId) {
@@ -733,7 +754,7 @@ export const SessionsTab = memo(function SessionsTab({
   const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
   const emptyListMessage = hasActiveFilters
     ? "No sessions match these filters."
-    : statusFilter === "expired"
+    : statusMode === "expired"
       ? "No expired sessions"
       : "No live sessions";
 
@@ -772,9 +793,9 @@ export const SessionsTab = memo(function SessionsTab({
             <span className="activity-filter-badge">{activeFilterCount}</span>
           )}
         </button>
-        <SegmentedControl<SessionStatusFilter>
-          value={statusFilter}
-          onChange={setStatusFilter}
+        <SegmentedControl<"live" | "expired">
+          value={statusMode}
+          onChange={setStatusMode}
           options={[
             { value: "live", label: "Live" },
             { value: "expired", label: "Expired" },
@@ -787,6 +808,7 @@ export const SessionsTab = memo(function SessionsTab({
             onChange={setFilters}
             providerOptions={providerOptions}
             modelOptions={modelOptions}
+            getModelOptionsForProviders={getModelOptionsForProviders}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}

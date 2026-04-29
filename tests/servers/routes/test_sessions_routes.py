@@ -685,6 +685,8 @@ class TestListSessions:
             params=[
                 ("sources", "claude"),
                 ("sources", "codex"),
+                ("status_in", "active"),
+                ("status_in", "paused"),
                 ("mode", "interactive"),
                 ("model", "claude-opus-4-7"),
                 ("session_seq_min", "10"),
@@ -701,6 +703,7 @@ class TestListSessions:
         assert response.status_code == 200
         kwargs = mock_server.session_manager.list.call_args.kwargs
         assert kwargs["sources"] == ["claude", "codex"]
+        assert kwargs["statuses"] == ["active", "paused"]
         assert kwargs["modes"] == ["interactive"]
         assert kwargs["models"] == ["claude-opus-4-7"]
         assert kwargs["session_seq_min"] == 10
@@ -710,6 +713,16 @@ class TestListSessions:
         assert kwargs["task_ref_roles"] == ["claimed", "created"]
         assert kwargs["created_after"] == "2026-04-01T00:00:00+00:00"
         assert kwargs["created_before"] == "2026-04-30T00:00:00+00:00"
+
+    def test_list_status_in_alone_reaches_storage(self, client, mock_server) -> None:
+        """status_in is wired through even when no other filter params are sent."""
+        mock_server.session_manager.list.return_value = []
+
+        response = client.get("/api/sessions", params=[("status_in", "expired")])
+
+        assert response.status_code == 200
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["statuses"] == ["expired"]
 
     def test_list_passes_cursor_to_storage(self, client, mock_server) -> None:
         """cursor_updated_at and cursor_id reach the storage layer verbatim."""

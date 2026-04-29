@@ -33,6 +33,7 @@ def _build_session_filters(
     source: str | None,
     *,
     sources: Sequence[str] | None = None,
+    statuses: Sequence[str] | None = None,
     modes: Sequence[str] | None = None,
     models: Sequence[str] | None = None,
     session_seq_min: int | None = None,
@@ -53,6 +54,10 @@ def _build_session_filters(
         if status:
             conditions.append("status = ?")
             params.append(status)
+        if statuses:
+            placeholders = ",".join(["?"] * len(statuses))
+            conditions.append(f"status IN ({placeholders})")
+            params.extend(statuses)
 
     if project_id:
         conditions.append("project_id = ?")
@@ -134,6 +139,7 @@ class _QueryMixin:
         cursor_updated_at: str | None = None,
         cursor_id: str | None = None,
         sources: Sequence[str] | None = None,
+        statuses: Sequence[str] | None = None,
         modes: Sequence[str] | None = None,
         models: Sequence[str] | None = None,
         session_seq_min: int | None = None,
@@ -160,6 +166,9 @@ class _QueryMixin:
                 Both must be supplied together; supplying one without the other is ignored.
             sources: Multi-value source filter (source IN ...). Combined with `source` via AND
                 if both are supplied — most callers use one or the other.
+            statuses: Multi-value status filter (status IN ...). Stacks on top of the
+                exclude-deleted base predicate; the legacy `status` positional and
+                `statuses` are independent (most callers use one or the other).
             modes: "interactive" / "auto" → agent_depth predicate. Empty/both = no filter.
             models: Multi-value model filter (model IN ...).
             session_seq_min / session_seq_max: Inclusive range on sessions.seq_num.
@@ -179,6 +188,7 @@ class _QueryMixin:
             status,
             source,
             sources=sources,
+            statuses=statuses,
             modes=modes,
             models=models,
             session_seq_min=session_seq_min,

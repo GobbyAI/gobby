@@ -485,6 +485,13 @@ def register_core_routes(
         sources: list[str] | None = Query(
             None, description="Repeatable: filter by multiple sources (source IN ...)"
         ),
+        status_in: list[str] | None = Query(
+            None,
+            description=(
+                "Repeatable: filter by multiple statuses (status IN ...). "
+                "Stacks on top of the exclude-deleted base predicate."
+            ),
+        ),
         mode: list[str] | None = Query(
             None,
             description=(
@@ -559,6 +566,7 @@ def register_core_routes(
                 cursor_updated_at=cursor_updated_at,
                 cursor_id=cursor_id,
                 sources=sources,
+                statuses=status_in,
                 modes=mode,
                 models=model,
                 session_seq_min=session_seq_min,

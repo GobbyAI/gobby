@@ -11,10 +11,15 @@
 export type SessionMode = "interactive" | "auto";
 export type TaskRefRole = "claimed" | "created" | "closed";
 export type DatePreset = "24h" | "7d" | "30d" | "all" | "custom";
+export type SessionStatus = "active" | "paused" | "expired";
 
 const ALL_MODES: readonly SessionMode[] = ["interactive", "auto"];
 const ALL_TASK_REF_ROLES: readonly TaskRefRole[] = ["claimed", "created", "closed"];
 const ALL_DATE_PRESETS: readonly DatePreset[] = ["24h", "7d", "30d", "all", "custom"];
+const ALL_STATUSES: readonly SessionStatus[] = ["active", "paused", "expired"];
+
+/** Default Live set — the SegmentedControl's "Live" option resolves here. */
+export const DEFAULT_LIVE_STATUSES: readonly SessionStatus[] = ["active", "paused"];
 
 export interface SessionsFilters {
   modes: Set<SessionMode>;
@@ -28,6 +33,7 @@ export interface SessionsFilters {
   datePreset: DatePreset;
   dateCustomFrom: string | null; // YYYY-MM-DD
   dateCustomTo: string | null;
+  statuses: Set<SessionStatus>;
 }
 
 export function defaultSessionsFilters(): SessionsFilters {
@@ -43,6 +49,7 @@ export function defaultSessionsFilters(): SessionsFilters {
     datePreset: "all",
     dateCustomFrom: null,
     dateCustomTo: null,
+    statuses: new Set<SessionStatus>(DEFAULT_LIVE_STATUSES),
   };
 }
 
@@ -97,6 +104,7 @@ export function resolveDateRange(
 
 interface FilterableSession {
   source: string;
+  status: string;
   model: string | null;
   agent_depth: number;
   seq_num: number | null;
@@ -117,6 +125,10 @@ export function matchesSessionsFilters(
   filters: SessionsFilters,
   now: Date,
 ): boolean {
+  if (filters.statuses.size > 0 && !filters.statuses.has(session.status as SessionStatus)) {
+    return false;
+  }
+
   if (filters.modes.size > 0) {
     const isInteractive = session.agent_depth === 0;
     const isAuto = session.agent_depth >= 1;
@@ -179,6 +191,7 @@ export function serializeSessionsFilters(filters: SessionsFilters, now: Date): U
   for (const mode of filters.modes) params.append("mode", mode);
   for (const provider of filters.providers) params.append("sources", provider);
   for (const model of filters.models) params.append("model", model);
+  for (const status of filters.statuses) params.append("status_in", status);
   if (filters.sessionRefMin !== null) params.set("session_seq_min", String(filters.sessionRefMin));
   if (filters.sessionRefMax !== null) params.set("session_seq_max", String(filters.sessionRefMax));
   if (filters.taskRefMin !== null) params.set("task_ref_min", String(filters.taskRefMin));
@@ -204,6 +217,7 @@ interface StoredSessionsFilters {
   datePreset: DatePreset;
   dateCustomFrom: string | null;
   dateCustomTo: string | null;
+  statuses: SessionStatus[];
 }
 
 /** Round-trip through arrays for JSON.stringify-friendly localStorage payloads. */
@@ -220,6 +234,7 @@ export function serializeForStorage(filters: SessionsFilters): StoredSessionsFil
     datePreset: filters.datePreset,
     dateCustomFrom: filters.dateCustomFrom,
     dateCustomTo: filters.dateCustomTo,
+    statuses: [...filters.statuses],
   };
 }
 
@@ -253,6 +268,13 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
     const datePreset = ALL_DATE_PRESETS.includes(parsed.datePreset as DatePreset)
       ? (parsed.datePreset as DatePreset)
       : base.datePreset;
+    // Missing or non-array statuses → fall back to default Live (mirrors today's
+    // initial state). Unknown values are stripped silently.
+    const statuses = new Set<SessionStatus>(
+      Array.isArray(parsed.statuses)
+        ? parsed.statuses.filter((s): s is SessionStatus => ALL_STATUSES.includes(s))
+        : base.statuses,
+    );
 
     return {
       modes,
@@ -266,6 +288,7 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
       datePreset,
       dateCustomFrom: typeof parsed.dateCustomFrom === "string" ? parsed.dateCustomFrom : null,
       dateCustomTo: typeof parsed.dateCustomTo === "string" ? parsed.dateCustomTo : null,
+      statuses,
     };
   } catch {
     return defaultSessionsFilters();
