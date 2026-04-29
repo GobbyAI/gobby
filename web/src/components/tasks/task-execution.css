@@ -647,7 +647,7 @@
 
 .activity-task-detail-section--escalated {
   background: var(--color-error-soft);
-  border-left: 3px solid var(--color-error);
+  border-bottom-color: color-mix(in srgb, var(--color-error) 35%, transparent);
 }
 
 .activity-task-detail-section--escalated .activity-task-detail-section-title {

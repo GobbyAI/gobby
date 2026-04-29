@@ -810,7 +810,6 @@
 .task-comment-node--nested {
   margin-left: 16px;
   padding-left: 8px;
-  border-left: 2px solid var(--border);
   border-bottom: none;
 }
 

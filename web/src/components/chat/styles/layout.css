@@ -37,8 +37,7 @@
 
 .message-model-switch {
   background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   font-size: calc(var(--font-size-base) * 0.8);
   font-style: italic;
   color: var(--text-secondary);
@@ -419,7 +418,8 @@
 }
 
 .command-palette-item.active {
-  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
 }
 
 .command-palette-item-dot {

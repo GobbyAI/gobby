@@ -298,8 +298,7 @@
 }
 
 .sc-table__row--selected {
-  background: color-mix(in srgb, var(--color-info) 10%, transparent);
-  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .sc-table__cell--name {
