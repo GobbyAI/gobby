@@ -278,12 +278,12 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
     assert by_section["1.7"].tdd is False
 
     assert by_section["1.1"].assigned_agent == "backend-developer"
-    assert by_section["1.2"].assigned_agent == "default"
+    assert by_section["1.2"].assigned_agent == "backend-developer"
     assert by_section["1.3"].assigned_agent == "backend-developer"
-    assert by_section["1.4"].assigned_agent == "default"
-    assert by_section["1.5"].assigned_agent == "default"
+    assert by_section["1.4"].assigned_agent == "backend-developer"
+    assert by_section["1.5"].assigned_agent == "backend-developer"
     assert by_section["1.6"].assigned_agent == "test-architect"
-    assert by_section["1.7"].assigned_agent == "default"
+    assert by_section["1.7"].assigned_agent == "backend-developer"
 
     for entry in document.manifest_entries:
         assert entry.task_type == "feature"
@@ -369,10 +369,36 @@ def test_emit_and_reparse_round_trips_with_no_plan_id(tmp_path: Path) -> None:
     outcome = emit_stub_manifest(plan)
 
     assert outcome == "fresh"
-    assert resolve_plan_id(None) == "unknown"
+    resolved_missing_id = resolve_plan_id(None)
+    assert resolved_missing_id == "unknown"
     assert resolve_plan_id("demo-plan") == "demo-plan"
     assert MISSING_PLAN_ID_SENTINEL == "unknown"
-    parse_plan(plan, parse_mode="expansion")
+    document = parse_plan(plan, parse_mode="expansion")
+    labels = [label for entry in document.manifest_entries for label in entry.labels]
+    assert labels == [f"covers:{resolved_missing_id}:1.1:1.1.1"]
+
+    plan_with_id = _write(
+        tmp_path / "with-plan-id.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 Work [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `src/work.py`
+        """,
+    )
+
+    assert emit_stub_manifest(plan_with_id) == "fresh"
+    document_with_id = parse_plan(plan_with_id, parse_mode="expansion")
+    labels_with_id = [
+        label for entry in document_with_id.manifest_entries for label in entry.labels
+    ]
+    assert labels_with_id == ["covers:demo-plan:1.1:1.1.1"]
 
 
 def test_yolo_fallback_audit_is_parser_safe(tmp_path: Path) -> None:

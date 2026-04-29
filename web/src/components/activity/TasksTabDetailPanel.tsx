@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import { Markdown } from "../chat/Markdown";
 import type { DependencyTree, GobbyTask, GobbyTaskDetail } from "../../hooks/useTasks";
 import {
@@ -76,12 +78,14 @@ export function TasksTabDetailPanel({
   const blockingCount = dependencies?.blocking?.length ?? 0;
   const commits = task.commits?.filter(Boolean) ?? [];
 
-  const subtaskBuckets: Partial<Record<TaskBucket, number>> = {};
-  for (const child of subtasks ?? []) {
-    const bucket = getTaskBucket(child);
-    subtaskBuckets[bucket] = (subtaskBuckets[bucket] ?? 0) + 1;
-  }
-  const subtaskTotal = subtasks?.length ?? 0;
+  const { subtaskBuckets, subtaskTotal } = useMemo(() => {
+    const buckets: Partial<Record<TaskBucket, number>> = {};
+    for (const child of subtasks ?? []) {
+      const bucket = getTaskBucket(child);
+      buckets[bucket] = (buckets[bucket] ?? 0) + 1;
+    }
+    return { subtaskBuckets: buckets, subtaskTotal: subtasks?.length ?? 0 };
+  }, [subtasks]);
 
   const validationStatus = task.validation_status?.trim() || null;
   const validationFailCount = task.validation_fail_count ?? 0;

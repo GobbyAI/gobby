@@ -174,7 +174,7 @@ Sequence on clean review (no blocking findings):
    re-runs the strict parse. If even the stub fails, the agent appends a
    second audit marker and force-approves the plan; downstream `gobby expand`
    will reject the plan when it parses in `expansion` mode, surfacing the
-   issue at expansion time where a human can intervene.
+   issue at expansion time when a human can intervene.
 5. On success (clean parse or yolo force-approve), the adversary calls
    `mark_task_review_approved` with `approval_notes` documenting the
    manifest outcome.

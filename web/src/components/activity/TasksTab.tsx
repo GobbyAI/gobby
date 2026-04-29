@@ -485,11 +485,12 @@ export const TasksTab = memo(function TasksTab({
       setTaskSubtasks([]);
       return;
     }
-    const controller = new AbortController();
+    const controllerDeps = new AbortController();
+    const controllerSubtasks = new AbortController();
     const baseUrl = getBaseUrl();
     fetch(
       `${baseUrl}/api/tasks/${selectedTaskId}/dependencies?direction=both`,
-      { signal: controller.signal },
+      { signal: controllerDeps.signal },
     )
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setTaskDependencies(data ?? null))
@@ -498,14 +499,17 @@ export const TasksTab = memo(function TasksTab({
       });
     fetch(
       `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200`,
-      { signal: controller.signal },
+      { signal: controllerSubtasks.signal },
     )
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setTaskSubtasks(data?.tasks ?? []))
       .catch((err) => {
         if (err.name !== "AbortError") setTaskSubtasks([]);
       });
-    return () => controller.abort();
+    return () => {
+      controllerDeps.abort();
+      controllerSubtasks.abort();
+    };
   }, [selectedTaskId]);
 
   const toggleFilter = useCallback((status: TaskFilterKey) => {

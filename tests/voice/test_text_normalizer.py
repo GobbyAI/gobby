@@ -14,6 +14,7 @@ pytestmark = pytest.mark.unit
     [
         ("### *'Ship it'* for issue #123.", "Ship it for issue number 123."),
         ("#123 is ready.", "number 123 is ready."),
+        ("Fix GH#123 before 50% rollout.", "Fix GH number 123 before 50 percent rollout."),
         (
             "Don't strip contractions or Gobby's possessives.",
             "Don't strip contractions or Gobby's possessives.",

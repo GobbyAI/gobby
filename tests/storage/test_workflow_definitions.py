@@ -450,7 +450,12 @@ def test_import_from_yaml_step_type_rejected(
     """`type: step` is not a valid top-level YAML import type. Step workflows are
     synthesized by spawn_agent, never hand-imported. Regression for the legacy
     map that used to silently rewrite step → workflow_type='pipeline'."""
-    yaml_with_step = "name: rogue-step\ntype: step\nsteps:\n  - name: claim\n"
+    yaml_with_step = """
+name: rogue-step
+type: step
+steps:
+  - name: claim
+"""
     with pytest.raises(ValueError, match="Invalid or missing 'type'"):
         manager.import_from_yaml(yaml_with_step)
 
@@ -459,7 +464,12 @@ def test_import_from_yaml_workflow_type_rejected(
     manager: LocalWorkflowDefinitionManager,
 ) -> None:
     """`type: workflow` was the other half of the legacy alias map; reject it."""
-    yaml_with_workflow = "name: rogue-workflow\ntype: workflow\nsteps:\n  - name: do\n"
+    yaml_with_workflow = """
+name: rogue-workflow
+type: workflow
+steps:
+  - name: do
+"""
     with pytest.raises(ValueError, match="Invalid or missing 'type'"):
         manager.import_from_yaml(yaml_with_workflow)
 

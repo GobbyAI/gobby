@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
                 plan_kind=plan_kind,
                 root_task_ref=root_ref,
             )
-        except Exception as exc:
+        except (ValueError, OSError, sqlite3.Error) as exc:
             return {"ok": False, "error": "create_plan_failed", "message": str(exc)}
         return {"ok": True, "plan": record.to_dict()}
 

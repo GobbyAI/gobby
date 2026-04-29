@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 from gobby.storage.merge_resolutions import ConflictStatus
 
 if TYPE_CHECKING:
@@ -242,9 +243,17 @@ def create_merge_registry(
                     )
                 ]
 
+                worktree_path = None
+                resolution = merge_storage.get_resolution(conflict.resolution_id)
+                if resolution and worktree_manager:
+                    worktree = worktree_manager.get(resolution.worktree_id)
+                    if worktree and worktree.worktree_path:
+                        worktree_path = worktree.worktree_path
+
                 result = await merge_resolver.resolve_file(
                     path=conflict.file_path,
                     conflict_hunks=hunks,
+                    worktree_path=worktree_path,
                 )
 
                 if result.success:
@@ -341,13 +350,14 @@ def create_merge_registry(
                     }
                 target = Path(wt_path) / conflict.file_path
                 await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
-                await asyncio.to_thread(target.write_text, conflict.resolved_content)
+                await asyncio.to_thread(
+                    target.write_text, conflict.resolved_content, encoding="utf-8"
+                )
 
                 add_result = await asyncio.to_thread(
-                    git_manager._run_git,
-                    ["add", "--", conflict.file_path],
+                    git_manager.stage_files,
+                    [conflict.file_path],
                     cwd=wt_path,
-                    timeout=10,
                 )
                 if add_result.returncode != 0:
                     return {
@@ -358,15 +368,7 @@ def create_merge_registry(
                     }
                 written.append(conflict.file_path)
 
-            unmerged_check = await asyncio.to_thread(
-                git_manager._run_git,
-                ["diff", "--name-only", "--diff-filter=U"],
-                cwd=wt_path,
-                timeout=10,
-            )
-            unmerged = [
-                line.strip() for line in unmerged_check.stdout.strip().split("\n") if line.strip()
-            ]
+            unmerged = await asyncio.to_thread(git_manager.get_unmerged_files, cwd=wt_path)
             if unmerged:
                 return {
                     "success": False,
@@ -378,7 +380,7 @@ def create_merge_registry(
                 }
 
             commit_result = await asyncio.to_thread(
-                git_manager._run_git,
+                git_manager.run_git_command,
                 ["commit", "--no-edit"],
                 cwd=wt_path,
                 timeout=30,
@@ -455,10 +457,6 @@ def create_merge_registry(
         except Exception as e:
             logger.exception(f"Error aborting merge for resolution_id={resolution_id}")
             return {"success": False, "error": str(e)}
-
-    # Register merge-landscape analytics tools on the same registry so the
-    # merge-orchestrator agent can survey/predict/verify alongside resolve/apply.
-    from gobby.mcp_proxy.tools.merge_landscape import register_merge_landscape_tools
 
     register_merge_landscape_tools(
         registry,

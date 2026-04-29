@@ -36,6 +36,12 @@ _SPACE_RE = re.compile(r"\s+")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,!?;:])")
 
 
+def _hash_number_replacement(match: re.Match[str]) -> str:
+    previous = match.string[match.start() - 1] if match.start() > 0 else ""
+    prefix = "" if not previous or previous.isspace() or previous in "([{" else " "
+    return f"{prefix}number "
+
+
 def normalize_tts_text(text: str) -> str:
     """Return a spoken form of assistant text without Markdown control symbols."""
     spoken = text.translate(_QUOTE_TRANSLATION)
@@ -47,8 +53,8 @@ def normalize_tts_text(text: str) -> str:
     spoken = _UNORDERED_LIST_RE.sub("", spoken)
     spoken = _ORDERED_LIST_RE.sub("", spoken)
     spoken = _TASK_MARKER_RE.sub("", spoken)
-    spoken = _HASH_NUMBER_RE.sub("number ", spoken)
-    spoken = spoken.replace("&", " and ").replace("%", " percent ")
+    spoken = _HASH_NUMBER_RE.sub(_hash_number_replacement, spoken)
+    spoken = spoken.replace("&", " and ").replace("%", " percent")
     spoken = _MARKDOWN_MARKER_RE.sub(" ", spoken)
     spoken = _BOUNDARY_APOSTROPHE_RE.sub("", spoken)
     spoken = _DOUBLE_QUOTE_RE.sub("", spoken)

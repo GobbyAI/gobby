@@ -5,15 +5,18 @@
 # Figure to Life
 
 ## Capability
+
 Converts figure (toy/statue) photos into photorealistic "human cosplayer" images. It strictly enforces character lore, ethnicity preferences (Russian/Western or Japanese/Korean/Asian), and realistic biological details, while replacing plastic textures with high-fidelity materials and placing the subject in a cinematic environment.
 
 ## Triggers
+
 - "figure to life"
 - "make this figure real"
 - "statue to person"
 - "convert figure to cosplayer"
 
 ## Instructions
+
 1.  **Analyze the Input**: Identify the character, their origin, and the visual attributes of the figure.
 2.  **Execute Conversion Logic**: Apply the following JSON-based reasoning to construct the generation prompt.
 

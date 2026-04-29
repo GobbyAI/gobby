@@ -17,6 +17,17 @@ def mock_worktree_storage():
 def mock_git_manager():
     manager = MagicMock()
     manager.repo_path = "/tmp/repo"
+    manager.run_git_command.side_effect = (
+        lambda args, cwd=None, timeout=30, check=False: manager._run_git(
+            args, cwd=cwd, timeout=timeout, check=check
+        )
+    )
+
+    def get_unmerged_files(cwd=None):
+        result = manager._run_git(["diff", "--name-only", "--diff-filter=U"], cwd=cwd, timeout=10)
+        return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+
+    manager.get_unmerged_files.side_effect = get_unmerged_files
     return manager
 
 

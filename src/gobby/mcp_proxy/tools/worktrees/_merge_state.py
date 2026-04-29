@@ -33,7 +33,7 @@ def is_branch_ancestor(
     """Return whether source_branch is an ancestor of target_branch in git."""
     for source_ref in _branch_candidates(source_branch):
         for target_ref in _branch_candidates(target_branch):
-            result = git_manager._run_git(
+            result = git_manager.run_git_command(
                 ["merge-base", "--is-ancestor", source_ref, target_ref],
                 cwd=cwd,
                 timeout=10,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import uuid
 from dataclasses import asdict, dataclass
@@ -16,6 +17,7 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
 
 PlanState = Literal["active", "archived"]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -229,10 +231,23 @@ class LocalPlanManager:
                     """,
                     (str(archived_relative), archived_at, archived_at, record.id),
                 )
-        except Exception:
+        except Exception as exc:
             if moved and completed_path.exists():
                 previous_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(completed_path), str(previous_path))
+                try:
+                    shutil.move(str(completed_path), str(previous_path))
+                except Exception:
+                    logger.error(
+                        "Failed to roll back archived plan file move",
+                        exc_info=True,
+                        extra={
+                            "plan_id": record.plan_id,
+                            "moved": moved,
+                            "completed_path": str(completed_path),
+                            "previous_path": str(previous_path),
+                            "original_error": str(exc),
+                        },
+                    )
             raise
 
         self._remove_coverage_manifest(record)
@@ -242,8 +257,9 @@ class LocalPlanManager:
         record = self.get_plan(plan_id, project_id=project_id)
         with self.db.transaction() as conn:
             cursor = conn.execute("DELETE FROM plans WHERE id = ?", (record.id,))
+            deleted_count = cursor.rowcount
         self._remove_coverage_manifest(record)
-        return cursor.rowcount > 0
+        return deleted_count > 0
 
     def _find_plan(self, plan_id_or_ref: str, *, project_id: str | None) -> Any | None:
         params: list[object] = [plan_id_or_ref, _normalize_ref(plan_id_or_ref)]

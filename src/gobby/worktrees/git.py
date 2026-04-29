@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
+_UNMERGED_ARGS = ["diff", "--name-only", "--diff-filter=U"]
 
 
 @dataclass
@@ -107,6 +108,24 @@ class WorktreeGitManager:
         except subprocess.CalledProcessError as e:
             logger.error(f"Git command failed: {' '.join(cmd)}, stderr: {e.stderr}")
             raise
+
+    def run_git_command(
+        self,
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 30,
+        check: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._run_git(args, cwd=cwd, timeout=timeout, check=check)
+
+    def stage_files(
+        self, paths: list[str], *, cwd: str | Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run_git_command(["add", "--", *paths], cwd=cwd, timeout=10)
+
+    def get_unmerged_files(self, *, cwd: str | Path | None = None) -> list[str]:
+        result = self.run_git_command(_UNMERGED_ARGS, cwd=cwd, timeout=10)
+        return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
 
     def create_worktree(
         self,

@@ -43,6 +43,7 @@
   --color-warning: oklch(30% 0.08 75);
   --color-warning-foreground: oklch(78% 0.16 75);
   --color-warning-soft: oklch(78% 0.16 75 / 0.12);
+  --text-on-warning: oklch(15% 0 0);
 
   --color-destructive: oklch(28% 0.10 350);
   --color-destructive-foreground: oklch(72% 0.20 350);
@@ -92,6 +93,7 @@
   --color-warning: oklch(95% 0.06 75);
   --color-warning-foreground: oklch(58% 0.16 75);
   --color-warning-soft: oklch(58% 0.16 75 / 0.10);
+  --text-on-warning: oklch(99% 0 0);
 
   --color-destructive: oklch(95% 0.05 350);
   --color-destructive-foreground: oklch(52% 0.22 350);

@@ -8,6 +8,7 @@ Tests for MCP tools in gobby-merge server:
 - merge_abort: Cancel merge and restore state
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -547,13 +548,15 @@ class TestMergeApplyTool:
 
     @pytest.fixture
     def mock_git_manager(self):
-        """Create mock git manager. _run_git returns subprocess-like records."""
+        """Create mock git manager with subprocess-like public git methods."""
         git_manager = MagicMock()
-        git_manager._run_git = MagicMock()
+        git_manager.stage_files = MagicMock()
+        git_manager.get_unmerged_files = MagicMock(return_value=[])
+        git_manager.run_git_command = MagicMock()
         return git_manager
 
     @pytest.fixture
-    def mock_worktree_manager(self, tmp_path):
+    def mock_worktree_manager(self, tmp_path: Path) -> MagicMock:
         """Mock worktree manager whose `get` returns a worktree under tmp_path."""
         manager = MagicMock()
         worktree = MagicMock()
@@ -611,13 +614,13 @@ class TestMergeApplyTool:
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
-            if args[:1] == ["diff"]:
-                result.stdout = ""
-            else:
-                result.stdout = ""
+            result.stdout = ""
             return result
 
-        mock_git_manager._run_git.side_effect = fake_run_git
+        mock_git_manager.stage_files.side_effect = lambda *args, **kwargs: fake_run_git(
+            ["add", "--"], **kwargs
+        )
+        mock_git_manager.run_git_command.side_effect = fake_run_git
 
         updated_resolution = MergeResolution(
             id="mr-test123",
@@ -638,9 +641,11 @@ class TestMergeApplyTool:
         # Resolved content was written to disk under the worktree path.
         written = (tmp_path / "src" / "test.py").read_text()
         assert written == "merged version\n"
-        # git add + diff + commit were issued in that order.
-        called_cmds = [call.args[0][:2] for call in mock_git_manager._run_git.call_args_list]
-        assert called_cmds == [["add", "--"], ["diff", "--name-only"], ["commit", "--no-edit"]]
+        mock_git_manager.stage_files.assert_called_once_with(["src/test.py"], cwd=str(tmp_path))
+        mock_git_manager.get_unmerged_files.assert_called_once_with(cwd=str(tmp_path))
+        mock_git_manager.run_git_command.assert_called_once_with(
+            ["commit", "--no-edit"], cwd=str(tmp_path), timeout=30
+        )
 
     @pytest.mark.asyncio
     async def test_merge_apply_with_pending_conflicts(self, merge_registry, mock_storage):

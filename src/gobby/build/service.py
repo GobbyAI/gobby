@@ -6,7 +6,7 @@ import asyncio
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 from gobby.config.build import SKIPPABLE_STAGES, Isolation
 from gobby.storage.database import DatabaseProtocol
@@ -32,6 +32,14 @@ class BuildOptions:
     clones_dir: Path | None = None
 
 
+class RetryCaps(TypedDict):
+    max_expansion_attempts: int | None
+    max_qa_rounds: int | None
+    max_merge_attempts: int | None
+    max_holistic_rounds: int | None
+    max_review_rounds: int
+
+
 @dataclass
 class BuildResult:
     """Summary returned by build service surfaces."""
@@ -41,7 +49,7 @@ class BuildResult:
     initial_lifecycle: str
     applied_stages_skipped: list[str]
     tick_dispatched: int
-    retry_caps: dict[str, int | None] | None = None
+    retry_caps: RetryCaps | None = None
 
 
 AUTOMATED_LEAF_CATEGORIES = frozenset({"code", "config", "docs", "test"})
@@ -125,7 +133,7 @@ def _build_plan_file(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=_kick_dispatcher_tick(),
-        retry_caps=_retry_caps(opts),
+        retry_caps=_retry_cap_artifacts(opts),
     )
 
 
@@ -161,7 +169,7 @@ def _build_leaf(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=_kick_dispatcher_tick(),
-        retry_caps=_retry_caps(opts),
+        retry_caps=_retry_cap_artifacts(opts),
     )
 
 
@@ -193,7 +201,7 @@ def _build_epic(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=_kick_dispatcher_tick(),
-        retry_caps=_retry_caps(opts),
+        retry_caps=_retry_cap_artifacts(opts),
     )
 
 
@@ -322,7 +330,7 @@ def _record_build_event(
     )
 
 
-def _retry_cap_artifacts(opts: BuildOptions) -> dict[str, int | None]:
+def _retry_cap_artifacts(opts: BuildOptions) -> RetryCaps:
     return {
         "max_expansion_attempts": opts.max_expansion_attempts,
         "max_qa_rounds": opts.max_qa_rounds,
@@ -330,10 +338,6 @@ def _retry_cap_artifacts(opts: BuildOptions) -> dict[str, int | None]:
         "max_holistic_rounds": opts.max_holistic_rounds,
         "max_review_rounds": opts.max_review_rounds,
     }
-
-
-def _retry_caps(opts: BuildOptions) -> dict[str, int | None]:
-    return dict(_retry_cap_artifacts(opts))
 
 
 def _kick_dispatcher_tick() -> int:

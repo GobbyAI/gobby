@@ -982,21 +982,21 @@ compiled_spec passes assertions." The following are sub-plan B / C concerns:
   validation_criteria: Routing fallback, dependency extraction, plan-id sentinel,
     yolo audit safety, and monolith preflight tests are implemented as specified.
   labels:
-  - covers:None:1.1:1.1.1
-  - covers:None:1.1:1.1.2
-  - covers:None:1.1:1.1.3
-  - covers:None:1.1:1.1.4
-  - covers:None:1.1:1.1.5
-  - covers:None:1.1:1.1.6
-  - covers:None:1.1:1.1.7
-  - covers:None:1.1:1.1.8
-  - covers:None:1.1:1.1.9
-  - covers:None:1.1:1.1.10
-  - covers:None:1.1:1.1.11
-  - covers:None:1.1:1.1.12
-  - covers:None:1.1:1.1.13
-  - covers:None:1.1:1.1.14
-  - covers:None:1.1:1.1.15
+  - covers:unknown:1.1:1.1.1
+  - covers:unknown:1.1:1.1.2
+  - covers:unknown:1.1:1.1.3
+  - covers:unknown:1.1:1.1.4
+  - covers:unknown:1.1:1.1.5
+  - covers:unknown:1.1:1.1.6
+  - covers:unknown:1.1:1.1.7
+  - covers:unknown:1.1:1.1.8
+  - covers:unknown:1.1:1.1.9
+  - covers:unknown:1.1:1.1.10
+  - covers:unknown:1.1:1.1.11
+  - covers:unknown:1.1:1.1.12
+  - covers:unknown:1.1:1.1.13
+  - covers:unknown:1.1:1.1.14
+  - covers:unknown:1.1:1.1.15
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.1'
@@ -1008,18 +1008,18 @@ compiled_spec passes assertions." The following are sub-plan B / C concerns:
   validation_criteria: compile_plan_to_spec consumes manifest entries as the single
     source of truth, preserves deferrals, and emits validation fields correctly.
   labels:
-  - covers:None:1.2:1.2.1
-  - covers:None:1.2:1.2.2
-  - covers:None:1.2:1.2.3
-  - covers:None:1.2:1.2.4
-  - covers:None:1.2:1.2.5
-  - covers:None:1.2:1.2.6
-  - covers:None:1.2:1.2.7
-  - covers:None:1.2:1.2.8
-  - covers:None:1.2:1.2.9
-  - covers:None:1.2:1.2.10
-  - covers:None:1.2:1.2.11
-  - covers:None:1.2:1.2.12
+  - covers:unknown:1.2:1.2.1
+  - covers:unknown:1.2:1.2.2
+  - covers:unknown:1.2:1.2.3
+  - covers:unknown:1.2:1.2.4
+  - covers:unknown:1.2:1.2.5
+  - covers:unknown:1.2:1.2.6
+  - covers:unknown:1.2:1.2.7
+  - covers:unknown:1.2:1.2.8
+  - covers:unknown:1.2:1.2.9
+  - covers:unknown:1.2:1.2.10
+  - covers:unknown:1.2:1.2.11
+  - covers:unknown:1.2:1.2.12
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.2'
@@ -1031,10 +1031,10 @@ compiled_spec passes assertions." The following are sub-plan B / C concerns:
   validation_criteria: Regression and minimal compile-service fixtures include manifests
     and pass under manifest-driven semantics.
   labels:
-  - covers:None:1.3:1.3.1
-  - covers:None:1.3:1.3.2
-  - covers:None:1.3:1.3.3
-  - covers:None:1.3:1.3.4
+  - covers:unknown:1.3:1.3.1
+  - covers:unknown:1.3:1.3.2
+  - covers:unknown:1.3:1.3.3
+  - covers:unknown:1.3:1.3.4
   assigned_agent: backend-developer
   tdd: true
   source_section: '1.3'
@@ -1046,11 +1046,11 @@ compiled_spec passes assertions." The following are sub-plan B / C concerns:
   validation_criteria: Plan-12725 has a parser-clean M1 manifest, explicit Plan ID,
     and matching coverage manifest plan_hash.
   labels:
-  - covers:None:1.4:1.4.1
-  - covers:None:1.4:1.4.2
-  - covers:None:1.4:1.4.3
-  - covers:None:1.4:1.4.4
-  - covers:None:1.4:1.4.5
+  - covers:unknown:1.4:1.4.1
+  - covers:unknown:1.4:1.4.2
+  - covers:unknown:1.4:1.4.3
+  - covers:unknown:1.4:1.4.4
+  - covers:unknown:1.4:1.4.5
   assigned_agent: default
   tdd: false
   source_section: '1.4'
@@ -1064,12 +1064,12 @@ compiled_spec passes assertions." The following are sub-plan B / C concerns:
   validation_criteria: The slow integration harness proves plan-12725 compiles to
     a manifest-1:1 compiled spec without applying tasks.
   labels:
-  - covers:None:1.5:1.5.1
-  - covers:None:1.5:1.5.2
-  - covers:None:1.5:1.5.3
-  - covers:None:1.5:1.5.4
-  - covers:None:1.5:1.5.5
-  - covers:None:1.5:1.5.6
+  - covers:unknown:1.5:1.5.1
+  - covers:unknown:1.5:1.5.2
+  - covers:unknown:1.5:1.5.3
+  - covers:unknown:1.5:1.5.4
+  - covers:unknown:1.5:1.5.5
+  - covers:unknown:1.5:1.5.6
   assigned_agent: test-architect
   tdd: true
   source_section: '1.5'

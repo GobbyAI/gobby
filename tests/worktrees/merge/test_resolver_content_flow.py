@@ -8,6 +8,7 @@ content was discarded.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -91,7 +92,7 @@ def resolver_with_llm() -> MergeResolver:
 
 @pytest.mark.asyncio
 async def test_resolve_file_tier2_populates_content(
-    resolver_with_llm: MergeResolver, tmp_path
+    resolver_with_llm: MergeResolver, tmp_path: Path
 ) -> None:
     file_path = tmp_path / "small.py"
     file_path.write_text(
@@ -114,8 +115,29 @@ async def test_resolve_file_tier2_populates_content(
 
 
 @pytest.mark.asyncio
+async def test_resolve_file_uses_worktree_path_for_relative_file(
+    resolver_with_llm: MergeResolver, tmp_path: Path
+) -> None:
+    file_path = tmp_path / "src" / "small.py"
+    file_path.parent.mkdir()
+    file_path.write_text(
+        "x = 1\n<<<<<<< HEAD\ny_ours = 2\n=======\ny_theirs = 3\n>>>>>>> feature\nz = 4\n"
+    )
+
+    provider = MagicMock()
+    provider.generate_text = AsyncMock(return_value="y = 2 + 3")
+    resolver_with_llm._llm_service.get_default_provider.return_value = provider  # type: ignore[union-attr]
+
+    hunks = [{"ours": "y_ours = 2", "theirs": "y_theirs = 3"}]
+    result = await resolver_with_llm.resolve_file("src/small.py", hunks, worktree_path=tmp_path)
+
+    assert result.success is True
+    assert result.resolved_content_by_file["src/small.py"] == "x = 1\ny = 2 + 3\nz = 4\n"
+
+
+@pytest.mark.asyncio
 async def test_resolve_file_tier3_populates_content_when_tier2_fails(
-    resolver_with_llm: MergeResolver, tmp_path
+    resolver_with_llm: MergeResolver, tmp_path: Path
 ) -> None:
     file_path = tmp_path / "big.py"
     # File holds one conflict block; Tier 2 LLM returns mismatched hunk count
@@ -138,7 +160,7 @@ async def test_resolve_file_tier3_populates_content_when_tier2_fails(
 
 @pytest.mark.asyncio
 async def test_resolve_file_human_review_has_empty_content(
-    resolver_with_llm: MergeResolver, tmp_path
+    resolver_with_llm: MergeResolver, tmp_path: Path
 ) -> None:
     file_path = tmp_path / "stuck.py"
     file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")

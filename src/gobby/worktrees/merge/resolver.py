@@ -20,6 +20,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _conflict_file_path(conflict: dict[str, Any]) -> Path:
+    file_path = Path(str(conflict.get("file", "unknown")))
+    worktree_path = conflict.get("worktree_path")
+    if file_path.is_absolute() or not worktree_path:
+        return file_path
+    return Path(str(worktree_path)) / file_path
+
+
 # Patterns for files that always conflict trivially in merges
 # These are append-only sync files that get re-synced from the DB anyway
 TRIVIAL_CONFLICT_PATTERNS = (
@@ -221,12 +230,14 @@ class MergeResolver:
         self,
         path: Path | str,
         conflict_hunks: list[Any],
+        worktree_path: Path | str | None = None,
     ) -> "ResolutionResult":
         """Resolve conflicts in a single file using tiered strategy.
 
         Args:
             path: Path to the file with conflicts
             conflict_hunks: List of ConflictHunk objects or conflict dicts
+            worktree_path: Worktree root used to resolve relative file paths
 
         Returns:
             ResolutionResult with resolution status
@@ -237,6 +248,7 @@ class MergeResolver:
         conflict = {
             "file": file_path,
             "hunks": conflict_hunks,
+            "worktree_path": str(worktree_path) if worktree_path is not None else None,
         }
 
         # Check if conflict is too large for conflict-only resolution
@@ -448,10 +460,16 @@ class MergeResolver:
         for file_rel_path in conflicted_files:
             file_path = Path(worktree_path) / file_rel_path
             try:
-                content = await asyncio.to_thread(file_path.read_text)
+                content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                 hunks = extract_conflict_hunks(content)
                 if hunks:
-                    conflicts.append({"file": str(file_rel_path), "hunks": hunks})
+                    conflicts.append(
+                        {
+                            "file": str(file_rel_path),
+                            "hunks": hunks,
+                            "worktree_path": worktree_path,
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Failed to parse conflicts in {file_rel_path}: {e}")
 
@@ -523,7 +541,9 @@ class MergeResolver:
                     resolved_hunks = [response.strip("\n")]
 
                 try:
-                    file_with_markers = await asyncio.to_thread(Path(file_path).read_text)
+                    file_with_markers = await asyncio.to_thread(
+                        _conflict_file_path(conflict).read_text, encoding="utf-8"
+                    )
                 except OSError as read_err:
                     logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
                     return {"success": False, "resolutions": []}
@@ -573,7 +593,9 @@ class MergeResolver:
             try:
                 # In a real scenario, we'd read the file content with markers here
                 # But typically the file on disk already has markers if git merge failed
-                content_with_markers = await asyncio.to_thread(Path(file_path).read_text)
+                content_with_markers = await asyncio.to_thread(
+                    _conflict_file_path(conflict).read_text, encoding="utf-8"
+                )
 
                 prompt = f"Resolve all merge conflicts in the following file {file_path}. Return the FULL resolved file content.\n\n"
                 prompt += content_with_markers
@@ -644,7 +666,9 @@ class MergeResolver:
 
         async def resolve_with_limit(conflict: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
-                result = await self._resolve_file_conflict(conflict)
+                result = await self._resolve_file_conflict(
+                    {**conflict, "worktree_path": worktree_path}
+                )
                 return {"conflict": conflict, "result": result}
 
         tasks = [resolve_with_limit(c) for c in conflicts]

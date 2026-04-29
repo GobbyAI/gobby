@@ -130,6 +130,16 @@ class CloneGitManager:
             logger.error(f"Git command failed: {' '.join(cmd)}, stderr: {e.stderr}")
             raise
 
+    def run_git_command(
+        self,
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 60,
+        check: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
+
     def get_remote_url(self, remote: str = "origin") -> str | None:
         """
         Get the remote URL for the repository.

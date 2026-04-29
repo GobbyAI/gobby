@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Protocol
 
 import pytest
 import yaml
@@ -36,6 +36,14 @@ class PlanRegistryEntry:
     plan_hash: str | None
 
 
+class TestDatabase(Protocol):
+    __test__: ClassVar[bool] = False
+
+    def fetchall(self, sql: str) -> list[dict[str, Any]]: ...
+
+    def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None: ...
+
+
 def test_retired_plan_state_files_are_removed() -> None:
     offenders = [
         str(path.relative_to(PROJECT_ROOT)) for path in RETIRED_PLAN_STATE_FILES if path.exists()
@@ -44,7 +52,7 @@ def test_retired_plan_state_files_are_removed() -> None:
     assert not offenders, "retired plan state files still exist: " + ", ".join(offenders)
 
 
-def test_plan_registry_queries_plans_table(temp_db: Any) -> None:
+def test_plan_registry_queries_plans_table(temp_db: TestDatabase) -> None:
     entries = _seed_registry(temp_db)
 
     rows = temp_db.fetchall("SELECT plan_id, state, plan_kind FROM plans ORDER BY plan_id")
@@ -54,7 +62,7 @@ def test_plan_registry_queries_plans_table(temp_db: Any) -> None:
     assert {row["plan_kind"] for row in rows} <= {"implementation", "strategy"}
 
 
-def test_registered_active_plan_files_parse_with_declared_kind(temp_db: Any) -> None:
+def test_registered_active_plan_files_parse_with_declared_kind(temp_db: TestDatabase) -> None:
     for entry in _active_entries(temp_db):
         parse_plan(
             entry.plan_path,
@@ -63,7 +71,7 @@ def test_registered_active_plan_files_parse_with_declared_kind(temp_db: Any) -> 
         )
 
 
-def test_active_implementation_manifests_match_on_disk(temp_db: Any) -> None:
+def test_active_implementation_manifests_match_on_disk(temp_db: TestDatabase) -> None:
     for entry in _active_implementation_entries(temp_db):
         manifest = _read_required_manifest(entry)
         header = _manifest_header(manifest)
@@ -75,7 +83,7 @@ def test_active_implementation_manifests_match_on_disk(temp_db: Any) -> None:
         assert header.get("plan_hash") == plan_hash
 
 
-def test_zero_missing_invalid_manifest_rows(temp_db: Any) -> None:
+def test_zero_missing_invalid_manifest_rows(temp_db: TestDatabase) -> None:
     bad_rows: list[str] = []
     for entry in _active_implementation_entries(temp_db):
         manifest = _read_required_manifest(entry)
@@ -86,7 +94,7 @@ def test_zero_missing_invalid_manifest_rows(temp_db: Any) -> None:
     assert not bad_rows, "coverage manifest rows not covered: " + ", ".join(bad_rows)
 
 
-def test_no_orphan_manifests(temp_db: Any) -> None:
+def test_no_orphan_manifests(temp_db: TestDatabase) -> None:
     _seed_registry(temp_db)
     implementation_keys = {
         (entry.project_id, entry.root_task_ref, entry.plan_id)
@@ -101,7 +109,7 @@ def test_no_orphan_manifests(temp_db: Any) -> None:
     assert not orphaned, "orphan manifests: " + ", ".join(orphaned)
 
 
-def _seed_registry(db: Any) -> dict[str, PlanRegistryEntry]:
+def _seed_registry(db: TestDatabase) -> dict[str, PlanRegistryEntry]:
     _seed_project(db)
     entries: dict[str, PlanRegistryEntry] = {}
     for path in _discover_plan_files():
@@ -130,7 +138,7 @@ def _seed_registry(db: Any) -> dict[str, PlanRegistryEntry]:
     return entries
 
 
-def _seed_project(db: Any) -> None:
+def _seed_project(db: TestDatabase) -> None:
     db.execute(
         """
         INSERT OR IGNORE INTO projects (id, name, repo_path, created_at, updated_at)
@@ -171,11 +179,11 @@ def _entry_for_path(path: Path) -> PlanRegistryEntry:
     )
 
 
-def _active_entries(db: Any) -> list[PlanRegistryEntry]:
+def _active_entries(db: TestDatabase) -> list[PlanRegistryEntry]:
     return _entries(db, "SELECT * FROM plans WHERE state = 'active' ORDER BY plan_id")
 
 
-def _active_implementation_entries(db: Any) -> list[PlanRegistryEntry]:
+def _active_implementation_entries(db: TestDatabase) -> list[PlanRegistryEntry]:
     return _entries(
         db,
         """
@@ -186,7 +194,7 @@ def _active_implementation_entries(db: Any) -> list[PlanRegistryEntry]:
     )
 
 
-def _entries(db: Any, sql: str) -> list[PlanRegistryEntry]:
+def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
     rows = db.fetchall(sql)
     return [
         PlanRegistryEntry(
@@ -272,7 +280,7 @@ def _required_string(raw: dict[str, Any], key: str, *, path: Path) -> str:
     return value
 
 
-def test_plans_table_has_unique_project_plan_constraint(temp_db: Any) -> None:
+def test_plans_table_has_unique_project_plan_constraint(temp_db: TestDatabase) -> None:
     _seed_registry(temp_db)
     first = _active_entries(temp_db)[0]
 

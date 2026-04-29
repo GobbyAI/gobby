@@ -142,20 +142,20 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         # Step 1: Fetch latest in the worktree
         fetch_result = await asyncio.to_thread(
-            resolved_git_mgr._run_git, ["fetch", "origin"], cwd=wt_path, timeout=60
+            resolved_git_mgr.run_git_command, ["fetch", "origin"], cwd=wt_path, timeout=60
         )
         if fetch_result.returncode != 0:
             logger.warning(f"Fetch failed in worktree (non-fatal): {fetch_result.stderr.strip()}")
 
         remote_merge_ref = f"origin/{merge_target}"
         local_ref_result = await asyncio.to_thread(
-            resolved_git_mgr._run_git,
+            resolved_git_mgr.run_git_command,
             ["show-ref", "--verify", "--quiet", f"refs/heads/{merge_target}"],
             cwd=wt_path,
             timeout=10,
         )
         remote_ref_result = await asyncio.to_thread(
-            resolved_git_mgr._run_git,
+            resolved_git_mgr.run_git_command,
             ["show-ref", "--verify", "--quiet", f"refs/remotes/{remote_merge_ref}"],
             cwd=wt_path,
             timeout=10,
@@ -187,17 +187,17 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         # (same pattern as merge_clone)
         stash_created = False
         stash_list_before = await asyncio.to_thread(
-            resolved_git_mgr._run_git, ["stash", "list"], cwd=wt_path, timeout=10
+            resolved_git_mgr.run_git_command, ["stash", "list"], cwd=wt_path, timeout=10
         )
         stash_push = await asyncio.to_thread(
-            resolved_git_mgr._run_git,
+            resolved_git_mgr.run_git_command,
             ["stash", "push", "-m", "gobby-merge: auto-stash sync files", "--", ".gobby/"],
             cwd=wt_path,
             timeout=10,
         )
         if stash_push.returncode == 0:
             stash_list_after = await asyncio.to_thread(
-                resolved_git_mgr._run_git, ["stash", "list"], cwd=wt_path, timeout=10
+                resolved_git_mgr.run_git_command, ["stash", "list"], cwd=wt_path, timeout=10
             )
             stash_created = stash_list_after.stdout != stash_list_before.stdout
 
@@ -207,7 +207,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             """Restore stashed .gobby/ files if any were stashed."""
             if stash_created:
                 pop_result = await asyncio.to_thread(
-                    resolved_git_mgr._run_git, ["stash", "pop"], cwd=wt_path, timeout=10
+                    resolved_git_mgr.run_git_command, ["stash", "pop"], cwd=wt_path, timeout=10
                 )
                 if pop_result.returncode != 0:
                     logger.warning(
@@ -226,7 +226,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         try:
             merge_result = await asyncio.to_thread(
-                resolved_git_mgr._run_git,
+                resolved_git_mgr.run_git_command,
                 ["merge", merge_ref, "--no-edit"],
                 cwd=wt_path,
                 timeout=60,
@@ -235,15 +235,9 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if merge_result.returncode != 0:
                 # Detect unmerged (conflicted) files via git index — more reliable
                 # than parsing human-readable merge output for "CONFLICT" strings
-                unmerged_result = await asyncio.to_thread(
-                    resolved_git_mgr._run_git,
-                    ["diff", "--name-only", "--diff-filter=U"],
-                    cwd=wt_path,
-                    timeout=10,
+                conflicted_files = await asyncio.to_thread(
+                    resolved_git_mgr.get_unmerged_files, cwd=wt_path
                 )
-                conflicted_files = [
-                    f.strip() for f in unmerged_result.stdout.strip().split("\n") if f.strip()
-                ]
                 if conflicted_files:
                     # Auto-resolve trivial conflicts (.gobby/*.jsonl)
                     from gobby.worktrees.merge.resolver import auto_resolve_trivial_conflicts
@@ -253,7 +247,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     if not remaining:
                         # All conflicts were trivial — commit the merge and continue
                         commit_result = await asyncio.to_thread(
-                            resolved_git_mgr._run_git,
+                            resolved_git_mgr.run_git_command,
                             ["commit", "--no-edit"],
                             cwd=wt_path,
                             timeout=30,
@@ -277,7 +271,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
                     # Still have real conflicts — abort and report
                     await asyncio.to_thread(
-                        resolved_git_mgr._run_git,
+                        resolved_git_mgr.run_git_command,
                         ["merge", "--abort"],
                         cwd=wt_path,
                         timeout=10,
@@ -306,7 +300,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             # Step 4 (optional): Push source branch to origin as target
             if push:
                 push_result = await asyncio.to_thread(
-                    resolved_git_mgr._run_git,
+                    resolved_git_mgr.run_git_command,
                     ["push", "--no-verify", "origin", f"{effective_source}:{merge_target}"],
                     cwd=wt_path,
                     timeout=60,
@@ -321,7 +315,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                         "target_branch": merge_target,
                     }
                 fetch_target = await asyncio.to_thread(
-                    resolved_git_mgr._run_git,
+                    resolved_git_mgr.run_git_command,
                     ["fetch", "origin", merge_target],
                     cwd=wt_path,
                     timeout=60,

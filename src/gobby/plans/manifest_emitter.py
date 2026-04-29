@@ -46,7 +46,7 @@ _AGENT_BY_CATEGORY: dict[str, str] = {
     "refactor": "backend-developer",
     "test": "test-architect",
 }
-_DEFAULT_AGENT_FALLBACK = "default"
+_DEFAULT_AGENT_FALLBACK = "backend-developer"
 _DEFAULT_TASK_TYPE = "feature"
 
 

@@ -6,7 +6,7 @@
 
 The uploaded image is an anime or art or 3D rendering, you will create a photorealistic photograph featuring the same character in the same background.
 
-In the to be generated photograph:
+In the to-be-generated photograph:
 
 Important requirements you must follow and think twice before generating:
 - **The character turns to a real person cosplayer, cosplaying the character in the uploaded image.**
@@ -14,4 +14,4 @@ Important requirements you must follow and think twice before generating:
 - The facial features should retain an anime-inspired aesthetic—like those of a cosplayer idol with refined makeup and an elegant appearance.
 - Select an appropriate ethnicity based on the character's depicted traits.
 - **The photograph shall match the angle and framing of the uploaded image**
-- The background is the same as it is the original image however rendered in a realistic style.
+- The background is the same as the original image, rendered realistically.

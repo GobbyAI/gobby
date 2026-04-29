@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
@@ -68,7 +69,7 @@ def _write_project(root: Path, project_id: str) -> None:
     project_dir = root / ".gobby"
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / "project.json").write_text(
-        yaml.safe_dump({"id": project_id}),
+        json.dumps({"id": project_id}),
         encoding="utf-8",
     )
 

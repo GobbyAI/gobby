@@ -20,16 +20,19 @@ instructions: |
   - If you have clone_id: use clone merge flow
 
   WORKTREE MERGE FLOW:
+  MAX_RESOLVE_RETRIES: 3 per conflict set.
   1. Call merge_worktree with worktree_id and push=true
   2. If SUCCESS: call kill_agent — you're done
   3. If CONFLICTS (has_conflicts: true):
      a. Call merge_start with worktree_id and the source/target branches
      b. Check merge_status for conflict details
-     c. Call merge_resolve with use_ai=true for each conflict
+     c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
+        by the exact unresolved conflict file/id set
      d. Call merge_apply to finalize the resolved merge
      e. Call merge_worktree again with push=true (merge is applied, this just pushes)
      f. Call kill_agent
-  4. If resolution fails: call merge_abort, then kill_agent
+  4. If resolution fails, or the same conflict set reaches MAX_RESOLVE_RETRIES:
+     call merge_abort, report the conflict ids/files and retry count, then kill_agent.
 
   CLONE MERGE FLOW:
   1. Sync the clone first: call sync_clone with clone_id
@@ -73,13 +76,16 @@ steps:
       If merge_worktree returns has_conflicts: true:
       1. Call merge_start with worktree_id, source_branch, target_branch
       2. Check merge_status for the resolution_id to see conflict details
-      3. Call merge_resolve with use_ai=true for each conflict
+      3. Call merge_resolve with use_ai=true for each conflict. Track attempts
+         by the exact unresolved conflict file/id set and stop after
+         MAX_RESOLVE_RETRIES=3 for the same set.
       4. Call merge_apply with the resolution_id to finalize
       5. Call merge_worktree again with push=true (merge is applied, this pushes)
       6. Call kill_agent
 
       CLONE CONFLICTS: call kill_agent (no auto-resolution for clones)
-      RESOLUTION FAILURE: call merge_abort, then kill_agent
+      RESOLUTION FAILURE OR RETRY CAP: call merge_abort, report the conflict
+      ids/files that hit the cap, then kill_agent
 
       The target branch is in your spawn prompt. Defaults:
       merge_worktree uses the worktree's base_branch, merge_clone uses "main".

@@ -217,9 +217,12 @@ When no blocking findings remain (zero findings or only nits):
      path (top-level invariant). Instead:
      - Append a `## Yolo Fallbacks` audit section to the planning anchor's
        description (NOT the plan file) documenting the failure mode.
-     - Fall back to the deterministic stub-manifest path by calling
-       `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)`. Re-run
-       `parse_plan(plan_path, parse_mode="expansion")`.
+     - Fall back to the deterministic stub-manifest path. Direct Python form:
+       `from gobby.plans.manifest_emitter import emit_stub_manifest`, then
+       call `emit_stub_manifest(plan_path)`. If direct imports are unavailable
+       in the current surface, call the MCP/tooling wrapper that exposes
+       `emit_stub_manifest(plan_path)`. Re-run `parse_plan(plan_path,
+       parse_mode="expansion")`.
      - If the stub also fails (the deliverable schema in the plan is malformed
        beyond the emitter's reach), append a second `## Yolo Fallbacks` audit
        marker and force-approve with `mark_task_review_approved` whose

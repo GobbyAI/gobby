@@ -217,7 +217,9 @@
 .trace-waterfall-bar--error { fill: var(--color-error); }
 .trace-waterfall-bar--unset { fill: var(--text-muted); }
 .trace-waterfall-bar--llm { fill: var(--color-warning-foreground); }
-.trace-waterfall-bar--llm:hover { fill: var(--color-warning-foreground); }
+.trace-waterfall-bar--llm:hover {
+  fill: color-mix(in srgb, var(--color-warning-foreground) 82%, var(--text-primary));
+}
 
 /* Token badge on waterfall bars */
 .trace-waterfall-token-badge {

@@ -96,7 +96,7 @@ Add an end-to-end regression around the full dispatch cycle.
   labels:
     - "covers:expansion-compile-regression:1.3a:1.3a.1"
   assigned_agent: backend-developer
-  tdd: true
+  tdd: false
   source_section: "1.3a"
 - title: "Dispatcher React UI"
   category: code

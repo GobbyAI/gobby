@@ -45,6 +45,19 @@ def _make_registry_context(
     wt.base_branch = base
     ctx.worktree_storage.get.return_value = wt
     ctx.git_manager = MagicMock()
+    ctx.git_manager.run_git_command.side_effect = (
+        lambda args, cwd=None, timeout=30, check=False: ctx.git_manager._run_git(
+            args, cwd=cwd, timeout=timeout, check=check
+        )
+    )
+
+    def get_unmerged_files(cwd=None):
+        result = ctx.git_manager._run_git(
+            ["diff", "--name-only", "--diff-filter=U"], cwd=cwd, timeout=10
+        )
+        return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+
+    ctx.git_manager.get_unmerged_files.side_effect = get_unmerged_files
     ctx.project_id = "test-project"
     return ctx
 

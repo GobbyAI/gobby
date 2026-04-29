@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import re
+import sqlite3
 from pathlib import Path
+from typing import cast
 
 import click
 
-from gobby.plans.parser import parse_plan
+from gobby.plans.parser import PlanParseError, parse_plan
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 
 from .utils import resolve_project_ref
+
+_ROOT_TASK_REF_RE = re.compile(r"^\s*root_task_ref\s*:\s*(?P<value>.+?)\s*$")
 
 
 @click.group("plans")
@@ -88,9 +93,7 @@ def register_plan_command(
 
     db = _open_db()
     try:
-        project_id = _project_id(project, required=True)
-        if project_id is None:
-            raise click.ClickException("No project context found")
+        project_id = cast(str, _project_id(project, required=True))
         record = LocalPlanManager(db).create_plan(
             project_id=project_id,
             plan_id=resolved_plan_id,
@@ -98,7 +101,7 @@ def register_plan_command(
             plan_kind=plan_kind,
             root_task_ref=resolved_root_ref,
         )
-    except Exception as exc:
+    except (PlanParseError, ValueError, OSError, sqlite3.Error) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
@@ -120,7 +123,7 @@ def archive_plan_command(plan_id: str, reason: str | None, project: str | None) 
             project_id=_project_id(project),
             reason=reason,
         )
-    except Exception as exc:
+    except (PlanNotFoundError, ValueError, OSError, sqlite3.Error) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         db.close()
@@ -163,7 +166,36 @@ def _root_ref_from_file(path: Path) -> str | None:
         token = stem.split("-", 2)[1]
         if token.isdecimal():
             return token
+    text = path.read_text(encoding="utf-8")
+    return _root_ref_from_metadata(text)
+
+
+def _root_ref_from_metadata(text: str) -> str | None:
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            root_ref = _root_ref_from_line(line)
+            if root_ref is not None:
+                return root_ref
+
+    for line in lines:
+        if line.lstrip().startswith("#"):
+            break
+        root_ref = _root_ref_from_line(line)
+        if root_ref is not None:
+            return root_ref
     return None
+
+
+def _root_ref_from_line(line: str) -> str | None:
+    match = _ROOT_TASK_REF_RE.match(line)
+    if match is None:
+        return None
+    value = match.group("value").strip().removeprefix("'").removesuffix("'")
+    value = value.removeprefix('"').removesuffix('"')
+    return value or None
 
 
 __all__ = ["plans"]

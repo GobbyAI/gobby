@@ -67,6 +67,9 @@ class TestAgentDefinitionBodyModel:
         assert body.workflows.rules == []
         assert body.workflows.pipeline is None
         assert body.workflows.variables == {}
+        assert body.steps is None
+        assert body.step_variables == {}
+        assert body.exit_condition is None
         assert body.enabled is True
 
     def test_full_creation(self) -> None:

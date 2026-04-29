@@ -16,6 +16,11 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
 PLAN_PATH = (
     Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch-rev1.md"
 )
+if not PLAN_PATH.exists():
+    pytest.skip(
+        "required plan file .gobby/plans/task-12725-lifecycle-dispatch-rev1.md not found",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture

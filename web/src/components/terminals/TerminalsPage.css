@@ -30,14 +30,6 @@
   background: var(--color-success-soft);
   color: var(--color-success-foreground);
 }
-[data-theme="light"] .mode-view {
-  background: var(--color-warning-soft);
-  color: var(--color-warning-foreground);
-}
-[data-theme="light"] .mode-edit {
-  background: var(--color-success-soft);
-  color: var(--color-success-foreground);
-}
 
 /* ============================================
    Terminals Page

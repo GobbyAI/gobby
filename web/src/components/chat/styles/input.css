@@ -360,8 +360,7 @@
 }
 
 .stop-button:hover {
-  background: var(--color-error);
-  color: #fff;
+  filter: brightness(1.08);
 }
 
 .chat-actions {

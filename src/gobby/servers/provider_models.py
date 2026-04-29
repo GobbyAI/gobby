@@ -560,29 +560,42 @@ class ProviderModelCatalog:
             for item in models:
                 if not isinstance(item, dict):
                     continue
-                context_length = _extract_context_length(item)
-                if context_length is None:
-                    for identifier in _model_identifiers(item):
-                        context_length = context_length_for_model(provider, identifier)
-                        if context_length is not None:
-                            break
-                if context_length is None:
+                match = self._match_candidate_and_context(provider, item, target)
+                if match is None:
                     continue
-                for candidate in self._entry_lookup_candidates(provider, item):
-                    if (
-                        target == candidate
-                        or target.startswith(candidate)
-                        or self._alias_matches(provider, candidate, target)
-                    ) and len(candidate) > best_len:
-                        best_len = len(candidate)
-                        best_context = context_length
+                candidate_len, context_length = match
+                if candidate_len > best_len:
+                    best_len = candidate_len
+                    best_context = context_length
 
         if best_context is not None:
             return best_context
         return context_length_for_model(provider, model) if include_static else None
 
-    @staticmethod
-    def _entry_lookup_candidates(provider: str, model: dict[str, Any]) -> set[str]:
+    def _match_candidate_and_context(
+        self, provider: str, item: dict[str, Any], target: str
+    ) -> tuple[int, int] | None:
+        context_length = _extract_context_length(item)
+        if context_length is None:
+            for identifier in _model_identifiers(item):
+                context_length = context_length_for_model(provider, identifier)
+                if context_length is not None:
+                    break
+        if context_length is None:
+            return None
+        candidate_len = 0
+        for candidate in self._entry_lookup_candidates(provider, item):
+            if (
+                target == candidate
+                or target.startswith(candidate)
+                or self._alias_matches(provider, candidate, target)
+            ):
+                candidate_len = max(candidate_len, len(candidate))
+        if not candidate_len:
+            return None
+        return candidate_len, context_length
+
+    def _entry_lookup_candidates(self, provider: str, model: dict[str, Any]) -> set[str]:
         candidates = {
             normalized
             for identifier in _model_identifiers(model)
@@ -598,13 +611,9 @@ class ProviderModelCatalog:
                     candidates.add("haiku")
         return candidates
 
-    @staticmethod
-    def _alias_matches(provider: str, candidate: str, target: str) -> bool:
-        return (
-            provider in {"claude", "droid"}
-            and candidate in {"opus", "sonnet", "haiku"}
-            and (candidate in target)
-        )
+    def _alias_matches(self, provider: str, candidate: str, target: str) -> bool:
+        families = {"opus", "sonnet", "haiku"}
+        return provider in {"claude", "droid"} and candidate in families and candidate in target
 
     @staticmethod
     def _droid_underlying_providers(model: str) -> tuple[str, ...]:

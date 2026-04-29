@@ -75,7 +75,6 @@ step_variables:
   task_claimed: false
   skill_loaded: false
   survey_complete: false
-  plan_complete: false
   execution_complete: false
   report_complete: false
 
@@ -172,14 +171,9 @@ steps:
     allowed_mcp_tools:
       - "gobby-tasks:get_task"
       - "gobby-tasks:list_tasks"
-    on_set_variable:
-      - variable: merge_plan
-        action: set_variable
-        variable: plan_complete
-        value: true
     transitions:
       - to: execute
-        when: "vars.plan_complete"
+        when: "vars.merge_plan"
 
   - name: execute
     description: "Dispatch merge-worker per step, verify, and record outcomes"

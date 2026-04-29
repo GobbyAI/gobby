@@ -62,6 +62,10 @@ def _make_registry(
     git_manager: MagicMock | None,
 ) -> InternalToolRegistry:
     registry = InternalToolRegistry(name="gobby-merge", description="test")
+    if git_manager is not None:
+        git_manager.run_git_command.side_effect = lambda args, cwd=None, timeout=30, check=False: (
+            git_manager._run_git(args, cwd=cwd, timeout=timeout, check=check)
+        )
     register_merge_landscape_tools(
         registry,
         worktree_manager=worktree_manager,

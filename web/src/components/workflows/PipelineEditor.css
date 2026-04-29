@@ -321,17 +321,17 @@
   cursor: pointer;
 }
 
-.pipeline-editor-mono {
+.pipeline-editor-field textarea.pipeline-editor-mono {
   font-family: var(--font-mono);
-  font-size: var(--text-sm) !important;
+  font-size: var(--text-sm);
 }
 
 /* Checkbox label */
-.pipeline-editor-checkbox-label {
-  display: flex !important;
+.pipeline-editor-field .pipeline-editor-checkbox-label {
+  display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--text-sm) !important;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 

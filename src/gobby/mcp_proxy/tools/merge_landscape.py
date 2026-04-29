@@ -32,7 +32,7 @@ def _git(
     timeout: int = 30,
 ) -> tuple[int, str, str]:
     """Run git via the manager and return (returncode, stdout, stderr)."""
-    proc = git_manager._run_git(args, cwd=cwd, timeout=timeout, check=False)
+    proc = git_manager.run_git_command(args, cwd=cwd, timeout=timeout, check=False)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -411,7 +411,7 @@ def register_merge_landscape_tools(
                 "stderr": stderr_b.decode("utf-8", errors="replace"),
             }
         except (OSError, ValueError) as e:
-            logger.exception(f"verify_in_worktree subprocess failed for {worktree_id}")
+            logger.exception("verify_in_worktree subprocess failed for %s", worktree_id)
             return {"success": False, "error": str(e)}
 
     @registry.tool(

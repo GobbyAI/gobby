@@ -378,7 +378,7 @@
 }
 
 .files-save-btn:hover {
-  background: var(--color-success-foreground);
+  background: color-mix(in srgb, var(--color-success-foreground) 85%, var(--text-primary));
 }
 
 .files-save-btn:disabled {
@@ -512,7 +512,7 @@
 }
 
 .files-confirm-discard:hover {
-  background: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 85%, var(--text-primary));
 }
 
 /* CodeMirror container */

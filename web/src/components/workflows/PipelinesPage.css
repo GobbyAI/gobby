@@ -343,23 +343,23 @@
 }
 
 .pipeline-btn--approve {
-  background: var(--color-success-foreground);
+  background: var(--color-success-soft);
   border: 1px solid var(--color-success-foreground);
-  color: #fff;
+  color: var(--color-success-foreground);
 }
 
 .pipeline-btn--approve:hover:not(:disabled) {
-  background: var(--color-success-foreground);
+  background: color-mix(in srgb, var(--color-success-foreground) 20%, transparent);
 }
 
 .pipeline-btn--reject {
-  background: var(--color-error);
+  background: var(--color-error-soft);
   border: 1px solid var(--color-error);
-  color: #fff;
+  color: var(--color-error);
 }
 
 .pipeline-btn--reject:hover:not(:disabled) {
-  background: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
 }
 
 .pipeline-steps {

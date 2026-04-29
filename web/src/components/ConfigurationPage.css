@@ -127,7 +127,7 @@
 .config-restart-banner button {
   padding: 4px 12px;
   background: var(--color-warning-foreground);
-  color: oklch(0% 0 0);
+  color: var(--text-on-warning);
   border: none;
   border-radius: 4px;
   font-size: var(--text-sm);

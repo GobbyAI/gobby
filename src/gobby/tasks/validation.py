@@ -485,8 +485,9 @@ def get_validation_context_smart(
             files = find_matching_files(patterns, base_dir=cwd or ".", max_files=5)
             if files:
                 file_content = read_files_content(files, remaining_chars)
-                context_parts.append(f"=== RELEVANT FILES ===\n{file_content}")
-                remaining_chars -= len(file_content)
+                relevant_text = f"=== RELEVANT FILES ===\n{file_content}"
+                context_parts.append(relevant_text)
+                remaining_chars -= len(relevant_text)
                 seen_files.update(path.resolve() for path in files)
 
     # Strategy 4: Related test files from task terms
@@ -508,13 +509,14 @@ def get_validation_context_smart(
             ]
             if related_test_files:
                 test_content = read_files_content(related_test_files, remaining_chars)
-                context_parts.append(
+                related_text = (
                     "=== RELATED TEST FILES ===\n"
                     f"Search text: {search_text[:500]}\n"
                     f"Search terms: {', '.join(related_terms)}\n\n"
                     f"{test_content}"
                 )
-                remaining_chars -= len(test_content)
+                context_parts.append(related_text)
+                remaining_chars -= len(related_text)
 
     if not context_parts:
         return None

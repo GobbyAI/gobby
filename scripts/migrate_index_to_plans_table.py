@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -80,36 +81,37 @@ def _upsert_plan(
 ) -> None:
     now = _now()
     archived_at = now if state == "archived" else None
-    db.execute(
-        """
-        INSERT INTO plans (
-            id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
-            root_task_ref, created_at, updated_at, archived_at
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO plans (
+                id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
+                root_task_ref, created_at, updated_at, archived_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, plan_id) DO UPDATE SET
+                plan_path = excluded.plan_path,
+                plan_hash = excluded.plan_hash,
+                plan_kind = excluded.plan_kind,
+                state = excluded.state,
+                root_task_ref = excluded.root_task_ref,
+                updated_at = excluded.updated_at,
+                archived_at = excluded.archived_at
+            """,
+            (
+                str(uuid.uuid4()),
+                project_id,
+                plan_id,
+                plan_path,
+                plan_hash,
+                plan_kind,
+                state,
+                root_task_ref,
+                now,
+                now,
+                archived_at,
+            ),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(project_id, plan_id) DO UPDATE SET
-            plan_path = excluded.plan_path,
-            plan_hash = excluded.plan_hash,
-            plan_kind = excluded.plan_kind,
-            state = excluded.state,
-            root_task_ref = excluded.root_task_ref,
-            updated_at = excluded.updated_at,
-            archived_at = excluded.archived_at
-        """,
-        (
-            str(uuid.uuid4()),
-            project_id,
-            plan_id,
-            plan_path,
-            plan_hash,
-            plan_kind,
-            state,
-            root_task_ref,
-            now,
-            now,
-            archived_at,
-        ),
-    )
 
 
 def _normalize_plan_kind(value: str) -> str:
@@ -135,7 +137,7 @@ def _index_entries(index_path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _project_id(repo_root: Path) -> str:
-    raw = yaml.safe_load((repo_root / ".gobby" / "project.json").read_text(encoding="utf-8"))
+    raw = json.loads((repo_root / ".gobby" / "project.json").read_text(encoding="utf-8"))
     return str(raw["id"])
 
 
