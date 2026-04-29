@@ -21,7 +21,9 @@ def service(temp_db) -> ExpansionService:
 
 def _write_minimal_plan(path: Path) -> Path:
     path.write_text(
-        """# Minimal Contract Plan
+        """> **Plan ID:** minimal-contract
+
+# Minimal Contract Plan
 
 ## P1 Phase 1
 `kind: framing`
@@ -58,6 +60,33 @@ original_acceptance_items:
     artifact_kind: behavior
     artifact_ref: "downstream lifecycle"
 ```
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Foundation"
+  category: code
+  task_type: task
+  depends_on: []
+  validation_criteria: "Foundation acceptance is satisfied."
+  labels:
+    - "covers:minimal-contract:1.1:1.1.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.1"
+- title: "Follow-up"
+  category: docs
+  task_type: task
+  depends_on:
+    - "1.1"
+  validation_criteria: "Documentation acceptance is satisfied."
+  labels:
+    - "covers:minimal-contract:2.1:2.1.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.1"
+```
 """,
         encoding="utf-8",
     )
@@ -74,7 +103,9 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
         title="Minimal epic",
         task_type="epic",
     )
-    plan_doc = parse_plan(_write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="draft")
+    plan_doc = parse_plan(
+        _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="expansion"
+    )
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
@@ -116,7 +147,9 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
         title="Minimal epic",
         task_type="epic",
     )
-    plan_doc = parse_plan(_write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="draft")
+    plan_doc = parse_plan(
+        _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="expansion"
+    )
     spec = service.compile_plan_to_spec(plan_doc, parent)
     run = service.run_manager.create(
         parent_task_id=parent.id,
