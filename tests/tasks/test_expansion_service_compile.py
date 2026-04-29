@@ -122,6 +122,20 @@ def test_compile_contract_plan_uses_deterministic_agent_assignment(
     assert all("(depends:" not in task["title"] for task in spec["tasks"])
 
 
+def test_compile_contract_plan_prefers_manifest_assigned_agent_over_prose_regex(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan_path = Path(__file__).resolve().parents[1] / "fixtures/plans/manifest-routing-bridge.md"
+    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
+
+    section_tasks = [task for task in spec["tasks"] if task["source_section_id"] == "2.1"]
+    assert len(section_tasks) == 3
+    assert {task["assigned_agent"] for task in section_tasks} == {"backend-developer"}
+    assert all(task["additional_skills"] == [] for task in section_tasks)
+
+
 def test_compile_12898_contract_plan_accepts_manual_deliverable(
     service: ExpansionService,
     sample_project,

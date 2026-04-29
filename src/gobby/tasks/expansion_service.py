@@ -14,7 +14,14 @@ from typing import Any, cast
 from jinja2 import Environment, StrictUndefined
 
 from gobby.config.app import DaemonConfig
-from gobby.plans.parser import Kind, PlanDocument, PlanParseError, PlanSection, parse_plan
+from gobby.plans.parser import (
+    Kind,
+    ManifestEntry,
+    PlanDocument,
+    PlanParseError,
+    PlanSection,
+    parse_plan,
+)
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
@@ -452,6 +459,9 @@ class ExpansionService:
         ]
         section_by_id = {section.section_id: section for section in plan_doc.sections}
         phase_by_section_id = self._contract_phase_index(plan_doc)
+        manifest_entry_by_section: dict[str, ManifestEntry] = {
+            entry.source_section: entry for entry in plan_doc.manifest_entries
+        }
 
         phases: list[dict[str, Any]] = []
         phase_by_id: dict[str, dict[str, Any]] = {}
@@ -500,6 +510,7 @@ class ExpansionService:
                 section=section,
                 phase_id=phase_id,
                 plan_id=plan_id,
+                manifest_entry=manifest_entry_by_section.get(section.section_id),
             )
             phase["task_ids"].extend([test_task["id"], impl_task["id"], ref_task["id"]])
             phase["test_intent"]["behaviors"].extend(
@@ -541,6 +552,7 @@ class ExpansionService:
         section: PlanSection,
         phase_id: str,
         plan_id: str,
+        manifest_entry: ManifestEntry | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         base_title = _clean_contract_section_title(section.title) or section.section_id
         body = _contract_section_body(plan_doc, section)
@@ -554,11 +566,16 @@ class ExpansionService:
         if acceptance_block:
             base_description = f"{base_description}\n\nAcceptance items:\n{acceptance_block}"
 
-        assigned_agent, additional_skills, description = _contract_agent_fields(
-            category=category,
-            title=base_title,
-            description=base_description,
-        )
+        if manifest_entry is not None and manifest_entry.assigned_agent:
+            assigned_agent = manifest_entry.assigned_agent
+            additional_skills: list[str] = []
+            description = base_description
+        else:
+            assigned_agent, additional_skills, description = _contract_agent_fields(
+                category=category,
+                title=base_title,
+                description=base_description,
+            )
         test_id, impl_id, ref_id = _contract_task_ids(section.section_id)
         priority = 2
 
