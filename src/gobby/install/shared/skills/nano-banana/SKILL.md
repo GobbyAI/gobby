@@ -114,6 +114,7 @@ If `get_skill_file` returns `{"success": false, ...}`, surface the error to the 
 Default: `gemini-2.5-flash-image` (~$0.04/image)
 
 For higher quality (4K, better reasoning):
+
 ```bash
 export NANOBANANA_MODEL=gemini-3-pro-image-preview
 ```

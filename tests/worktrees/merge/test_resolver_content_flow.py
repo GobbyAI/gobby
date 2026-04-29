@@ -86,9 +86,7 @@ def test_merge_result_to_dict_includes_resolved_content_by_file() -> None:
 
 @pytest.fixture
 def resolver_with_llm() -> MergeResolver:
-    res = MergeResolver()
-    res._llm_service = MagicMock()
-    return res
+    return MergeResolver(llm_service=MagicMock())
 
 
 @pytest.mark.asyncio

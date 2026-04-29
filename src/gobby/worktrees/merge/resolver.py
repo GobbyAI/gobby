@@ -200,17 +200,22 @@ class MergeResolver:
         self,
         conflict_size_threshold: int = 100,
         max_parallel_files: int = 5,
+        *,
+        llm_service: "LLMService | None" = None,
+        config: Any | None = None,
     ):
         """Initialize MergeResolver.
 
         Args:
             conflict_size_threshold: Lines of conflict above which to escalate to full-file
             max_parallel_files: Maximum files to resolve in parallel
+            llm_service: Optional LLM service for AI conflict resolution
+            config: Optional MergeResolutionConfig for provider/model selection
         """
         self.conflict_size_threshold = conflict_size_threshold
         self.max_parallel_files = max_parallel_files
-        self._llm_service: LLMService | None = None  # LLM service integration point
-        self._config: Any | None = None  # MergeResolutionConfig for provider/model
+        self._llm_service: LLMService | None = llm_service
+        self._config: Any | None = config
 
     async def resolve_file(
         self,
@@ -443,7 +448,7 @@ class MergeResolver:
         for file_rel_path in conflicted_files:
             file_path = Path(worktree_path) / file_rel_path
             try:
-                content = file_path.read_text()
+                content = await asyncio.to_thread(file_path.read_text)
                 hunks = extract_conflict_hunks(content)
                 if hunks:
                     conflicts.append({"file": str(file_rel_path), "hunks": hunks})
@@ -518,7 +523,7 @@ class MergeResolver:
                     resolved_hunks = [response.strip("\n")]
 
                 try:
-                    file_with_markers = Path(file_path).read_text()
+                    file_with_markers = await asyncio.to_thread(Path(file_path).read_text)
                 except OSError as read_err:
                     logger.error(f"Failed to read {file_path} for hunk splicing: {read_err}")
                     return {"success": False, "resolutions": []}
@@ -568,7 +573,7 @@ class MergeResolver:
             try:
                 # In a real scenario, we'd read the file content with markers here
                 # But typically the file on disk already has markers if git merge failed
-                content_with_markers = Path(file_path).read_text()
+                content_with_markers = await asyncio.to_thread(Path(file_path).read_text)
 
                 prompt = f"Resolve all merge conflicts in the following file {file_path}. Return the FULL resolved file content.\n\n"
                 prompt += content_with_markers

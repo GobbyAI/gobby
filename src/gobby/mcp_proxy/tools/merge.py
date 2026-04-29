@@ -340,8 +340,8 @@ def create_merge_registry(
                         ),
                     }
                 target = Path(wt_path) / conflict.file_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(conflict.resolved_content)
+                await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(target.write_text, conflict.resolved_content)
 
                 add_result = await asyncio.to_thread(
                     git_manager._run_git,

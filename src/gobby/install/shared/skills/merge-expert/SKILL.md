@@ -144,9 +144,10 @@ it as a recovery action before any new dispatch:
 - `state == "merging"` with conflicts → call `merge_abort`, then re-survey
   before scheduling a fresh `merge` step.
 - `state == "cherry-picking"` with conflicts → call
-  `gobby-merge:merge_resolve` on each conflict, then continue the cherry-pick
-  via `git cherry-pick --continue` (no MCP wrapper today; document as a
-  worker delegation).
+  `gobby-merge:merge_resolve` on each conflict, then **dispatch a
+  `merge-worker` to run `git cherry-pick --continue`** in the worktree (no
+  MCP wrapper today; worker delegation is required because the orchestrator
+  is read+dispatch only).
 - `state == "rebasing"` → escalate. The orchestrator does not unwind in-
   progress rebases; that is a human decision.
 

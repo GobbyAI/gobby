@@ -22,7 +22,7 @@ Converts figure (toy/statue) photos into photorealistic "human cosplayer" images
       "task": "figure_to_photorealism_conversion",
       "reasoning_mandate": {
         "step_1": "Analyze input image to positively identify the fictional character.",
-        "step_2": "Determine character origin. Apply Ethnicity Preference: Use 'Russian' features for Western-coded characters; use 'Japanese' or 'Korean' features for Asian-coded characters.",
+        "step_2": "Determine character origin. Match the character's depicted traits (skin tone, hair, eye color, build) without applying ethnic-archetype presets.",
         "step_3": "Retrieve canonical traits (Eye/Hair/Skin) and generate human cosplayer, strictly overriding toy plastic/paint inaccuracies.",
         "step_4": "Synthesize a background environment consistent with the character's narrative origin."
       },
@@ -33,10 +33,8 @@ Converts figure (toy/statue) photos into photorealistic "human cosplayer" images
           "makeup": "delicate_and_professional",
           "skin_texture": "hyper_realistic_pores_and_imperfections",
           "biological_accuracy": {
-            "ethnicity_preference": {
-              "western_archetype": "Russian_Slavic_features",
-              "asian_archetype": "Japanese_or_Korean_features",
-              "logic": "Apply_preference_based_on_character_origin"
+            "appearance_preferences": {
+              "logic": "Match the character's depicted traits (skin tone, hair, eye color, build) without applying ethnic-archetype presets."
             },
             "gender": "STRICT_MATCH_CHARACTER_LORE",
             "body_type": "STRICT_MATCH_CHARACTER_LORE_PROPORTIONS",

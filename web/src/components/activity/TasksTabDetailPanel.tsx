@@ -192,8 +192,8 @@ export function TasksTabDetailPanel({
 
       {labels.length > 0 && (
         <div className="activity-task-detail-labels">
-          {labels.map((label) => (
-            <span key={label} className="activity-task-detail-label">
+          {labels.map((label, index) => (
+            <span key={`${label}-${index}`} className="activity-task-detail-label">
               {label}
             </span>
           ))}

@@ -110,14 +110,23 @@ def register_merge_landscape_tools(
                 continue
 
             base_ref = wt.base_branch or "main"
-            rc, stdout, _ = await _git_async(
+            rc, stdout, stderr = await _git_async(
                 git_manager,
                 ["rev-list", "--count", f"{base_ref}...HEAD"],
                 cwd=wt_path,
             )
-            entry["divergence_commits"] = (
-                int(stdout.strip()) if rc == 0 and stdout.strip().isdigit() else None
-            )
+            if rc == 0 and stdout.strip().isdigit():
+                entry["divergence_commits"] = int(stdout.strip())
+            else:
+                logger.warning(
+                    "rev-list failed for worktree %s (base=%s): rc=%d stderr=%s; "
+                    "the base branch may not be fetched in this worktree.",
+                    wt_path,
+                    base_ref,
+                    rc,
+                    stderr.strip(),
+                )
+                entry["divergence_commits"] = None
 
             rc, stdout, _ = await _git_async(
                 git_manager,
@@ -436,7 +445,7 @@ def register_merge_landscape_tools(
         else:
             state = "clean"
 
-        can_resume = bool(conflicted_files) and state != "clean"
+        can_resume = bool(conflicted_files) or state != "clean"
 
         return {
             "success": True,

@@ -353,8 +353,8 @@
 }
 
 .workflows-card-type--agent {
-  background: var(--color-info-soft);
-  color: var(--color-success-foreground);
+  background: var(--color-agent-soft);
+  color: var(--color-agent);
 }
 
 .workflows-card-type--skill {

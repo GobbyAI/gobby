@@ -238,7 +238,7 @@
 /* Conflict warning */
 .rule-edit-conflict-warning {
   font-size: calc(var(--font-size-base) * 0.75);
-  color: var(--color-warning-foreground, var(--color-warning-foreground));
+  color: var(--color-warning-foreground);
   background: color-mix(in srgb, var(--color-warning, var(--color-warning-foreground)) 15%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning, var(--color-warning-foreground)) 40%, transparent);
   border-radius: 6px;

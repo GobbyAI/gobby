@@ -97,12 +97,12 @@
 
 .config-toolbar-btn.danger {
   color: var(--color-error);
-  border-color: var(--color-error)33;
+  border-color: color-mix(in srgb, var(--color-error) 20%, transparent);
 }
 
 .config-toolbar-btn.danger:hover {
-  background: var(--color-error)15;
-  border-color: var(--color-error)66;
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
 }
 
 /* Content area */
@@ -118,8 +118,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: var(--color-warning-foreground)15;
-  border-bottom: 1px solid var(--color-warning-foreground)33;
+  background: color-mix(in srgb, var(--color-warning-foreground) 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning-foreground) 20%, transparent);
   color: var(--color-warning-foreground);
   font-size: var(--text-md);
 }
@@ -371,7 +371,7 @@
 
 .config-secret-actions button.delete:hover {
   color: var(--color-error);
-  border-color: var(--color-error)66;
+  border-color: color-mix(in srgb, var(--color-error) 40%, transparent);
 }
 
 .config-secret-hint {
@@ -540,12 +540,12 @@
 }
 
 .config-prompt-badge.bundled {
-  background: var(--color-success-foreground)15;
+  background: color-mix(in srgb, var(--color-success-foreground) 8%, transparent);
   color: var(--color-success-foreground);
 }
 
 .config-prompt-badge.overridden {
-  background: var(--color-warning-foreground)15;
+  background: color-mix(in srgb, var(--color-warning-foreground) 8%, transparent);
   color: var(--color-warning-foreground);
 }
 

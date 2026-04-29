@@ -240,7 +240,7 @@
   font-size: var(--text-xs);
   color: var(--color-warning-foreground);
   font-family: var(--font-mono);
-  background: rgba(0, 0, 0, 0.3);
+  background: color-mix(in srgb, black 30%, transparent);
   padding: 4px 6px;
   border-radius: 3px;
   margin-bottom: 4px;

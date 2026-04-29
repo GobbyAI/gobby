@@ -355,12 +355,13 @@
 
 .stop-button {
   background: var(--color-error);
-  color: var(--color-error);
+  color: #fff;
   border: 1px solid var(--color-error);
 }
 
 .stop-button:hover {
   background: var(--color-error);
+  color: #fff;
 }
 
 .chat-actions {

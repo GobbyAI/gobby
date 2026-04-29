@@ -321,7 +321,7 @@
 
 .launch-agent-success-icon {
   font-size: var(--text-4xl);
-  color: var(--color-success-foreground, var(--color-success-foreground));
+  color: var(--color-success-foreground);
 }
 
 .launch-agent-success p {

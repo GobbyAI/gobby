@@ -9,7 +9,7 @@ enabled: true
 priority: 50
 surfaces: [spawn, persona]
 provider: gemini
-model: gemini-2.0-flash-exp
+model: gemini-2.5-flash
 reasoning_effort: medium
 isolation: inherit
 

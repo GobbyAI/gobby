@@ -1,44 +1,10 @@
-/* Light theme overrides */
-[data-theme="light"] .session-detail-status-active {
-  background: var(--color-success-soft);
-  color: var(--color-success-foreground);
-}
-[data-theme="light"] .session-detail-status-expired {
-  background: var(--color-error-soft);
-  color: var(--color-error);
-}
-[data-theme="light"] .session-detail-status-handoff_ready,
-[data-theme="light"] .read-only-badge {
-  background: var(--color-warning-soft);
-  color: var(--color-warning-foreground);
-}
-[data-theme="light"] .lineage-node-status-active {
-  color: var(--color-success-foreground);
-}
-[data-theme="light"] .lineage-node-status-expired {
-  color: var(--color-error);
-}
-[data-theme="light"] .session-dot.user {
-  background: var(--color-success-foreground);
-}
-[data-theme="light"] .session-dot.agent {
-  background: var(--color-agent);
-}
-[data-theme="light"] .session-dot.dead {
-  background: var(--text-muted);
-}
-[data-theme="light"] .session-source-dot.web-chat {
-  background: var(--color-success-foreground);
-}
-[data-theme="light"] .session-source-dot.claude {
-  background: var(--color-warning-foreground);
-}
-[data-theme="light"] .session-source-dot.codex {
-  background: var(--color-agent);
-}
-[data-theme="light"] .session-source-dot.droid {
-  background: var(--color-info);
-}
+/* Theme overrides removed — every token referenced here
+   (--color-success-soft, --color-error-soft, --color-warning-soft,
+    --color-agent, --color-warning-foreground, --color-success-foreground,
+    --color-error, --text-muted, --color-info)
+   is already redefined per-theme in web/src/styles/index.css, so the base
+   rules render correctly in both light and dark mode without re-stating
+   the token assignments here. */
 
 /* Read-only badge */
 .read-only-badge {

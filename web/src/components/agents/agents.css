@@ -397,7 +397,7 @@
   transition: border-color 0.15s;
 }
 .agent-def-card:hover {
-  border-color: var(--bg-tertiary);
+  border-color: var(--text-muted);
 }
 .agent-def-card--expanded {
   border-color: var(--accent);

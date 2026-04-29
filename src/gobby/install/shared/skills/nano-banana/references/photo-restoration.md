@@ -23,7 +23,7 @@ Transform blurry, vintage, or low-quality images into crystal-clear, 8k resoluti
     - **Enhancements**: "Sharpen all details, remove film grain, and correct focus. Enhance facial features to be lifelike and highly detailed, ensuring realistic skin texture and eye clarity. Fix lighting to be balanced and natural."
     - **Preservation**: "Upscale to high definition while preserving the original identity, pose, and composition."
     - **Style**: "Professional portrait photography, shot on a 85mm lens, f/1.8, photorealistic, cinematic lighting."
-    - **Constraint**: "While largely improving the quality of the photo, the restored image should remain identical to the original."
+    - **Constraint**: "While improving quality dramatically, preserve the original composition, identity, pose, and framing."
 
 3.  **Generate the Image**:
     - Use the image generation tool.

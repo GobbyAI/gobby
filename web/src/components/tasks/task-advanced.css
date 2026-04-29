@@ -927,8 +927,8 @@
 
 /* Pinned memory items */
 .task-memory-item--pinned {
-  border-color: var(--color-warning-foreground)40;
-  background: var(--color-warning-foreground)08;
+  border-color: color-mix(in srgb, var(--color-warning-foreground) 25%, transparent);
+  background: color-mix(in srgb, var(--color-warning-foreground) 3%, transparent);
 }
 
 .task-memory-pin-badge {
@@ -1074,8 +1074,8 @@
 
 /* Memory card pin & quick actions (MemoryTable) */
 .memory-card--pinned {
-  border-color: var(--color-warning-foreground)40;
-  background: var(--color-warning-foreground)08;
+  border-color: color-mix(in srgb, var(--color-warning-foreground) 25%, transparent);
+  background: color-mix(in srgb, var(--color-warning-foreground) 3%, transparent);
 }
 
 .memory-pin-indicator {

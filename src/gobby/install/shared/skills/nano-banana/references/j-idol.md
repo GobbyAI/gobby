@@ -9,8 +9,7 @@
 1.  **Analyze Reference:** Examine the character in the provided reference image to understand their identity. Determine key appearance characteristics, eye colors, and ethnicity. Identify if the reference is a real photo, anime, or game CGI.
 2.  **Generate Concept & Face Mapping:** Create a completely NEW, original photorealistic Gravure portrait in the J-Idol style. Use the reference for character identity (hair color/style, eye color, costume). For the face and ethnicity:
     *   **Real Photo:** Recreate the original face from the photo as accurately as possible.
-    *   **Anime/Game CGI (Western):** Use the face of a young, beautiful Russian woman with features identical to the character.
-    *   **Anime/Game CGI (Asian):** Use the face of a young, pretty Japanese woman with features identical to the character.
+    *   **Anime/Game CGI:** Use a young adult female face matching the character's depicted features and heritage.
     *   **Strictly DO NOT copy** the reference composition or pose.
 3.  **Define Composition & Style:**
     *   **Format:** 2:3 vertical aspect ratio, knee-up shot. Ensure **ample negative space** around the character to provide compositional breathing room and avoid a cramped feeling; the subject should be comfortably framed to make them truly pop.

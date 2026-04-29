@@ -345,7 +345,7 @@
 .pipeline-btn--approve {
   background: var(--color-success-foreground);
   border: 1px solid var(--color-success-foreground);
-  color: var(--color-success-foreground);
+  color: #fff;
 }
 
 .pipeline-btn--approve:hover:not(:disabled) {
@@ -355,7 +355,7 @@
 .pipeline-btn--reject {
   background: var(--color-error);
   border: 1px solid var(--color-error);
-  color: var(--color-error);
+  color: #fff;
 }
 
 .pipeline-btn--reject:hover:not(:disabled) {

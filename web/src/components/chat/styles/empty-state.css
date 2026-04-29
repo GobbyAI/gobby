@@ -14,13 +14,13 @@
   .mobile-chat-drawer-empty {
     padding: 0.75rem 1rem;
     color: var(--text-muted);
-    font-size: calc(var(--font-size-base) * 0.85);
+    font-size: var(--text-sm);
   }
 .command-palette-empty {
   padding: 1.5rem;
   text-align: center;
   color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-sm);
 }
 .activity-tab-empty {
   display: flex;
@@ -29,7 +29,7 @@
   justify-content: center;
   height: 100%;
   color: var(--text-muted);
-  font-size: calc(var(--font-size-base) * 0.85);
+  font-size: var(--text-sm);
   padding: 2rem;
   text-align: center;
 }

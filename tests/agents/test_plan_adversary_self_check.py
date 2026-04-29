@@ -80,7 +80,7 @@ class TestYoloFallback:
         instructions = agent.instructions or ""
         lowered = instructions.lower()
         assert "yolo" in lowered
-        assert "never" in lowered or "do not" in lowered or "do NOT" in instructions
+        assert "never" in lowered or "do not" in lowered
         assert "escalate" in lowered
 
     def test_yolo_falls_back_to_stub_emitter(self, agent: AgentDefinitionBody) -> None:
