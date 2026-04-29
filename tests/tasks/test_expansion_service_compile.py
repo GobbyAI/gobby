@@ -45,9 +45,11 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
 ) -> None:
     parent = _parent(service, sample_project)
     plan_doc = _regression_plan_doc()
+    deliverable_count = sum(1 for section in plan_doc.sections if section.kind is Kind.deliverable)
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
+    assert len(plan_doc.manifest_entries) == deliverable_count
     assert spec["contract_plan"] is True
     assert spec["deliverable_count"] == 6
     assert len(spec["tasks"]) == 18
