@@ -18,6 +18,9 @@ MIN_COMPILED_TASK_COUNT = 74
 MIN_IMPL_OR_SINGLE_TASK_COUNT = 32
 MIN_ANNOTATED_DEPENDENCY_COUNT = 24
 
+# PLAN_PATH points at the checked-in task-planning fixture produced by the
+# lifecycle-dispatch planning workflow; if it is absent in a trimmed checkout,
+# pytest.skip below keeps this slow compile-only coverage out of the run.
 PLAN_PATH = (
     Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch-rev1.md"
 )

@@ -46,6 +46,7 @@ def _register_agent_workflow(
     session_id: str = "agent-session",
     workflow_name: str = "plan-adversary-steps",
     review_tool: str = "mark_task_review_approved",
+    review_success_handlers: list[dict[str, object]] | None = None,
     review_error_handlers: list[dict[str, object]] | None = None,
 ) -> WorkflowInstanceManager:
     _create_session(db, session_id)
@@ -61,7 +62,8 @@ def _register_agent_workflow(
             {
                 "name": "review",
                 "allowed_tools": "all",
-                "on_mcp_success": [
+                "on_mcp_success": review_success_handlers
+                or [
                     {
                         "server": "gobby-tasks",
                         "tool": review_tool,
@@ -113,16 +115,21 @@ def _after_tool_event(
     *,
     session_id: str = "agent-session",
     source: SessionSource = SessionSource.CLAUDE,
+    mcp_server: str = "gobby-tasks",
     mcp_tool: str = "mark_task_review_approved",
+    tool_arguments: dict[str, object] | None = None,
     tool_output: object | None = None,
     tool_response: object | None = None,
 ) -> HookEvent:
+    tool_input: dict[str, object] = {
+        "server_name": mcp_server,
+        "tool_name": mcp_tool,
+    }
+    if tool_arguments is not None:
+        tool_input["arguments"] = tool_arguments
     data = {
         "tool_name": "mcp__gobby__call_tool",
-        "tool_input": {
-            "server_name": "gobby-tasks",
-            "tool_name": mcp_tool,
-        },
+        "tool_input": tool_input,
     }
     if tool_output is not None:
         data["tool_output"] = tool_output
@@ -338,3 +345,64 @@ class TestAgentWorkflowCompletion:
         assert result["status"] == "success"
         assert result["via"] == "workflow_terminate"
         assert result["workflow"] == "plan-adversary-steps"
+
+    @pytest.mark.asyncio
+    async def test_on_mcp_success_when_can_require_final_tool_argument(
+        self, db: LocalDatabase
+    ) -> None:
+        instance_manager = _register_agent_workflow(
+            db,
+            workflow_name="merge-orchestrator-test",
+            review_tool="verify_in_worktree",
+            review_success_handlers=[
+                {
+                    "server": "gobby-merge",
+                    "tool": "verify_in_worktree",
+                    "when": "tool_input.final is True",
+                    "action": "set_variable",
+                    "variable": "review_complete",
+                    "value": True,
+                }
+            ],
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-merge",
+                mcp_tool="verify_in_worktree",
+                tool_arguments={"final": False},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
+        assert instance is not None
+        assert instance.current_step == "review"
+        assert instance.variables["review_complete"] is False
+        assert "review_complete" not in variables
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-merge",
+                mcp_tool="verify_in_worktree",
+                tool_arguments={"final": True},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "merge-orchestrator-test")
+        assert instance is not None
+        assert instance.current_step == "terminate"
+        assert instance.variables["review_complete"] is True
+        assert variables["review_complete"] is True

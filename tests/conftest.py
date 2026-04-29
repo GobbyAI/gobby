@@ -159,7 +159,7 @@ def mock_config_with_websocket() -> MagicMock:
 
 
 @pytest.fixture
-def sample_project(project_manager: "LocalProjectManager") -> dict:
+def sample_project(project_manager: "LocalProjectManager") -> dict[str, Any]:
     """Create a sample project for testing."""
     project = project_manager.create(
         name="test-project",

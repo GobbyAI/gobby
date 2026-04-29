@@ -15,6 +15,7 @@ interface SessionsFilterDropdownProps {
   onChange: (next: SessionsFilters) => void;
   providerOptions: readonly string[];
   modelOptions: readonly string[];
+  getModelOptionsForProviders: (providers: ReadonlySet<string>) => readonly string[];
   onClose: () => void;
 }
 
@@ -57,6 +58,7 @@ export function SessionsFilterDropdown({
   onChange,
   providerOptions,
   modelOptions,
+  getModelOptionsForProviders,
   onClose,
 }: SessionsFilterDropdownProps) {
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
@@ -82,14 +84,9 @@ export function SessionsFilterDropdown({
 
   function handleProviderToggle(provider: string): void {
     const nextProviders = toggleSetMember(filters.providers, provider);
-    // When the provider set narrows, drop selected models that no longer
-    // belong to any selected provider — but the dropdown doesn't know
-    // provider-to-model mapping, so we delegate that to the caller via the
-    // narrowed modelOptions prop. Selected models that vanish from the
-    // option list still serialize but the user cannot toggle them, so we
-    // also prune them here as a guard.
+    const modelOptionsForNext = new Set(getModelOptionsForProviders(nextProviders));
     const nextModels = new Set<string>(
-      [...filters.models].filter((m) => modelOptions.includes(m)),
+      [...filters.models].filter((m) => modelOptionsForNext.has(m)),
     );
     update({ providers: nextProviders, models: nextModels });
   }
@@ -119,6 +116,7 @@ export function SessionsFilterDropdown({
         className="fixed inset-0 z-[99]"
         onClick={onClose}
         aria-hidden="true"
+        data-testid="sessions-filter-overlay"
       />
       <div
         ref={panelRef}

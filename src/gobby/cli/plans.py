@@ -144,7 +144,8 @@ def review_runs_command(planning_task_ref: str) -> None:
 
 def _open_db() -> LocalDatabase:
     db = LocalDatabase()
-    run_migrations(db)
+    if db.migrations_needed():
+        run_migrations(db)
     return db
 
 

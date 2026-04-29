@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Query
@@ -47,7 +48,8 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         db = server.services.database
         store = TokenEventStore(db)
         bucket_granularity = _coerce_granularity(granularity)
-        spent_rows = store.get_timeseries(
+        spent_rows = await asyncio.to_thread(
+            store.get_timeseries,
             hours=hours,
             project_id=project_id,
             granularity=bucket_granularity,
@@ -67,7 +69,8 @@ def register_token_timeseries_routes(router: APIRouter, server: HTTPServer) -> N
         # _bucket_expression() is safe to interpolate here because FastAPI validates
         # granularity against ^(30m|1h|1d)$ before this query reaches db.fetchall().
         bucket_expr = _bucket_expression("created_at", bucket_granularity)
-        rows = db.fetchall(
+        rows = await asyncio.to_thread(
+            db.fetchall,
             f"""
             SELECT
                 {bucket_expr} AS bucket,

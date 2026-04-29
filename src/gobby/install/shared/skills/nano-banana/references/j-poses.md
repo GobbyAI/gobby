@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 MD030 MD041 -->
+
 > You are continuing a session under the `nano-banana` skill; the setup, command syntax, and output conventions already apply.
 
 ---

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.app import deep_merge
+from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -187,173 +188,15 @@ def with_context_lengths(provider: str, models: list[dict[str, Any]]) -> list[di
 def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
     if not isinstance(models, list):
         return []
+    # _cached_models keeps cached lists consistent: if every entry already has
+    # _extract_context_length metadata, return it; otherwise enrich all entries
+    # with with_context_lengths.
     if all(isinstance(model, dict) and _extract_context_length(model) for model in models):
         return copy.deepcopy(models)
     return with_context_lengths(provider, models)
 
 
-# Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
-DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths(
-    "droid",
-    [
-        {
-            "value": "claude-opus-4-7",
-            "label": "Claude Opus 4.7",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
-                "default_effort": "high",
-            },
-        },
-        {
-            "value": "claude-opus-4-6",
-            "label": "Claude Opus 4.6",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high", "max"],
-                "default_effort": "high",
-            },
-        },
-        {
-            "value": "claude-opus-4-6-fast",
-            "label": "Claude Opus 4.6 Fast Mode",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high", "max"],
-                "default_effort": "high",
-            },
-        },
-        {
-            "value": "claude-opus-4-5-20251101",
-            "label": "Claude Opus 4.5",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high"],
-                "default_effort": "off",
-            },
-        },
-        {
-            "value": "claude-sonnet-4-6",
-            "label": "Claude Sonnet 4.6",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high", "max"],
-                "default_effort": "high",
-            },
-        },
-        {
-            "value": "claude-sonnet-4-5-20250929",
-            "label": "Claude Sonnet 4.5",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high"],
-                "default_effort": "off",
-            },
-        },
-        {
-            "value": "claude-haiku-4-5-20251001",
-            "label": "Claude Haiku 4.5",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high"],
-                "default_effort": "off",
-            },
-        },
-        {
-            "value": "gpt-5.4",
-            "label": "GPT-5.4",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "medium",
-            },
-        },
-        {
-            "value": "gpt-5.4-fast",
-            "label": "GPT-5.4 Fast Mode",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "medium",
-            },
-        },
-        {
-            "value": "gpt-5.4-mini",
-            "label": "GPT-5.4 Mini",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "high",
-            },
-        },
-        {
-            "value": "gpt-5.3-codex",
-            "label": "GPT-5.3-Codex",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "medium",
-            },
-        },
-        {
-            "value": "gpt-5.3-codex-fast",
-            "label": "GPT-5.3-Codex Fast Mode",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "medium",
-            },
-        },
-        {
-            "value": "gpt-5.2",
-            "label": "GPT-5.2",
-            "reasoning": {
-                "supported_efforts": ["off", "low", "medium", "high", "xhigh"],
-                "default_effort": "low",
-            },
-        },
-        {
-            "value": "gpt-5.2-codex",
-            "label": "GPT-5.2-Codex",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "medium",
-            },
-        },
-        {
-            "value": "gemini-3.1-pro-preview",
-            "label": "Gemini 3.1 Pro",
-            "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
-        },
-        {
-            "value": "gemini-3-flash-preview",
-            "label": "Gemini 3 Flash",
-            "reasoning": {
-                "supported_efforts": ["minimal", "low", "medium", "high"],
-                "default_effort": "high",
-            },
-        },
-        {
-            "value": "minimax-m2.7",
-            "label": "Droid Core (MiniMax M2.7)",
-            "reasoning": {"supported_efforts": ["high"], "default_effort": "high"},
-        },
-        {
-            "value": "minimax-m2.5",
-            "label": "Droid Core (MiniMax M2.5)",
-            "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
-        },
-        {
-            "value": "kimi-k2.6",
-            "label": "Droid Core (Kimi K2.6)",
-            "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
-        },
-        {
-            "value": "kimi-k2.5",
-            "label": "Droid Core (Kimi K2.5)",
-            "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
-        },
-        {"value": "glm-5.1", "label": "Droid Core (GLM-5.1)"},
-        {"value": "glm-5", "label": "Droid Core (GLM-5)"},
-        {"value": "glm-4.7", "label": "Droid Core (GLM-4.7) [Deprecated]"},
-        {
-            "value": "gpt-5.1-codex-max",
-            "label": "GPT-5.1-Codex-Max [Deprecated]",
-            "reasoning": {
-                "supported_efforts": ["low", "medium", "high", "xhigh"],
-                "default_effort": "medium",
-            },
-        },
-    ],
-)
+DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID_MODEL_CATALOG)
 
 
 def _gobby_home() -> Path:
@@ -412,16 +255,36 @@ def _merge_models(
     secondary: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
-    seen_values: set[str] = set()
+    by_value: dict[str, dict[str, Any]] = {}
 
     for item in [*primary, *secondary]:
         value = str(item.get("value") or "").strip()
-        if not value or value in seen_values:
+        if not value:
             continue
-        seen_values.add(value)
-        merged.append(copy.deepcopy(item))
+        if value in by_value:
+            existing = by_value[value]
+            for key, field_value in item.items():
+                if key not in existing:
+                    existing[key] = copy.deepcopy(field_value)
+            continue
+        entry = copy.deepcopy(item)
+        by_value[value] = entry
+        merged.append(entry)
 
     return merged
+
+
+def _configured_models_for_provider(
+    config: DaemonConfig | None, provider: str
+) -> list[dict[str, Any]]:
+    providers = getattr(config, "llm_providers", None)
+    provider_config = getattr(providers, provider, None) if providers is not None else None
+    fields_set = getattr(providers, "model_fields_set", None)
+    if fields_set is not None and provider not in fields_set:
+        return []
+    if provider_config is None or not hasattr(provider_config, "get_models_list"):
+        return []
+    return [{"value": model} for model in provider_config.get_models_list()]
 
 
 class ProviderModelCatalog:
@@ -512,11 +375,15 @@ class ProviderModelCatalog:
         """Return a single provider snapshot for routing/status."""
         entry = self._providers.get(provider, {})
         models = entry.get("models")
+        if isinstance(models, list):
+            models = _merge_models(_configured_models_for_provider(self._config, provider), models)
+        else:
+            models = _configured_models_for_provider(self._config, provider)
         return {
             "source": entry.get("source", "failed"),
             "cli_version": entry.get("cli_version"),
             "error": entry.get("error"),
-            "models": copy.deepcopy(models) if isinstance(models, list) else [],
+            "models": with_context_lengths(provider, models),
             "generated_at": entry.get("generated_at") or self._generated_at,
         }
 

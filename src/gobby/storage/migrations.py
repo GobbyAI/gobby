@@ -44,6 +44,8 @@ __all__ = [
     "_setup_skills_fts",
     "_setup_tasks_fts",
     "get_current_version",
+    "latest_known_version",
+    "migrations_needed",
     "run_migrations",
 ]
 
@@ -163,7 +165,9 @@ def _add_task_artifact_retry_cap_columns(db: LocalDatabase) -> None:
         "max_review_rounds",
     ):
         if column not in existing_columns:
-            db.execute(f"ALTER TABLE task_artifacts ADD COLUMN {column} INTEGER")
+            db.execute(  # nosec B608 - column is from the fixed allowlist above.
+                f"ALTER TABLE task_artifacts ADD COLUMN {column} INTEGER"
+            )
 
 
 def _default_task_artifact_column(column: str) -> str:
@@ -216,6 +220,14 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         "Add task artifact retry cap overrides",
         _add_task_artifact_retry_cap_columns,
     ),
+    (
+        228,
+        "Index plans by project and state",
+        """
+        CREATE INDEX IF NOT EXISTS idx_plans_project_state
+            ON plans(project_id, state)
+        """,
+    ),
 ]
 
 
@@ -226,6 +238,26 @@ def get_current_version(db: LocalDatabase) -> int:
         return row["version"] if row and row["version"] else 0
     except Exception:
         return 0
+
+
+def latest_known_version() -> int:
+    """Return the newest schema version known to this build."""
+    return max(
+        BASELINE_VERSION,
+        max((version for version, _description, _action in MIGRATIONS), default=BASELINE_VERSION),
+    )
+
+
+def migrations_needed(db: LocalDatabase) -> bool:
+    """Return whether schema migrations should run for this database.
+
+    This is intentionally a schema-version check only. Startup repair work that
+    lives in run_migrations should still be executed by normal daemon startup.
+    """
+    current_version = get_current_version(db)
+    if current_version == 0 or current_version < _MIN_MIGRATION_VERSION:
+        return True
+    return current_version < latest_known_version()
 
 
 def _apply_baseline(db: LocalDatabase) -> None:
@@ -348,16 +380,13 @@ def run_migrations(db: LocalDatabase) -> int:
         logger.error(msg)
         raise MigrationUnsupportedError(msg)
 
-    latest_known_version = max(
-        BASELINE_VERSION,
-        max((version for version, _description, _action in MIGRATIONS), default=BASELINE_VERSION),
-    )
-    if current_version > latest_known_version:
+    latest_version = latest_known_version()
+    if current_version > latest_version:
         logger.info(
             "Database version %s is newer than this build's latest known SQLite "
             "schema %s; leaving it untouched.",
             current_version,
-            latest_known_version,
+            latest_version,
         )
         return 0
 

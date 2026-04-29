@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense, Component, type ReactNode } from 'react'
 import './MemoryPage.css'
+import './MemoryPagePanels.css'
 import { useMemory, useNeo4jStatus } from '../../hooks/useMemory'
 import { useNow } from '../../hooks/useNow'
 import type { GobbyMemory } from '../../hooks/useMemory'

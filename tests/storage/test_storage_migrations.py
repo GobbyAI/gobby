@@ -10,6 +10,7 @@ from gobby.storage.migrations import (
     MigrationUnsupportedError,
     _run_migration_list,
     get_current_version,
+    migrations_needed,
     run_migrations,
 )
 from gobby.storage.sessions import SYSTEM_SESSION_ID
@@ -254,10 +255,21 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     assert "idx_memories_source_session" in _index_names(db, "memories")
     assert "idx_token_events_dedup" in _index_names(db, "token_events")
     assert "idx_cc_target" in _index_names(db, "code_calls")
+    assert "idx_plans_project_state" in _index_names(db, "plans")
 
     rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
     claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
     assert claimed_fk["on_delete"] == "SET NULL"
+
+
+def test_migrations_needed_checks_latest_schema_version(tmp_path) -> None:
+    """The lightweight schema-version check avoids running no-op CLI migrations."""
+    db_path = tmp_path / "migrations-needed.db"
+    db = LocalDatabase(db_path)
+
+    assert migrations_needed(db) is True
+    run_migrations(db)
+    assert migrations_needed(db) is False
 
     pending_index = db.fetchone(
         """

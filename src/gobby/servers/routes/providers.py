@@ -13,16 +13,6 @@ from gobby.servers.provider_models import DROID_MODEL_CATALOG, with_context_leng
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
-_SUPPORTED_WEB_CHAT_CODEX_MODELS = frozenset(
-    {
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex",
-        "gpt-5.3-codex-spark",
-        "gpt-5.2",
-    }
-)
-
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
 _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
@@ -116,14 +106,47 @@ def _friendly_label(provider: str, model: str) -> str:
     return model
 
 
+def _configured_model_entries(config: Any, provider: str) -> list[dict[str, Any]]:
+    providers = getattr(config, "llm_providers", None)
+    provider_config = getattr(providers, provider, None) if providers is not None else None
+    fields_set = getattr(providers, "model_fields_set", None)
+    if fields_set is not None and provider not in fields_set:
+        return []
+    if provider_config is None or not hasattr(provider_config, "get_models_list"):
+        return []
+    return [
+        {"value": model, "label": _friendly_label(provider, model)}
+        for model in provider_config.get_models_list()
+    ]
+
+
+def _merge_model_entries(
+    primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    by_value: dict[str, dict[str, Any]] = {}
+    for item in [*primary, *secondary]:
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        if value in by_value:
+            existing = by_value[value]
+            for key, field_value in item.items():
+                existing.setdefault(key, field_value)
+            continue
+        entry = dict(item)
+        by_value[value] = entry
+        merged.append(entry)
+    return merged
+
+
 def _build_model_catalog(
     server: HTTPServer | None = None,
 ) -> dict[str, tuple[list[dict[str, Any]], str]]:
     """Return the canonical web-chat provider model catalog.
 
-    For web chat, the backend owns the supported model picker contract.
-    We intentionally do not mirror arbitrary daemon config model strings into
-    the picker because that reintroduces stale or retired model IDs.
+    Configured model lists are prepended when present, then live or static
+    catalog entries fill in labels, reasoning, context windows, and fallbacks.
     """
     provider_model_catalog = getattr(
         getattr(server, "services", None), "provider_model_catalog", None
@@ -143,6 +166,14 @@ def _build_model_catalog(
         }
 
     config = getattr(getattr(server, "services", None), "config", None)
+    for provider, (models, source) in list(catalog.items()):
+        configured_models = _configured_model_entries(config, provider)
+        if configured_models:
+            catalog[provider] = (
+                with_context_lengths(provider, _merge_model_entries(configured_models, models)),
+                source,
+            )
+
     local_cfg = getattr(config, "local", None) if config is not None else None
     if local_cfg and getattr(local_cfg, "model", None):
         claude_entries, source = catalog["claude"]
@@ -171,16 +202,8 @@ def _provider_health(
 def _filter_models_for_web_chat(
     provider: str, models: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Keep the model picker aligned with the documented web-chat-safe surface."""
-    visible_models = [model for model in models if not bool(model.get("hidden", False))]
-    if provider != "codex":
-        return visible_models
-
-    return [
-        model
-        for model in visible_models
-        if str(model.get("value") or "").strip() in _SUPPORTED_WEB_CHAT_CODEX_MODELS
-    ]
+    """Drop hidden models from the web-chat picker."""
+    return [model for model in models if not bool(model.get("hidden", False))]
 
 
 async def _probe_providers() -> list[tuple[str, str | None]]:

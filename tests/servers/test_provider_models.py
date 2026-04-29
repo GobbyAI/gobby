@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.config.llm_providers import LLMProviderConfig, LLMProvidersConfig
 from gobby.servers.provider_models import ProviderModelCatalog
 
 pytestmark = pytest.mark.unit
@@ -211,7 +213,12 @@ class TestProviderModelCatalog:
                     {"value": "glm-5", "label": "Droid Core (GLM-5)", "context_length": 128_000}
                 ]
             },
-            "codex": {"models": [{"value": "gpt-5.4", "context_length": 333_000}]},
+            "codex": {
+                "models": [
+                    {"value": "gpt-5.5", "context_length": 321_000},
+                    {"value": "gpt-5.4", "context_length": 333_000},
+                ]
+            },
         }
 
         assert catalog.get_context_window("claude", "sonnet") == 200_000
@@ -219,9 +226,44 @@ class TestProviderModelCatalog:
         assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
         assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
         assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
+        assert catalog.get_context_window("droid", "gpt-5.5") == 321_000
         assert catalog.get_context_window("droid", "gpt-5.4") == 333_000
         assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
         assert catalog.get_context_window("droid", "custom/byok-model") is None
+
+    def test_configured_models_precede_live_snapshot_and_keep_metadata(
+        self, temp_dir: Path
+    ) -> None:
+        config = DaemonConfig(
+            llm_providers=LLMProvidersConfig(
+                codex=LLMProviderConfig(models="gpt-5.5,gpt-5.4"),
+            )
+        )
+        catalog = ProviderModelCatalog(
+            config=config,
+            cache_path=temp_dir / "provider-model-catalog.json",
+        )
+        catalog._providers = {
+            "codex": {
+                "source": "live",
+                "models": [
+                    {
+                        "value": "gpt-5.5",
+                        "label": "GPT-5.5 Live",
+                        "context_length": 321_000,
+                    },
+                    {"value": "gpt-5.4", "label": "GPT-5.4 Live", "context_length": 200_000},
+                    {"value": "gpt-5.2", "label": "GPT-5.2 Live", "context_length": 200_000},
+                ],
+            },
+        }
+
+        snapshot = catalog.get_provider_snapshot("codex")
+        models = snapshot["models"]
+
+        assert [model["value"] for model in models] == ["gpt-5.5", "gpt-5.4", "gpt-5.2"]
+        assert models[0]["label"] == "GPT-5.5 Live"
+        assert models[0]["context_length"] == 321_000
 
     @pytest.mark.asyncio
     async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:

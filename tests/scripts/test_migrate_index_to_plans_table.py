@@ -19,7 +19,7 @@ def test_migrates_active_and_completed_plans_then_deletes_index(temp_db, tmp_pat
     _write_project(tmp_path, project_id)
     active = _write_plan(tmp_path / ".gobby" / "plans", "task-100-active")
     completed = _write_plan(tmp_path / ".gobby" / "plans" / "completed", "task-101-done")
-    index = tmp_path / ".gobby" / "plans" / ("index" + ".yaml")
+    index = tmp_path / ".gobby" / "plans" / "index.yaml"
     index.write_text(
         yaml.safe_dump(
             {
@@ -58,7 +58,7 @@ def test_keep_index_preserves_source_file(temp_db, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     _write_project(tmp_path, project_id)
     _write_plan(tmp_path / ".gobby" / "plans", "task-100-active")
-    index = tmp_path / ".gobby" / "plans" / ("index" + ".yaml")
+    index = tmp_path / ".gobby" / "plans" / "index.yaml"
     index.write_text("entries: []\n", encoding="utf-8")
 
     migrate(tmp_path, temp_db, delete_index=False)

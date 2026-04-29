@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.database import DatabaseProtocol
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.projects import LocalProjectManager
 
 
-def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> InternalToolRegistry:
+def create_plan_registry(
+    db: DatabaseProtocol, *, default_project_id: str | None = None
+) -> InternalToolRegistry:
     """Create the gobby-plans registry."""
 
     registry = InternalToolRegistry(
@@ -69,7 +72,7 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except ValueError as exc:
-            return {"ok": False, "error": "invalid_ref", "message": str(exc)}
+            return _known_error_payload(exc, "get_plan_failed")
         return {"ok": True, "plan": record.to_dict()}
 
     registry.register(
@@ -220,7 +223,9 @@ def create_plan_registry(db: Any, *, default_project_id: str | None = None) -> I
     return registry
 
 
-def _resolve_project_id(db: Any, project: str | None, default_project_id: str | None) -> str:
+def _resolve_project_id(
+    db: DatabaseProtocol, project: str | None, default_project_id: str | None
+) -> str:
     project_id = _optional_project_id(db, project, default_project_id)
     if project_id is None:
         raise ValueError("project is required")
@@ -228,7 +233,7 @@ def _resolve_project_id(db: Any, project: str | None, default_project_id: str | 
 
 
 def _optional_project_id(
-    db: Any,
+    db: DatabaseProtocol,
     project: str | None,
     default_project_id: str | None,
 ) -> str | None:

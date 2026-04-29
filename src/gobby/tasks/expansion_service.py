@@ -726,45 +726,6 @@ class ExpansionService:
         }
         return test_task, impl_task, ref_task
 
-    def _contract_section_tasks(
-        self,
-        *,
-        plan_doc: PlanDocument,
-        section: PlanSection,
-        phase_id: str,
-        plan_id: str,
-        manifest_entry: ManifestEntry | None = None,
-    ) -> tuple[dict[str, Any], ...]:
-        fallback_title = _clean_contract_section_title(section.title) or section.section_id
-        fallback_category = _contract_section_category(section)
-        fallback_description = _contract_section_body(plan_doc, section)
-        fallback_agent, _fallback_skills, _fallback_description = _contract_agent_fields(
-            category=fallback_category,
-            title=fallback_title,
-            description=fallback_description,
-        )
-        entry = manifest_entry or ManifestEntry(
-            title=fallback_title,
-            category=fallback_category,
-            task_type="task",
-            depends_on=tuple(_contract_section_depends(section)),
-            validation_criteria=(
-                "Implementation satisfies acceptance artifacts: "
-                f"{_contract_artifact_summary(section)}."
-            ),
-            labels=tuple(_contract_covers_labels(plan_id, section)),
-            assigned_agent=fallback_agent,
-            tdd=True,
-            source_section=section.section_id,
-            source_line=section.source_span[0] + 1,
-        )
-        return self._contract_entry_tasks(
-            plan_doc=plan_doc,
-            entry=entry,
-            section=section,
-            phase_id=phase_id,
-        )
-
     def _contract_phase_index(self, plan_doc: PlanDocument) -> dict[str, PlanSection]:
         section_by_id = {section.section_id: section for section in plan_doc.sections}
         phase_by_section_id: dict[str, PlanSection] = {}

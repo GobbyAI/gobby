@@ -11,6 +11,7 @@ from gobby.plans.bootstrap_ledger import (
     verify_bootstrap_ledger,
 )
 from gobby.plans.coverage_manifest import coverage_manifest_path
+from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 
@@ -107,7 +108,9 @@ def _seed_plan_task_tree(
     return root, leaf, project.id
 
 
-def _write_plan_row(temp_db, *, project_id: str, root_ref: str, plan_id: str) -> None:
+def _write_plan_row(
+    temp_db: LocalDatabase, *, project_id: str, root_ref: str, plan_id: str
+) -> None:
     temp_db.execute(
         """
         INSERT INTO plans (

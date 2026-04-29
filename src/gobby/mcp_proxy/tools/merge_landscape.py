@@ -394,7 +394,9 @@ def register_merge_landscape_tools(
         worktree_id: str,
         command: str,
         timeout: int = 300,
+        final: bool = False,
     ) -> dict[str, Any]:
+        _ = final
         if not command.strip():
             return {"success": False, "error": "command is required"}
         try:

@@ -347,6 +347,7 @@ CREATE TABLE plans (
 );
 CREATE INDEX idx_plans_root_task ON plans(root_task_ref);
 CREATE INDEX idx_plans_state ON plans(state);
+CREATE INDEX idx_plans_project_state ON plans(project_id, state);
 
 CREATE TABLE task_dependencies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

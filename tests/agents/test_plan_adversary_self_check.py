@@ -17,7 +17,7 @@ deadlock on a not-yet-written manifest (§2.21.3).
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from importlib.resources import files
 
 import pytest
 import yaml
@@ -26,15 +26,14 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-ADVERSARY_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+ADVERSARY_PATH = files("gobby").joinpath(
+    "install/shared/workflows/agents/plan-adversary.yaml"
 )
 
 
 @pytest.fixture(scope="module")
 def agent() -> AgentDefinitionBody:
-    with ADVERSARY_PATH.open() as f:
+    with ADVERSARY_PATH.open(encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return AgentDefinitionBody.model_validate(data)
 
@@ -79,9 +78,9 @@ class TestYoloFallback:
     def test_yolo_never_escalates_after_cap(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
         lowered = instructions.lower()
-        assert "yolo" in lowered
-        assert "never" in lowered or "do not" in lowered
-        assert "escalate" in lowered
+        # Contract: "- yolo: do NOT call `escalate_task` (top-level yolo invariant"
+        expected = "yolo: do not call `escalate_task` (top-level yolo invariant"
+        assert expected in lowered
 
     def test_yolo_falls_back_to_stub_emitter(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""

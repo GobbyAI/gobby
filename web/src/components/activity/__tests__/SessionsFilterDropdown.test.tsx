@@ -8,15 +8,20 @@ function renderDropdown(overrides: Partial<{
   filters: SessionsFilters;
   providerOptions: readonly string[];
   modelOptions: readonly string[];
+  getModelOptionsForProviders: (providers: ReadonlySet<string>) => readonly string[];
 }> = {}) {
   const onChange = vi.fn();
   const onClose = vi.fn();
+  const modelOptions = overrides.modelOptions ?? ["claude-opus-4-7", "gpt-5"];
   const view = render(
     <SessionsFilterDropdown
       filters={overrides.filters ?? defaultSessionsFilters()}
       onChange={onChange}
       providerOptions={overrides.providerOptions ?? ["claude", "codex", "gemini"]}
-      modelOptions={overrides.modelOptions ?? ["claude-opus-4-7", "gpt-5"]}
+      modelOptions={modelOptions}
+      getModelOptionsForProviders={
+        overrides.getModelOptionsForProviders ?? (() => modelOptions)
+      }
       onClose={onClose}
     />,
   );
@@ -49,6 +54,7 @@ describe("SessionsFilterDropdown", () => {
     const { onChange } = renderDropdown({
       filters,
       modelOptions: ["gpt-5"],
+      getModelOptionsForProviders: () => ["gpt-5"],
     });
 
     fireEvent.click(screen.getByLabelText("codex"));
@@ -57,6 +63,27 @@ describe("SessionsFilterDropdown", () => {
     expect([...next.providers]).toEqual(["codex"]);
     // phantom-model is not in modelOptions and is dropped
     expect([...next.models].sort()).toEqual(["gpt-5"]);
+  });
+
+  it("toggling a Provider prunes models using the next provider selection", () => {
+    const filters = defaultSessionsFilters();
+    filters.providers.add("claude");
+    filters.providers.add("codex");
+    filters.models.add("sonnet");
+    filters.models.add("gpt-5.5");
+    const { onChange } = renderDropdown({
+      filters,
+      providerOptions: ["claude", "codex"],
+      modelOptions: ["sonnet", "gpt-5.5"],
+      getModelOptionsForProviders: (providers) =>
+        providers.has("claude") ? ["sonnet", "gpt-5.5"] : ["gpt-5.5"],
+    });
+
+    fireEvent.click(screen.getByLabelText("claude"));
+
+    const next: SessionsFilters = onChange.mock.calls[0][0];
+    expect([...next.providers]).toEqual(["codex"]);
+    expect([...next.models]).toEqual(["gpt-5.5"]);
   });
 
   it("typing a session ref bound emits onChange with the parsed integer", () => {
@@ -135,8 +162,8 @@ describe("SessionsFilterDropdown", () => {
   });
 
   it("clicking the outside overlay closes the dropdown", () => {
-    const { onClose, container } = renderDropdown();
-    const overlay = container.querySelector('[aria-hidden="true"]')!;
+    const { onClose } = renderDropdown();
+    const overlay = screen.getByTestId("sessions-filter-overlay");
     fireEvent.click(overlay);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

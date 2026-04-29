@@ -41,7 +41,8 @@ instructions: |
     merge_subset | abort.
   - Execute: for each step, dispatch merge-worker via spawn_agent (or
     dispatch_batch for parallel-safe steps), wait, then run
-    verify_in_worktree as the gate. Append a lifecycle event per step.
+    verify_in_worktree as the gate. Use final=true only on the last
+    campaign-level verification. Append a lifecycle event per step.
   - Recover orphaned merge state with merge_abort or merge_resolve before
     scheduling fresh work in the same worktree.
   - Report: write the campaign JSON into task_artifacts.merge_campaign_report
@@ -180,9 +181,10 @@ steps:
     status_message: |
       For each step in merge_plan: pre-flight inspect_merge_state, dispatch
       merge-worker via spawn_agent (or dispatch_batch for parallel-safe
-      steps), wait, then run verify_in_worktree as the gate. Recover
-      orphaned state via merge_abort before fresh dispatches. Append a
-      task_lifecycle_event per step.
+      steps), wait, then run verify_in_worktree as the gate. Use final=true
+      only on the last campaign-level verification, then recover orphaned
+      state via merge_abort before fresh dispatches. Append a task_lifecycle_event
+      per step.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
@@ -194,6 +196,7 @@ steps:
     on_mcp_success:
       - server: gobby-merge
         tool: verify_in_worktree
+        when: "tool_input.final is True"
         action: set_variable
         variable: execution_complete
         value: true
