@@ -1,5 +1,7 @@
 # Lifecycle-State-Driven Agent Dispatch
 
+> **Plan ID:** task-12725-lifecycle-dispatch-rev1
+
 ## Overview
 `kind: framing`
 
@@ -2869,3 +2871,499 @@ CLI tick-kick is a single explicit call to the state-dispatcher handler; the per
 - **Additional built-in agents** (`docs-writer`, `migration-runner`, `security-reviewer`, etc.): follow-up work driven by audits of `## Agent Selection` markers — when `backend-developer` default shows up repeatedly for a specific kind of task, that's the signal to author a specialized agent. Expander prompt tuning follows the same audit feedback loop.
 - **`auto` profile with LLM-assisted classification**: current plan ships a rule-based `auto` (plan-file → review; leaf → quick; epic with plan → full; epic without plan → error). LLM-based classification is a follow-up if rule-based proves too coarse.
 - **Daemon-side `mark_task_review_rejected` formatting fix**: the rejection-append code in `src/gobby/storage/tasks/_transitions.py` emits a duplicate `## Adversary Findings — Round N` heading when `rejection_notes` already starts with that heading. Cosmetic only; filed as its own task. Not part of this lifecycle epic.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Extend task CRUD for new fields and helpers
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/storage/tasks/_crud.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.3
+  - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.4
+  - covers:task-12725-lifecycle-dispatch-rev1:1.3:1.3.5
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.3'
+- title: '`is_blocked_by_deps` predicate'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: src/gobby/storage/tasks/_dependencies.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.3a:1.3a.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: 1.3a
+- title: Dispatcher mutex
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: src/gobby/dispatch/mutex.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.4:1.4.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.4:1.4.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.4:1.4.3
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.4'
+- title: Register mutex-clearing event handlers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: src/gobby/hooks/event_handlers/_task.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.5:1.5.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.5'
+- title: Dispatch action wrappers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: src/gobby/dispatch/actions.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.6:1.6.1
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.6'
+- title: Prompt-builder registry
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.6'
+  validation_criteria: src/gobby/dispatch/prompts.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.6a:1.6a.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.6a:1.6a.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.6a:1.6a.3
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: 1.6a
+- title: Decision rules for all stages
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.6'
+  - 1.6a
+  validation_criteria: src/gobby/dispatch/rules.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.3
+  - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.4
+  - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.5
+  - covers:task-12725-lifecycle-dispatch-rev1:1.7:1.7.6
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.7'
+- title: Lifecycle transitions in review tools
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/storage/tasks/_transitions.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.3
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.4
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.5
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.6
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.6a
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.6b
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.6c
+  - covers:task-12725-lifecycle-dispatch-rev1:1.8:1.8.7
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.8'
+- title: Dispatcher scanner
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '1.6'
+  - '1.7'
+  - '1.8'
+  - 2.8b
+  validation_criteria: src/gobby/dispatch/dispatcher.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.5
+  - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.3
+  - covers:task-12725-lifecycle-dispatch-rev1:1.9:1.9.4
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.9'
+- title: Cron handler registration
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.9'
+  validation_criteria: src/gobby/dispatch/cron_registration.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.1
+  - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.5
+  - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.2
+  - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.4
+  - covers:task-12725-lifecycle-dispatch-rev1:1.10:1.10.3
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '1.10'
+- title: 'Expansion: Agent Selection + profile-appropriate subtasks'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/tasks/expansion_service.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8:2.8.4
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.8'
+- title: Expose `start_expansion_run_impl` for in-process dispatcher use
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/mcp_proxy/tools/tasks/_expansion.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8b:2.8b.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8b:2.8b.2
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: 2.8b
+- title: Split `expansion_service.py` monolith
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '2.8'
+  - 2.8b
+  validation_criteria: src/gobby/tasks/expansion/service.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.8c:2.8c.4
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: 2.8c
+- title: Expansion-QA transition contract
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.8'
+  validation_criteria: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.9:2.9.1
+  assigned_agent: default
+  tdd: false
+  source_section: '2.9'
+- title: "Merge agent \u2014 lifecycle integration"
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.8'
+  validation_criteria: src/gobby/install/shared/workflows/agents/merge.yaml
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.10:2.10.4
+  assigned_agent: default
+  tdd: false
+  source_section: '2.10'
+- title: qa-reviewer agent (read-only)
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.7'
+  - '1.8'
+  validation_criteria: src/gobby/install/shared/workflows/agents/qa-reviewer.yaml
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.11:2.11.5
+  assigned_agent: default
+  tdd: false
+  source_section: '2.11'
+- title: holistic-reviewer three-outcome contract
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.7'
+  - '1.8'
+  - '2.11'
+  validation_criteria: src/gobby/install/shared/workflows/agents/holistic-reviewer.yaml
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.12:2.12.5
+  assigned_agent: default
+  tdd: false
+  source_section: '2.12'
+- title: expansion-qa as a multi-mode verification harness
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.9'
+  validation_criteria: src/gobby/install/shared/workflows/agents/expansion-qa.yaml
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.13:2.13.5
+  assigned_agent: default
+  tdd: false
+  source_section: '2.13'
+- title: Hook/rule scoping for autonomous build agents
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.11'
+  - '2.12'
+  validation_criteria: src/gobby/agents/roles.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14a:2.14a.5
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: 2.14a
+- title: Deprecation pattern for retired agents and pipelines
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/install/shared/workflows/agents/deprecated/.gitkeep
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.5
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.6
+  - covers:task-12725-lifecycle-dispatch-rev1:2.14b:2.14b.7
+  assigned_agent: default
+  tdd: false
+  source_section: 2.14b
+- title: DB-backed plan state + `gobby-plans` MCP/CLI
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/storage/migrations/<next_version>_add_plans_table.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.5
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.6
+  - covers:task-12725-lifecycle-dispatch-rev1:2.15:2.15.7
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.15'
+- title: Retire `.grandfathered`, `.grandfathered-task-state.yaml`, `.legacy-classification.yaml`
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.15'
+  validation_criteria: files no longer exist in the repo (`git ls-files` returns no
+    matches)
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.5
+  - covers:task-12725-lifecycle-dispatch-rev1:2.16:2.16.6
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.16'
+- title: System-managed coverage manifest lifecycle
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.15'
+  validation_criteria: "idempotent \u2014 existing manifest is overwritten"
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.17:2.17.5
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.17'
+- title: Auto-move plan files on epic terminal state
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.7'
+  - '2.15'
+  validation_criteria: "`tests/dispatch/test_archive_plan_on_merge.py` (cross-references\
+    \ \xA71.7.5)"
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.18:2.18.4
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.18'
+- title: Configurable retry caps via BuildConfig + `gobby build` CLI
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.7'
+  - '3.2'
+  validation_criteria: src/gobby/config/build.py`, `src/gobby/build/service.py`, `src/gobby/cli/build.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.5
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.6
+  - covers:task-12725-lifecycle-dispatch-rev1:2.19:2.19.7
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '2.19'
+- title: 'Plan-Coverage Contract: `## Task Manifest` section requirement'
+  category: docs
+  task_type: feature
+  depends_on: []
+  validation_criteria: docs/contracts/plan-coverage.md
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3a
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3b
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3c
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.3d
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21:2.21.4
+  assigned_agent: default
+  tdd: false
+  source_section: '2.21'
+- title: Manifest-emitter library
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.21'
+  validation_criteria: src/gobby/plans/manifest_emitter.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.5
+  - covers:task-12725-lifecycle-dispatch-rev1:2.21a:2.21a.6
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: 2.21a
+- title: 'plan-adversary agent: manifest emission on approval'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.21'
+  - 2.21a
+  validation_criteria: src/gobby/install/shared/workflows/agents/plan-adversary.yaml
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.22:2.22.5
+  assigned_agent: default
+  tdd: false
+  source_section: '2.22'
+- title: 'planner agent / plan-draft skill: fresh context + tighter mandate'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.21'
+  - '2.22'
+  validation_criteria: src/gobby/install/shared/skills/plan-draft/SKILL.md
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.23:2.23.5
+  assigned_agent: default
+  tdd: false
+  source_section: '2.23'
+- title: '`/gobby plan` skill: end-to-end coordinator flow'
+  category: config
+  task_type: feature
+  depends_on:
+  - '2.21'
+  - '2.22'
+  - '2.23'
+  validation_criteria: src/gobby/install/shared/skills/plan/SKILL.md
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.5
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.6
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.7
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.8
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.9
+  - covers:task-12725-lifecycle-dispatch-rev1:2.24:2.24.10
+  assigned_agent: default
+  tdd: false
+  source_section: '2.24'
+- title: 'Re-expansion of #12725 as Epic 1 end-to-end validation'
+  category: manual
+  task_type: feature
+  depends_on:
+  - '2.21'
+  - '2.22'
+  validation_criteria: the run's `compiled_summary` reports correct phase_count, task_count,
+    and dependency_count; logs name `deterministic` as the path used
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.1
+  - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.2
+  - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.3
+  - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.4
+  - covers:task-12725-lifecycle-dispatch-rev1:2.20:2.20.5
+  assigned_agent: default
+  tdd: false
+  source_section: '2.20'
+- title: "Build service \u2014 CLI + MCP + HTTP shared core"
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: src/gobby/build/service.py
+  labels:
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.1
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.2
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.3
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.4
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.5
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.6
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.7
+  - covers:task-12725-lifecycle-dispatch-rev1:3.2:3.2.8
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: '3.2'
+```
