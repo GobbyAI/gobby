@@ -335,6 +335,10 @@ def _contract_task_ids(section_id: str) -> tuple[str, str, str]:
     return f"{section_id}::test", f"{section_id}::impl", f"{section_id}::ref"
 
 
+def _contract_single_task_id(section_id: str) -> str:
+    return f"{section_id}::single"
+
+
 def _contract_deferral_record(section: PlanSection) -> dict[str, Any] | None:
     if section.deferral is None:
         return None
@@ -454,14 +458,27 @@ class ExpansionService:
     def compile_plan_to_spec(self, plan_doc: PlanDocument, task: Task) -> dict[str, Any]:
         """Compile a Plan-Coverage Contract document into a compiled expansion spec."""
         plan_id = _contract_plan_id(plan_doc)
-        deliverables = [
-            section for section in plan_doc.sections if section.kind is Kind.deliverable
-        ]
         section_by_id = {section.section_id: section for section in plan_doc.sections}
         phase_by_section_id = self._contract_phase_index(plan_doc)
         manifest_entry_by_section: dict[str, ManifestEntry] = {
             entry.source_section: entry for entry in plan_doc.manifest_entries
         }
+        for entry in plan_doc.manifest_entries:
+            section = section_by_id.get(entry.source_section)
+            if section is None or section.kind is not Kind.deliverable:
+                raise ValueError(
+                    f"manifest entry source_section={entry.source_section!r} "
+                    "does not resolve to a kind: deliverable section"
+                )
+        deliverable_ids = {
+            section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable
+        }
+        orphan_deliverables = sorted(deliverable_ids - set(manifest_entry_by_section))
+        if orphan_deliverables:
+            raise ValueError(
+                "kind: deliverable sections without manifest entries: "
+                f"{', '.join(orphan_deliverables)}"
+            )
 
         phases: list[dict[str, Any]] = []
         phase_by_id: dict[str, dict[str, Any]] = {}
@@ -475,10 +492,11 @@ class ExpansionService:
                 if record is not None:
                     deferrals.append(record)
                 continue
-            if section.kind is not Kind.deliverable:
-                continue
 
-            phase_section = phase_by_section_id.get(section.section_id)
+        for entry in plan_doc.manifest_entries:
+            section = section_by_id[entry.source_section]
+
+            phase_section = phase_by_section_id.get(entry.source_section)
             phase_id = _contract_phase_spec_id(
                 phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
             )
@@ -505,31 +523,42 @@ class ExpansionService:
                 phases.append(phase)
                 phase_by_id[phase_id] = phase
 
-            test_task, impl_task, ref_task = self._contract_section_tasks(
+            emitted_tasks = self._contract_entry_tasks(
                 plan_doc=plan_doc,
+                entry=entry,
                 section=section,
                 phase_id=phase_id,
-                plan_id=plan_id,
-                manifest_entry=manifest_entry_by_section.get(section.section_id),
             )
-            phase["task_ids"].extend([test_task["id"], impl_task["id"], ref_task["id"]])
+            phase["task_ids"].extend(task_item["id"] for task_item in emitted_tasks)
             phase["test_intent"]["behaviors"].extend(
                 item.prose for item in section.acceptance_items
             )
             phase["test_intent"]["suggested_test_files"] = sorted(
                 set(phase["test_intent"]["suggested_test_files"])
-                | set(test_task.get("affected_files") or [])
+                | set(emitted_tasks[0].get("affected_files") or [])
             )
-            tasks.extend([test_task, impl_task, ref_task])
+            tasks.extend(emitted_tasks)
 
-            for dependency in _contract_section_depends(section):
+            caller_id = emitted_tasks[0]["id"]
+            for dependency in entry.depends_on:
                 blocker = section_by_id.get(dependency)
-                if blocker is None or blocker.kind is not Kind.deliverable:
-                    continue
-                _blocker_test, _blocker_impl, blocker_ref = _contract_task_ids(dependency)
-                dependencies.append({"task_id": test_task["id"], "depends_on": blocker_ref})
-            dependencies.append({"task_id": impl_task["id"], "depends_on": test_task["id"]})
-            dependencies.append({"task_id": ref_task["id"], "depends_on": impl_task["id"]})
+                blocker_entry = manifest_entry_by_section.get(dependency)
+                if blocker is None or blocker.kind is not Kind.deliverable or blocker_entry is None:
+                    raise ValueError(
+                        f"manifest entry source_section={entry.source_section!r} depends on "
+                        f"{dependency!r}, which has no manifest entry"
+                    )
+                if blocker_entry.tdd:
+                    _blocker_test, _blocker_impl, blocker_terminal_id = _contract_task_ids(
+                        dependency
+                    )
+                else:
+                    blocker_terminal_id = _contract_single_task_id(dependency)
+                dependencies.append({"task_id": caller_id, "depends_on": blocker_terminal_id})
+            if entry.tdd:
+                test_task, impl_task, ref_task = emitted_tasks
+                dependencies.append({"task_id": impl_task["id"], "depends_on": test_task["id"]})
+                dependencies.append({"task_id": ref_task["id"], "depends_on": impl_task["id"]})
 
         return {
             "version": 1,
@@ -542,54 +571,61 @@ class ExpansionService:
             "deferrals": deferrals,
             "contract_plan": True,
             "plan_id": plan_id,
-            "deliverable_count": len(deliverables),
+            "deliverable_count": len(plan_doc.manifest_entries),
         }
 
-    def _contract_section_tasks(
+    def _contract_entry_tasks(
         self,
         *,
         plan_doc: PlanDocument,
+        entry: ManifestEntry,
         section: PlanSection,
         phase_id: str,
-        plan_id: str,
-        manifest_entry: ManifestEntry | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        base_title = _clean_contract_section_title(section.title) or section.section_id
+    ) -> tuple[dict[str, Any], ...]:
+        base_title = entry.title
         body = _contract_section_body(plan_doc, section)
-        category = _contract_section_category(section)
-        labels = _contract_covers_labels(plan_id, section)
+        category = entry.category
+        labels = list(entry.labels)
         affected_files = _contract_affected_files(section)
         acceptance_lines = _contract_acceptance_lines(section)
         acceptance_block = "\n".join(acceptance_lines)
-        artifact_summary = _contract_artifact_summary(section)
         base_description = f"Plan section `{section.section_id}`.\n\n{body}".strip()
         if acceptance_block:
             base_description = f"{base_description}\n\nAcceptance items:\n{acceptance_block}"
-
-        if manifest_entry is not None and manifest_entry.assigned_agent:
-            assigned_agent = manifest_entry.assigned_agent
-            additional_skills: list[str] = []
-            description = base_description
-        else:
-            assigned_agent, additional_skills, description = _contract_agent_fields(
-                category=category,
-                title=base_title,
-                description=base_description,
-            )
-        test_id, impl_id, ref_id = _contract_task_ids(section.section_id)
+        assigned_agent = entry.assigned_agent
+        additional_skills: list[str] = []
+        description = base_description
         priority = 2
 
+        if not entry.tdd:
+            return (
+                {
+                    "id": _contract_single_task_id(section.section_id),
+                    "phase_id": phase_id,
+                    "title": base_title,
+                    "description": description,
+                    "priority": priority,
+                    "task_type": entry.task_type,
+                    "category": category,
+                    "validation": entry.validation_criteria,
+                    "affected_files": affected_files,
+                    "labels": labels,
+                    "assigned_agent": assigned_agent,
+                    "additional_skills": additional_skills,
+                    "source_section_id": section.section_id,
+                },
+            )
+
+        test_id, impl_id, ref_id = _contract_task_ids(section.section_id)
         test_task = {
             "id": test_id,
             "phase_id": phase_id,
             "title": f"[TEST] {base_title}",
             "description": description,
             "priority": priority,
-            "task_type": "task",
+            "task_type": entry.task_type,
             "category": "test",
-            "validation": (
-                f"Failing tests cover the plan acceptance artifacts: {artifact_summary}."
-            ),
+            "validation": entry.validation_criteria,
             "affected_files": _find_test_files(affected_files),
             "labels": labels,
             "assigned_agent": assigned_agent,
@@ -602,9 +638,9 @@ class ExpansionService:
             "title": f"[IMPL] {base_title}",
             "description": description,
             "priority": priority,
-            "task_type": "task",
+            "task_type": entry.task_type,
             "category": category,
-            "validation": f"Implementation satisfies acceptance artifacts: {artifact_summary}.",
+            "validation": entry.validation_criteria,
             "affected_files": affected_files,
             "labels": labels,
             "assigned_agent": assigned_agent,
@@ -617,12 +653,9 @@ class ExpansionService:
             "title": f"[REF] {base_title}",
             "description": description,
             "priority": priority,
-            "task_type": "task",
+            "task_type": entry.task_type,
             "category": "refactor",
-            "validation": (
-                "Refactoring keeps tests green while preserving acceptance artifacts: "
-                f"{artifact_summary}."
-            ),
+            "validation": entry.validation_criteria,
             "affected_files": affected_files,
             "labels": labels,
             "assigned_agent": assigned_agent,
@@ -630,6 +663,45 @@ class ExpansionService:
             "source_section_id": section.section_id,
         }
         return test_task, impl_task, ref_task
+
+    def _contract_section_tasks(
+        self,
+        *,
+        plan_doc: PlanDocument,
+        section: PlanSection,
+        phase_id: str,
+        plan_id: str,
+        manifest_entry: ManifestEntry | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        fallback_title = _clean_contract_section_title(section.title) or section.section_id
+        fallback_category = _contract_section_category(section)
+        fallback_description = _contract_section_body(plan_doc, section)
+        fallback_agent, _fallback_skills, _fallback_description = _contract_agent_fields(
+            category=fallback_category,
+            title=fallback_title,
+            description=fallback_description,
+        )
+        entry = manifest_entry or ManifestEntry(
+            title=fallback_title,
+            category=fallback_category,
+            task_type="task",
+            depends_on=tuple(_contract_section_depends(section)),
+            validation_criteria=(
+                "Implementation satisfies acceptance artifacts: "
+                f"{_contract_artifact_summary(section)}."
+            ),
+            labels=tuple(_contract_covers_labels(plan_id, section)),
+            assigned_agent=fallback_agent,
+            tdd=True,
+            source_section=section.section_id,
+            source_line=section.source_span[0] + 1,
+        )
+        return self._contract_entry_tasks(
+            plan_doc=plan_doc,
+            entry=entry,
+            section=section,
+            phase_id=phase_id,
+        )
 
     def _contract_phase_index(self, plan_doc: PlanDocument) -> dict[str, PlanSection]:
         section_by_id = {section.section_id: section for section in plan_doc.sections}
@@ -655,7 +727,7 @@ class ExpansionService:
             if repo_path is not None:
                 plan_path = repo_path / plan_path
         try:
-            return parse_plan(plan_path, parse_mode="draft")
+            return parse_plan(plan_path, parse_mode="expansion")
         except (OSError, PlanParseError) as exc:
             self.run_manager.append_log(
                 run.id,

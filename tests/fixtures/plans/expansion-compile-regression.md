@@ -1,3 +1,5 @@
+> **Plan ID:** expansion-compile-regression
+
 ## P1 Backend Foundation
 `kind: framing`
 
@@ -57,3 +59,78 @@ Add an end-to-end regression around the full dispatch cycle.
 
 **Acceptance:**
 - 3.1.1 - The dispatch cycle is covered end to end. test: `tests/e2e/test_dispatcher_cycle.py`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Dispatcher Schema"
+  category: code
+  task_type: task
+  depends_on: []
+  validation_criteria: "Dispatcher schema acceptance is satisfied."
+  labels:
+    - "covers:expansion-compile-regression:1.1:1.1.1"
+    - "covers:expansion-compile-regression:1.1:1.1.2"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.1"
+- title: "Mutex Lease"
+  category: code
+  task_type: task
+  depends_on:
+    - "1.1"
+  validation_criteria: "Mutex lease acceptance is satisfied."
+  labels:
+    - "covers:expansion-compile-regression:1.2:1.2.1"
+    - "covers:expansion-compile-regression:1.2:1.2.2"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.2"
+- title: "Operator Runbook"
+  category: docs
+  task_type: task
+  depends_on:
+    - "1.2"
+  validation_criteria: "Operator runbook acceptance is satisfied."
+  labels:
+    - "covers:expansion-compile-regression:1.3a:1.3a.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.3a"
+- title: "Dispatcher React UI"
+  category: code
+  task_type: task
+  depends_on:
+    - "1.3a"
+  validation_criteria: "Dispatcher React UI acceptance is satisfied."
+  labels:
+    - "covers:expansion-compile-regression:2.1:2.1.1"
+    - "covers:expansion-compile-regression:2.1:2.1.2"
+  assigned_agent: frontend-developer
+  tdd: true
+  source_section: "2.1"
+- title: "CLI Status Command"
+  category: config
+  task_type: task
+  depends_on:
+    - "1.2"
+  validation_criteria: "CLI status command acceptance is satisfied."
+  labels:
+    - "covers:expansion-compile-regression:2.2:2.2.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.2"
+- title: "End-to-End Coverage"
+  category: test
+  task_type: task
+  depends_on:
+    - "2.1"
+    - "2.2"
+  validation_criteria: "End-to-end dispatch acceptance is satisfied."
+  labels:
+    - "covers:expansion-compile-regression:3.1:3.1.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.1"
+```
