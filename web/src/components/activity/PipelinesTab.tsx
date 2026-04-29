@@ -1,7 +1,8 @@
-import { memo, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent } from 'react'
+import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
+import { SegmentedControl } from '../ui/SegmentedControl'
 import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {
@@ -41,7 +42,6 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const filterButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
   const selectedIdRef = useRef<string | null>(null)
   const PAGE_SIZE = 50
 
@@ -122,35 +122,6 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     selectedIdRef.current = selectedId
   }, [selectedId])
 
-  const selectStatusFilter = useCallback((nextFilter: StatusFilter, focusIndex?: number) => {
-    setStatusFilter(nextFilter)
-    if (focusIndex != null) {
-      queueMicrotask(() => {
-        filterButtonRefs.current[focusIndex]?.focus()
-      })
-    }
-  }, [])
-
-  const handleFilterKeyDown = useCallback((event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let nextIndex: number | null = null
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      nextIndex = (index + 1) % FILTER_OPTIONS.length
-    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      nextIndex = (index - 1 + FILTER_OPTIONS.length) % FILTER_OPTIONS.length
-    } else if (event.key === 'Home') {
-      nextIndex = 0
-    } else if (event.key === 'End') {
-      nextIndex = FILTER_OPTIONS.length - 1
-    }
-
-    if (nextIndex == null) {
-      return
-    }
-
-    event.preventDefault()
-    selectStatusFilter(FILTER_OPTIONS[nextIndex].id, nextIndex)
-  }, [selectStatusFilter])
-
   useEffect(() => {
     if (executions.length === 0) {
       if (selectedIdRef.current !== null) {
@@ -207,33 +178,12 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <div className="flex rounded-md border border-border text-xs" role="radiogroup" aria-label="Pipeline status filter">
-          {FILTER_OPTIONS.map((option, index) => (
-            <button
-              key={option.id}
-              ref={(node) => {
-                filterButtonRefs.current[index] = node
-              }}
-              type="button"
-              role="radio"
-              aria-checked={statusFilter === option.id}
-              tabIndex={statusFilter === option.id ? 0 : -1}
-              className={`px-2 py-1 transition-colors ${
-                index === 0 ? 'rounded-l-md' : ''
-              } ${
-                index === FILTER_OPTIONS.length - 1 ? 'rounded-r-md' : ''
-              } ${
-                statusFilter === option.id
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-muted'
-              }`}
-              onClick={() => selectStatusFilter(option.id, index)}
-              onKeyDown={(event) => handleFilterKeyDown(event, index)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<StatusFilter>
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
+          ariaLabel="Pipeline status filter"
+        />
       </div>
 
       {/* Execution list */}

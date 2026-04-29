@@ -10,7 +10,7 @@ import {
   PipelineStatusDot as StatusDot,
 } from "./execution-utils";
 import { formatTime, formatDuration, formatJson } from "./executionFormatters";
-import { cn } from "../../lib/utils";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import "./reports-page.css";
 
 // =============================================================================
@@ -532,30 +532,16 @@ export function ReportsPage({
       <div className="reports-toolbar">
         <div className="reports-toolbar-left">
           <h2 className="reports-title">Reports</h2>
-          <div className="flex rounded-md border border-border text-xs">
-            <button
-              className={cn(
-                "px-2 py-1 rounded-l-md transition-colors",
-                subTab === "pipelines"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-              onClick={() => setSubTab("pipelines")}
-            >
-              Pipeline Executions
-            </button>
-            <button
-              className={cn(
-                "px-2 py-1 rounded-r-md transition-colors",
-                subTab === "agents"
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-              onClick={() => setSubTab("agents")}
-            >
-              Agent Runs
-            </button>
-          </div>
+          <SegmentedControl<SubTab>
+            value={subTab}
+            onChange={setSubTab}
+            options={[
+              { value: "pipelines", label: "Pipeline Executions" },
+              { value: "agents", label: "Agent Runs" },
+            ]}
+            ariaLabel="Report type"
+          />
+
         </div>
         <div className="reports-toolbar-right">
           <div className="reports-group-toggle">
