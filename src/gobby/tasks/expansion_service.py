@@ -460,105 +460,43 @@ class ExpansionService:
         plan_id = _contract_plan_id(plan_doc)
         section_by_id = {section.section_id: section for section in plan_doc.sections}
         phase_by_section_id = self._contract_phase_index(plan_doc)
-        manifest_entry_by_section: dict[str, ManifestEntry] = {
-            entry.source_section: entry for entry in plan_doc.manifest_entries
-        }
-        for entry in plan_doc.manifest_entries:
-            section = section_by_id.get(entry.source_section)
-            if section is None or section.kind is not Kind.deliverable:
-                raise ValueError(
-                    f"manifest entry source_section={entry.source_section!r} "
-                    "does not resolve to a kind: deliverable section"
-                )
-        deliverable_ids = {
-            section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable
-        }
-        orphan_deliverables = sorted(deliverable_ids - set(manifest_entry_by_section))
-        if orphan_deliverables:
-            raise ValueError(
-                "kind: deliverable sections without manifest entries: "
-                f"{', '.join(orphan_deliverables)}"
-            )
+        manifest_entry_by_section = self._validate_contract_manifest(plan_doc, section_by_id)
 
         phases: list[dict[str, Any]] = []
         phase_by_id: dict[str, dict[str, Any]] = {}
         tasks: list[dict[str, Any]] = []
         dependencies: list[dict[str, str]] = []
-        deferrals: list[dict[str, Any]] = []
-
-        for section in plan_doc.sections:
-            if section.kind is Kind.deferred:
-                record = _contract_deferral_record(section)
-                if record is not None:
-                    deferrals.append(record)
-                continue
+        deferrals = self._contract_deferrals(plan_doc)
 
         for entry in plan_doc.manifest_entries:
             section = section_by_id[entry.source_section]
-
             phase_section = phase_by_section_id.get(entry.source_section)
-            phase_id = _contract_phase_spec_id(
-                phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
+            phase = self._ensure_contract_phase(
+                phases=phases,
+                phase_by_id=phase_by_id,
+                phase_section=phase_section,
+                task=task,
             )
-            phase_number = (
-                _contract_phase_number(phase_section.section_id) if phase_section is not None else 1
-            )
-            phase = phase_by_id.get(phase_id)
-            if phase is None:
-                phase = {
-                    "id": phase_id,
-                    "title": phase_section.title if phase_section is not None else task.title,
-                    "summary": phase_section.title
-                    if phase_section is not None
-                    else task.description or "",
-                    "test_intent": {
-                        "summary": f"Write failing tests for Phase {phase_number}.",
-                        "behaviors": [],
-                        "suggested_test_files": [],
-                        "entry_criteria": ["Tests should fail before implementation begins."],
-                    },
-                    "task_ids": [],
-                    "tdd_sandwich_emitted": True,
-                }
-                phases.append(phase)
-                phase_by_id[phase_id] = phase
 
             emitted_tasks = self._contract_entry_tasks(
                 plan_doc=plan_doc,
                 entry=entry,
                 section=section,
-                phase_id=phase_id,
+                phase_id=phase["id"],
             )
-            phase["task_ids"].extend(task_item["id"] for task_item in emitted_tasks)
-            phase["test_intent"]["behaviors"].extend(
-                item.prose for item in section.acceptance_items
-            )
-            phase["test_intent"]["suggested_test_files"] = sorted(
-                set(phase["test_intent"]["suggested_test_files"])
-                | set(emitted_tasks[0].get("affected_files") or [])
+            self._record_contract_phase_tasks(
+                phase=phase,
+                section=section,
+                emitted_tasks=emitted_tasks,
             )
             tasks.extend(emitted_tasks)
-
-            caller_id = emitted_tasks[0]["id"]
-            for dependency in entry.depends_on:
-                blocker = section_by_id.get(dependency)
-                blocker_entry = manifest_entry_by_section.get(dependency)
-                if blocker is None or blocker.kind is not Kind.deliverable or blocker_entry is None:
-                    raise ValueError(
-                        f"manifest entry source_section={entry.source_section!r} depends on "
-                        f"{dependency!r}, which has no manifest entry"
-                    )
-                if blocker_entry.tdd:
-                    _blocker_test, _blocker_impl, blocker_terminal_id = _contract_task_ids(
-                        dependency
-                    )
-                else:
-                    blocker_terminal_id = _contract_single_task_id(dependency)
-                dependencies.append({"task_id": caller_id, "depends_on": blocker_terminal_id})
-            if entry.tdd:
-                test_task, impl_task, ref_task = emitted_tasks
-                dependencies.append({"task_id": impl_task["id"], "depends_on": test_task["id"]})
-                dependencies.append({"task_id": ref_task["id"], "depends_on": impl_task["id"]})
+            self._append_contract_entry_dependencies(
+                entry=entry,
+                section_by_id=section_by_id,
+                manifest_entry_by_section=manifest_entry_by_section,
+                emitted_tasks=emitted_tasks,
+                dependencies=dependencies,
+            )
 
         return {
             "version": 1,
@@ -573,6 +511,130 @@ class ExpansionService:
             "plan_id": plan_id,
             "deliverable_count": len(plan_doc.manifest_entries),
         }
+
+    def _validate_contract_manifest(
+        self,
+        plan_doc: PlanDocument,
+        section_by_id: dict[str, PlanSection],
+    ) -> dict[str, ManifestEntry]:
+        manifest_entry_by_section = {
+            entry.source_section: entry for entry in plan_doc.manifest_entries
+        }
+        for entry in plan_doc.manifest_entries:
+            section = section_by_id.get(entry.source_section)
+            if section is None or section.kind is not Kind.deliverable:
+                raise ValueError(
+                    f"manifest entry source_section={entry.source_section!r} "
+                    "does not resolve to a kind: deliverable section"
+                )
+
+        deliverable_ids = {
+            section.section_id for section in plan_doc.sections if section.kind is Kind.deliverable
+        }
+        orphan_deliverables = sorted(deliverable_ids - set(manifest_entry_by_section))
+        if orphan_deliverables:
+            raise ValueError(
+                "kind: deliverable sections without manifest entries: "
+                f"{', '.join(orphan_deliverables)}"
+            )
+        return manifest_entry_by_section
+
+    def _contract_deferrals(self, plan_doc: PlanDocument) -> list[dict[str, Any]]:
+        deferrals: list[dict[str, Any]] = []
+        for section in plan_doc.sections:
+            if section.kind is not Kind.deferred:
+                continue
+            record = _contract_deferral_record(section)
+            if record is not None:
+                deferrals.append(record)
+        return deferrals
+
+    def _ensure_contract_phase(
+        self,
+        *,
+        phases: list[dict[str, Any]],
+        phase_by_id: dict[str, dict[str, Any]],
+        phase_section: PlanSection | None,
+        task: Task,
+    ) -> dict[str, Any]:
+        phase_source_id = (
+            phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
+        )
+        phase_id = _contract_phase_spec_id(phase_source_id)
+        phase = phase_by_id.get(phase_id)
+        if phase is not None:
+            return phase
+
+        phase_number = _contract_phase_number(phase_source_id)
+        phase = {
+            "id": phase_id,
+            "title": phase_section.title if phase_section is not None else task.title,
+            "summary": phase_section.title if phase_section is not None else task.description or "",
+            "test_intent": {
+                "summary": f"Write failing tests for Phase {phase_number}.",
+                "behaviors": [],
+                "suggested_test_files": [],
+                "entry_criteria": ["Tests should fail before implementation begins."],
+            },
+            "task_ids": [],
+            "tdd_sandwich_emitted": True,
+        }
+        phases.append(phase)
+        phase_by_id[phase_id] = phase
+        return phase
+
+    def _record_contract_phase_tasks(
+        self,
+        *,
+        phase: dict[str, Any],
+        section: PlanSection,
+        emitted_tasks: tuple[dict[str, Any], ...],
+    ) -> None:
+        phase["task_ids"].extend(task_item["id"] for task_item in emitted_tasks)
+        phase["test_intent"]["behaviors"].extend(item.prose for item in section.acceptance_items)
+        phase["test_intent"]["suggested_test_files"] = sorted(
+            set(phase["test_intent"]["suggested_test_files"])
+            | set(emitted_tasks[0].get("affected_files") or [])
+        )
+
+    def _append_contract_entry_dependencies(
+        self,
+        *,
+        entry: ManifestEntry,
+        section_by_id: dict[str, PlanSection],
+        manifest_entry_by_section: dict[str, ManifestEntry],
+        emitted_tasks: tuple[dict[str, Any], ...],
+        dependencies: list[dict[str, str]],
+    ) -> None:
+        caller_id = emitted_tasks[0]["id"]
+        for dependency in entry.depends_on:
+            blocker = section_by_id.get(dependency)
+            blocker_entry = manifest_entry_by_section.get(dependency)
+            if blocker is None or blocker.kind is not Kind.deliverable or blocker_entry is None:
+                raise ValueError(
+                    f"manifest entry source_section={entry.source_section!r} depends on "
+                    f"{dependency!r}, which has no manifest entry"
+                )
+            dependencies.append(
+                {
+                    "task_id": caller_id,
+                    "depends_on": self._contract_entry_terminal_id(
+                        dependency,
+                        blocker_entry,
+                    ),
+                }
+            )
+
+        if entry.tdd:
+            test_task, impl_task, ref_task = emitted_tasks
+            dependencies.append({"task_id": impl_task["id"], "depends_on": test_task["id"]})
+            dependencies.append({"task_id": ref_task["id"], "depends_on": impl_task["id"]})
+
+    def _contract_entry_terminal_id(self, section_id: str, entry: ManifestEntry) -> str:
+        if entry.tdd:
+            _test_id, _impl_id, ref_id = _contract_task_ids(section_id)
+            return ref_id
+        return _contract_single_task_id(section_id)
 
     def _contract_entry_tasks(
         self,
