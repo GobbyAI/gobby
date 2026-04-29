@@ -543,6 +543,44 @@ describe("TasksTab", () => {
     expect(screen.getByText("Closed")).toBeTruthy();
   });
 
+  it("hides the active-filter badge while statusFilters matches the default set", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    const funnel = screen.getByLabelText("Filter tasks");
+    expect(funnel.querySelector(".activity-filter-badge")).toBeNull();
+  });
+
+  it("shows the active-filter badge with a symmetric-difference count", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    const funnel = screen.getByLabelText("Filter tasks");
+    fireEvent.click(funnel);
+
+    // Toggle a default off (Blocked is in DEFAULT_FILTERS).
+    fireEvent.click(screen.getByLabelText("Blocked"));
+    expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("1");
+
+    // Toggle a non-default on (Closed is not in DEFAULT_FILTERS) → diff = 2.
+    fireEvent.click(screen.getByLabelText("Closed"));
+    expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("2");
+
+    // Restore Blocked → diff = 1 (only Closed is non-default).
+    fireEvent.click(screen.getByLabelText("Blocked"));
+    expect(funnel.querySelector(".activity-filter-badge")?.textContent).toBe("1");
+
+    // Restore defaults completely.
+    fireEvent.click(screen.getByLabelText("Closed"));
+    expect(funnel.querySelector(".activity-filter-badge")).toBeNull();
+  });
+
   it("renders detail metadata in the lower pane without the old inline summary line", async () => {
     mockFetch.resetRoutes();
     const detailTask = {

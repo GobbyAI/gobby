@@ -317,6 +317,12 @@ export const TasksTab = memo(function TasksTab({
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    for (const key of DEFAULT_FILTERS) if (!statusFilters.has(key)) count += 1;
+    for (const key of statusFilters) if (!DEFAULT_FILTERS.has(key)) count += 1;
+    return count;
+  }, [statusFilters]);
   const [topHeight, setTopHeight] = useState(50);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -858,6 +864,8 @@ export const TasksTab = memo(function TasksTab({
           className="activity-filter-button"
           onClick={() => setShowFilterDropdown((v) => !v)}
           title="Filter by task state"
+          aria-label="Filter tasks"
+          aria-expanded={showFilterDropdown}
         >
           <svg
             width="14"
@@ -868,9 +876,13 @@ export const TasksTab = memo(function TasksTab({
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
+            aria-hidden="true"
           >
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
+          {activeFilterCount > 0 && (
+            <span className="activity-filter-badge">{activeFilterCount}</span>
+          )}
         </button>
         {showFilterDropdown && (
           <FilterDropdown
