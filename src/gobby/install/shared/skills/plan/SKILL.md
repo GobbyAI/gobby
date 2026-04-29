@@ -42,7 +42,7 @@ honored; expansion coverage comes only from structured `covers:` records.
 | 5 | Plan Verification | Run `plan-draft`'s verification checklist. |
 | 6 | First-Draft Approval | Route through real `ExitPlanMode`; branch on opt-in. |
 | 6b | Adversary Mode Selection | I/D + `max_rounds`, only if Step 1a opted in. |
-| 7 | Adversarial Review Loop | Spawn `plan-adversary`; wait; revise; re-approve. |
+| 7 | Adversarial Review Loop | Pre-flight fact-check; spawn `plan-adversary`; wait; revise; re-approve. |
 | 8 | Approval Handoff / Expansion | Run `expand-task` pipeline with retry/escalate. |
 | 9 | Round-budget Exhausted / Abort | Bypass / abort / restart with cleanup. |
 
@@ -385,6 +385,87 @@ Read `current_round` from the `planning-round:N` label on the planning epic (def
 
 Surface: `Round {current_round + 1} of {max_rounds}`.
 
+### 7.3a. Pre-flight fact-check
+
+Before creating the round's anchor and spawning the adversary, dispatch a
+**mid-tier subagent** (one tier below the planner agent's own model — fast and
+cost-optimized for read-and-verify, not strategy) to mechanically verify every
+concrete claim in the plan against the actual codebase. Iterate until clean,
+then proceed to Step 7.4.
+
+**Why**: adversary rounds are expensive. A non-trivial share of rejection
+rounds fire on factual drift the planner introduced during revision — wrong
+line numbers, nonexistent symbols, miscounted fixtures, wrong field names —
+that a cheap mechanical check catches in seconds. Burning an adversary round
+on drift is wasteful. The pre-flight stays focused on existence-and-accuracy
+checks, leaving architecture and contract-level critique to the adversary.
+
+**What to verify** (read-only — the subagent must NOT modify any file):
+
+- Every line number cited in the plan (allow ±5 lines before flagging drift).
+- Every symbol/function/class/method name referenced (must exist in the cited
+  module).
+- Every file path mentioned (must exist on disk; for new files, mark as
+  "to-be-created" and skip).
+- Every field/key/attribute name claimed (must match actual schema or
+  dataclass).
+- Every cited count (deliverables, sections, tests, fixture inventory,
+  acceptance items, dependency annotations).
+- Every regex/format claim (must match the actual pattern, not a paraphrase).
+
+**Dispatch** (CLI-agnostic — adapt to the host CLI's subagent dispatch
+mechanism; the schema below is the contract, not a literal call):
+
+```text
+factcheck_run = spawn_agent(
+    description="Plan fact-check pre-flight",
+    subagent_type=<host-CLI's lightweight code-reading agent>,
+    model=<a mid-tier model: cheaper than the planner's own model>,
+    prompt=f"""
+        Pre-adversary fact-check of `{artifact_path}`. Read-only verification
+        of every concrete claim against the actual codebase. Report drift
+        only — every claim that doesn't match reality, with the actual value.
+        Do NOT modify any file.
+
+        Categories to check:
+          1. Line numbers cited in the plan (±5 acceptable).
+          2. Symbols/functions/classes named (must exist where claimed).
+          3. File paths (must exist on disk; new files marked separately).
+          4. Field/key/attribute names (must match actual schema).
+          5. Counts (deliverables, sections, tests, fixture inventory).
+          6. Regex/format claims (must match actual pattern verbatim).
+
+        Report format: one line per drift, `CLAIM: <plan claim> | ACTUAL: <code reality>`.
+        If no drift found, say so explicitly.
+    """,
+    isolation="none",
+)
+```
+
+**Iteration loop**:
+
+1. Receive the drift report.
+2. If drift is reported: apply each fix in-place to `artifact_path`. Do NOT
+   modify the source code being verified. Re-run Step 7.3a against the
+   revised plan.
+3. When the report says "no drift," continue to Step 7.4.
+
+The loop converges quickly — each pass only fixes drift; it never introduces
+new claims. Typical run: 1-2 passes.
+
+**Mode behavior**:
+
+- Both `interactive` and `delegated` modes run this step every round.
+- `delegated` mode applies drift fixes silently and proceeds; do not
+  interrupt the user for mechanical fact-check fixes.
+- `interactive` mode applies drift fixes silently as well — the pre-flight
+  is mechanical, not a design decision; surface only if a fix would alter
+  the plan's intent (rare).
+- If the pre-flight subagent fails to dispatch (host CLI does not expose
+  subagent spawning, or the subagent crashes), log the limitation and
+  proceed directly to Step 7.4. The adversary round will still run; the
+  user just loses the pre-flight benefit for that round.
+
 ### 7.4. Create the per-round anchor and spawn the adversary
 
 Create a fresh anchor task scoped to this round, then spawn against it:
@@ -450,9 +531,9 @@ After reading the verdict, **close the anchor** so it does not linger. Then bran
   2. Close the anchor with reason "round rejected; findings captured".
   3. If `current_round + 1 >= max_rounds` → go to Step 9.
   4. If `plan_review_mode == "adversarial"`:
-     Present the findings verbatim to the user via `ExitPlanMode` or `AskUserQuestion`. End the current turn after presenting; the user's reply triggers the next turn. On the next turn, if the user approved continuing, re-enter plan mode, revise the plan file with the user, route the revised plan through `ExitPlanMode` again, then loop back to 7.4 (which creates the next anchor and spawns the next round).
+     Present the findings verbatim to the user via `ExitPlanMode` or `AskUserQuestion`. End the current turn after presenting; the user's reply triggers the next turn. On the next turn, if the user approved continuing, re-enter plan mode, revise the plan file with the user, route the revised plan through `ExitPlanMode` again, then loop back to **Step 7.3a** (pre-flight fact-check the revised plan, then spawn the next round).
   5. If `plan_review_mode == "delegated"`:
-     Revise the plan file in place using the adversary findings, run the same verification checklist from Step 5, keep edits scoped to `artifact_path` only, and loop back to 7.4 (creates next anchor + spawn) without re-entering plan mode. Do not interrupt the user for non-terminal review rejections.
+     Revise the plan file in place using the adversary findings, run the same verification checklist from Step 5, keep edits scoped to `artifact_path` only, and loop back to **Step 7.3a** (pre-flight fact-check, then spawn the next round) without re-entering plan mode. Do not interrupt the user for non-terminal review rejections.
 
 - **`escalated`** with `escalation_reason` starting `needs_requirements:` or `needs_human:`
   1. Close the anchor with reason "round escalated".
