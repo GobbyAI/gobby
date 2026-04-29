@@ -73,16 +73,40 @@ await asyncio.to_thread(target.write_text, conflict.resolved_content)
   shape; behavior change is purely event-loop hygiene. symbol:
   `gobby.mcp_proxy.tools.merge.create_merge_registry.merge_apply`.
 
-### 1.2 Wrap blocking file read in resolver.py tier-2 path [category: code]
+### 1.2 Wrap blocking file reads in all resolver.py async paths [category: code]
 `kind: deliverable`
 
-Target: `src/gobby/worktrees/merge/resolver.py:524-529`
+Target: `src/gobby/worktrees/merge/resolver.py:448` (`_git_merge`),
+`:524` (`_resolve_conflicts_only`), `:578` (`_resolve_full_file`)
 
-`_resolve_conflicts_only` reads the conflicted file via
-`Path(file_path).read_text()` directly inside an `async` function. Wrap the
-call in `asyncio.to_thread`. Preserve the existing `OSError` handling — the
-exception now bubbles out of the awaited call, so the surrounding
-`try`/`except` stays in place.
+The `MergeResolver` class has THREE sync `read_text()` calls inside `async`
+methods, all blocking the event loop:
+
+| Line | Method | Current code |
+| --- | --- | --- |
+| 448 | `_git_merge` | `content = file_path.read_text()` |
+| 524 | `_resolve_conflicts_only` | `file_with_markers = Path(file_path).read_text()` |
+| 578 | `_resolve_full_file` | `content_with_markers = Path(file_path).read_text()` |
+
+All three replace with `await asyncio.to_thread(...)`. Preserve each call
+site's existing exception handling — exceptions now bubble out of the
+awaited call, so the surrounding `try`/`except` blocks stay in place.
+
+**Site A — `_git_merge:448`** is inside a `try`/`except Exception as e`
+that logs and continues to the next conflicted file. Keep that handler.
+
+```python
+try:
+    content = await asyncio.to_thread(file_path.read_text)
+    hunks = extract_conflict_hunks(content)
+    if hunks:
+        conflicts.append({"file": str(file_rel_path), "hunks": hunks})
+except Exception as e:
+    logger.error(f"Failed to parse conflicts in {file_rel_path}: {e}")
+```
+
+**Site B — `_resolve_conflicts_only:524`** is inside a `try`/`except OSError as read_err`.
+Keep the OSError handler; the awaited call raises the same exception.
 
 ```python
 try:
@@ -96,14 +120,38 @@ except OSError as read_err:
     return {"success": False, "resolutions": []}
 ```
 
+**Site C — `_resolve_full_file:578`** is inside a broad `try`/`except Exception as e`
+that logs and returns `{"success": False, "resolutions": []}`. Keep that
+handler.
+
+```python
+try:
+    content_with_markers = await asyncio.to_thread(
+        Path(file_path).read_text
+    )
+    # ... rest of try-block unchanged ...
+```
+
 **Acceptance:**
 
-- 1.2.1 — `Path(file_path).read_text()` is replaced by
-  `await asyncio.to_thread(Path(file_path).read_text)` inside
-  `_resolve_conflicts_only`. file: `src/gobby/worktrees/merge/resolver.py`.
-- 1.2.2 — The `OSError` handler around the read still logs and returns the
-  `{"success": False, "resolutions": []}` failure dict. symbol:
+- 1.2.1 — `_git_merge` at `resolver.py:~448` reads the conflicted file via
+  `await asyncio.to_thread(file_path.read_text)`; the surrounding
+  `try`/`except Exception` continues to log and skip on parse failure.
+  symbol: `gobby.worktrees.merge.resolver.MergeResolver._git_merge`.
+- 1.2.2 — `_resolve_conflicts_only` at `resolver.py:~524` reads the
+  conflict-marker file via
+  `await asyncio.to_thread(Path(file_path).read_text)`; the `OSError`
+  handler continues to log and return the failure dict. symbol:
   `gobby.worktrees.merge.resolver.MergeResolver._resolve_conflicts_only`.
+- 1.2.3 — `_resolve_full_file` at `resolver.py:~578` reads the full-file
+  content via `await asyncio.to_thread(Path(file_path).read_text)`; the
+  surrounding `try`/`except Exception` continues to log and return the
+  failure dict. symbol:
+  `gobby.worktrees.merge.resolver.MergeResolver._resolve_full_file`.
+- 1.2.4 — No remaining `Path(...).read_text()` or `<path-var>.read_text()`
+  calls appear in any `async def` of `src/gobby/worktrees/merge/resolver.py`
+  (verified via `grep -nE 'read_text\(\)' src/gobby/worktrees/merge/resolver.py`).
+  file: `src/gobby/worktrees/merge/resolver.py`.
 
 ### 1.3 Fix inverted can_resume logic and log rev-list failures [category: code]
 `kind: deliverable`
@@ -189,41 +237,126 @@ model: gemini-2.5-flash
 restore contrast on the stop-button and pipeline approve/reject buttons, and
 remove dead `var(x, x)` self-fallbacks.
 
-### 2.1 Replace invalid var(--x)NN with color-mix in ConfigurationPage.css [category: refactor]
+The parent task description on #13456 says "invalid CSS `var()NN` syntax in
+5 files" — that count was authored before the audit and conflates three
+distinct bug classes. §2.0 reconciles the actual scope: the
+`var(--x)NN`-syntax bug affects exactly two CSS files; the "5 files" total
+includes the two `var(--x)NN` files PLUS the two invisible-text files PLUS
+one redundant-self-fallback file (or two if `LaunchAgentModal.css` is
+counted). Each class is addressed by its own deliverable (§2.1, §2.2, §2.3,
+§2.4, §2.5) so the parent's intent is preserved even though the literal
+"5 files" wording is imprecise.
+
+### 2.0 Audit and reconcile CSS bug-class scope [category: research]
 `kind: deliverable`
 
-Target: `web/src/components/ConfigurationPage.css:100, 104, 105, 121, 122, 374, 543-549`
+Target: `web/src/` (full tree audit)
 
-Six occurrences of `var(--token)NN` that browsers ignore as a syntax error.
-Replace each with the equivalent `color-mix(in srgb, var(--token) <pct>%,
-transparent)`. Translation table:
+Run a global audit across `web/src/` to confirm the actual bug-class
+surface, prove no occurrences are missed, and reconcile the parent task
+description's "5 files" total. The audit is a precondition for the
+remaining §2.x deliverables — if it discovers additional sites, they MUST
+be folded into the relevant deliverable before any §2.x fix lands.
 
-| Line | Suffix | Percent (color-mix) |
-| --- | --- | --- |
-| 100 | `33` | 20% |
-| 104 | `15` | 8% |
-| 105 | `66` | 40% |
-| 121 | `15` | 8% |
-| 122 | `33` | 20% |
-| 374 | `66` | 40% |
-| 548 | `15` | 8% |
-| 549 | `15` | 8% |
+Audit commands:
 
-The percentages are derived from the originally-intended hex alpha (`33` ≈
-0.2 = 20%, `15` ≈ 0.083 ≈ 8%, `66` ≈ 0.4 = 40%) so the visual outcome matches
-the broken-but-intended design.
+```bash
+# Class A — invalid var(--x)NN syntax (browser-fatal)
+grep -rnE 'var\(--[a-z-]+\)[0-9a-fA-F]+' web/src/
+
+# Class B — declarations setting `color` and `background` to the same
+#          token in the same rule block (invisible-text bug). Scoped
+#          spot-check; full scan is heuristic.
+grep -nB1 -A2 'color: var(--color-error)' web/src/components/chat/styles/input.css
+grep -nB1 -A2 'color: var(--color-success-foreground)\|color: var(--color-error)' \
+  web/src/components/workflows/PipelinesPage.css
+
+# Class C — redundant var(x, x) self-fallback
+grep -rnE 'var\(--([a-z-]+),\s*var\(--\1\)\)' web/src/
+```
+
+Expected results based on triage scan (drift implies plan needs to grow):
+
+- Class A: exactly 12 sites across 2 files —
+  `ConfigurationPage.css` (8 sites: 100/104/105/121/122/374/543/548),
+  `task-advanced.css` (4 sites: 932/933/1079/1080).
+- Class B: exactly 2 affected rules across 2 files —
+  `input.css` `.stop-button` (line 356-364), `PipelinesPage.css`
+  `.pipeline-btn--approve` and `.pipeline-btn--reject` (line 345-363).
+- Class C: exactly 3 sites across 2 files —
+  `RuleEditForm.css:241` and the matching `:242-243` declarations,
+  `LaunchAgentModal.css:323`.
 
 **Acceptance:**
 
-- 2.1.1 — No occurrences of the regex `var\(--[a-z-]+\)\d+` remain in
-  `web/src/components/ConfigurationPage.css`. file:
+- 2.0.1 — Class A audit (`grep -rnE 'var\(--[a-z-]+\)[0-9a-fA-F]+' web/src/`)
+  returns exactly the 12 sites enumerated above and NO others. If new
+  sites appear, §2.1/§2.2 acceptance items grow to cover them before any
+  §2.x fix lands. behavior: "Class A audit returns the expected site list"
+  in `web/src/`.
+- 2.0.2 — Class C audit (`grep -rnE 'var\(--([a-z-]+),\s*var\(--\1\)\)'
+  web/src/`) returns exactly the 3 sites in §2.5 and NO others. behavior:
+  "Class C audit returns the expected site list" in `web/src/`.
+- 2.0.3 — The parent task description on #13456 is updated (or this plan
+  carries an explicit reconciliation note) clarifying that the "5 files"
+  count = 2 files for Class A + 2 files for Class B + 1-2 files for Class
+  C, NOT 5 files of `var(--x)NN`. The reconciliation is documented in
+  this plan's §P2 framing intro (already done above). file:
+  `.gobby/plans/task-13456-coderabbit-suggestion-triage.md`.
+
+### 2.1 Replace invalid var(--x)NN with color-mix in ConfigurationPage.css [category: refactor] (depends: 2.0)
+`kind: deliverable`
+
+Target: `web/src/components/ConfigurationPage.css` lines 100, 104, 105, 121,
+122, 374, 543, 548 (eight sites, verified via
+`grep -nE 'var\(--[a-z-]+\)[0-9a-fA-F]+' web/src/components/ConfigurationPage.css`).
+
+Eight occurrences of `var(--token)NN` that browsers ignore as a syntax
+error (the parser drops the entire declaration). Each replaces with
+`color-mix(in srgb, var(--token) <pct>%, transparent)` so the originally-
+intended translucent shade actually renders. Hex-alpha→percent mapping:
+`33` ≈ 20%, `15` ≈ 8%, `66` ≈ 40% (derived from the literal hex alpha
+0x33/0xFF, 0x15/0xFF, 0x66/0xFF).
+
+The acceptance items below name each site individually so a future drift
+on any one of them fails the gate without masking by sibling fixes.
+
+**Acceptance:**
+
+- 2.1.1 — Line 100 (`.config-toolbar-btn.danger` `border-color`) reads
+  `border-color: color-mix(in srgb, var(--color-error) 20%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.2 — Line 104 (`.config-toolbar-btn.danger:hover` `background`) reads
+  `background: color-mix(in srgb, var(--color-error) 8%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.3 — Line 105 (`.config-toolbar-btn.danger:hover` `border-color`) reads
+  `border-color: color-mix(in srgb, var(--color-error) 40%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.4 — Line 121 (`.config-restart-banner` `background`) reads
+  `background: color-mix(in srgb, var(--color-warning-foreground) 8%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.5 — Line 122 (`.config-restart-banner` `border-bottom`) reads
+  `border-bottom: 1px solid color-mix(in srgb, var(--color-warning-foreground) 20%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.6 — Line 374 (`.config-secret-actions button.delete:hover` `border-color`)
+  reads
+  `border-color: color-mix(in srgb, var(--color-error) 40%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.7 — Line 543 (`.config-prompt-badge.bundled` `background`) reads
+  `background: color-mix(in srgb, var(--color-success-foreground) 8%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.8 — Line 548 (`.config-prompt-badge.overridden` `background`) reads
+  `background: color-mix(in srgb, var(--color-warning-foreground) 8%, transparent);`.
+  file: `web/src/components/ConfigurationPage.css`.
+- 2.1.9 — Post-fix audit: `grep -nE 'var\(--[a-z-]+\)[0-9a-fA-F]+'
+  web/src/components/ConfigurationPage.css` returns no matches.
+  behavior: "no invalid var(--x)NN suffixes remain in
+  ConfigurationPage.css" in
   `web/src/components/ConfigurationPage.css`.
-- 2.1.2 — Each affected declaration uses `color-mix(in srgb, var(--token)
-  <pct>%, transparent)` with the percent from the translation table. file:
-  `web/src/components/ConfigurationPage.css`.
-- 2.1.3 — Visual smoke test: `.config-restart-banner`, `.config-toolbar-btn.danger`,
-  the danger-secret button, and `.config-prompt-badge.bundled/.overridden` all
-  render with their intended translucent backgrounds in light + dark themes.
+- 2.1.10 — Visual smoke test: `.config-restart-banner`,
+  `.config-toolbar-btn.danger`, the danger-secret button, and
+  `.config-prompt-badge.bundled/.overridden` all render with their
+  intended translucent backgrounds in light + dark themes.
   behavior: "translucent badges and danger buttons render correctly" in
   `web/src/components/ConfigurationPage.css`.
 
