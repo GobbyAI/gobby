@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PROVIDERS = ("claude", "gemini", "qwen", "codex", "droid")
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _CLAUDE_ALIASES: tuple[tuple[str, str], ...] = (
     ("haiku", "Haiku"),
@@ -31,167 +31,327 @@ _CLAUDE_ALIASES: tuple[tuple[str, str], ...] = (
 )
 _CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "max")
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
+_KNOWN_PROVIDER_PREFIXES = (
+    "anthropic/",
+    "openai/",
+    "google/",
+    "qwen/",
+    "z-ai/",
+    "moonshotai/",
+    "minimax/",
+)
+_STATIC_CONTEXT_LENGTHS: dict[str, int] = {
+    "opus": 1_000_000,
+    "sonnet": 200_000,
+    "haiku": 200_000,
+    "claude-opus-4-7": 1_000_000,
+    "claude-opus-4-6": 1_000_000,
+    "claude-opus-4-6-fast": 1_000_000,
+    "claude-opus-4-5": 1_000_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-sonnet-4-5": 200_000,
+    "claude-haiku-4-5": 200_000,
+    "gpt-5.4": 200_000,
+    "gpt-5.4-fast": 200_000,
+    "gpt-5.4-mini": 200_000,
+    "gpt-5.3-codex": 200_000,
+    "gpt-5.3-codex-fast": 200_000,
+    "gpt-5.3-codex-spark": 200_000,
+    "gpt-5.2": 200_000,
+    "gpt-5.2-codex": 200_000,
+    "gpt-5.1-codex-max": 200_000,
+    "gemini-3.1-pro-preview": 1_000_000,
+    "gemini-3-flash-preview": 1_000_000,
+    "gemini-2.5-pro": 1_000_000,
+    "qwen3-coder": 262_144,
+    "qwen3-coder-plus": 262_144,
+    "qwen3-coder-flash": 262_144,
+}
+
+
+def _coerce_context_length(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = int(value.replace("_", ""))
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _strip_known_provider_prefix(value: str) -> str:
+    normalized = value.strip()
+    lower = normalized.lower()
+    for prefix in _KNOWN_PROVIDER_PREFIXES:
+        if lower.startswith(prefix):
+            return normalized.split("/", 1)[1]
+    return normalized
+
+
+def _strip_qwen_auth_suffix(value: str) -> str:
+    trimmed = value.strip()
+    close_idx = trimmed.rfind(")")
+    open_idx = trimmed.rfind("(")
+    if open_idx >= 0 and close_idx == len(trimmed) - 1 and open_idx < close_idx:
+        model_id = trimmed[:open_idx].strip()
+        auth_type = trimmed[open_idx + 1 : close_idx].strip()
+        if model_id and auth_type in _QWEN_AUTH_TYPES:
+            return model_id
+    return trimmed
+
+
+def _normalize_model_lookup_id(value: str) -> str:
+    return _strip_qwen_auth_suffix(_strip_known_provider_prefix(value)).lower()
+
+
+def _context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
+    if key in {"opus", "sonnet", "haiku"}:
+        return provider in {None, "claude", "droid"}
+    if key.startswith("qwen3-coder"):
+        return provider in {None, "qwen"}
+    return True
+
+
+def context_length_for_model(provider: str | None, model: str | None) -> int | None:
+    """Return a static catalog context length for known shipped models."""
+    if not model:
+        return None
+
+    normalized_provider = provider.strip().lower() if isinstance(provider, str) else None
+    normalized_model = _normalize_model_lookup_id(model)
+    exact = _STATIC_CONTEXT_LENGTHS.get(normalized_model)
+    if exact is not None and _context_key_allowed_for_provider(
+        normalized_provider, normalized_model
+    ):
+        return exact
+
+    best_len = 0
+    best_value: int | None = None
+    for key, value in _STATIC_CONTEXT_LENGTHS.items():
+        if not _context_key_allowed_for_provider(normalized_provider, key):
+            continue
+        if normalized_model.startswith(key) and len(key) > best_len:
+            best_len = len(key)
+            best_value = value
+    return best_value
+
+
+def _extract_context_length(model: dict[str, Any]) -> int | None:
+    for key in (
+        "context_length",
+        "contextLength",
+        "contextWindow",
+        "inputTokenLimit",
+        "maxInputTokens",
+    ):
+        context_length = _coerce_context_length(model.get(key))
+        if context_length is not None:
+            return context_length
+
+    top_provider = model.get("top_provider")
+    if isinstance(top_provider, dict):
+        return _coerce_context_length(top_provider.get("context_length"))
+    return None
+
+
+def _model_identifiers(model: dict[str, Any]) -> list[str]:
+    identifiers: list[str] = []
+    for key in ("value", "canonical_id", "id", "model"):
+        value = model.get(key)
+        if isinstance(value, str) and value.strip():
+            identifiers.append(value)
+    match_identifiers = model.get("match_identifiers")
+    if isinstance(match_identifiers, list):
+        identifiers.extend(str(value) for value in match_identifiers if str(value).strip())
+    return identifiers
+
+
+def _normalize_model_entry(provider: str, model: dict[str, Any]) -> dict[str, Any]:
+    entry = copy.deepcopy(model)
+    context_length = _extract_context_length(entry)
+    if context_length is None:
+        for identifier in _model_identifiers(entry):
+            context_length = context_length_for_model(provider, identifier)
+            if context_length is not None:
+                break
+    if context_length is not None:
+        entry["context_length"] = context_length
+    return entry
+
+
+def with_context_lengths(provider: str, models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return provider model entries enriched with known context lengths."""
+    return [_normalize_model_entry(provider, model) for model in models if isinstance(model, dict)]
+
+
 # Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
 # Droid does not expose a machine-readable model catalog yet, so this static
 # list is the source of truth for API/model-picker consumers.
-DROID_MODEL_CATALOG: list[dict[str, Any]] = [
-    {
-        "value": "claude-opus-4-7",
-        "label": "Claude Opus 4.7",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
-            "default_effort": "high",
+DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths(
+    "droid",
+    [
+        {
+            "value": "claude-opus-4-7",
+            "label": "Claude Opus 4.7",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
+                "default_effort": "high",
+            },
         },
-    },
-    {
-        "value": "claude-opus-4-6",
-        "label": "Claude Opus 4.6",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high", "max"],
-            "default_effort": "high",
+        {
+            "value": "claude-opus-4-6",
+            "label": "Claude Opus 4.6",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high", "max"],
+                "default_effort": "high",
+            },
         },
-    },
-    {
-        "value": "claude-opus-4-6-fast",
-        "label": "Claude Opus 4.6 Fast Mode",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high", "max"],
-            "default_effort": "high",
+        {
+            "value": "claude-opus-4-6-fast",
+            "label": "Claude Opus 4.6 Fast Mode",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high", "max"],
+                "default_effort": "high",
+            },
         },
-    },
-    {
-        "value": "claude-opus-4-5-20251101",
-        "label": "Claude Opus 4.5",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high"],
-            "default_effort": "off",
+        {
+            "value": "claude-opus-4-5-20251101",
+            "label": "Claude Opus 4.5",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high"],
+                "default_effort": "off",
+            },
         },
-    },
-    {
-        "value": "claude-sonnet-4-6",
-        "label": "Claude Sonnet 4.6",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high", "max"],
-            "default_effort": "high",
+        {
+            "value": "claude-sonnet-4-6",
+            "label": "Claude Sonnet 4.6",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high", "max"],
+                "default_effort": "high",
+            },
         },
-    },
-    {
-        "value": "claude-sonnet-4-5-20250929",
-        "label": "Claude Sonnet 4.5",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high"],
-            "default_effort": "off",
+        {
+            "value": "claude-sonnet-4-5-20250929",
+            "label": "Claude Sonnet 4.5",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high"],
+                "default_effort": "off",
+            },
         },
-    },
-    {
-        "value": "claude-haiku-4-5-20251001",
-        "label": "Claude Haiku 4.5",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high"],
-            "default_effort": "off",
+        {
+            "value": "claude-haiku-4-5-20251001",
+            "label": "Claude Haiku 4.5",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high"],
+                "default_effort": "off",
+            },
         },
-    },
-    {
-        "value": "gpt-5.4",
-        "label": "GPT-5.4",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "medium",
+        {
+            "value": "gpt-5.4",
+            "label": "GPT-5.4",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "medium",
+            },
         },
-    },
-    {
-        "value": "gpt-5.4-fast",
-        "label": "GPT-5.4 Fast Mode",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "medium",
+        {
+            "value": "gpt-5.4-fast",
+            "label": "GPT-5.4 Fast Mode",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "medium",
+            },
         },
-    },
-    {
-        "value": "gpt-5.4-mini",
-        "label": "GPT-5.4 Mini",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "high",
+        {
+            "value": "gpt-5.4-mini",
+            "label": "GPT-5.4 Mini",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "high",
+            },
         },
-    },
-    {
-        "value": "gpt-5.3-codex",
-        "label": "GPT-5.3-Codex",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "medium",
+        {
+            "value": "gpt-5.3-codex",
+            "label": "GPT-5.3-Codex",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "medium",
+            },
         },
-    },
-    {
-        "value": "gpt-5.3-codex-fast",
-        "label": "GPT-5.3-Codex Fast Mode",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "medium",
+        {
+            "value": "gpt-5.3-codex-fast",
+            "label": "GPT-5.3-Codex Fast Mode",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "medium",
+            },
         },
-    },
-    {
-        "value": "gpt-5.2",
-        "label": "GPT-5.2",
-        "reasoning": {
-            "supported_efforts": ["off", "low", "medium", "high", "xhigh"],
-            "default_effort": "low",
+        {
+            "value": "gpt-5.2",
+            "label": "GPT-5.2",
+            "reasoning": {
+                "supported_efforts": ["off", "low", "medium", "high", "xhigh"],
+                "default_effort": "low",
+            },
         },
-    },
-    {
-        "value": "gpt-5.2-codex",
-        "label": "GPT-5.2-Codex",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "medium",
+        {
+            "value": "gpt-5.2-codex",
+            "label": "GPT-5.2-Codex",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "medium",
+            },
         },
-    },
-    {
-        "value": "gemini-3.1-pro-preview",
-        "label": "Gemini 3.1 Pro",
-        "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
-    },
-    {
-        "value": "gemini-3-flash-preview",
-        "label": "Gemini 3 Flash",
-        "reasoning": {
-            "supported_efforts": ["minimal", "low", "medium", "high"],
-            "default_effort": "high",
+        {
+            "value": "gemini-3.1-pro-preview",
+            "label": "Gemini 3.1 Pro",
+            "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
         },
-    },
-    {
-        "value": "minimax-m2.7",
-        "label": "Droid Core (MiniMax M2.7)",
-        "reasoning": {"supported_efforts": ["high"], "default_effort": "high"},
-    },
-    {
-        "value": "minimax-m2.5",
-        "label": "Droid Core (MiniMax M2.5)",
-        "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
-    },
-    {
-        "value": "kimi-k2.6",
-        "label": "Droid Core (Kimi K2.6)",
-        "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
-    },
-    {
-        "value": "kimi-k2.5",
-        "label": "Droid Core (Kimi K2.5)",
-        "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
-    },
-    {"value": "glm-5.1", "label": "Droid Core (GLM-5.1)"},
-    {"value": "glm-5", "label": "Droid Core (GLM-5)"},
-    {"value": "glm-4.7", "label": "Droid Core (GLM-4.7) [Deprecated]"},
-    {
-        "value": "gpt-5.1-codex-max",
-        "label": "GPT-5.1-Codex-Max [Deprecated]",
-        "reasoning": {
-            "supported_efforts": ["low", "medium", "high", "xhigh"],
-            "default_effort": "medium",
+        {
+            "value": "gemini-3-flash-preview",
+            "label": "Gemini 3 Flash",
+            "reasoning": {
+                "supported_efforts": ["minimal", "low", "medium", "high"],
+                "default_effort": "high",
+            },
         },
-    },
-]
+        {
+            "value": "minimax-m2.7",
+            "label": "Droid Core (MiniMax M2.7)",
+            "reasoning": {"supported_efforts": ["high"], "default_effort": "high"},
+        },
+        {
+            "value": "minimax-m2.5",
+            "label": "Droid Core (MiniMax M2.5)",
+            "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
+        },
+        {
+            "value": "kimi-k2.6",
+            "label": "Droid Core (Kimi K2.6)",
+            "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
+        },
+        {
+            "value": "kimi-k2.5",
+            "label": "Droid Core (Kimi K2.5)",
+            "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
+        },
+        {"value": "glm-5.1", "label": "Droid Core (GLM-5.1)"},
+        {"value": "glm-5", "label": "Droid Core (GLM-5)"},
+        {"value": "glm-4.7", "label": "Droid Core (GLM-4.7) [Deprecated]"},
+        {
+            "value": "gpt-5.1-codex-max",
+            "label": "GPT-5.1-Codex-Max [Deprecated]",
+            "reasoning": {
+                "supported_efforts": ["low", "medium", "high", "xhigh"],
+                "default_effort": "medium",
+            },
+        },
+    ],
+)
 
 
 def _gobby_home() -> Path:
@@ -297,7 +457,7 @@ class ProviderModelCatalog:
 
         if not isinstance(payload, dict):
             return
-        if payload.get("version") not in (None, _CACHE_VERSION):
+        if payload.get("version") not in (None, 2, _CACHE_VERSION):
             logger.warning(
                 "Ignoring unsupported provider model cache version: %s", payload.get("version")
             )
@@ -317,7 +477,9 @@ class ProviderModelCatalog:
                 "source": str(entry.get("source") or "cache"),
                 "cli_version": entry.get("cli_version"),
                 "error": entry.get("error"),
-                "models": copy.deepcopy(models) if isinstance(models, list) else [],
+                "models": with_context_lengths(provider, models)
+                if isinstance(models, list)
+                else [],
                 "generated_at": entry.get("generated_at"),
             }
 
@@ -358,6 +520,105 @@ class ProviderModelCatalog:
             "generated_at": entry.get("generated_at") or self._generated_at,
         }
 
+    def get_context_window(self, provider: str | None, model: str | None) -> int | None:
+        """Resolve context length from provider catalog metadata."""
+        if not model:
+            return None
+
+        normalized_provider = provider.strip().lower() if isinstance(provider, str) else None
+        if not normalized_provider:
+            for candidate_provider in _PROVIDERS:
+                context_length = self._get_provider_context_window(candidate_provider, model)
+                if context_length is not None:
+                    return context_length
+            return None
+
+        if normalized_provider == "droid":
+            context_length = self._get_provider_context_window(
+                normalized_provider, model, include_static=False
+            )
+            if context_length is not None:
+                return context_length
+            for underlying_provider in self._droid_underlying_providers(model):
+                context_length = self._get_provider_context_window(underlying_provider, model)
+                if context_length is not None:
+                    return context_length
+            return self._get_provider_context_window(normalized_provider, model)
+
+        return self._get_provider_context_window(normalized_provider, model)
+
+    def _get_provider_context_window(
+        self, provider: str, model: str, *, include_static: bool = True
+    ) -> int | None:
+        target = _normalize_model_lookup_id(model)
+        entry = self._providers.get(provider, {})
+        models = entry.get("models")
+        best_len = 0
+        best_context: int | None = None
+
+        if isinstance(models, list):
+            for item in models:
+                if not isinstance(item, dict):
+                    continue
+                context_length = _extract_context_length(item)
+                if context_length is None:
+                    for identifier in _model_identifiers(item):
+                        context_length = context_length_for_model(provider, identifier)
+                        if context_length is not None:
+                            break
+                if context_length is None:
+                    continue
+                for candidate in self._entry_lookup_candidates(provider, item):
+                    if (
+                        target == candidate
+                        or target.startswith(candidate)
+                        or self._alias_matches(provider, candidate, target)
+                    ) and len(candidate) > best_len:
+                        best_len = len(candidate)
+                        best_context = context_length
+
+        if best_context is not None:
+            return best_context
+        return context_length_for_model(provider, model) if include_static else None
+
+    @staticmethod
+    def _entry_lookup_candidates(provider: str, model: dict[str, Any]) -> set[str]:
+        candidates = {
+            normalized
+            for identifier in _model_identifiers(model)
+            if (normalized := _normalize_model_lookup_id(identifier))
+        }
+        if provider == "claude":
+            for candidate in tuple(candidates):
+                if candidate.startswith("claude-opus"):
+                    candidates.add("opus")
+                elif candidate.startswith("claude-sonnet"):
+                    candidates.add("sonnet")
+                elif candidate.startswith("claude-haiku"):
+                    candidates.add("haiku")
+        return candidates
+
+    @staticmethod
+    def _alias_matches(provider: str, candidate: str, target: str) -> bool:
+        return (
+            provider in {"claude", "droid"}
+            and candidate in {"opus", "sonnet", "haiku"}
+            and (candidate in target)
+        )
+
+    @staticmethod
+    def _droid_underlying_providers(model: str) -> tuple[str, ...]:
+        normalized = _normalize_model_lookup_id(model)
+        if normalized.startswith("claude-") or any(
+            family in normalized for family in ("opus", "sonnet", "haiku")
+        ):
+            return ("claude",)
+        if normalized.startswith(("gpt-", "o1-", "o3-", "o4-")):
+            return ("codex",)
+        if normalized.startswith("gemini-"):
+            return ("gemini",)
+        return ()
+
     def status_snapshot(self) -> dict[str, dict[str, Any]]:
         """Return a compact health/status view for each provider catalog."""
         snapshot: dict[str, dict[str, Any]] = {}
@@ -386,7 +647,10 @@ class ProviderModelCatalog:
             previous = old.get(provider)
             cli_version = await self._get_cli_version(provider)
             try:
-                models = await self._discover_provider_models(provider, codex_client=codex_client)
+                discovered_models = await self._discover_provider_models(
+                    provider, codex_client=codex_client
+                )
+                models = with_context_lengths(provider, discovered_models)
                 results[provider] = {
                     "source": "live",
                     "cli_version": cli_version or (previous or {}).get("cli_version"),
@@ -401,7 +665,10 @@ class ProviderModelCatalog:
                         "source": "cache",
                         "cli_version": cli_version or previous.get("cli_version"),
                         "error": error,
-                        "models": copy.deepcopy(previous.get("models", [])),
+                        "models": with_context_lengths(
+                            provider,
+                            previous.get("models", []),
+                        ),
                         "generated_at": previous.get("generated_at") or self._generated_at,
                     }
                 else:
@@ -471,6 +738,9 @@ class ProviderModelCatalog:
                 "hidden": bool(item.get("hidden", False)),
                 "is_default": bool(item.get("isDefault", False)),
             }
+            context_length = _extract_context_length(item)
+            if context_length is not None:
+                entry["context_length"] = context_length
             reasoning = _extract_reasoning(item)
             if reasoning:
                 entry["reasoning"] = reasoning
@@ -619,6 +889,9 @@ class ProviderModelCatalog:
                 "value": model_id,
                 "label": str(item.get("name") or model_id),
             }
+            context_length = _extract_context_length(item)
+            if context_length is not None:
+                entry["context_length"] = context_length
             reasoning = _extract_reasoning(item)
             if reasoning:
                 entry["reasoning"] = reasoning
@@ -688,6 +961,7 @@ class ProviderModelCatalog:
             "value": alias,
             "label": label,
             "canonical_id": str(canonical_id),
+            "context_length": context_length_for_model("claude", str(canonical_id)),
             "reasoning": {"supported_efforts": list(_CLAUDE_REASONING_EFFORTS)},
         }
 

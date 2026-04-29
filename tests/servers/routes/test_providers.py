@@ -126,6 +126,7 @@ class TestProviderModelsRoute:
         assert providers["claude"]["models"][0]["reasoning"] == {
             "supported_efforts": ["low", "medium", "high", "max"]
         }
+        assert providers["claude"]["models"][0]["context_length"] == 1_000_000
 
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]
@@ -134,6 +135,7 @@ class TestProviderModelsRoute:
             "gemini-3-flash-preview",
         ]
         assert [m["label"] for m in gemini] == ["pro-3.1", "flash-3"]
+        assert [m["context_length"] for m in gemini] == [1_000_000, 1_000_000]
 
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
@@ -156,6 +158,13 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
+        assert [m["context_length"] for m in codex] == [
+            200_000,
+            200_000,
+            200_000,
+            200_000,
+            200_000,
+        ]
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
         assert len(droid_values) == 24
@@ -163,6 +172,9 @@ class TestProviderModelsRoute:
         assert "gpt-5.4" in droid_values
         assert "gemini-3-flash-preview" in droid_values
         assert "minimax-m2.7" in droid_values
+        droid_by_id = {m["value"]: m for m in providers["droid"]["models"]}
+        assert droid_by_id["claude-opus-4-7"]["context_length"] == 1_000_000
+        assert droid_by_id["gpt-5.4"]["context_length"] == 200_000
 
         # Each entry should have source field
         for p in data["providers"]:
@@ -240,6 +252,7 @@ class TestProviderModelsRoute:
         assert providers["gemini"]["models"][0]["value"] == "gemini-model"
         assert providers["qwen"]["models"][0]["value"] == "qwen-model"
         assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
+        assert providers["codex"]["models"][0]["context_length"] == 200_000
         assert providers["droid"]["models"][0]["value"] == "droid-model"
         assert providers["codex"]["source"] == "live"
 

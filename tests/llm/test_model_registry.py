@@ -61,6 +61,30 @@ SAMPLE_OPENROUTER_RESPONSE = {
                 "max_completion_tokens": 65536,
             },
         },
+        {
+            "id": "qwen/qwen3-coder",
+            "name": "Qwen: Qwen3 Coder",
+            "context_length": 262144,
+            "top_provider": {"max_completion_tokens": 32768},
+        },
+        {
+            "id": "z-ai/glm-5",
+            "name": "Z.AI: GLM-5",
+            "context_length": 128000,
+            "top_provider": {"max_completion_tokens": 32768},
+        },
+        {
+            "id": "moonshotai/kimi-k2.5",
+            "name": "Moonshot AI: Kimi K2.5",
+            "context_length": 256000,
+            "top_provider": {"max_completion_tokens": 32768},
+        },
+        {
+            "id": "minimax/minimax-m2.5",
+            "name": "MiniMax: M2.5",
+            "context_length": 200000,
+            "top_provider": {"max_completion_tokens": 32768},
+        },
         # Should be filtered out — not a provider we care about
         {
             "id": "mistral/mistral-large",
@@ -94,6 +118,20 @@ class TestProviderForModel:
     def test_google(self) -> None:
         assert _provider_for_model("google/gemini-2.5-pro") == "gemini"
 
+    def test_qwen(self) -> None:
+        assert _provider_for_model("qwen/qwen3-coder") == "qwen"
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "z-ai/glm-5",
+            "moonshotai/kimi-k2.5",
+            "minimax/minimax-m2.5",
+        ],
+    )
+    def test_droid_core_provider_prefixes(self, model_id: str) -> None:
+        assert _provider_for_model(model_id) == "droid"
+
     def test_unknown_provider(self) -> None:
         assert _provider_for_model("mistral/mistral-large") is None
 
@@ -114,10 +152,10 @@ class TestFetchModelsSync:
 
         models = fetch_models_sync()
 
-        # 4 valid models (mistral filtered by provider, free claude passes through)
-        assert len(models) == 4
+        # 8 valid models (mistral filtered by provider, free claude passes through)
+        assert len(models) == 8
         providers = {m.provider for m in models}
-        assert providers == {"claude", "codex", "gemini"}
+        assert providers == {"claude", "codex", "gemini", "qwen", "droid"}
 
     @patch("gobby.llm.model_registry.httpx.get")
     def test_parses_model_fields(self, mock_get: MagicMock) -> None:
@@ -201,6 +239,18 @@ class TestStripProviderPrefix:
 
     def test_strips_openai(self) -> None:
         assert strip_provider_prefix("openai/gpt-4o") == "gpt-4o"
+
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("qwen/qwen3-coder", "qwen3-coder"),
+            ("z-ai/glm-5", "glm-5"),
+            ("moonshotai/kimi-k2.5", "kimi-k2.5"),
+            ("minimax/minimax-m2.5", "minimax-m2.5"),
+        ],
+    )
+    def test_strips_new_provider_prefixes(self, model_id: str, expected: str) -> None:
+        assert strip_provider_prefix(model_id) == expected
 
     def test_no_prefix(self) -> None:
         assert strip_provider_prefix("claude-opus-4-6") == "claude-opus-4-6"

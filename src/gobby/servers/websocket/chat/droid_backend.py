@@ -182,11 +182,19 @@ class DroidManagedChatSession(GeminiWebChatPermissionsMixin, ManagedChatSessionB
                     if isinstance(chat_event, DoneEvent):
                         return
 
-                yield DoneEvent(tool_calls_count=0, sdk_session_id=self.sdk_session_id)
+                yield DoneEvent(
+                    tool_calls_count=0,
+                    sdk_session_id=self.sdk_session_id,
+                    context_window=self._resolve_context_window(),
+                )
             except Exception as exc:
                 logger.error("Droid managed session %s error: %s", self.conversation_id, exc)
                 yield TextChunk(content=f"Generation failed: {exc}")
-                yield DoneEvent(tool_calls_count=0, sdk_session_id=self.sdk_session_id)
+                yield DoneEvent(
+                    tool_calls_count=0,
+                    sdk_session_id=self.sdk_session_id,
+                    context_window=self._resolve_context_window(),
+                )
 
     def _translate_event(self, event: StreamEvent) -> ChatEvent | None:
         if event.event_type == "content_delta":
@@ -238,6 +246,7 @@ class DroidManagedChatSession(GeminiWebChatPermissionsMixin, ManagedChatSessionB
                 tool_calls_count=0,
                 input_tokens=usage.get("input_tokens") or usage.get("inputTokens"),
                 output_tokens=usage.get("output_tokens") or usage.get("outputTokens"),
+                context_window=self._resolve_context_window(),
                 sdk_session_id=self.sdk_session_id,
             )
 

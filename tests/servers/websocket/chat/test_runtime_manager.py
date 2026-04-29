@@ -170,12 +170,15 @@ class TestGeminiBackend:
         )
         session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
         session._connected = True
+        session._model = "gemini-ctx"
+        session._context_window_overrides = {"gemini-ctx": 123_000}
         session.sdk_session_id = "sess-1"
 
         events = [event async for event in session.send_message("hi")]
 
         assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Gemini"]
         assert isinstance(events[-1], DoneEvent)
+        assert events[-1].context_window == 123_000
 
     @pytest.mark.asyncio
     async def test_managed_session_defers_tool_lifecycle_context_to_next_turn(self) -> None:
@@ -279,6 +282,24 @@ class TestQwenBackend:
         assert isinstance(event, TextChunk)
         assert event.content == "Error: Internal error"
         assert any("Managed qwen upstream error" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_managed_session_done_event_includes_context_window(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            return_value=_async_stream(StreamEvent(event_type="result", data={}))
+        )
+        session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
+        session._connected = True
+        session.sdk_session_id = "sess-qwen"
+        session._model = "qwen3-coder"
+        session._context_window_overrides = {"qwen3-coder": 262_144}
+
+        events = [event async for event in session.send_message("hi")]
+
+        assert isinstance(events[-1], DoneEvent)
+        assert events[-1].context_window == 262_144
 
     @pytest.mark.asyncio
     async def test_attach_session_warms_local_openai_models(self) -> None:
@@ -421,6 +442,7 @@ class TestCodexBackend:
         session._connected = True
         session._thread_id = "thread-1"
         session._model = "gpt-5.4"
+        session._context_window_overrides = {"gpt-5.4": 200_000}
         session.reasoning_effort = "xhigh"
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
@@ -435,6 +457,7 @@ class TestCodexBackend:
             effort="xhigh",
         )
         assert isinstance(events[-1], DoneEvent)
+        assert events[-1].context_window == 200_000
 
     @pytest.mark.asyncio
     async def test_interrupt_uses_thread_and_turn_identity(self) -> None:

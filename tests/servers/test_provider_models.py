@@ -43,6 +43,7 @@ class TestProviderModelCatalog:
             "value": "sonnet",
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
+            "context_length": 200_000,
             "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
         }
 
@@ -114,8 +115,85 @@ class TestProviderModelCatalog:
         assert status["codex"]["error"] == "codex probe failed"
 
         payload = json.loads(cache_path.read_text(encoding="utf-8"))
-        assert payload["version"] == 2
+        assert payload["version"] == 3
         assert payload["providers"]["codex"]["source"] == "cache"
+        assert payload["providers"]["codex"]["models"][0]["context_length"] == 200_000
+
+    def test_load_cache_preserves_and_enriches_context_lengths(self, temp_dir: Path) -> None:
+        cache_path = temp_dir / "provider-model-catalog.json"
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "providers": {
+                        "codex": {
+                            "source": "live",
+                            "models": [{"value": "gpt-5.4", "label": "gpt-5.4"}],
+                        },
+                        "gemini": {
+                            "source": "live",
+                            "models": [
+                                {
+                                    "value": "gemini-custom",
+                                    "label": "Gemini Custom",
+                                    "context_length": 123456,
+                                }
+                            ],
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        catalog = ProviderModelCatalog(config=None, cache_path=cache_path)
+
+        codex = catalog.get_provider_snapshot("codex")["models"][0]
+        gemini = catalog.get_provider_snapshot("gemini")["models"][0]
+        assert codex["context_length"] == 200_000
+        assert gemini["context_length"] == 123_456
+
+    def test_get_context_window_matches_aliases_suffixes_and_droid_core(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        catalog._providers = {
+            "claude": {
+                "models": [
+                    {
+                        "value": "sonnet",
+                        "canonical_id": "claude-sonnet-4-6-20260410",
+                        "context_length": 200_000,
+                    }
+                ]
+            },
+            "qwen": {
+                "models": [
+                    {
+                        "value": "qwen3-coder(openai)",
+                        "label": "qwen3-coder",
+                        "context_length": 262_144,
+                    }
+                ]
+            },
+            "droid": {
+                "models": [
+                    {"value": "glm-5", "label": "Droid Core (GLM-5)", "context_length": 128_000}
+                ]
+            },
+            "codex": {"models": [{"value": "gpt-5.4", "context_length": 333_000}]},
+        }
+
+        assert catalog.get_context_window("claude", "sonnet") == 200_000
+        assert catalog.get_context_window("claude", "claude-sonnet-4-6-20260410") == 200_000
+        assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
+        assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
+        assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
+        assert catalog.get_context_window("droid", "gpt-5.4") == 333_000
+        assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000
+        assert catalog.get_context_window("droid", "custom/byok-model") is None
 
     @pytest.mark.asyncio
     async def test_refresh_marks_provider_failed_without_prior_cache(self, temp_dir: Path) -> None:

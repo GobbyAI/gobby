@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
-from gobby.servers.provider_models import DROID_MODEL_CATALOG
+from gobby.servers.provider_models import DROID_MODEL_CATALOG, with_context_lengths
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -26,55 +26,64 @@ _SUPPORTED_WEB_CHAT_CODEX_MODELS = frozenset(
 # Static model catalog per provider. Dynamic probing can augment this
 # later without breaking the contract.
 _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
-    "claude": [
-        {
-            "value": "opus",
-            "label": "Opus",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
-        },
-        {
-            "value": "sonnet",
-            "label": "Sonnet",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
-        },
-        {
-            "value": "haiku",
-            "label": "Haiku",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
-        },
-    ],
-    "gemini": [
-        {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
-        {"value": "gemini-3-flash-preview", "label": "flash-3"},
-    ],
+    "claude": with_context_lengths(
+        "claude",
+        [
+            {
+                "value": "opus",
+                "label": "Opus",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+            },
+            {
+                "value": "sonnet",
+                "label": "Sonnet",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+            },
+            {
+                "value": "haiku",
+                "label": "Haiku",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "max"]},
+            },
+        ],
+    ),
+    "gemini": with_context_lengths(
+        "gemini",
+        [
+            {"value": "gemini-3.1-pro-preview", "label": "pro-3.1"},
+            {"value": "gemini-3-flash-preview", "label": "flash-3"},
+        ],
+    ),
     "qwen": [],
-    "codex": [
-        {
-            "value": "gpt-5.4",
-            "label": "codex-5.4",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.4-mini",
-            "label": "mini-5.4",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.3-codex",
-            "label": "codex-5.3",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.3-codex-spark",
-            "label": "spark-5.3",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-        {
-            "value": "gpt-5.2",
-            "label": "gpt-5.2",
-            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-        },
-    ],
+    "codex": with_context_lengths(
+        "codex",
+        [
+            {
+                "value": "gpt-5.4",
+                "label": "codex-5.4",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.4-mini",
+                "label": "mini-5.4",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.3-codex",
+                "label": "codex-5.3",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.3-codex-spark",
+                "label": "spark-5.3",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+            {
+                "value": "gpt-5.2",
+                "label": "gpt-5.2",
+                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+            },
+        ],
+    ),
     "droid": DROID_MODEL_CATALOG,
 }
 
@@ -120,13 +129,14 @@ def _build_model_catalog(
         getattr(server, "services", None), "provider_model_catalog", None
     )
     if provider_model_catalog is not None:
-        catalog = {
-            provider: (
-                provider_model_catalog.get_provider_snapshot(provider).get("models", []),
-                provider_model_catalog.get_provider_snapshot(provider).get("source", "failed"),
+        catalog = {}
+        for provider, _binary in _PROVIDER_DEFS:
+            snapshot = provider_model_catalog.get_provider_snapshot(provider)
+            models = snapshot.get("models", [])
+            catalog[provider] = (
+                with_context_lengths(provider, models) if isinstance(models, list) else [],
+                snapshot.get("source", "failed"),
             )
-            for provider, _binary in _PROVIDER_DEFS
-        }
     else:
         catalog = {
             provider: ([*models], "static") for provider, models in _BASE_MODEL_CATALOG.items()

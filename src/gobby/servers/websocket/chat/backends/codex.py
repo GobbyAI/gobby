@@ -680,7 +680,10 @@ class CodexWebChatBackend:
 
                 if method == "thread/closed":
                     session._turn_id = None
-                    yield DoneEvent(tool_calls_count=0)
+                    yield DoneEvent(
+                        tool_calls_count=0,
+                        context_window=session._resolve_context_window(),
+                    )
                     turn_completed.set()
                     continue
 
@@ -700,13 +703,18 @@ class CodexWebChatBackend:
                         tool_calls_count=0,
                         input_tokens=int(usage.get("input_tokens", 0)),
                         output_tokens=int(usage.get("output_tokens", 0)),
+                        context_window=session._resolve_context_window(),
                         sdk_session_id=session.sdk_session_id,
                     )
                     turn_completed.set()
         except Exception as exc:
             logger.error("Codex managed session %s error: %s", session.conversation_id, exc)
             yield TextChunk(content=f"Error: {exc}")
-            yield DoneEvent(tool_calls_count=0, sdk_session_id=session.sdk_session_id)
+            yield DoneEvent(
+                tool_calls_count=0,
+                sdk_session_id=session.sdk_session_id,
+                context_window=session._resolve_context_window(),
+            )
         finally:
             for method in event_methods:
                 self._client.remove_notification_handler(method, _enqueue)

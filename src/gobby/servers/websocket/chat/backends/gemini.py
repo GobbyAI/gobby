@@ -175,7 +175,11 @@ class GeminiManagedChatSession(
                     if chat_event is not None:
                         yield chat_event
 
-                yield DoneEvent(tool_calls_count=0, sdk_session_id=self.sdk_session_id)
+                yield DoneEvent(
+                    tool_calls_count=0,
+                    sdk_session_id=self.sdk_session_id,
+                    context_window=self._resolve_context_window(),
+                )
             except Exception as exc:
                 logger.error(
                     "%s managed session %s error: %s",
@@ -185,7 +189,7 @@ class GeminiManagedChatSession(
                     exc_info=True,
                 )
                 yield TextChunk(content=f"Generation failed: {exc}")
-                yield DoneEvent(tool_calls_count=0)
+                yield DoneEvent(tool_calls_count=0, context_window=self._resolve_context_window())
 
     def _translate_event(
         self,

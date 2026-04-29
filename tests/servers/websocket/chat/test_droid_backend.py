@@ -205,6 +205,8 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
     backend = DroidWebChatBackend()
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
     session._connected = True
+    session._model = "gpt-5.4"
+    session._context_window_overrides = {"gpt-5.4": 200_000}
 
     async def fake_send_message(_session: Any, _prompt: str):
         for line in _fixture_lines("thinking.jsonl"):
@@ -218,6 +220,7 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
     assert any(isinstance(event, ThinkingEvent) for event in events)
     assert [event.content for event in events if isinstance(event, TextChunk)] == ["Done"]
     assert isinstance(events[-1], DoneEvent)
+    assert events[-1].context_window == 200_000
 
 
 @pytest.mark.asyncio

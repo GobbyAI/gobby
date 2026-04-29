@@ -9,6 +9,7 @@ export interface ProviderModelOption {
   hidden?: boolean;
   is_default?: boolean;
   canonical_id?: string;
+  context_length?: number | null;
   reasoning?: ProviderModelReasoning;
 }
 
