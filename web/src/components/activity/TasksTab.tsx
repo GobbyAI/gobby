@@ -10,7 +10,7 @@ import {
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import "../tasks/task-execution.css";
-import type { GobbyTask } from "../../hooks/useTasks";
+import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
 import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
@@ -320,6 +320,8 @@ export const TasksTab = memo(function TasksTab({
   const [topHeight, setTopHeight] = useState(50);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
+  const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
   const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
@@ -470,6 +472,38 @@ export const TasksTab = memo(function TasksTab({
       })
       .finally(() => {
         if (!controller.signal.aborted) setDetailLoading(false);
+      });
+    return () => controller.abort();
+  }, [selectedTaskId]);
+
+  // Fetch dependencies + subtasks alongside the detail. Each call uses its own
+  // controller so a stale response from a previous selection can't overwrite
+  // the current panel.
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setTaskDependencies(null);
+      setTaskSubtasks([]);
+      return;
+    }
+    const controller = new AbortController();
+    const baseUrl = getBaseUrl();
+    fetch(
+      `${baseUrl}/api/tasks/${selectedTaskId}/dependencies?direction=both`,
+      { signal: controller.signal },
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setTaskDependencies(data ?? null))
+      .catch((err) => {
+        if (err.name !== "AbortError") setTaskDependencies(null);
+      });
+    fetch(
+      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200`,
+      { signal: controller.signal },
+    )
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setTaskSubtasks(data?.tasks ?? []))
+      .catch((err) => {
+        if (err.name !== "AbortError") setTaskSubtasks([]);
       });
     return () => controller.abort();
   }, [selectedTaskId]);
@@ -912,6 +946,8 @@ export const TasksTab = memo(function TasksTab({
               task={taskDetail}
               parentTask={parentTask}
               onSelectTask={setSelectedTaskId}
+              dependencies={taskDependencies}
+              subtasks={taskSubtasks}
             />
           ) : (
             <p className="activity-task-detail-empty">
