@@ -112,7 +112,7 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
   return (
     <div className={cn(
       'px-4 py-3',
-      message.role === 'user' && 'bg-[#1e3a5f]/30',
+      message.role === 'user' && 'bg-[var(--color-info-soft)]',
       message.role === 'system' && !isCommandResult && 'bg-muted/30',
     )}>
       <div className="max-w-3xl mx-auto">
