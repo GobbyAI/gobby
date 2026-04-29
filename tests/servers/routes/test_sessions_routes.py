@@ -28,7 +28,13 @@ NOW_ISO = "2026-02-10T12:00:00+00:00"
 
 
 def _make_session(**overrides) -> MagicMock:
-    """Create a mock Session with sensible defaults."""
+    """Create a mock Session with sensible defaults.
+
+    `to_dict` reads attributes lazily via side_effect, so callers and route
+    code that mutate fields after construction (e.g., assigning
+    claimed_task_refs from a bulk join) see those mutations reflected in the
+    serialized output.
+    """
     defaults = {
         "id": "sess-abc123",
         "external_id": "ext-123",
@@ -46,12 +52,16 @@ def _make_session(**overrides) -> MagicMock:
         "updated_at": NOW_ISO,
         "seq_num": 42,
         "message_count": 0,
+        "claimed_task_refs": [],
+        "created_task_refs": [],
+        "closed_task_refs": [],
     }
     defaults.update(overrides)
+    keys = list(defaults.keys())
     session = MagicMock()
     for key, val in defaults.items():
         setattr(session, key, val)
-    session.to_dict.return_value = defaults
+    session.to_dict.side_effect = lambda: {key: getattr(session, key) for key in keys}
     return session
 
 
@@ -594,6 +604,51 @@ class TestListSessions:
             cursor_updated_at=None,
             cursor_id=None,
         )
+
+    def test_list_emits_task_refs_per_session(self, client, mock_server) -> None:
+        """The route enriches each session with claimed/created/closed task refs."""
+        sessions = [
+            _make_session(id="sess-A"),
+            _make_session(id="sess-B"),
+        ]
+        mock_server.session_manager.list.return_value = sessions
+        mock_server.session_manager.fetch_task_refs_by_session.return_value = {
+            "sess-A": {"claimed": [10, 11], "created": [20], "closed": []},
+            "sess-B": {"claimed": [], "created": [], "closed": [99]},
+        }
+
+        response = client.get("/api/sessions")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sessions"][0]["id"] == "sess-A"
+        assert data["sessions"][0]["claimed_task_refs"] == [10, 11]
+        assert data["sessions"][0]["created_task_refs"] == [20]
+        assert data["sessions"][0]["closed_task_refs"] == []
+        assert data["sessions"][1]["id"] == "sess-B"
+        assert data["sessions"][1]["claimed_task_refs"] == []
+        assert data["sessions"][1]["closed_task_refs"] == [99]
+
+        # Single bulk join — fetch_task_refs_by_session called once with all ids.
+        mock_server.session_manager.fetch_task_refs_by_session.assert_called_once_with(
+            ["sess-A", "sess-B"]
+        )
+
+    def test_list_task_refs_default_empty_when_helper_silent(
+        self, client, mock_server
+    ) -> None:
+        """Sessions absent from the bulk-query result still serialize with empty lists."""
+        sessions = [_make_session(id="sess-A")]
+        mock_server.session_manager.list.return_value = sessions
+        mock_server.session_manager.fetch_task_refs_by_session.return_value = {}
+
+        response = client.get("/api/sessions")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sessions"][0]["claimed_task_refs"] == []
+        assert data["sessions"][0]["created_task_refs"] == []
+        assert data["sessions"][0]["closed_task_refs"] == []
 
     def test_list_emits_next_cursor_when_page_full(self, client, mock_server) -> None:
         """next_cursor is built from the last session when the page hits the limit."""

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from gobby.llm.local_detection import is_local_legacy_fallback
@@ -76,6 +76,11 @@ class Session:
     session_type: str = "terminal"
     sandbox_enabled: bool | None = False
     sandbox_policy_hash: str | None = None
+    # Task-ref enrichment populated post-load by callers that join the tasks
+    # table. Default empty so unenriched Session instances serialize cleanly.
+    claimed_task_refs: list[int] = field(default_factory=list)
+    created_task_refs: list[int] = field(default_factory=list)
+    closed_task_refs: list[int] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: Any) -> Session:
@@ -254,6 +259,9 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
+            "claimed_task_refs": self.claimed_task_refs,
+            "created_task_refs": self.created_task_refs,
+            "closed_task_refs": self.closed_task_refs,
             "id": self.id,  # UUID at end for backwards compat
         }
 

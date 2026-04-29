@@ -527,6 +527,21 @@ def register_core_routes(
             if include_resumability:
                 resumability = await _compute_resumability(server, sessions, current_session_id)
 
+            # One bulk join against tasks for the whole page — populates
+            # claimed_task_refs / created_task_refs / closed_task_refs on each
+            # session before serialization. Empty lists when the session never
+            # touched a task.
+            task_refs_by_session = server.session_manager.fetch_task_refs_by_session(
+                [s.id for s in sessions]
+            )
+            for session in sessions:
+                refs = task_refs_by_session.get(session.id)
+                if refs is None:
+                    continue
+                session.claimed_task_refs = refs["claimed"]
+                session.created_task_refs = refs["created"]
+                session.closed_task_refs = refs["closed"]
+
             # Enrich sessions with counts
             session_list = []
             for session in sessions:
