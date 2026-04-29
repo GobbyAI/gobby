@@ -32,13 +32,9 @@ def granularity_pattern() -> str:
     app.include_router(router)
 
     route = next(
-        r
-        for r in app.routes
-        if isinstance(r, APIRoute) and r.path.endswith("/tokens/timeseries")
+        r for r in app.routes if isinstance(r, APIRoute) and r.path.endswith("/tokens/timeseries")
     )
-    granularity_param = next(
-        p for p in route.dependant.query_params if p.name == "granularity"
-    )
+    granularity_param = next(p for p in route.dependant.query_params if p.name == "granularity")
     metadata = getattr(granularity_param.field_info, "metadata", []) or []
     for entry in metadata:
         pattern = getattr(entry, "pattern", None)

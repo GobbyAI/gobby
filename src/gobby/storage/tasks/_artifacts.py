@@ -20,6 +20,11 @@ _ARTIFACT_FIELDS = frozenset(
         "target_branch",
         "expansion_run_id",
         "expansion_attempts",
+        "max_expansion_attempts",
+        "max_qa_rounds",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+        "max_review_rounds",
         "pr_url",
         "merge_commit_sha",
     }
@@ -60,12 +65,18 @@ class TaskArtifacts:
     target_branch: str | None = None
     expansion_run_id: str | None = None
     expansion_attempts: int = 0
+    max_expansion_attempts: int | None = None
+    max_qa_rounds: int | None = None
+    max_merge_attempts: int | None = None
+    max_holistic_rounds: int | None = None
+    max_review_rounds: int | None = None
     pr_url: str | None = None
     merge_commit_sha: str | None = None
     updated_at: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> TaskArtifacts:
+        keys = row.keys()
         return cls(
             task_id=row["task_id"],
             plan_file_path=row["plan_file_path"],
@@ -78,6 +89,11 @@ class TaskArtifacts:
             target_branch=row["target_branch"],
             expansion_run_id=row["expansion_run_id"],
             expansion_attempts=int(row["expansion_attempts"] or 0),
+            max_expansion_attempts=_optional_row_int(row, keys, "max_expansion_attempts"),
+            max_qa_rounds=_optional_row_int(row, keys, "max_qa_rounds"),
+            max_merge_attempts=_optional_row_int(row, keys, "max_merge_attempts"),
+            max_holistic_rounds=_optional_row_int(row, keys, "max_holistic_rounds"),
+            max_review_rounds=_optional_row_int(row, keys, "max_review_rounds"),
             pr_url=row["pr_url"],
             merge_commit_sha=row["merge_commit_sha"],
             updated_at=row["updated_at"],
@@ -118,6 +134,16 @@ def _validate_constraints(values: dict[str, Any]) -> None:
             "isolation_base_without_family",
             "base_commit_sha requires an active worktree or clone artifact family",
         )
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+def _optional_row_int(row: sqlite3.Row, keys: list[str], field: str) -> int | None:
+    if field not in keys:
+        return None
+    return _optional_int(row[field])
 
 
 _ISOLATION_FIELDS = frozenset({"worktree_path", "worktree_id", "clone_path", "clone_id"})

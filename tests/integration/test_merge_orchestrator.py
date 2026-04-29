@@ -214,24 +214,18 @@ async def test_inspect_merge_state_detects_orphaned_merge_head(
     registry: InternalToolRegistry,
 ) -> None:
     """inspect_merge_state finds the planted MERGE_HEAD in wt-orphan only."""
-    orphan_result = await registry.call(
-        "inspect_merge_state", {"worktree_id": "wt-orphan"}
-    )
+    orphan_result = await registry.call("inspect_merge_state", {"worktree_id": "wt-orphan"})
     assert orphan_result["success"] is True
     assert orphan_result["state"] == "merging"
     assert orphan_result["has_merge_head"] is True
 
-    trivial_result = await registry.call(
-        "inspect_merge_state", {"worktree_id": "wt-trivial"}
-    )
+    trivial_result = await registry.call("inspect_merge_state", {"worktree_id": "wt-trivial"})
     assert trivial_result["success"] is True
     assert trivial_result["state"] == "clean"
     assert trivial_result["has_merge_head"] is False
     assert trivial_result["conflicted_files"] == []
 
-    conflict_result = await registry.call(
-        "inspect_merge_state", {"worktree_id": "wt-conflict"}
-    )
+    conflict_result = await registry.call("inspect_merge_state", {"worktree_id": "wt-conflict"})
     assert conflict_result["success"] is True
     assert conflict_result["state"] == "clean"
     assert conflict_result["has_merge_head"] is False

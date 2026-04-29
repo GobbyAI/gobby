@@ -267,13 +267,13 @@ def test_validate_covers_behavior_referenced_by_bare_file() -> None:
     item = _item(
         "A1.1",
         artifact_kind=ArtifactKind.behavior,
-        artifact_ref='"CLAUDE.md states .grandfathered rules" in `CLAUDE.md`',
-        prose='behavior: "CLAUDE.md states .grandfathered rules" in `CLAUDE.md`',
+        artifact_ref='"CLAUDE.md states plans table rules" in `CLAUDE.md`',
+        prose='behavior: "CLAUDE.md states plans table rules" in `CLAUDE.md`',
     )
 
     result = validate_covers(
         CoversRecord("plan", "A1", "A1.1"),
-        "CLAUDE.md states .grandfathered is reserved for merged epics.",
+        "CLAUDE.md states plans table rules for active and archived plan rows.",
         "#leaf",
         _plan_doc("A1", item),
     )

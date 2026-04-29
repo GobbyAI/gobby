@@ -691,3 +691,17 @@ The detailed semantics (why phases must be sub-epics, how cross-phase deps wire)
 ## Optional: Workflow-Enforced Planning
 
 The `plan-expansion` workflow template still exists as a stricter alternative (hard step gates, tool restrictions, loop enforcement). It is documented in `docs/guides/workflows-overview.md`. `/gobby plan` does **not** activate it automatically — use whichever activation path you have configured today.
+
+---
+
+## Lifecycle Coordinator Contract
+
+This skill is the coordinator for the lifecycle-dispatch flow.
+
+- The parent chat session never claims implementation or review tasks during Phase 3. It creates a fresh planning anchor for each round, spawns the required agent, records `active_anchor_id`, then ends the turn.
+- Round 1 spawns `plan-adversary` against the user-approved first draft. Planner is not involved before the first adversary verdict.
+- Round N, where N > 1, first spawns `planner` in a fresh context with the plan file, cumulative `## Plan Changelog`, and latest `## Adversary Findings — Round N-1`; after planner resubmits, the coordinator creates a new adversary anchor and spawns `plan-adversary`.
+- Wake routing reads the active anchor with `get_task`. `status=review_approved` proceeds only after the plan file contains `## M1 Task Manifest`; `status=open` with remaining budget spawns the next round; `status=open` with exhausted budget surfaces final findings; `status=escalated` surfaces the escalation reason.
+- The daemon's task-completion notification is the wake signal. Do not use `ScheduleWakeup`, `Monitor`, or polling in Phase 3.
+- In delegated mode, load the `build` skill before Phase 3b, ask for build scope, then either trigger `gobby build <plan_file>` with the resolved profile or show the exact CLI command.
+- The coordinator does not edit the plan file during Phase 3. Manifest writes belong to `plan-adversary`; surgical revisions belong to fresh-context `planner`.

@@ -80,6 +80,11 @@ def _task_artifacts_create_sql(table_name: str) -> str:
             target_branch TEXT,
             expansion_run_id TEXT,
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
+            max_expansion_attempts INTEGER,
+            max_qa_rounds INTEGER,
+            max_merge_attempts INTEGER,
+            max_holistic_rounds INTEGER,
+            max_review_rounds INTEGER,
             pr_url TEXT,
             merge_commit_sha TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -122,6 +127,11 @@ def _add_task_artifact_evidence_columns(db: LocalDatabase) -> None:
         "target_branch",
         "expansion_run_id",
         "expansion_attempts",
+        "max_expansion_attempts",
+        "max_qa_rounds",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+        "max_review_rounds",
         "pr_url",
         "merge_commit_sha",
         "updated_at",
@@ -141,6 +151,19 @@ def _add_task_artifact_evidence_columns(db: LocalDatabase) -> None:
         """,  # nosec B608 - columns are fixed allowlist values.
     )
     db.execute("DROP TABLE task_artifacts_old")
+
+
+def _add_task_artifact_retry_cap_columns(db: LocalDatabase) -> None:
+    existing_columns = _table_columns(db, "task_artifacts")
+    for column in (
+        "max_expansion_attempts",
+        "max_qa_rounds",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+        "max_review_rounds",
+    ):
+        if column not in existing_columns:
+            db.execute(f"ALTER TABLE task_artifacts ADD COLUMN {column} INTEGER")
 
 
 def _default_task_artifact_column(column: str) -> str:
@@ -165,6 +188,33 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         CREATE INDEX IF NOT EXISTS idx_pipeline_executions_created_at
             ON pipeline_executions (created_at DESC)
         """,
+    ),
+    (
+        226,
+        "Add DB-backed plan registry",
+        """
+        CREATE TABLE IF NOT EXISTS plans (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            plan_id TEXT NOT NULL,
+            plan_path TEXT NOT NULL,
+            plan_hash TEXT,
+            plan_kind TEXT NOT NULL CHECK(plan_kind IN ('implementation', 'strategy')),
+            state TEXT NOT NULL CHECK(state IN ('active', 'archived')),
+            root_task_ref TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            archived_at TEXT,
+            UNIQUE (project_id, plan_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_plans_root_task ON plans(root_task_ref);
+        CREATE INDEX IF NOT EXISTS idx_plans_state ON plans(state)
+        """,
+    ),
+    (
+        227,
+        "Add task artifact retry cap overrides",
+        _add_task_artifact_retry_cap_columns,
     ),
 ]
 

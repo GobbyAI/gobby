@@ -76,6 +76,7 @@ GOBBY_EXEMPT_SERVERS = frozenset(
         "gobby-metrics",
         "gobby-pipeline",
         "gobby-pipelines",
+        "gobby-plans",
         "gobby-rule",
         "gobby-rules",
         "gobby-schedule",

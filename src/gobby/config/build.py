@@ -61,13 +61,22 @@ class BuildConfig:
     default_skip_stages: tuple[str, ...] = ()
     default_isolation: Isolation = "worktree"
     default_yolo: bool = False
-    default_max_review_rounds: int = 3
+    max_expansion_attempts: int = 3
+    max_qa_rounds: int = 5
+    max_merge_attempts: int = 3
+    max_holistic_rounds: int = 3
+    max_review_rounds: int = 3
     default_target_branch: str | None = None
     clones_dir: Path = field(default_factory=_default_clones_dir)
     cleanup_clones_on_merge: bool = True
     max_active_agents: int = 10
     dispatch_interval_seconds: int = 60
     profiles: dict[str, BuildProfile] = field(default_factory=_default_profiles)
+
+    @property
+    def default_max_review_rounds(self) -> int:
+        """Backward-compatible alias for the consolidated review cap."""
+        return self.max_review_rounds
 
 
 def load_build_config(
@@ -112,7 +121,11 @@ def _config_to_mapping(cfg: BuildConfig) -> dict[str, Any]:
         "default_skip_stages": cfg.default_skip_stages,
         "default_isolation": cfg.default_isolation,
         "default_yolo": cfg.default_yolo,
-        "default_max_review_rounds": cfg.default_max_review_rounds,
+        "max_expansion_attempts": cfg.max_expansion_attempts,
+        "max_qa_rounds": cfg.max_qa_rounds,
+        "max_merge_attempts": cfg.max_merge_attempts,
+        "max_holistic_rounds": cfg.max_holistic_rounds,
+        "max_review_rounds": cfg.max_review_rounds,
         "default_target_branch": cfg.default_target_branch,
         "clones_dir": cfg.clones_dir,
         "cleanup_clones_on_merge": cfg.cleanup_clones_on_merge,
@@ -176,8 +189,17 @@ def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
             raw.get("default_isolation", "worktree"), "default_isolation"
         ),
         default_yolo=_normalize_bool(raw.get("default_yolo", False), "default_yolo"),
-        default_max_review_rounds=_normalize_int(
-            raw.get("default_max_review_rounds", 3), "default_max_review_rounds"
+        max_expansion_attempts=_normalize_int(
+            raw.get("max_expansion_attempts", 3), "max_expansion_attempts"
+        ),
+        max_qa_rounds=_normalize_int(raw.get("max_qa_rounds", 5), "max_qa_rounds"),
+        max_merge_attempts=_normalize_int(raw.get("max_merge_attempts", 3), "max_merge_attempts"),
+        max_holistic_rounds=_normalize_int(
+            raw.get("max_holistic_rounds", 3), "max_holistic_rounds"
+        ),
+        max_review_rounds=_normalize_int(
+            raw.get("max_review_rounds", raw.get("default_max_review_rounds", 3)),
+            "max_review_rounds",
         ),
         default_target_branch=_normalize_optional_str(
             raw.get("default_target_branch"), "default_target_branch"

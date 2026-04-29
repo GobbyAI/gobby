@@ -48,8 +48,12 @@ def _make_worktree(
     )
 
 
-def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=["git"], returncode=returncode, stdout=stdout, stderr=stderr)
+def _completed(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 def _make_registry(
@@ -138,9 +142,7 @@ async def test_predict_conflicts_clean_pair(tmp_path) -> None:
     ]
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
-    result = await registry.call(
-        "predict_conflicts", {"worktree_ids": ["wt-a", "wt-b"]}
-    )
+    result = await registry.call("predict_conflicts", {"worktree_ids": ["wt-a", "wt-b"]})
 
     assert result["success"] is True
     assert len(result["pairs"]) == 1
@@ -167,9 +169,7 @@ async def test_predict_conflicts_pair_conflicts(tmp_path) -> None:
     ]
 
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
-    result = await registry.call(
-        "predict_conflicts", {"worktree_ids": ["wt-a", "wt-b"]}
-    )
+    result = await registry.call("predict_conflicts", {"worktree_ids": ["wt-a", "wt-b"]})
 
     assert result["success"] is True
     pair = result["pairs"][0]
@@ -406,9 +406,7 @@ async def test_inspect_merge_state_worktree_missing() -> None:
     worktree_manager = MagicMock()
     worktree_manager.get.return_value = None
 
-    registry = _make_registry(
-        worktree_manager=worktree_manager, git_manager=MagicMock()
-    )
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call("inspect_merge_state", {"worktree_id": "missing"})
     assert result["success"] is False
     assert "not found" in result["error"]

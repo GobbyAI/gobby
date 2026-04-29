@@ -26,15 +26,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_splice_single_block() -> None:
-    file_with_markers = (
-        "header\n"
-        "<<<<<<< HEAD\n"
-        "ours\n"
-        "=======\n"
-        "theirs\n"
-        ">>>>>>> feature\n"
-        "footer\n"
-    )
+    file_with_markers = "header\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\nfooter\n"
     spliced = splice_resolutions_into_file(file_with_markers, ["RESOLVED"])
     assert spliced == "header\nRESOLVED\nfooter\n"
 
@@ -59,27 +51,13 @@ def test_splice_multiple_blocks_in_order() -> None:
 
 
 def test_splice_count_mismatch_returns_none() -> None:
-    file_with_markers = (
-        "<<<<<<< HEAD\n"
-        "ours\n"
-        "=======\n"
-        "theirs\n"
-        ">>>>>>> b\n"
-    )
+    file_with_markers = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> b\n"
     # Two resolutions provided, but file only has one block.
     assert splice_resolutions_into_file(file_with_markers, ["X", "Y"]) is None
 
 
 def test_splice_empty_resolution_collapses_block() -> None:
-    file_with_markers = (
-        "before\n"
-        "<<<<<<< HEAD\n"
-        "ours\n"
-        "=======\n"
-        "theirs\n"
-        ">>>>>>> b\n"
-        "after\n"
-    )
+    file_with_markers = "before\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> b\nafter\n"
     spliced = splice_resolutions_into_file(file_with_markers, [""])
     assert spliced == "before\nafter\n"
 
@@ -119,13 +97,7 @@ async def test_resolve_file_tier2_populates_content(
 ) -> None:
     file_path = tmp_path / "small.py"
     file_path.write_text(
-        "x = 1\n"
-        "<<<<<<< HEAD\n"
-        "y_ours = 2\n"
-        "=======\n"
-        "y_theirs = 3\n"
-        ">>>>>>> feature\n"
-        "z = 4\n"
+        "x = 1\n<<<<<<< HEAD\ny_ours = 2\n=======\ny_theirs = 3\n>>>>>>> feature\nz = 4\n"
     )
 
     provider = MagicMock()
@@ -150,13 +122,7 @@ async def test_resolve_file_tier3_populates_content_when_tier2_fails(
     file_path = tmp_path / "big.py"
     # File holds one conflict block; Tier 2 LLM returns mismatched hunk count
     # (two separator-delimited chunks), forcing Tier 3.
-    file_path.write_text(
-        "<<<<<<< HEAD\n"
-        "ours\n"
-        "=======\n"
-        "theirs\n"
-        ">>>>>>> feature\n"
-    )
+    file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")
 
     full_file_response = "RESOLVED FULL FILE\n"
     tier2_response = "chunk1\n---HUNK SEPARATOR---\nchunk2\n"
@@ -177,13 +143,7 @@ async def test_resolve_file_human_review_has_empty_content(
     resolver_with_llm: MergeResolver, tmp_path
 ) -> None:
     file_path = tmp_path / "stuck.py"
-    file_path.write_text(
-        "<<<<<<< HEAD\n"
-        "ours\n"
-        "=======\n"
-        "theirs\n"
-        ">>>>>>> feature\n"
-    )
+    file_path.write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n")
     provider = MagicMock()
     provider.generate_text = AsyncMock(return_value=None)
     resolver_with_llm._llm_service.get_default_provider.return_value = provider  # type: ignore[union-attr]

@@ -365,9 +365,7 @@ def register_merge_landscape_tools(
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout
-                )
+                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
@@ -418,9 +416,7 @@ def register_merge_landscape_tools(
 
         has_merge_head = (git_dir / "MERGE_HEAD").exists()
         has_cherry_pick_head = (git_dir / "CHERRY_PICK_HEAD").exists()
-        has_rebase = (git_dir / "rebase-merge").exists() or (
-            git_dir / "rebase-apply"
-        ).exists()
+        has_rebase = (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
 
         rc, stdout, _ = await _git_async(
             git_manager,
@@ -428,9 +424,7 @@ def register_merge_landscape_tools(
             cwd=wt_path,
         )
         conflicted_files = (
-            [line.strip() for line in stdout.splitlines() if line.strip()]
-            if rc == 0
-            else []
+            [line.strip() for line in stdout.splitlines() if line.strip()] if rc == 0 else []
         )
 
         if has_merge_head:

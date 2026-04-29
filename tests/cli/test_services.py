@@ -47,7 +47,9 @@ def _completed_process(
     stderr: str = "",
 ) -> subprocess.CompletedProcess[str]:
     """Build a completed subprocess result for CLI mocks."""
-    return subprocess.CompletedProcess(args=args, returncode=returncode, stdout=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(
+        args=args, returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 async def _run_inline(func, *args, **kwargs):
