@@ -474,6 +474,14 @@ def register_core_routes(
         current_session_id: str | None = Query(
             None, description="Caller's own session ID (excluded from resumable list)"
         ),
+        cursor_updated_at: str | None = Query(
+            None,
+            description="Compound-cursor timestamp from a prior page's next_cursor",
+        ),
+        cursor_id: str | None = Query(
+            None,
+            description="Compound-cursor session id from a prior page's next_cursor",
+        ),
     ) -> dict[str, Any]:
         """
         List sessions with optional filtering and message counts.
@@ -486,9 +494,14 @@ def register_core_routes(
             exclude_subagents: If true, only return top-level sessions
             include_resumability: If true, enrich with resumability and filter non-resumable
             current_session_id: Caller's session to exclude from resumable results
+            cursor_updated_at: Pass next_cursor.updated_at from a prior page to fetch the next.
+            cursor_id: Pass next_cursor.id from a prior page; both cursor params must be set
+                together. Cursor pagination is disabled when include_resumability=true (the
+                over-fetch semantics make cursor positioning unreliable); next_cursor is
+                always null in that mode.
 
         Returns:
-            List of session objects with message counts
+            Dict with `sessions`, `count`, `next_cursor` (or null), and `response_time_ms`.
         """
         start_time = time.perf_counter()
 
@@ -505,6 +518,8 @@ def register_core_routes(
                 source=source,
                 limit=fetch_limit,
                 exclude_subagents=exclude_subagents,
+                cursor_updated_at=cursor_updated_at,
+                cursor_id=cursor_id,
             )
 
             # Build resumability info if requested
@@ -531,9 +546,18 @@ def register_core_routes(
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
+            next_cursor: dict[str, str] | None = None
+            if not include_resumability and len(session_list) >= limit and session_list:
+                last = session_list[-1]
+                next_cursor = {
+                    "updated_at": str(last["updated_at"]),
+                    "id": str(last["id"]),
+                }
+
             return {
                 "sessions": session_list,
                 "count": len(session_list),
+                "next_cursor": next_cursor,
                 "response_time_ms": response_time_ms,
             }
 

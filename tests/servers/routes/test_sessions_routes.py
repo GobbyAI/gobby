@@ -591,7 +591,71 @@ class TestListSessions:
             source="Claude Code",
             limit=50,
             exclude_subagents=False,
+            cursor_updated_at=None,
+            cursor_id=None,
         )
+
+    def test_list_emits_next_cursor_when_page_full(self, client, mock_server) -> None:
+        """next_cursor is built from the last session when the page hits the limit."""
+        sessions = [
+            _make_session(id=f"sess-{index}", updated_at=f"2026-04-29T10:00:{index:02d}+00:00")
+            for index in range(2)
+        ]
+        mock_server.session_manager.list.return_value = sessions
+
+        response = client.get("/api/sessions", params={"limit": 2})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["next_cursor"] == {
+            "updated_at": "2026-04-29T10:00:01+00:00",
+            "id": "sess-1",
+        }
+
+    def test_list_next_cursor_null_when_page_partial(self, client, mock_server) -> None:
+        """A short page (fewer than limit rows) means there's no next page."""
+        sessions = [_make_session(id="sess-only")]
+        mock_server.session_manager.list.return_value = sessions
+
+        response = client.get("/api/sessions", params={"limit": 100})
+
+        assert response.status_code == 200
+        assert response.json()["next_cursor"] is None
+
+    def test_list_passes_cursor_to_storage(self, client, mock_server) -> None:
+        """cursor_updated_at and cursor_id reach the storage layer verbatim."""
+        mock_server.session_manager.list.return_value = []
+
+        response = client.get(
+            "/api/sessions",
+            params={
+                "cursor_updated_at": "2026-04-29T10:00:00+00:00",
+                "cursor_id": "sess-cursor",
+            },
+        )
+
+        assert response.status_code == 200
+        kwargs = mock_server.session_manager.list.call_args.kwargs
+        assert kwargs["cursor_updated_at"] == "2026-04-29T10:00:00+00:00"
+        assert kwargs["cursor_id"] == "sess-cursor"
+
+    def test_list_next_cursor_null_when_resumability(self, client, mock_server) -> None:
+        """include_resumability disables cursor pagination — next_cursor is always null."""
+        sessions = [
+            _make_session(id=f"sess-{index}", updated_at=f"2026-04-29T10:00:{index:02d}+00:00")
+            for index in range(5)
+        ]
+        mock_server.session_manager.list.return_value = sessions
+
+        response = client.get(
+            "/api/sessions",
+            params={"limit": 2, "include_resumability": "true"},
+        )
+
+        assert response.status_code == 200
+        # The route still trims to limit when resumability filtering is in effect, but
+        # cursor positioning would be ambiguous, so next_cursor stays null.
+        assert response.json()["next_cursor"] is None
 
     def test_list_no_session_manager(self, client, mock_server) -> None:
         """Returns 503 when session_manager is None."""

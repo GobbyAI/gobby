@@ -48,6 +48,8 @@ class _QueryMixin:
         source: str | None = None,
         limit: int = 100,
         exclude_subagents: bool = False,
+        cursor_updated_at: str | None = None,
+        cursor_id: str | None = None,
     ) -> list[Session]:
         """
         List sessions with optional filters.
@@ -58,6 +60,11 @@ class _QueryMixin:
             source: Filter by CLI source
             limit: Maximum number of results
             exclude_subagents: If True, only return top-level sessions (agent_depth = 0)
+            cursor_updated_at: Compound-cursor timestamp from a prior page's last row.
+                When set with cursor_id, returns rows strictly after (lower than) the
+                cursor in the (updated_at, id) DESC ordering.
+            cursor_id: Compound-cursor session id paired with cursor_updated_at.
+                Both must be supplied together; supplying one without the other is ignored.
 
         Returns:
             List of Session instances
@@ -69,6 +76,10 @@ class _QueryMixin:
                 "(parent_session_id IS NULL OR parent_session_id = '') AND agent_depth = 0"
             )
 
+        if cursor_updated_at is not None and cursor_id is not None:
+            conditions.append("(updated_at < ? OR (updated_at = ? AND id < ?))")
+            params.extend([cursor_updated_at, cursor_updated_at, cursor_id])
+
         where_clause = " AND ".join(conditions)
         params.append(limit)
 
@@ -76,7 +87,7 @@ class _QueryMixin:
             f"""
             SELECT * FROM sessions
             WHERE {where_clause}
-            ORDER BY updated_at DESC
+            ORDER BY updated_at DESC, id DESC
             LIMIT ?
             """,  # nosec B608
             tuple(params),
