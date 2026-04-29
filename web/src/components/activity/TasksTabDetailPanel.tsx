@@ -32,6 +32,13 @@ const SUBTASK_BUCKET_ORDER: TaskBucket[] = [
   "closed",
 ];
 
+function formatLifecycleStage(stage: string): string {
+  return stage
+    .split("_")
+    .map((part) => (part.length > 0 ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
+}
+
 function formatTaskDetailDate(iso: string | null | undefined): string {
   if (!iso) {
     return "—";
@@ -124,6 +131,13 @@ export function TasksTabDetailPanel({
           />
         )}
         <TaskDetailMetaRow label="State" value={stateLabel} />
+        {task.lifecycle_stage && (
+          <TaskDetailMetaRow
+            label="Lifecycle"
+            value={formatLifecycleStage(task.lifecycle_stage)}
+            title="Internal lifecycle stage"
+          />
+        )}
         <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
         <TaskDetailMetaRow label="Updated" value={formatTaskDetailDate(task.updated_at)} />
         <TaskDetailMetaRow label="Category" value={categoryLabel} />
