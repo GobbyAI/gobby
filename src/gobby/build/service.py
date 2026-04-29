@@ -23,6 +23,10 @@ class BuildOptions:
     isolation: Isolation
     yolo: bool
     max_review_rounds: int
+    max_expansion_attempts: int | None = None
+    max_qa_rounds: int | None = None
+    max_merge_attempts: int | None = None
+    max_holistic_rounds: int | None = None
     target_branch: str | None = None
     assigned_agent: str | None = None
     clones_dir: Path | None = None
@@ -37,6 +41,7 @@ class BuildResult:
     initial_lifecycle: str
     applied_stages_skipped: list[str]
     tick_dispatched: int
+    retry_caps: dict[str, int | None] | None = None
 
 
 AUTOMATED_LEAF_CATEGORIES = frozenset({"code", "config", "docs", "test"})
@@ -111,6 +116,7 @@ def _build_plan_file(
         task.id,
         plan_file_path=str(plan_file),
         target_branch=opts.target_branch,
+        **_retry_cap_artifacts(opts),
     )
     _record_build_event(task_manager, task, initial_lifecycle)
     return BuildResult(
@@ -119,6 +125,7 @@ def _build_plan_file(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=_kick_dispatcher_tick(),
+        retry_caps=_retry_caps(opts),
     )
 
 
@@ -146,6 +153,7 @@ def _build_leaf(
         isolation="none",
         assigned_agent=opts.assigned_agent,
     )
+    task_manager.artifacts.set_artifacts_atomic(task.id, **_retry_cap_artifacts(opts))
     _record_build_event(task_manager, task, initial_lifecycle)
     return BuildResult(
         task_id=task.id,
@@ -153,6 +161,7 @@ def _build_leaf(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=_kick_dispatcher_tick(),
+        retry_caps=_retry_caps(opts),
     )
 
 
@@ -164,6 +173,11 @@ def _build_epic(
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
     _validate_epic_isolation_artifacts(opts.isolation, artifacts)
+    task_manager.artifacts.set_artifacts_atomic(
+        task.id,
+        target_branch=opts.target_branch,
+        **_retry_cap_artifacts(opts),
+    )
     task_manager.cascade_build_state_to_subtree(
         task.id,
         isolation=opts.isolation,
@@ -179,6 +193,7 @@ def _build_epic(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=_kick_dispatcher_tick(),
+        retry_caps=_retry_caps(opts),
     )
 
 
@@ -305,6 +320,20 @@ def _record_build_event(
         reason="gobby build",
         by_actor="build",
     )
+
+
+def _retry_cap_artifacts(opts: BuildOptions) -> dict[str, int | None]:
+    return {
+        "max_expansion_attempts": opts.max_expansion_attempts,
+        "max_qa_rounds": opts.max_qa_rounds,
+        "max_merge_attempts": opts.max_merge_attempts,
+        "max_holistic_rounds": opts.max_holistic_rounds,
+        "max_review_rounds": opts.max_review_rounds,
+    }
+
+
+def _retry_caps(opts: BuildOptions) -> dict[str, int | None]:
+    return dict(_retry_cap_artifacts(opts))
 
 
 def _kick_dispatcher_tick() -> int:

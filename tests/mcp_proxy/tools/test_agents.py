@@ -967,10 +967,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
             )
 
         notify_result = mock_complete.call_args.kwargs["notify_result"]
-        assert (
-            notify_result["signoff_message"]
-            == "REJECTED: round 5, 1 blocking (sample)"
-        )
+        assert notify_result["signoff_message"] == "REJECTED: round 5, 1 blocking (sample)"
         assert notify_result["status"] == "success"
         assert notify_result["run_id"] == "run-xyz"
 

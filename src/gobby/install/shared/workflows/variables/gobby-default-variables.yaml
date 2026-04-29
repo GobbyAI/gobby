@@ -59,6 +59,7 @@ variables:
     value:
       - gobby-tasks
       - gobby-tasks-ops
+      - gobby-plans
       - gobby-sessions
       - gobby-memory
       - gobby-workflows

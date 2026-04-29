@@ -99,19 +99,16 @@ Canonical section-heading regex:
 - Bootstrap-ledger requirement: every new epic plan ships a
   `.coverage-ledger.yaml` companion file, adversary-reviewed before expansion,
   until the contract tooling is mature.
-- Plan index (`.gobby/plans/index.yaml`): every `task-*.md` plan file MUST
-  have an entry. Each entry carries `plan_id`, `project_id`, `root_task_ref`,
-  `plan_kind`, and `status`. `plan_kind` is one of:
+- Plan storage: the `plans` table is the authoritative registry. Use the
+  `gobby-plans` MCP server or `gobby plans` CLI to create, list, update, and
+  archive plan records. Each row carries `plan_id`, `project_id`,
+  `root_task_ref`, `plan_path`, `plan_hash`, `plan_kind`, and `state`.
+  `plan_kind` is one of:
   - `implementation` — parsed strict; requires a generated manifest with
     matching `plan_hash` and every row `status: covered`.
   - `strategy` — parsed permissive; no manifest permitted.
-  - `legacy` — parsed permissive; no manifest permitted; requires a row in
-    `.gobby/plans/.legacy-classification.yaml` with `legacy_reason` and
-    target-task snapshot fields.
-- `.grandfathered` mechanism: reserved for already-merged epics; additions
-  require a co-located removal task with a paired
-  `# remove-by: <task-ref>` annotation, and that task must be open.
-  Epic 1 (#13175) is not grandfathered.
+  `state` is one of `active` or `archived`; archived plans live under
+  `.gobby/plans/completed/`.
 - Table-row decomposition rule: any `deliverable` section whose body uses a
   markdown table to enumerate work items MUST emit one acceptance item per data
   row with stable IDs. Plan-adversary qualitatively rejects deliverables that

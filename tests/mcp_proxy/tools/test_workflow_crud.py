@@ -279,12 +279,7 @@ steps:
         'pipeline' via _LEGACY_TYPE_MAP. Now it must error."""
         create_workflow_definition(def_manager, loader, VALID_WORKFLOW_YAML)
 
-        rogue_yaml = (
-            "name: test-workflow\n"
-            "type: step\n"
-            "steps:\n"
-            "  - name: claim\n"
-        )
+        rogue_yaml = "name: test-workflow\ntype: step\nsteps:\n  - name: claim\n"
         result = update_workflow_definition(
             def_manager, loader, name="test-workflow", yaml_content=rogue_yaml
         )

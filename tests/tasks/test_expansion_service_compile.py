@@ -32,7 +32,7 @@ def _regression_plan_path() -> Path:
 
 
 def _regression_plan_doc() -> PlanDocument:
-    return parse_plan(_regression_plan_path(), parse_mode="draft")
+    return parse_plan(_regression_plan_path(), parse_mode="expansion")
 
 
 def _deps_for(spec: dict, task_id: str) -> set[str]:
@@ -45,9 +45,11 @@ def test_compile_contract_plan_emits_tdd_leaves_by_phase(
 ) -> None:
     parent = _parent(service, sample_project)
     plan_doc = _regression_plan_doc()
+    deliverable_count = sum(1 for section in plan_doc.sections if section.kind is Kind.deliverable)
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
+    assert len(plan_doc.manifest_entries) == deliverable_count
     assert spec["contract_plan"] is True
     assert spec["deliverable_count"] == 6
     assert len(spec["tasks"]) == 18
@@ -99,7 +101,7 @@ def test_compile_contract_plan_translates_section_dependencies(
     assert _deps_for(spec, "3.1::test") == {"2.1::ref", "2.2::ref"}
 
 
-def test_compile_contract_plan_uses_deterministic_agent_assignment(
+def test_compile_contract_plan_uses_manifest_agent_assignment(
     service: ExpansionService,
     sample_project,
 ) -> None:
@@ -136,7 +138,7 @@ def test_compile_contract_plan_prefers_manifest_assigned_agent_over_prose_regex(
     assert all(task["additional_skills"] == [] for task in section_tasks)
 
 
-def test_compile_12898_contract_plan_accepts_manual_deliverable(
+def test_compile_12898_contract_plan_requires_manifest(
     service: ExpansionService,
     sample_project,
 ) -> None:
@@ -144,8 +146,5 @@ def test_compile_12898_contract_plan_accepts_manual_deliverable(
     plan_path = (
         Path(__file__).resolve().parents[2] / ".gobby/plans/task-12898-memory-recall-helper.md"
     )
-    spec = service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
-
-    assert len(spec["tasks"]) == 39
-    assert any(task["category"] == "manual" for task in spec["tasks"])
-    assert service.validate_compiled_spec(spec)["valid"] is True
+    with pytest.raises(ValueError, match="kind: deliverable sections without manifest entries"):
+        service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)

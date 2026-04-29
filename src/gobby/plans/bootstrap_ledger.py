@@ -59,7 +59,7 @@ def bootstrap_ledger_path_for_task(db: DatabaseProtocol, task_id: str) -> Path |
     if scope is None:
         return None
 
-    for entry in _matching_index_entries(scope):
+    for entry in _matching_plan_entries(db, scope):
         plan_id = _required_string(entry, "plan_id")
         if plan_id is None:
             continue
@@ -80,7 +80,7 @@ def verify_bootstrap_ledger(db: DatabaseProtocol, task_id: str) -> None:
     last_ledger_path: Path | None = None
     last_manifest_path: Path | None = None
 
-    for entry in _matching_index_entries(scope):
+    for entry in _matching_plan_entries(db, scope):
         plan_id = _required_string(entry, "plan_id")
         if plan_id is None:
             continue
@@ -189,26 +189,21 @@ def _scope_for_task(db: DatabaseProtocol, task_id: str) -> _TaskPlanScope | None
     )
 
 
-def _matching_index_entries(scope: _TaskPlanScope) -> tuple[Mapping[str, object], ...]:
-    index_path = scope.repo_root / ".gobby" / "plans" / "index.yaml"
-    index = _load_yaml_mapping(index_path)
-    if index is None:
-        return ()
-    entries = index.get("entries")
-    if not isinstance(entries, Sequence) or isinstance(entries, str):
-        return ()
-
-    root_ref = _normalize_ref(scope.root_task_ref)
-    matches: list[Mapping[str, object]] = []
-    for raw_entry in entries:
-        if not isinstance(raw_entry, Mapping):
-            continue
-        if _required_string(raw_entry, "project_id") not in (None, scope.project_id):
-            continue
-        entry_root_ref = _required_string(raw_entry, "root_task_ref")
-        if entry_root_ref is not None and _normalize_ref(entry_root_ref) == root_ref:
-            matches.append(raw_entry)
-    return tuple(matches)
+def _matching_plan_entries(
+    db: DatabaseProtocol,
+    scope: _TaskPlanScope,
+) -> tuple[Mapping[str, object], ...]:
+    rows = db.fetchall(
+        """
+        SELECT plan_id, project_id, root_task_ref
+        FROM plans
+        WHERE project_id = ?
+          AND (root_task_ref = ? OR root_task_ref = ?)
+        ORDER BY updated_at DESC, plan_id ASC
+        """,
+        (scope.project_id, scope.root_task_ref, _normalize_ref(scope.root_task_ref)),
+    )
+    return tuple(dict(row) for row in rows)
 
 
 def _header_mismatches(

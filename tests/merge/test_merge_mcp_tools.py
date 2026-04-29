@@ -562,9 +562,7 @@ class TestMergeApplyTool:
         return manager
 
     @pytest.fixture
-    def merge_registry(
-        self, mock_storage, mock_resolver, mock_git_manager, mock_worktree_manager
-    ):
+    def merge_registry(self, mock_storage, mock_resolver, mock_git_manager, mock_worktree_manager):
         """Create merge registry with mocked dependencies."""
         from gobby.mcp_proxy.tools.merge import create_merge_registry
 

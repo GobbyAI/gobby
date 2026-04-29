@@ -22,6 +22,7 @@ PLAN_HEADING_REGEX: re.Pattern[str] = re.compile(
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
 _KIND_LINE_RE = re.compile(r"^`?kind:\s*(?P<kind>[a-z_]+)`?$")
 _PLAN_ID_RE = re.compile(r"^\s*>?\s*\*\*Plan ID:\*\*\s*(?P<plan_id>.+?)\s*$")
+_SECTION_DEPENDS_RE = re.compile(r"\(depends:\s*(?P<depends>[^)]+)\)", flags=re.IGNORECASE)
 _ACCEPTANCE_MARKER = "**Acceptance:**"
 _ACCEPTANCE_BULLET_RE = re.compile(
     r"^\s*-\s+(?P<item_id>[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+)"
@@ -32,6 +33,25 @@ _ARTIFACT_RE = re.compile(
     r"""(?P<ref>`[^`]+`|"[^"]+"|'[^']+'|.*?)(?=\s+\b(?:file|symbol|test|behavior):|$)"""
 )
 _FENCE_OPENER_RE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
+MISSING_PLAN_ID_SENTINEL = "unknown"
+
+
+def resolve_plan_id(plan_id: str | None) -> str:
+    """Return the plan ID used for generated and validated covers labels."""
+    return plan_id or MISSING_PLAN_ID_SENTINEL
+
+
+def extract_section_dependencies(title: str) -> tuple[str, ...]:
+    """Extract dependency section IDs from a ``(depends: X, Y)`` annotation."""
+    match = _SECTION_DEPENDS_RE.search(title)
+    if match is None:
+        return ()
+    return tuple(part.strip() for part in match.group("depends").split(",") if part.strip())
+
+
+def strip_section_dependencies(title: str) -> str:
+    """Remove a ``(depends: ...)`` annotation from a section title."""
+    return _SECTION_DEPENDS_RE.sub("", title)
 
 
 class Kind(StrEnum):
@@ -797,8 +817,9 @@ def _validate_manifest_invariants(
         target = deliverables.get(entry.source_section)
         if target is None:
             continue
+        resolved_plan_id = resolve_plan_id(plan_id)
         expected_labels = {
-            f"covers:{plan_id}:{target.section_id}:{item.item_id}"
+            f"covers:{resolved_plan_id}:{target.section_id}:{item.item_id}"
             for item in target.acceptance_items
         }
         actual_covers = tuple(label for label in entry.labels if label.startswith("covers:"))
@@ -856,5 +877,9 @@ __all__ = [
     "PlanKind",
     "PlanParseError",
     "PlanSection",
+    "MISSING_PLAN_ID_SENTINEL",
+    "extract_section_dependencies",
     "parse_plan",
+    "resolve_plan_id",
+    "strip_section_dependencies",
 ]

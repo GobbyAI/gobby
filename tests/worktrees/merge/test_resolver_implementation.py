@@ -89,15 +89,7 @@ async def test_git_merge_conflict(resolver):
 async def test_resolve_conflicts_only_success(resolver, mock_llm_service, tmp_path):
     """Tier 2 splices the LLM hunk response into the file on disk."""
     file_path = tmp_path / "file.txt"
-    file_path.write_text(
-        "before\n"
-        "<<<<<<< HEAD\n"
-        "A\n"
-        "=======\n"
-        "B\n"
-        ">>>>>>> feature\n"
-        "after\n"
-    )
+    file_path.write_text("before\n<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feature\nafter\n")
     conflicts = [
         {
             "file": str(file_path),

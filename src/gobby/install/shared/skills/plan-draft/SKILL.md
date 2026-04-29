@@ -452,3 +452,25 @@ Plan updated. Ready for review.
 
 If any check still fails after attempted fixes, **do not present the plan yet** —
 revise until every check passes.
+
+---
+
+## Revision Round Mandate
+
+Planner revision rounds run in fresh context. Read only the current plan file,
+the cumulative `## Plan Changelog`, and the latest `## Adversary Findings —
+Round N` supplied by the coordinator.
+
+Apply surgical fixes: missing acceptance items, ambiguous wording, stale file
+paths, missing dependency annotations, and contradictions with the codebase.
+Do not redesign the plan in response to adversary findings. When a finding
+requires rejecting the premise or re-engineering a section, call
+`escalate_task(reason="needs_human:premise_disagreement:<section_id>:<details>")`.
+
+After a revision, append one concise bullet to `## Plan Changelog` describing
+the surgical fixes for that round, then resubmit with one atomic
+`mark_task_needs_review(task_id=..., review_notes=...)` call. That transition
+clears `planning-current-verdict:rejected`; do not clear the label separately.
+
+Planners author narrative sections only. The `## M1 Task Manifest` is emitted
+by `plan-adversary` on approval.

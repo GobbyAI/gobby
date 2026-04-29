@@ -10,7 +10,13 @@ from typing import get_args
 import pytest
 
 from gobby.plans.manifest_emitter import EmitOutcome, emit_stub_manifest
-from gobby.plans.parser import PlanKind, parse_plan
+from gobby.plans.parser import (
+    MISSING_PLAN_ID_SENTINEL,
+    PlanKind,
+    PlanParseError,
+    parse_plan,
+    resolve_plan_id,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -248,6 +254,12 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
 
         **Acceptance:**
         - 1.6.1 — file: `f.py`
+
+        ### 1.7 Manual work [category: manual]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.7.1 — behavior: verified manually
         """,
     )
 
@@ -263,7 +275,151 @@ def test_default_assignment_and_tdd_by_category(tmp_path: Path) -> None:
     assert by_section["1.4"].tdd is False
     assert by_section["1.5"].tdd is False
     assert by_section["1.6"].tdd is True
+    assert by_section["1.7"].tdd is False
+
+    assert by_section["1.1"].assigned_agent == "backend-developer"
+    assert by_section["1.2"].assigned_agent == "default"
+    assert by_section["1.3"].assigned_agent == "backend-developer"
+    assert by_section["1.4"].assigned_agent == "default"
+    assert by_section["1.5"].assigned_agent == "default"
+    assert by_section["1.6"].assigned_agent == "test-architect"
+    assert by_section["1.7"].assigned_agent == "default"
 
     for entry in document.manifest_entries:
-        assert entry.assigned_agent == "backend-developer"
         assert entry.task_type == "feature"
+
+
+def test_synthesized_entry_preserves_section_depends_on(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "depends.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 A [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `a.py`
+
+        ### 1.2 B [category: code] (depends: 1.1)
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.2.1 — file: `b.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    document = parse_plan(plan, parse_mode="expansion")
+    by_section = {entry.source_section: entry for entry in document.manifest_entries}
+    assert list(by_section["1.2"].depends_on) == ["1.1"]
+
+
+def test_synthesized_entry_preserves_multi_dep(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "multi-depends.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 A [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `a.py`
+
+        ### 1.2 B [category: code] (depends: 1.1, 2.3, Phase 1)
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.2.1 — file: `b.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    document = parse_plan(plan, parse_mode="expansion")
+    by_section = {entry.source_section: entry for entry in document.manifest_entries}
+    assert list(by_section["1.2"].depends_on) == ["1.1", "2.3", "Phase 1"]
+
+
+def test_emit_and_reparse_round_trips_with_no_plan_id(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "no-plan-id.md",
+        """
+        ## P1 Phase 1
+        `kind: framing`
+
+        ### 1.1 Work [category: code]
+        `kind: deliverable`
+
+        **Acceptance:**
+        - 1.1.1 — file: `src/work.py`
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fresh"
+    assert resolve_plan_id(None) == "unknown"
+    assert resolve_plan_id("demo-plan") == "demo-plan"
+    assert MISSING_PLAN_ID_SENTINEL == "unknown"
+    parse_plan(plan, parse_mode="expansion")
+
+
+def test_yolo_fallback_audit_is_parser_safe(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "fallback-parser-safe.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## 1.1 Broken
+        `kind: deliverable`
+
+        Prose without an acceptance block.
+        """,
+    )
+
+    outcome = emit_stub_manifest(plan)
+
+    assert outcome == "fallback_force_approve"
+    with pytest.raises(PlanParseError) as exc_info:
+        parse_plan(plan, parse_mode="expansion")
+    messages = [message for _, message in exc_info.value.errors]
+    assert any("missing **Acceptance:** block" in message for message in messages)
+    assert not any("non-canonical heading" in message for message in messages)
+
+
+def test_yolo_fallback_then_reemit_recovers(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "fallback-recovers.md",
+        """
+        > **Plan ID:** demo-plan
+
+        ## 1.1 Broken [category: code]
+        `kind: deliverable`
+
+        Prose without an acceptance block.
+        """,
+    )
+
+    first_outcome = emit_stub_manifest(plan)
+    fixed_text = plan.read_text(encoding="utf-8").replace(
+        "Prose without an acceptance block.",
+        "Recovered implementation.\n\n**Acceptance:**\n- 1.1.1 — file: `src/recovered.py`",
+    )
+    plan.write_text(fixed_text, encoding="utf-8")
+
+    second_outcome = emit_stub_manifest(plan)
+
+    assert first_outcome == "fallback_force_approve"
+    assert second_outcome == "fresh"
+    parse_plan(plan, parse_mode="expansion")

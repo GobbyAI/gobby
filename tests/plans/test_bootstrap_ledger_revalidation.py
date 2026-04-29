@@ -22,8 +22,8 @@ def test_close_blocked_on_ledger_mismatch(temp_db, tmp_path: Path) -> None:
         temp_db, tmp_path, expected_leaf_title="Expected leaf"
     )
     repo = tmp_path / "repo"
-    _write_plan_index(
-        repo,
+    _write_plan_row(
+        temp_db,
         project_id=project_id,
         root_ref=str(root.seq_num),
         plan_id="task-100-plan",
@@ -55,8 +55,8 @@ def test_close_succeeds_on_ledger_match(temp_db, tmp_path: Path) -> None:
         temp_db, tmp_path, expected_leaf_title="Expected leaf"
     )
     repo = tmp_path / "repo"
-    _write_plan_index(
-        repo,
+    _write_plan_row(
+        temp_db,
         project_id=project_id,
         root_ref=str(root.seq_num),
         plan_id="task-100-plan",
@@ -107,29 +107,28 @@ def _seed_plan_task_tree(
     return root, leaf, project.id
 
 
-def _write_plan_index(repo: Path, *, project_id: str, root_ref: str, plan_id: str) -> None:
-    plans_dir = repo / ".gobby" / "plans"
-    plans_dir.mkdir(parents=True)
-    (plans_dir / "index.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "entries": [
-                    {
-                        "plan_id": plan_id,
-                        "project_id": project_id,
-                        "root_task_ref": root_ref,
-                        "plan_kind": "implementation",
-                        "status": "active",
-                    }
-                ]
-            },
-            sort_keys=False,
+def _write_plan_row(temp_db, *, project_id: str, root_ref: str, plan_id: str) -> None:
+    temp_db.execute(
+        """
+        INSERT INTO plans (
+            id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
+            root_task_ref, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'hash-1', 'implementation', 'active', ?,
+                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+        """,
+        (
+            f"plan-{plan_id}",
+            project_id,
+            plan_id,
+            f".gobby/plans/{plan_id}.md",
+            root_ref,
         ),
-        encoding="utf-8",
     )
 
 
 def _write_ledger(repo: Path, *, project_id: str, root_ref: str, plan_id: str, title: str) -> None:
+    (repo / ".gobby" / "plans").mkdir(parents=True, exist_ok=True)
     (repo / ".gobby" / "plans" / f"{plan_id}.coverage-ledger.yaml").write_text(
         yaml.safe_dump(
             {

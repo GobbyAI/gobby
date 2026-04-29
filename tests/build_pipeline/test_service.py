@@ -211,6 +211,40 @@ async def test_build_plan_file_creates_planning_epic_artifacts_labels_and_kicks_
 
 
 @pytest.mark.asyncio
+async def test_build_persists_retry_caps_in_artifacts(temp_db, tmp_path: Path) -> None:
+    project_id, _repo_path = _project(temp_db, tmp_path)
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n")
+
+    result = await _build(
+        str(plan_file),
+        _options(
+            max_expansion_attempts=4,
+            max_qa_rounds=6,
+            max_merge_attempts=2,
+            max_holistic_rounds=5,
+            max_review_rounds=7,
+        ),
+        db=temp_db,
+        project_id=project_id,
+    )
+
+    artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(result.task_id)
+    assert artifacts.max_expansion_attempts == 4
+    assert artifacts.max_qa_rounds == 6
+    assert artifacts.max_merge_attempts == 2
+    assert artifacts.max_holistic_rounds == 5
+    assert artifacts.max_review_rounds == 7
+    assert result.retry_caps == {
+        "max_expansion_attempts": 4,
+        "max_qa_rounds": 6,
+        "max_merge_attempts": 2,
+        "max_holistic_rounds": 5,
+        "max_review_rounds": 7,
+    }
+
+
+@pytest.mark.asyncio
 async def test_build_leaf_forces_none_isolation_and_sets_agent_and_lifecycle(
     temp_db,
     sample_project,

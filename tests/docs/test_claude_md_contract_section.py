@@ -84,8 +84,13 @@ def test_plan_coverage_section_present() -> None:
         "commits | task-diff | worktree-diff | coverage-matrix | none",
         "Bootstrap-ledger requirement",
         ".coverage-ledger.yaml",
-        ".grandfathered",
-        "# remove-by: <task-ref>",
+        "`plans` table",
+        "gobby-plans",
+        "gobby plans",
+        "implementation",
+        "strategy",
+        "active",
+        "archived",
         "Table-row decomposition rule",
     )
     for term in required_terms:
@@ -106,3 +111,17 @@ def test_table_row_decomposition_rule_documented() -> None:
         assert "one acceptance item per" in body
         assert "data row" in body
         assert "plan-adversary" in body
+
+
+def test_no_retired_plan_storage_terms() -> None:
+    stale_terms = (
+        "index" + ".yaml",
+        ".grand" + "fathered",
+        ".legacy" + "-classification",
+        "plan_kind` " + "—" + " one of `implementation`, `strategy`, `" + "legacy" + "`",
+        "`status` " + "—" + " one of `active`, `" + "merged" + "`, `archived`",
+    )
+    for path in (CLAUDE, CONTRACT):
+        body = path.read_text(encoding="utf-8")
+        for term in stale_terms:
+            assert term not in body
