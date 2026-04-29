@@ -19,6 +19,14 @@ import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
 import type { GobbySession } from "./types/sessions";
+import {
+  defaultSessionsFilters,
+  deserializeFromStorage,
+  serializeForStorage,
+  type SessionsFilters,
+} from "./components/activity/sessionsFilters";
+
+const SESSIONS_FILTERS_STORAGE_KEY = "gobby-sessions-filters";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
@@ -247,7 +255,42 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
+  const [sessionsFilters, setSessionsFilters] = useState<SessionsFilters>(
+    () => {
+      try {
+        return deserializeFromStorage(
+          localStorage.getItem(SESSIONS_FILTERS_STORAGE_KEY),
+        );
+      } catch {
+        return defaultSessionsFilters();
+      }
+    },
+  );
+
+  // Persist sessions-filter state so a reload restores the user's narrowed
+  // view. The filter badge on the SessionsTab funnel button is the visible
+  // cue that something is filtering.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SESSIONS_FILTERS_STORAGE_KEY,
+        JSON.stringify(serializeForStorage(sessionsFilters)),
+      );
+    } catch {
+      // Best-effort — disabled storage just means filters are per-tab-load.
+    }
+  }, [sessionsFilters]);
+
+  // Two catalog instances: the unfiltered one feeds the resume modal, web-chat
+  // sidebar list, and session-reconciliation hook (consumers that must see
+  // every session regardless of the activity panel's filter narrowing); the
+  // filtered one feeds the activity panel's Sessions tab so date/provider/etc.
+  // filters reach the historical tail via server-side predicates.
   const sessionCatalog = useSessionCatalog(effectiveProjectId);
+  const activitySessionCatalog = useSessionCatalog(
+    effectiveProjectId,
+    sessionsFilters,
+  );
   const confirmSessionDeleted = sessionCatalog.confirmSessionDeleted;
   const markSessionDeleting = sessionCatalog.markSessionDeleting;
   const restoreSession = sessionCatalog.restoreSession;
@@ -832,6 +875,10 @@ export default function App() {
                 }}
                 allProjectSessions={allProjectSessions}
                 allProjectSessionsLoading={sessionCatalog.isLoading}
+                activitySessions={activitySessionCatalog.sessions}
+                activitySessionsLoading={activitySessionCatalog.isLoading}
+                sessionsFilters={sessionsFilters}
+                onSessionsFiltersChange={setSessionsFilters}
                 conversations={{
                   sessions: webChatSessions,
                   activeSessionId: dbSessionId,

@@ -61,6 +61,12 @@ interface ChatPageProps {
   paletteActions?: CommandPaletteAction[];
   allProjectSessions?: GobbySession[];
   allProjectSessionsLoading?: boolean;
+  activitySessions?: GobbySession[];
+  activitySessionsLoading?: boolean;
+  sessionsFilters?: import("../activity/sessionsFilters").SessionsFilters;
+  onSessionsFiltersChange?: (
+    filters: import("../activity/sessionsFilters").SessionsFilters,
+  ) => void;
   onSttEnabledChange?: (enabled: boolean) => void;
   onTtsEnabledChange?: (enabled: boolean) => void;
 }
@@ -84,6 +90,10 @@ export function ChatPage({
   paletteActions = [],
   allProjectSessions = [],
   allProjectSessionsLoading = false,
+  activitySessions,
+  activitySessionsLoading,
+  sessionsFilters,
+  onSessionsFiltersChange,
   onSttEnabledChange,
   onTtsEnabledChange,
 }: ChatPageProps) {
@@ -870,8 +880,10 @@ export function ChatPage({
         changedFiles={fileChanges.changedFiles}
         fetchDiff={fileChanges.fetchDiff}
         projectId={projectId}
-        sessions={allProjectSessions}
-        sessionsLoading={allProjectSessionsLoading}
+        sessions={activitySessions ?? allProjectSessions}
+        sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
+        sessionsFilters={sessionsFilters}
+        onSessionsFiltersChange={onSessionsFiltersChange}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
         chatSessionId={activityPanelChatSessionId}

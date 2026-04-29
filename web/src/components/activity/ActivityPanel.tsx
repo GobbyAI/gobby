@@ -171,6 +171,10 @@ interface ActivityPanelProps {
   projectId?: string | null;
   sessions?: GobbySession[];
   sessionsLoading?: boolean;
+  sessionsFilters?: import("./sessionsFilters").SessionsFilters;
+  onSessionsFiltersChange?: (
+    filters: import("./sessionsFilters").SessionsFilters,
+  ) => void;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // Sessions tab
@@ -278,6 +282,8 @@ export function ActivityPanel({
   projectId,
   sessions = [],
   sessionsLoading = false,
+  sessionsFilters,
+  onSessionsFiltersChange,
   onAddFileToChat,
   onKillAgent,
   onExpireSession,
@@ -347,6 +353,8 @@ export function ActivityPanel({
           <SessionsTab
             sessions={sessions}
             isLoadingSessions={sessionsLoading}
+            filters={sessionsFilters}
+            onFiltersChange={onSessionsFiltersChange}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
             chatSessionId={chatSessionId ?? undefined}

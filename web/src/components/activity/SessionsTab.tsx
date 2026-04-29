@@ -28,13 +28,9 @@ import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
 import {
   countActiveFilters,
   defaultSessionsFilters,
-  deserializeFromStorage,
   matchesSessionsFilters,
-  serializeForStorage,
   type SessionsFilters,
 } from "./sessionsFilters";
-
-const FILTERS_STORAGE_KEY = "gobby-sessions-filters";
 
 interface RunningAgent {
   run_id: string;
@@ -50,6 +46,8 @@ interface RunningAgent {
 interface SessionsTabProps {
   sessions?: GobbySession[];
   isLoadingSessions?: boolean;
+  filters?: SessionsFilters;
+  onFiltersChange?: (filters: SessionsFilters) => void;
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
@@ -221,6 +219,8 @@ function entryTimestamp(entry: WatchingSessionEntry): number {
 export const SessionsTab = memo(function SessionsTab({
   sessions = [],
   isLoadingSessions = false,
+  filters: filtersProp,
+  onFiltersChange,
   onKillAgent,
   onExpireSession,
   onResumeSession,
@@ -247,30 +247,26 @@ export const SessionsTab = memo(function SessionsTab({
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
-  const [filters, setFilters] = useState<SessionsFilters>(() => {
-    try {
-      return deserializeFromStorage(localStorage.getItem(FILTERS_STORAGE_KEY));
-    } catch {
-      return defaultSessionsFilters();
-    }
-  });
+  // Filter state is owned by App so the catalog hook can refetch with
+  // server-side predicates (covers historical-tail filtering). Fall back to
+  // local state if a legacy caller mounts SessionsTab without the props —
+  // tests and standalone storybook entries do this.
+  const [localFilters, setLocalFilters] = useState<SessionsFilters>(
+    defaultSessionsFilters,
+  );
+  const filters = filtersProp ?? localFilters;
+  const setFilters = useCallback(
+    (next: SessionsFilters) => {
+      if (onFiltersChange) {
+        onFiltersChange(next);
+      } else {
+        setLocalFilters(next);
+      }
+    },
+    [onFiltersChange],
+  );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [providerCatalog, setProviderCatalog] = useState<ProviderModelEntry[]>([]);
-
-  // Persist filter state to localStorage so a reload restores the user's
-  // narrowed view. Active-filter badge on the funnel button is the visible
-  // cue that something is filtering after reload.
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        FILTERS_STORAGE_KEY,
-        JSON.stringify(serializeForStorage(filters)),
-      );
-    } catch {
-      // Best-effort — a full storage quota or disabled localStorage just
-      // means the filter state is per-tab-load.
-    }
-  }, [filters]);
 
   // Provider/Model catalog drives the dropdown's checkbox lists. One fetch
   // per mount; the helper has its own 5-minute cache.
