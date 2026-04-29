@@ -1,0 +1,198 @@
+/**
+ * Sessions-tab filter dropdown — type, defaults, serializers.
+ *
+ * The URL serializer is the contract between the dropdown UI and the
+ * useSessionCatalog hook (which forwards everything as query params on
+ * /api/sessions). The storage serializer is the contract between the
+ * dropdown and localStorage (Sets are not JSON-serializable, so we
+ * round-trip through arrays).
+ */
+
+export type SessionMode = "interactive" | "auto";
+export type TaskRefRole = "claimed" | "created" | "closed";
+export type DatePreset = "24h" | "7d" | "30d" | "all" | "custom";
+
+const ALL_MODES: readonly SessionMode[] = ["interactive", "auto"];
+const ALL_TASK_REF_ROLES: readonly TaskRefRole[] = ["claimed", "created", "closed"];
+const ALL_DATE_PRESETS: readonly DatePreset[] = ["24h", "7d", "30d", "all", "custom"];
+
+export interface SessionsFilters {
+  modes: Set<SessionMode>;
+  providers: Set<string>;
+  models: Set<string>;
+  sessionRefMin: number | null;
+  sessionRefMax: number | null;
+  taskRefMin: number | null;
+  taskRefMax: number | null;
+  taskRefRoles: Set<TaskRefRole>;
+  datePreset: DatePreset;
+  dateCustomFrom: string | null; // YYYY-MM-DD
+  dateCustomTo: string | null;
+}
+
+export function defaultSessionsFilters(): SessionsFilters {
+  return {
+    modes: new Set<SessionMode>(),
+    providers: new Set<string>(),
+    models: new Set<string>(),
+    sessionRefMin: null,
+    sessionRefMax: null,
+    taskRefMin: null,
+    taskRefMax: null,
+    taskRefRoles: new Set<TaskRefRole>(["claimed"]),
+    datePreset: "all",
+    dateCustomFrom: null,
+    dateCustomTo: null,
+  };
+}
+
+/** Number of filter sections that have a non-default value. Drives the badge on the funnel button. */
+export function countActiveFilters(filters: SessionsFilters): number {
+  let count = 0;
+  if (filters.modes.size > 0) count += 1;
+  if (filters.providers.size > 0) count += 1;
+  if (filters.models.size > 0) count += 1;
+  if (filters.sessionRefMin !== null || filters.sessionRefMax !== null) count += 1;
+  if (filters.taskRefMin !== null || filters.taskRefMax !== null) count += 1;
+  if (filters.datePreset !== "all") count += 1;
+  return count;
+}
+
+/**
+ * Resolve a date preset to (after, before) inclusive-after / exclusive-before
+ * timestamps. Returns null for either bound when the preset doesn't apply.
+ */
+export function resolveDateRange(
+  filters: SessionsFilters,
+  now: Date,
+): { after: string | null; before: string | null } {
+  switch (filters.datePreset) {
+    case "all":
+      return { after: null, before: null };
+    case "24h":
+      return { after: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), before: null };
+    case "7d":
+      return { after: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), before: null };
+    case "30d":
+      return {
+        after: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+        before: null,
+      };
+    case "custom": {
+      // Custom dates arrive as YYYY-MM-DD; expand them to UTC bounds.
+      const after = filters.dateCustomFrom
+        ? new Date(`${filters.dateCustomFrom}T00:00:00.000Z`).toISOString()
+        : null;
+      // Inclusive end-of-day: bump the upper bound by one day so it stays
+      // exclusive in the URL serializer (matches backend semantics).
+      const before = filters.dateCustomTo
+        ? new Date(
+            new Date(`${filters.dateCustomTo}T00:00:00.000Z`).getTime() + 24 * 60 * 60 * 1000,
+          ).toISOString()
+        : null;
+      return { after, before };
+    }
+  }
+}
+
+/**
+ * Build URLSearchParams matching the backend /api/sessions filter contract.
+ * Empty Sets and null bounds drop out (the server treats absence as "no filter").
+ */
+export function serializeSessionsFilters(filters: SessionsFilters, now: Date): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const mode of filters.modes) params.append("mode", mode);
+  for (const provider of filters.providers) params.append("sources", provider);
+  for (const model of filters.models) params.append("model", model);
+  if (filters.sessionRefMin !== null) params.set("session_seq_min", String(filters.sessionRefMin));
+  if (filters.sessionRefMax !== null) params.set("session_seq_max", String(filters.sessionRefMax));
+  if (filters.taskRefMin !== null) params.set("task_ref_min", String(filters.taskRefMin));
+  if (filters.taskRefMax !== null) params.set("task_ref_max", String(filters.taskRefMax));
+  if (filters.taskRefMin !== null || filters.taskRefMax !== null) {
+    for (const role of filters.taskRefRoles) params.append("task_ref_role", role);
+  }
+  const { after, before } = resolveDateRange(filters, now);
+  if (after) params.set("created_after", after);
+  if (before) params.set("created_before", before);
+  return params;
+}
+
+interface StoredSessionsFilters {
+  modes: SessionMode[];
+  providers: string[];
+  models: string[];
+  sessionRefMin: number | null;
+  sessionRefMax: number | null;
+  taskRefMin: number | null;
+  taskRefMax: number | null;
+  taskRefRoles: TaskRefRole[];
+  datePreset: DatePreset;
+  dateCustomFrom: string | null;
+  dateCustomTo: string | null;
+}
+
+/** Round-trip through arrays for JSON.stringify-friendly localStorage payloads. */
+export function serializeForStorage(filters: SessionsFilters): StoredSessionsFilters {
+  return {
+    modes: [...filters.modes],
+    providers: [...filters.providers],
+    models: [...filters.models],
+    sessionRefMin: filters.sessionRefMin,
+    sessionRefMax: filters.sessionRefMax,
+    taskRefMin: filters.taskRefMin,
+    taskRefMax: filters.taskRefMax,
+    taskRefRoles: [...filters.taskRefRoles],
+    datePreset: filters.datePreset,
+    dateCustomFrom: filters.dateCustomFrom,
+    dateCustomTo: filters.dateCustomTo,
+  };
+}
+
+/**
+ * Hydrate a SessionsFilters from a localStorage payload. Tolerates malformed
+ * input (returns defaults on any parse error) — a corrupt storage entry should
+ * never wedge the app.
+ */
+export function deserializeFromStorage(raw: string | null): SessionsFilters {
+  if (raw === null) return defaultSessionsFilters();
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredSessionsFilters>;
+    const base = defaultSessionsFilters();
+
+    const modes = new Set<SessionMode>(
+      Array.isArray(parsed.modes)
+        ? parsed.modes.filter((m): m is SessionMode => ALL_MODES.includes(m))
+        : [],
+    );
+    const providers = new Set<string>(
+      Array.isArray(parsed.providers) ? parsed.providers.filter((p) => typeof p === "string") : [],
+    );
+    const models = new Set<string>(
+      Array.isArray(parsed.models) ? parsed.models.filter((m) => typeof m === "string") : [],
+    );
+    const taskRefRoles = new Set<TaskRefRole>(
+      Array.isArray(parsed.taskRefRoles)
+        ? parsed.taskRefRoles.filter((r): r is TaskRefRole => ALL_TASK_REF_ROLES.includes(r))
+        : base.taskRefRoles,
+    );
+    const datePreset = ALL_DATE_PRESETS.includes(parsed.datePreset as DatePreset)
+      ? (parsed.datePreset as DatePreset)
+      : base.datePreset;
+
+    return {
+      modes,
+      providers,
+      models,
+      sessionRefMin: typeof parsed.sessionRefMin === "number" ? parsed.sessionRefMin : null,
+      sessionRefMax: typeof parsed.sessionRefMax === "number" ? parsed.sessionRefMax : null,
+      taskRefMin: typeof parsed.taskRefMin === "number" ? parsed.taskRefMin : null,
+      taskRefMax: typeof parsed.taskRefMax === "number" ? parsed.taskRefMax : null,
+      taskRefRoles,
+      datePreset,
+      dateCustomFrom: typeof parsed.dateCustomFrom === "string" ? parsed.dateCustomFrom : null,
+      dateCustomTo: typeof parsed.dateCustomTo === "string" ? parsed.dateCustomTo : null,
+    };
+  } catch {
+    return defaultSessionsFilters();
+  }
+}

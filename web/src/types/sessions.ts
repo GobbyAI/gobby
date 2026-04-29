@@ -37,6 +37,12 @@ export interface GobbySession {
   tasks_closed?: number;
   memories_created?: number;
   commit_count?: number;
+  // Task seq_nums linked to this session via three role columns on the tasks
+  // table. Populated by /api/sessions on each list response. Empty arrays
+  // when the session has no tasks in a given role.
+  claimed_task_refs?: number[];
+  created_task_refs?: number[];
+  closed_task_refs?: number[];
 }
 
 export const KNOWN_SOURCES = ["claude", "gemini", "qwen", "codex", "droid"] as const;

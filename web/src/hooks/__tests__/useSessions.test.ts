@@ -87,14 +87,15 @@ describe("useSessionCatalog", () => {
     expect(result.current.sessions[0].title).toBe("Another Session");
   });
 
-  it("passes the project filter to the sessions API", async () => {
+  it("passes the project filter and page-size limit to the sessions API", async () => {
     renderHook(() => useSessionCatalog("proj-1"));
 
     await waitFor(() => {
       expect(
-        mockFetch.fn.mock.calls.some(([url]) =>
-          String(url).includes("/api/sessions?limit=200&project_id=proj-1"),
-        ),
+        mockFetch.fn.mock.calls.some(([url]) => {
+          const u = String(url);
+          return u.includes("/api/sessions") && u.includes("project_id=proj-1") && u.includes("limit=100");
+        }),
       ).toBe(true);
     });
   });
@@ -175,6 +176,70 @@ describe("useSessionCatalog", () => {
     expect(
       result.current.sessions.find((session) => session.id === "sess-1")?.title,
     ).toBe("Renamed");
+  });
+
+  it("hasMore reflects next_cursor on the response", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/sessions", {
+      sessions: SAMPLE_SESSIONS,
+      next_cursor: { updated_at: "2026-03-01T12:00:00Z", id: "sess-1" },
+    });
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.hasMore).toBe(true);
+  });
+
+  it("hasMore is false when next_cursor is null", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/sessions", {
+      sessions: SAMPLE_SESSIONS,
+      next_cursor: null,
+    });
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.hasMore).toBe(false);
+  });
+
+  it("loadMore appends the next page using the cursor", async () => {
+    mockFetch.resetRoutes();
+    let callCount = 0;
+    mockFetch.fn.mockImplementation(async (url) => {
+      callCount += 1;
+      const u = String(url);
+      const isFirstPage = !u.includes("cursor_updated_at");
+      const body = isFirstPage
+        ? {
+            sessions: [SAMPLE_SESSIONS[0]],
+            next_cursor: { updated_at: "2026-03-01T12:00:00Z", id: "sess-1" },
+          }
+        : {
+            sessions: [SAMPLE_SESSIONS[1]],
+            next_cursor: null,
+          };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    const { result } = renderHook(() => useSessionCatalog("proj-1"));
+
+    await waitFor(() => expect(result.current.sessions).toHaveLength(1));
+    expect(result.current.hasMore).toBe(true);
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+
+    expect(result.current.sessions).toHaveLength(2);
+    expect(result.current.hasMore).toBe(false);
+    expect(callCount).toBe(2);
   });
 
   it("renameSession restores the previous title when the API call fails", async () => {

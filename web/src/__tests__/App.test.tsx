@@ -137,8 +137,11 @@ function makeSessionCatalogState() {
   return {
     sessions: [],
     isLoading: false,
+    isLoadingMore: false,
     error: null,
     refresh: vi.fn(),
+    loadMore: vi.fn(),
+    hasMore: false,
     removeSession: vi.fn(),
     markSessionDeleting: vi.fn(),
     confirmSessionDeleted: vi.fn(),

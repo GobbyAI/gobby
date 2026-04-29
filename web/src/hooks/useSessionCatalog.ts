@@ -1,76 +1,188 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import type { GobbySession } from "../types/sessions";
+import {
+  serializeSessionsFilters,
+  type SessionsFilters,
+} from "../components/activity/sessionsFilters";
 import { useWebSocketEvent } from "./useWebSocketEvent";
 
 const REFETCH_DEBOUNCE_MS = 500;
+const FILTER_REFETCH_DEBOUNCE_MS = 250;
+const PAGE_SIZE = 100;
+
+interface SessionCursor {
+  updated_at: string;
+  id: string;
+}
 
 function getBaseUrl(): string {
   return "";
 }
 
-export function useSessionCatalog(projectId: string | null) {
+function buildSessionsUrl(
+  baseUrl: string,
+  projectId: string,
+  filters: SessionsFilters | null,
+  cursor: SessionCursor | null,
+  now: Date,
+): string {
+  const params = filters
+    ? serializeSessionsFilters(filters, now)
+    : new URLSearchParams();
+  params.set("project_id", projectId);
+  params.set("limit", String(PAGE_SIZE));
+  if (cursor) {
+    params.set("cursor_updated_at", cursor.updated_at);
+    params.set("cursor_id", cursor.id);
+  }
+  return `${baseUrl}/api/sessions?${params}`;
+}
+
+interface FetchPageResult {
+  sessions: GobbySession[];
+  next_cursor: SessionCursor | null;
+}
+
+async function fetchSessionPage(
+  projectId: string,
+  filters: SessionsFilters | null,
+  cursor: SessionCursor | null,
+): Promise<FetchPageResult> {
+  const baseUrl = getBaseUrl();
+  const url = buildSessionsUrl(baseUrl, projectId, filters, cursor, new Date());
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch sessions: ${response.status}`);
+  }
+  const data = await response.json();
+  const sessions: GobbySession[] = Array.isArray(data.sessions)
+    ? data.sessions.filter((session: GobbySession) => session.status !== "deleted")
+    : [];
+  const next: SessionCursor | null =
+    data.next_cursor && typeof data.next_cursor === "object"
+      ? {
+          updated_at: String(data.next_cursor.updated_at),
+          id: String(data.next_cursor.id),
+        }
+      : null;
+  return { sessions, next_cursor: next };
+}
+
+export function useSessionCatalog(
+  projectId: string | null,
+  filters: SessionsFilters | null = null,
+) {
   const [sessions, setSessions] = useState<GobbySession[]>([]);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [cursor, setCursor] = useState<SessionCursor | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
+  const filterDebounceRef = useRef<number | null>(null);
+
+  // Latest filters + projectId in refs so callbacks captured by websocket
+  // listeners always see current values without requiring re-subscription.
+  const filtersRef = useRef<SessionsFilters | null>(filters);
+  const projectIdRef = useRef<string | null>(projectId);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+  useEffect(() => {
+    projectIdRef.current = projectId;
+  }, [projectId]);
 
   useEffect(() => {
     return () => {
       if (debouncedRefetchRef.current) {
         window.clearTimeout(debouncedRefetchRef.current);
       }
+      if (filterDebounceRef.current) {
+        window.clearTimeout(filterDebounceRef.current);
+      }
     };
   }, []);
 
-  const fetchSessions = useCallback(async () => {
-    if (!projectId) {
+  // Reset and fetch page 1. Used on initial load, project change, and
+  // filter change. Discards any older pages — when the filter window shifts,
+  // older pages no longer match and would create stale results.
+  const resetAndFetch = useCallback(async () => {
+    const currentProjectId = projectIdRef.current;
+    if (!currentProjectId) {
       setSessions([]);
+      setCursor(null);
       setError(null);
       setIsLoading(false);
       return;
     }
-
     setIsLoading(true);
     setError(null);
     try {
-      const baseUrl = getBaseUrl();
-      const params = new URLSearchParams({ limit: "200" });
-      params.set("project_id", projectId);
-
-      const response = await fetch(`${baseUrl}/api/sessions?${params}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch sessions: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const fetched: GobbySession[] = Array.isArray(data.sessions)
-        ? data.sessions
-        : [];
-      setSessions(fetched.filter((session) => session.status !== "deleted"));
+      const result = await fetchSessionPage(currentProjectId, filtersRef.current, null);
+      setSessions(result.sessions);
+      setCursor(result.next_cursor);
     } catch (e) {
       console.error("Failed to fetch sessions:", e);
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
       setIsLoading(false);
     }
-  }, [projectId]);
+  }, []);
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void fetchSessions();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [fetchSessions]);
+  // Re-fetch page 1 only and merge by id. Keeps any older loaded pages in
+  // place (their rows are replaced if they show up on page 1, otherwise
+  // preserved). Used for websocket-driven refresh and the public refresh()
+  // method — we don't want a websocket tick to nuke the user's scroll
+  // history.
+  const refreshPageOne = useCallback(async () => {
+    const currentProjectId = projectIdRef.current;
+    if (!currentProjectId) return;
+    try {
+      const result = await fetchSessionPage(currentProjectId, filtersRef.current, null);
+      setSessions((prev) => {
+        const merged = new Map<string, GobbySession>();
+        for (const s of prev) merged.set(s.id, s);
+        for (const s of result.sessions) merged.set(s.id, s);
+        return Array.from(merged.values());
+      });
+      // next_cursor only resets if page 1 already covers everything we had.
+      // Otherwise we keep our deeper cursor so loadMore continues from there.
+      setCursor((prev) => {
+        if (result.next_cursor === null) return prev;
+        return prev ?? result.next_cursor;
+      });
+    } catch (e) {
+      console.error("Failed to refresh sessions page 1:", e);
+    }
+  }, []);
 
+  // Initial load + project changes
   const previousProjectIdRef = useRef(projectId);
   useEffect(() => {
     if (projectId !== previousProjectIdRef.current) {
       previousProjectIdRef.current = projectId;
       setSessions([]);
+      setCursor(null);
     }
-  }, [projectId]);
+    void resetAndFetch();
+  }, [projectId, resetAndFetch]);
+
+  // Filter changes — debounced reset + refetch. Skip the very first render
+  // (initial load is owned by the project effect above).
+  const initialFilterMountRef = useRef(true);
+  useEffect(() => {
+    if (initialFilterMountRef.current) {
+      initialFilterMountRef.current = false;
+      return;
+    }
+    if (filterDebounceRef.current) {
+      window.clearTimeout(filterDebounceRef.current);
+    }
+    filterDebounceRef.current = window.setTimeout(() => {
+      void resetAndFetch();
+    }, FILTER_REFETCH_DEBOUNCE_MS);
+  }, [filters, resetAndFetch]);
 
   useWebSocketEvent(
     "session_event",
@@ -79,10 +191,10 @@ export function useSessionCatalog(projectId: string | null) {
         window.clearTimeout(debouncedRefetchRef.current);
       }
       debouncedRefetchRef.current = window.setTimeout(
-        () => void fetchSessions(),
+        () => void refreshPageOne(),
         REFETCH_DEBOUNCE_MS,
       );
-    }, [fetchSessions]),
+    }, [refreshPageOne]),
   );
 
   useWebSocketEvent(
@@ -136,9 +248,30 @@ export function useSessionCatalog(projectId: string | null) {
   );
 
   const refresh = useCallback(() => {
-    setIsLoading(true);
-    void fetchSessions();
-  }, [fetchSessions]);
+    void refreshPageOne();
+  }, [refreshPageOne]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || isLoadingMore) return;
+    const currentProjectId = projectIdRef.current;
+    if (!currentProjectId) return;
+    setIsLoadingMore(true);
+    try {
+      const result = await fetchSessionPage(currentProjectId, filtersRef.current, cursor);
+      setSessions((prev) => {
+        // Append, but de-dupe by id in case a session moved between pages
+        // due to an updated_at change between page-1 fetch and this fetch.
+        const seen = new Set(prev.map((s) => s.id));
+        return [...prev, ...result.sessions.filter((s) => !seen.has(s.id))];
+      });
+      setCursor(result.next_cursor);
+    } catch (e) {
+      console.error("Failed to load more sessions:", e);
+      setError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [cursor, isLoadingMore]);
 
   const removeSessionById = useCallback((id: string) => {
     setSessions((prev) => prev.filter((session) => session.id !== id));
@@ -149,17 +282,23 @@ export function useSessionCatalog(projectId: string | null) {
     });
   }, []);
 
-  const removeSession = useCallback((id: string) => {
-    removeSessionById(id);
-  }, [removeSessionById]);
+  const removeSession = useCallback(
+    (id: string) => {
+      removeSessionById(id);
+    },
+    [removeSessionById],
+  );
 
   const markSessionDeleting = useCallback((id: string) => {
     setDeletingIds((prev) => new Set(prev).add(id));
   }, []);
 
-  const confirmSessionDeleted = useCallback((sessionId: string) => {
-    removeSessionById(sessionId);
-  }, [removeSessionById]);
+  const confirmSessionDeleted = useCallback(
+    (sessionId: string) => {
+      removeSessionById(sessionId);
+    },
+    [removeSessionById],
+  );
 
   const restoreSession = useCallback((id: string) => {
     setDeletingIds((prev) => {
@@ -171,7 +310,7 @@ export function useSessionCatalog(projectId: string | null) {
 
   const renameSession = useCallback(
     async (id: string, title: string) => {
-      const previousSession = sessions.find((s) => s.id === id)
+      const previousSession = sessions.find((s) => s.id === id);
       setSessions((prev) =>
         prev.map((session) =>
           session.id === id ? { ...session, title } : session,
@@ -200,22 +339,25 @@ export function useSessionCatalog(projectId: string | null) {
         if (!response.ok) {
           console.error(`Rename failed: ${response.status}`);
           restorePreviousTitle();
-          await fetchSessions();
+          await refreshPageOne();
         }
       } catch (e) {
         console.error("Failed to rename session:", e);
         restorePreviousTitle();
-        await fetchSessions();
+        await refreshPageOne();
       }
     },
-    [fetchSessions, sessions],
+    [refreshPageOne, sessions],
   );
 
   return {
     sessions: sortedSessions,
     isLoading,
+    isLoadingMore,
     error,
     refresh,
+    loadMore,
+    hasMore: cursor !== null,
     removeSession,
     markSessionDeleting,
     confirmSessionDeleted,
