@@ -30,7 +30,7 @@ Users invoke skills with `/gobby skillname` syntax:
 /gobby memory        # Persistent memory
 /gobby sessions      # Session management
 /gobby worktrees     # Git worktree management
-/gobby merge         # AI merge conflict resolution
+/gobby merge         # Launch a merge campaign (surveys + routes to worker/orchestrator)
 /gobby agents        # Agent spawning
 /gobby doctor        # Systems diagnostics
 /gobby commit        # Resolves to source-control
