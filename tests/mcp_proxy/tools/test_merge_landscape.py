@@ -81,7 +81,8 @@ async def test_analyze_merge_landscape_happy_path(tmp_path) -> None:
 
     git_manager = MagicMock()
     git_manager._run_git.side_effect = [
-        _completed(stdout="3\n"),  # rev-list --count
+        _completed(stdout="3\n"),  # rev-list --count main..HEAD
+        _completed(stdout="1\n"),  # rev-list --count HEAD..main
         _completed(stdout="src/a.py\nsrc/b.py\n"),  # diff --name-only
         _completed(stdout="2026-04-28T12:34:56+00:00\n"),  # log -1 %cI
     ]
@@ -94,9 +95,35 @@ async def test_analyze_merge_landscape_happy_path(tmp_path) -> None:
     entry = result["worktrees"][0]
     assert entry["worktree_id"] == "wt-1"
     assert entry["branch"] == "feat/x"
+    assert entry["commits_ahead"] == 3
+    assert entry["commits_behind"] == 1
     assert entry["divergence_commits"] == 3
     assert entry["files_touched"] == ["src/a.py", "src/b.py"]
     assert entry["last_commit_at"] == "2026-04-28T12:34:56+00:00"
+
+
+@pytest.mark.asyncio
+async def test_analyze_merge_landscape_behind_only_keeps_divergence_zero(tmp_path) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.list_worktrees.return_value = [wt]
+
+    git_manager = MagicMock()
+    git_manager._run_git.side_effect = [
+        _completed(stdout="0\n"),  # rev-list --count main..HEAD
+        _completed(stdout="2\n"),  # rev-list --count HEAD..main
+        _completed(stdout=""),  # diff --name-only
+        _completed(stdout="2026-04-28T12:34:56+00:00\n"),  # log -1 %cI
+    ]
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("analyze_merge_landscape", {})
+
+    assert result["success"] is True
+    entry = result["worktrees"][0]
+    assert entry["commits_ahead"] == 0
+    assert entry["commits_behind"] == 2
+    assert entry["divergence_commits"] == 0
 
 
 @pytest.mark.asyncio

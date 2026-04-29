@@ -112,21 +112,40 @@ def register_merge_landscape_tools(
             base_ref = wt.base_branch or "main"
             rc, stdout, stderr = await _git_async(
                 git_manager,
-                ["rev-list", "--count", f"{base_ref}...HEAD"],
+                ["rev-list", "--count", f"{base_ref}..HEAD"],
                 cwd=wt_path,
             )
             if rc == 0 and stdout.strip().isdigit():
-                entry["divergence_commits"] = int(stdout.strip())
+                entry["commits_ahead"] = int(stdout.strip())
             else:
                 logger.warning(
-                    "rev-list failed for worktree %s (base=%s): rc=%d stderr=%s; "
+                    "rev-list ahead count failed for worktree %s (base=%s): rc=%d stderr=%s; "
                     "the base branch may not be fetched in this worktree.",
                     wt_path,
                     base_ref,
                     rc,
                     stderr.strip(),
                 )
-                entry["divergence_commits"] = None
+                entry["commits_ahead"] = None
+
+            rc, stdout, stderr = await _git_async(
+                git_manager,
+                ["rev-list", "--count", f"HEAD..{base_ref}"],
+                cwd=wt_path,
+            )
+            if rc == 0 and stdout.strip().isdigit():
+                entry["commits_behind"] = int(stdout.strip())
+            else:
+                logger.warning(
+                    "rev-list behind count failed for worktree %s (base=%s): rc=%d stderr=%s; "
+                    "the base branch may not be fetched in this worktree.",
+                    wt_path,
+                    base_ref,
+                    rc,
+                    stderr.strip(),
+                )
+                entry["commits_behind"] = None
+            entry["divergence_commits"] = entry["commits_ahead"]
 
             rc, stdout, _ = await _git_async(
                 git_manager,
