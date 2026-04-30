@@ -1,0 +1,49 @@
+name: review
+type: pipeline
+description: |
+  Interactive /gobby review workflow. Dispatches holistic-reviewer for an
+  epic so the holistic review loop can approve, reject, or escalate independent
+  of gobby build.
+
+version: "1.0"
+enabled: true
+
+inputs:
+  task_id:
+    type: string
+    required: true
+    description: "Epic task ID to review"
+  mode:
+    type: string
+    default: "interactive"
+    description: "Invocation mode: interactive or delegated"
+  provider:
+    type: string
+    default: "codex"
+    description: "LLM provider override"
+  model:
+    type: string
+    default: ""
+    description: "Model override (empty = provider default)"
+  worktree_id:
+    type: string
+    default: ""
+    description: "Worktree ID for isolation (empty = inherit or none)"
+
+steps:
+  - id: spawn_holistic_reviewer
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: holistic-reviewer
+        task_id: "${{ inputs.task_id }}"
+        assigned_task_id: "${{ inputs.task_id }}"
+        provider: "${{ inputs.provider }}"
+        model: "${{ inputs.model }}"
+        worktree_id: "${{ inputs.worktree_id }}"
+        parent_session_id: "${{ session_id }}"
+        prompt: |
+          Review epic task ${{ inputs.task_id }} as the holistic-reviewer
+          agent. Check scope, reality, testing, and YAGNI against the approved
+          plan and implementation evidence, then approve, reject, or escalate.
