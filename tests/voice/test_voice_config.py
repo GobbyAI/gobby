@@ -13,7 +13,8 @@ class TestVoiceConfig:
         config = VoiceConfig()
         assert config.enabled is False
         assert config.tts_provider == "chatterbox"
-        assert config.tts_chatterbox_max_generation_tokens == 256
+        assert config.tts_chatterbox_max_generation_tokens == 1000
+        assert config.tts_clause_max_chars == 180
         assert config.tts_reference_text is None
         assert config.stt_enabled is True
         assert config.whisper_model_size == "base"
@@ -26,10 +27,12 @@ class TestVoiceConfig:
             enabled=True,
             whisper_model_size="small",
             tts_chatterbox_max_generation_tokens=144,
+            tts_clause_max_chars=220,
         )
         assert config.enabled is True
         assert config.whisper_model_size == "small"
         assert config.tts_chatterbox_max_generation_tokens == 144
+        assert config.tts_clause_max_chars == 220
 
     def test_stt_only(self):
         config = VoiceConfig(enabled=True, stt_enabled=True)
@@ -57,13 +60,20 @@ class TestVoiceConfig:
                 "enabled": True,
                 "whisper_model_size": "medium",
                 "tts_chatterbox_max_generation_tokens": 144,
+                "tts_clause_max_chars": 220,
             }
         )
         assert config.voice.enabled is True
         assert config.voice.whisper_model_size == "medium"
         assert config.voice.tts_chatterbox_max_generation_tokens == 144
+        assert config.voice.tts_clause_max_chars == 220
 
     @pytest.mark.parametrize("value", [0, 1001])
     def test_generation_token_bounds_validation(self, value: int):
         with pytest.raises(ValidationError):
             VoiceConfig(tts_chatterbox_max_generation_tokens=value)
+
+    @pytest.mark.parametrize("value", [79, 401])
+    def test_clause_max_chars_bounds_validation(self, value: int):
+        with pytest.raises(ValidationError):
+            VoiceConfig(tts_clause_max_chars=value)

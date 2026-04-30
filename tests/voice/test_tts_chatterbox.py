@@ -172,7 +172,7 @@ class TestChatterboxTurboProvider:
                 "t3_cond": "conds",
                 "text_tokens": "tokens",
                 "temperature": voice_config.tts_temperature,
-                "max_gen_len": 256,
+                "max_gen_len": 1000,
             }
         ]
         assert mock_model.t3.inference_turbo is inference_turbo
