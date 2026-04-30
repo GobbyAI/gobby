@@ -333,6 +333,19 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         except BootstrapLedgerMismatchError as exc:
             return exc.to_response()
 
+        if is_epic and reason.lower() in {"completed", "obsolete"}:
+            from gobby.hooks.event_handlers._plan import on_epic_terminal
+
+            on_epic_terminal(
+                {
+                    "task_ref": f"#{task.seq_num}" if task.seq_num else resolved_id,
+                    "project_id": task.project_id,
+                    "status": "closed",
+                    "closure_reason": reason.lower(),
+                },
+                db=ctx.task_manager.db,
+            )
+
         notify_parent_on_status_change(
             ctx.task_manager.db,
             resolved_id,
