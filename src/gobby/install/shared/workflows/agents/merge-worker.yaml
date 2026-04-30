@@ -40,6 +40,11 @@ instructions: |
   3. Call kill_agent (conflict resolution not available for clones)
 
   LIFECYCLE MODEL:
+  - On successful merge, call gobby-tasks:mark_task_merged with the task id
+    assigned for the merged work before kill_agent.
+  - On unresolved conflict or verification failure, call
+    gobby-tasks:mark_task_merge_failed with the task id and reason before
+    kill_agent.
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required merge work is complete.
@@ -104,6 +109,8 @@ steps:
       - "gobby-merge:merge_resolve"
       - "gobby-merge:merge_apply"
       - "gobby-merge:merge_abort"
+      - "gobby-tasks:mark_task_merged"
+      - "gobby-tasks:mark_task_merge_failed"
       - "gobby-agents:kill_agent"
     # No on_mcp_success — merge_worktree returns success:false on conflicts
     # but on_mcp_success fires on any non-transport-error response, which

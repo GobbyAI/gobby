@@ -19,6 +19,11 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_labels import (
     register_add_label,
     register_remove_label,
 )
+from gobby.mcp_proxy.tools.tasks._lifecycle_merge import (
+    register_mark_task_merge_failed,
+    register_mark_task_merged,
+    register_mark_task_pr_opened,
+)
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import (
     register_de_escalate_task,
     register_escalate_task,
@@ -54,5 +59,8 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     register_mark_task_review_approved(registry, ctx)
     register_mark_task_review_rejected(registry, ctx)
     register_mark_task_needs_review(registry, ctx)
+    register_mark_task_pr_opened(registry, ctx)
+    register_mark_task_merged(registry, ctx)
+    register_mark_task_merge_failed(registry, ctx)
 
     return registry

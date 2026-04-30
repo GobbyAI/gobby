@@ -219,6 +219,8 @@ steps:
     allowed_mcp_tools:
       - "gobby-tasks:update_task_artifacts"
       - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:mark_task_merged"
+      - "gobby-tasks:mark_task_merge_failed"
       - "gobby-tasks:escalate_task"
       - "gobby-tasks:advance_lifecycle"
       - "gobby-tasks:append_description_section"
