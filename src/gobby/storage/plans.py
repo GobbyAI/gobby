@@ -112,7 +112,7 @@ class LocalPlanManager:
             )
 
         record = self.get_plan(plan_id, project_id=project_id)
-        self.regenerate_coverage_manifest(record.plan_id, project_id=record.project_id)
+        self._generate_coverage_manifest(record)
         return record
 
     def get_plan(self, plan_id_or_ref: str, *, project_id: str | None = None) -> PlanRecord:
@@ -173,7 +173,7 @@ class LocalPlanManager:
                 (doc.source_hash, now, record.id),
             )
         updated = self.get_plan(plan_id, project_id=record.project_id)
-        self.regenerate_coverage_manifest(updated.plan_id, project_id=updated.project_id)
+        self._generate_coverage_manifest(updated)
         return updated
 
     def regenerate_coverage_manifest(
@@ -183,6 +183,9 @@ class LocalPlanManager:
         project_id: str | None = None,
     ) -> Path:
         record = self.get_plan(plan_id, project_id=project_id)
+        return self._generate_coverage_manifest(record)
+
+    def _generate_coverage_manifest(self, record: PlanRecord) -> Path:
         project_root = self._project_root(record.project_id)
         report = evaluate(
             plan=project_root / record.plan_path,

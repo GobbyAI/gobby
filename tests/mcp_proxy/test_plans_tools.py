@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.mcp_proxy.tools.plans import create_plan_registry
+from gobby.storage.database import LocalDatabase
 from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
@@ -40,7 +41,7 @@ def _write_plan(root: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_plan_tool_schemas_and_happy_path(temp_db, tmp_path: Path) -> None:
+async def test_plan_tool_schemas_and_happy_path(temp_db: LocalDatabase, tmp_path: Path) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)
@@ -77,7 +78,9 @@ async def test_plan_tool_schemas_and_happy_path(temp_db, tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(temp_db) -> None:
+async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(
+    temp_db: LocalDatabase,
+) -> None:
     registry = create_plan_registry(temp_db, default_project_id="project-1")
 
     result = await registry.call("get_plan", {"plan_id_or_ref": "   "})
@@ -87,7 +90,9 @@ async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(temp_db) -> None
 
 
 @pytest.mark.asyncio
-async def test_create_plan_rejects_invalid_plan_kind(temp_db, tmp_path: Path) -> None:
+async def test_create_plan_rejects_invalid_plan_kind(
+    temp_db: LocalDatabase, tmp_path: Path
+) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     plan_path = _write_plan(tmp_path)
     registry = create_plan_registry(temp_db, default_project_id=project_id)

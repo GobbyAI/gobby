@@ -8,13 +8,14 @@ from pathlib import Path
 import pytest
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
+from gobby.storage.database import LocalDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
 
-def _project(temp_db, root: Path) -> str:
+def _project(temp_db: LocalDatabase, root: Path) -> str:
     return LocalProjectManager(temp_db).create(name="plans-red", repo_path=str(root)).id
 
 
@@ -43,7 +44,7 @@ def _write_plan(root: Path) -> Path:
     return path
 
 
-def test_update_plan_hash_regenerates_manifest(temp_db, tmp_path: Path) -> None:
+def test_update_plan_hash_regenerates_manifest(temp_db: LocalDatabase, tmp_path: Path) -> None:
     manager = LocalPlanManager(temp_db)
     project_id = _project(temp_db, tmp_path)
     plan = _write_plan(tmp_path)
@@ -69,7 +70,7 @@ def test_update_plan_hash_regenerates_manifest(temp_db, tmp_path: Path) -> None:
     assert manifest.stat().st_mtime_ns > first_mtime
 
 
-def test_archive_removes_coverage_manifest(temp_db, tmp_path: Path) -> None:
+def test_archive_removes_coverage_manifest(temp_db: LocalDatabase, tmp_path: Path) -> None:
     manager = LocalPlanManager(temp_db)
     project_id = _project(temp_db, tmp_path)
     plan = _write_plan(tmp_path)
