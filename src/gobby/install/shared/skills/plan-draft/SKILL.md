@@ -131,9 +131,9 @@ Free-form `plan-ref:` labels are not honored by the coverage contract.
 ### Authoring Scope: Narrative Only — Never the Manifest
 
 Planner authors **narrative sections only**: `# {Epic Title}`, `## Overview`,
-`## Constraints`, `## Phase N: Name`, `### N.N {Task Title}` deliverables with
-`**Acceptance:**` blocks, `framing` / `verification` / `deferred` sections, and
-the `## Plan Changelog` rolling summary (per §2.23). Stop there.
+`## Constraints`, `## P<N>: {Phase Name}`, `### N.M {Task Title}` deliverables
+with `**Acceptance:**` blocks, `framing` / `verification` / `deferred` sections,
+and the `## Plan Changelog` rolling summary (per §2.23). Stop there.
 
 The `## M1 Task Manifest` section is **NOT** part of the planner's surface. It
 is written by `plan-adversary` as the final act of approval — the act of
@@ -167,28 +167,43 @@ Every plan is one Markdown document. The structure is:
 - **Epic title** — `# {Feature Name}` at the top of the file.
 - **Overview** — goal + context in one or two short paragraphs.
 - **Constraints** — explicit constraints or non-goals.
-- **Phases** — one `## Phase N: Name` section per logical grouping of work.
-- **Tasks** — one `### N.N Title [category: X]` subsection per atomic unit of work
-  under each phase.
-- **Dependencies** — inline `(depends: 1.1)` or `(depends: Phase N)` notation on
-  task headings.
+- **Phases** — one `## P<N>: Name` section per logical grouping of work
+  (letter-prefixed `P1`, `P2`, … so the section_id matches the contract regex
+  `^P\d+$`; phases carry `kind: framing`).
+- **Tasks** — one `### N.M Title [category: X]` subsection per atomic unit of
+  work under each phase (numeric, e.g. `### 1.1`, `### 1.2`, `### 2.1`; tasks
+  carry `kind: deliverable`).
+- **Dependencies** — inline `(depends: 1.1)` for an intra-phase task or
+  `(depends: P<N>)` for the whole phase, on task headings. Use the bare
+  section_id — `(depends: Phase 1)` does NOT resolve.
 
 ### Canonical Template
+
+Each section heading carries a `` `kind: ...` `` annotation on the next
+non-blank line. Phases are `kind: framing`; task subsections are
+`kind: deliverable` and require an `**Acceptance:**` block. Without these
+annotations the parser silently drops the section.
 
 ~~~markdown
 # {Epic Title}
 
 ## Overview
+`kind: framing`
+
 {Goal and context — 1–2 sentences.}
 
 ## Constraints
+`kind: framing`
+
 {Explicit constraints, non-goals, or external requirements.}
 
-## Phase 1: {Phase Name}
+## P1: {Phase Name}
+`kind: framing`
 
 **Goal**: {One sentence outcome.}
 
 ### 1.1 {Task Title} [category: code]
+`kind: deliverable`
 
 Target: `src/module/file.py`
 
@@ -214,17 +229,29 @@ class Example(Base):
         return len(self.name) > 0
 ```
 
+**Acceptance:**
+
+- 1.1.1 - Example model exists. file: `src/module/file.py`.
+- 1.1.2 - Validation rejects empty names. test: `tests/test_module.py::test_validate_empty`.
+
 ### 1.2 {Task Title} [category: code] (depends: 1.1)
+`kind: deliverable`
 
 Target: `src/module/other.py`
 
 {Full implementation specification — code examples, behavioral specs, edge cases…}
 
-## Phase 2: {Phase Name}
+**Acceptance:**
+
+- 1.2.1 - {prose}. file: `src/module/other.py`.
+
+## P2: {Phase Name}
+`kind: framing`
 
 **Goal**: {One sentence outcome.}
 
-### 2.1 {Task Title} [category: config] (depends: Phase 1)
+### 2.1 {Task Title} [category: config] (depends: P1)
+`kind: deliverable`
 
 Target: `config/settings.yaml`
 
@@ -235,6 +262,10 @@ settings:
   timeout: 30
   retries: 3
 ```
+
+**Acceptance:**
+
+- 2.1.1 - {prose}. file: `config/settings.yaml`.
 
 ## Task Mapping
 
@@ -247,7 +278,9 @@ settings:
 ### Dependency Notation
 
 - `(depends: 1.1)` — this task depends on task `1.1` of this plan.
-- `(depends: Phase N)` — this task (or the whole phase) depends on phase sub-epic `N`.
+- `(depends: P<N>)` — this task (or the whole phase) depends on phase
+  sub-epic `P<N>`. Use the bare section_id of the phase, not the literal
+  word "Phase" — `(depends: Phase 1)` does not resolve.
 - Dependencies are resolved by `/gobby expand` using `parent_task_id` and
   `add_dependency`; do not try to pre-create task refs yourself.
 
@@ -338,18 +371,32 @@ around without changing behavior is `refactor`, not `code`.
 
 ## Phase Heading Syntax
 
-Canonical form is `## Phase N: Name` (colon). Use this in new plans — every
-example in this skill follows it.
+Canonical form is `## P<N>: {Phase Name}` — letter-prefixed `P` plus the phase
+number, matching the contract phase regex
+`_CONTRACT_PHASE_ID_RE = re.compile(r"^P(?P<number>\d+)$")` at
+`src/gobby/tasks/expansion/_common.py:219`.
 
-The `/gobby expand` parser also tolerates:
+Examples that work:
 
-- `## Phase N — Name` (em-dash)
-- `## Phase N – Name` (en-dash)
-- `## Phase N - Name` (ASCII hyphen)
+- `## P1: Setup` (colon separator)
+- `## P1 Setup` (space separator — the canonical-heading regex's lookahead
+  accepts whitespace, `).:-`, or end-of-line after the section_id)
+- `## P2: Implementation`
 
-Anything else (no separator, unusual punctuation) is **silently skipped** — the
-phase will not be recognized and its tasks will be dropped. Always prefer the
-canonical colon form.
+Examples that **silently fail** (parser extracts no section_id, or extracts
+the wrong one — phase will not be recognized and the whole phase plus its
+tasks will be dropped at expansion time):
+
+- `## Phase 1: Setup` — the literal word "Phase" prevents the section_id
+  regex from matching; `_CONTRACT_PHASE_ID_RE` would not see `P<N>` here.
+- `## Phase N — Name` and dash variants — same problem.
+- `## 1: Setup` — extracts section_id `"1"` (numeric) which does NOT match
+  the phase regex `^P\d+$`. The validator returns `phase_count: 0` and the
+  expansion compiler cannot anchor TDD wrappers.
+
+Always prefer `## P<N>: Name`. Pair every phase heading with `` `kind: framing` ``
+on the next non-blank line — without it the parser treats the section as
+unannotated and drops it.
 
 ---
 
@@ -374,14 +421,14 @@ Bad: `"Implement enrichment"` (too vague — the agent has to guess)
 
 Plans with multiple phases **must** produce a hierarchical task tree, not a flat
 list. `/gobby expand` creates this hierarchy automatically from the plan's
-`## Phase` headings.
+`## P<N>` headings.
 
 ### Required Structure
 
 ```
 L1: Root Epic (from plan title)
-└── L2: Phase Sub-Epic (from each ## Phase section)
-    └── L3: Feature Task (from each ### N.N task heading)
+└── L2: Phase Sub-Epic (from each ## P<N> section)
+    └── L3: Feature Task (from each ### N.M task heading)
         ├── [TDD] Write failing tests     ← TDD sandwich (auto-generated)
         ├── [IMPL] Implement feature      ← TDD sandwich (auto-generated)
         └── [REF] Refactor with green tests ← TDD sandwich (auto-generated)
@@ -397,11 +444,11 @@ L1: Root Epic (from plan title)
 ### How `/gobby expand` Handles Phases
 
 1. Creates the root epic from `# Title`.
-2. For each `## Phase N: Name` section:
+2. For each `## P<N>: Name` section:
    - Creates a phase sub-epic under the root.
-   - Saves an expansion spec with that phase's `### N.N` tasks.
+   - Saves an expansion spec with that phase's `### N.M` tasks.
    - Executes expansion with `tdd=true` — adds [TDD] and [REF] wrappers per phase.
-3. Wires cross-phase dependencies (e.g., `depends: Phase N` becomes a dependency
+3. Wires cross-phase dependencies (e.g., `depends: P<N>` becomes a dependency
    on the phase sub-epic).
 
 ---
@@ -419,19 +466,23 @@ section above. Remove any that appear. Report any that were found and removed.
 
 - No circular dependencies (A → B → A is invalid).
 - No missing references (if `(depends: 1.1)`, task `1.1` must exist).
-- Phase dependencies (`depends: Phase N`) reference existing phases.
+- Phase dependencies (`depends: P<N>`) reference existing phases by their
+  letter-prefixed section_id. `(depends: Phase 1)` does not resolve.
 - Leaf tasks are concrete implementation work, not meta-tasks like "coordinate
   phase 2".
 
 ### 3. Categories Assigned Correctly
 
-Every `### N.N` heading carries a `[category: X]` tag and `X` is one of the
+Every `### N.M` heading carries a `[category: X]` tag and `X` is one of the
 canonical categories above. Fix any missing or unknown category.
 
 ### 4. Phase Heading Syntax
 
-Every `## Phase N` heading uses the canonical `## Phase N: Name` form (or one of
-the tolerated dash variants). Anything else is silently skipped by expansion.
+Every phase heading uses the canonical `## P<N>: Name` form (letter-prefixed
+section_id matching `^P\d+$`). Headings like `## Phase 1: Name`, `## 1: Name`,
+or dash-separator variants are **silently dropped** by the parser — the
+phase will not be recognized and its tasks will be lost at expansion. Pair
+each phase heading with `` `kind: framing` `` on the next non-blank line.
 
 ### 5. Sections Are Self-Contained
 
