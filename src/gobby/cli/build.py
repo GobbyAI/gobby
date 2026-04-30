@@ -52,7 +52,12 @@ def _echo_build_result(result: BuildResult) -> None:
     show_default=True,
     help="Execution isolation mode.",
 )
-@click.option("--yolo/--no-yolo", default=False, show_default=True, help="Enable yolo mode.")
+@click.option(
+    "--yolo/--no-yolo",
+    default=False,
+    show_default=True,
+    help="Enable composer yolo mode.",
+)
 @click.option(
     "--max-review-rounds",
     default=3,
@@ -89,7 +94,8 @@ def build_command(
         profile=profile,
         skip_stages=_parse_skip_stages(skip_stage),
         isolation=cast(Isolation, isolation),
-        yolo=yolo,
+        unattended=False,
+        composer_yolo=yolo,
         max_review_rounds=max_review_rounds,
         max_expansion_attempts=max_expansion_attempts,
         max_qa_rounds=max_qa_rounds,

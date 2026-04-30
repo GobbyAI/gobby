@@ -78,7 +78,8 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path) -> None:
     assert opts.profile == "review"
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
-    assert opts.yolo is True
+    assert opts.unattended is False
+    assert opts.composer_yolo is True
     assert opts.max_review_rounds == 7
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"

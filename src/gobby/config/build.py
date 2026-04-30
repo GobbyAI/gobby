@@ -39,7 +39,12 @@ _DEFAULT_PROFILE_TEMPLATES: Mapping[str, tuple[tuple[str, ...], Isolation, bool]
     ),
     "review": (("plan_review", "pr"), "worktree", False),
     "full": ((), "worktree", False),
-    "full-yolo": (("pr",), "worktree", True),
+    "default_unattended": ((), "worktree", False),
+    "full-unattended": (("pr",), "worktree", True),
+}
+_PROFILE_ALIASES = {
+    "default_yolo": "default_unattended",
+    "full-yolo": "full-unattended",
 }
 
 
@@ -110,6 +115,7 @@ def resolve_profile(
     profile_name = (
         _resolve_auto_profile_name(input_ref, input_kind, has_plan_file) if name == "auto" else name
     )
+    profile_name = _PROFILE_ALIASES.get(profile_name, profile_name)
     if profile_name not in cfg.profiles:
         raise ValueError(f"unknown build profile: {profile_name}")
 
@@ -153,6 +159,8 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
 
 def _merge_config(target: dict[str, Any], updates: Mapping[str, Any]) -> None:
     for key, value in updates.items():
+        if key == "default_max_review_rounds":
+            key = "max_review_rounds"
         if key == "profiles":
             _merge_profiles(target, value)
             continue
@@ -169,15 +177,16 @@ def _merge_profiles(target: dict[str, Any], value: Any) -> None:
 
     updates = _string_key_mapping(value, "profiles")
     for name, profile in updates.items():
+        profile_name = _PROFILE_ALIASES.get(name, name)
         if not isinstance(profile, Mapping):
             raise ValueError(f"build profile must be a mapping: {name}")
 
-        existing = raw_profiles.get(name, {})
+        existing = raw_profiles.get(profile_name, {})
         merged_profile: dict[str, Any] = {}
         if isinstance(existing, Mapping):
             merged_profile.update(_string_key_mapping(existing, f"profiles.{name}"))
         merged_profile.update(_string_key_mapping(profile, f"profiles.{name}"))
-        raw_profiles[name] = merged_profile
+        raw_profiles[profile_name] = merged_profile
 
 
 def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
@@ -198,7 +207,13 @@ def _build_config_from_mapping(raw: Mapping[str, Any]) -> BuildConfig:
             raw.get("max_holistic_rounds", 3), "max_holistic_rounds"
         ),
         max_review_rounds=_normalize_int(
-            raw.get("max_review_rounds", raw.get("default_max_review_rounds", 3)),
+            raw.get(
+                "max_review_rounds",
+                raw.get(
+                    "default_max_review_rounds",
+                    raw.get("default_review_rounds", 3),
+                ),
+            ),
             "max_review_rounds",
         ),
         default_target_branch=_normalize_optional_str(

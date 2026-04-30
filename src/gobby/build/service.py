@@ -21,7 +21,8 @@ class BuildOptions:
     profile: str | None
     skip_stages: list[str]
     isolation: Isolation
-    yolo: bool
+    unattended: bool
+    composer_yolo: bool
     max_review_rounds: int
     max_expansion_attempts: int | None = None
     max_qa_rounds: int | None = None
@@ -82,18 +83,20 @@ async def build(
     _validate_profile_for_input(opts.profile, input_kind)
     _validate_clones_dir(opts)
     _validate_retry_caps(opts)
-    await _validate_target_branch(db, project_id, opts.target_branch)
+    target_branch = await _resolve_target_branch(db, project_id, opts.target_branch, input_kind)
 
     if input_kind == "plan_file":
         assert isinstance(task_or_plan, Path)
-        return _build_plan_file(task_manager, task_or_plan, opts, skip_stages, project_id)
+        return _build_plan_file(
+            task_manager, task_or_plan, opts, skip_stages, project_id, target_branch
+        )
 
     assert isinstance(task_or_plan, Task)
     task = task_or_plan
     if input_kind == "leaf":
         return _build_leaf(task_manager, task, opts, skip_stages)
 
-    return _build_epic(task_manager, task, opts, skip_stages)
+    return _build_epic(task_manager, task, opts, skip_stages, target_branch)
 
 
 def _build_plan_file(
@@ -102,6 +105,7 @@ def _build_plan_file(
     opts: BuildOptions,
     skip_stages: list[str],
     project_id: str,
+    target_branch: str | None,
 ) -> BuildResult:
     initial_lifecycle = _initial_lifecycle_for_plan(skip_stages)
     task = task_manager.create_task(
@@ -117,14 +121,14 @@ def _build_plan_file(
         labels=labels,
         lifecycle=initial_lifecycle,
         allow_automation=True,
-        yolo=opts.yolo,
+        unattended=opts.unattended,
         isolation=opts.isolation,
         assigned_agent=opts.assigned_agent,
     )
     task_manager.artifacts.set_artifacts_atomic(
         task.id,
         plan_file_path=str(plan_file),
-        target_branch=opts.target_branch,
+        target_branch=target_branch,
         **_retry_cap_artifacts(opts),
     )
     _record_build_event(task_manager, task, initial_lifecycle)
@@ -158,7 +162,7 @@ def _build_leaf(
         labels=_merge_stage_labels(task.labels, skip_stages),
         lifecycle=initial_lifecycle,
         allow_automation=True,
-        yolo=opts.yolo,
+        unattended=opts.unattended,
         isolation="none",
         assigned_agent=opts.assigned_agent,
     )
@@ -179,18 +183,19 @@ def _build_epic(
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
+    target_branch: str | None,
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
     _validate_epic_isolation_artifacts(opts.isolation, artifacts)
     task_manager.artifacts.set_artifacts_atomic(
         task.id,
-        target_branch=opts.target_branch,
+        target_branch=target_branch,
         **_retry_cap_artifacts(opts),
     )
     task_manager.cascade_build_state_to_subtree(
         task.id,
         isolation=opts.isolation,
-        yolo=opts.yolo,
+        unattended=opts.unattended,
         skip_stage_labels=_stage_labels(skip_stages),
         allow_automation=True,
     )
@@ -256,6 +261,20 @@ def _validate_retry_caps(opts: BuildOptions) -> None:
             raise ValueError(f"{field} must be greater than or equal to 1")
 
 
+async def _resolve_target_branch(
+    db: DatabaseProtocol,
+    project_id: str,
+    target_branch: str | None,
+    input_kind: InputKind,
+) -> str | None:
+    if target_branch:
+        await _validate_target_branch(db, project_id, target_branch)
+        return target_branch
+    if input_kind == "leaf":
+        return None
+    return await _current_target_branch(db, project_id)
+
+
 async def _validate_target_branch(
     db: DatabaseProtocol,
     project_id: str,
@@ -272,19 +291,15 @@ async def _validate_target_branch(
 
     proc = await asyncio.create_subprocess_exec(
         "git",
-        "branch",
-        "--list",
+        "rev-parse",
+        "--verify",
         target_branch,
         cwd=repo_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout_bytes, stderr_bytes = await proc.communicate()
-    if proc.returncode != 0:
-        stderr = stderr_bytes.decode().strip()
-        detail = f": {stderr}" if stderr else ""
-        raise ValueError(f"failed to inspect git branches for {repo_path}{detail}")
-    if stdout_bytes.decode().strip():
+    if proc.returncode == 0 and stdout_bytes.decode().strip():
         return
 
     list_proc = await asyncio.create_subprocess_exec(
@@ -299,6 +314,38 @@ async def _validate_target_branch(
     branches_stdout, _ = await list_proc.communicate()
     available = ", ".join(branches_stdout.decode().split()) or "main"
     raise ValueError(f"target branch {target_branch} is missing; available branches: {available}")
+
+
+async def _current_target_branch(db: DatabaseProtocol, project_id: str) -> str | None:
+    project = LocalProjectManager(db).get(project_id)
+    repo_path = Path(project.repo_path) if project is not None and project.repo_path else Path.cwd()
+    if not (repo_path / ".git").exists():
+        repo_path = Path.cwd()
+
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+        cwd=repo_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_bytes, _ = await proc.communicate()
+    if proc.returncode != 0:
+        return None
+    branch = stdout_bytes.decode().strip()
+    return branch or None
+
+
+def _composer_scope_cap(
+    *,
+    input_kind: str,
+    composer_authority: str,
+) -> str:
+    if composer_authority == "upstream" and input_kind in ("plan_file", "epic", "leaf"):
+        raise ValueError("composer upstream authority is only valid for ideate builds")
+    return composer_authority
 
 
 def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArtifacts) -> None:

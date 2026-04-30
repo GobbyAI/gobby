@@ -42,7 +42,12 @@ def test_build_config_defaults_include_profiles_and_dispatch_knobs() -> None:
         "isolation": "worktree",
         "yolo": False,
     }
-    assert cfg.profiles["full-yolo"] == {
+    assert cfg.profiles["default_unattended"] == {
+        "skip_stages": [],
+        "isolation": "worktree",
+        "yolo": False,
+    }
+    assert cfg.profiles["full-unattended"] == {
         "skip_stages": ["pr"],
         "isolation": "worktree",
         "yolo": True,
@@ -136,6 +141,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
         ),
         ("review", {"skip_stages": ["plan_review", "pr"], "isolation": "worktree", "yolo": False}),
         ("full", {"skip_stages": [], "isolation": "worktree", "yolo": False}),
+        ("full-unattended", {"skip_stages": ["pr"], "isolation": "worktree", "yolo": True}),
         ("full-yolo", {"skip_stages": ["pr"], "isolation": "worktree", "yolo": True}),
     ],
 )

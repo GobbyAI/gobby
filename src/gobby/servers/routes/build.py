@@ -23,8 +23,14 @@ class BuildRequest(BaseModel):
     profile: str | None = None
     skip_stages: list[str] = Field(default_factory=list)
     isolation: Isolation = "worktree"
-    yolo: bool = False
+    unattended: bool = False
+    composer_yolo: bool = False
+    yolo: bool | None = Field(default=None, json_schema_extra={"deprecated": True})
     max_review_rounds: int = 3
+    max_expansion_attempts: int | None = None
+    max_qa_rounds: int | None = None
+    max_merge_attempts: int | None = None
+    max_holistic_rounds: int | None = None
     target_branch: str | None = None
     agent: str | None = None
     clones_dir: str | None = None
@@ -32,12 +38,20 @@ class BuildRequest(BaseModel):
 
 def _build_options(request_data: BuildRequest) -> BuildOptions:
     clones_dir = Path(request_data.clones_dir).expanduser() if request_data.clones_dir else None
+    unattended = request_data.unattended
+    if request_data.yolo is not None and not unattended:
+        unattended = request_data.yolo
     return BuildOptions(
         profile=request_data.profile,
         skip_stages=request_data.skip_stages,
         isolation=request_data.isolation,
-        yolo=request_data.yolo,
+        unattended=unattended,
+        composer_yolo=request_data.composer_yolo,
         max_review_rounds=request_data.max_review_rounds,
+        max_expansion_attempts=request_data.max_expansion_attempts,
+        max_qa_rounds=request_data.max_qa_rounds,
+        max_merge_attempts=request_data.max_merge_attempts,
+        max_holistic_rounds=request_data.max_holistic_rounds,
         target_branch=request_data.target_branch,
         assigned_agent=request_data.agent,
         clones_dir=clones_dir,

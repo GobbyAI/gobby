@@ -16,10 +16,11 @@ async def _build(input_ref: str, opts: BuildOptions, db: object, project_id: str
 
 def _options(**overrides: object) -> BuildOptions:
     values = {
-        "profile": "full-yolo",
+        "profile": "full-unattended",
         "skip_stages": ["test_arch", "qa"],
         "isolation": "clone",
-        "yolo": True,
+        "unattended": True,
+        "composer_yolo": False,
         "max_review_rounds": 4,
         "target_branch": "main",
         "assigned_agent": None,
@@ -93,7 +94,7 @@ async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
     ]:
         assert task.allow_automation is True
         assert task.isolation == "clone"
-        assert task.yolo is True
+        assert task.unattended is True
         assert {"stage-:test_arch", "stage-:qa"}.issubset(set(task.labels))
 
 

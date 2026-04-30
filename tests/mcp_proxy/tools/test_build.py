@@ -34,12 +34,18 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
         "quick",
         "review",
         "full",
+        "default_unattended",
+        "full-unattended",
+        "default_yolo",
         "full-yolo",
         "auto",
     }
     assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
+    assert schema["properties"]["unattended"]["type"] == "boolean"
+    assert schema["properties"]["composer_yolo"]["type"] == "boolean"
     assert schema["properties"]["yolo"]["type"] == "boolean"
+    assert schema["properties"]["yolo"]["deprecated"] is True
     assert schema["properties"]["max_review_rounds"]["type"] == "integer"
     assert schema["properties"]["max_review_rounds"]["minimum"] == 1
     assert schema["properties"]["max_qa_rounds"]["minimum"] == 1

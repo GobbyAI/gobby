@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -11,7 +12,16 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
-BuildProfileName = Literal["quick", "review", "full", "full-yolo", "auto"]
+BuildProfileName = Literal[
+    "quick",
+    "review",
+    "full",
+    "default_unattended",
+    "full-unattended",
+    "default_yolo",
+    "full-yolo",
+    "auto",
+]
 BuildIsolation = Literal["none", "worktree", "clone"]
 
 
@@ -28,7 +38,9 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         profile: BuildProfileName = "auto",
         skip_stages: list[str] | None = None,
         isolation: BuildIsolation = "worktree",
-        yolo: bool = False,
+        unattended: bool = False,
+        composer_yolo: bool = False,
+        yolo: bool | None = None,
         max_review_rounds: int = 3,
         max_expansion_attempts: int | None = None,
         max_qa_rounds: int | None = None,
@@ -43,12 +55,21 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_task")
+        if yolo is not None:
+            warnings.warn(
+                "build_task.yolo is deprecated; use unattended for dispatch automation",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if not unattended:
+                unattended = bool(yolo)
 
         opts = BuildOptions(
             profile=profile,
             skip_stages=skip_stages or [],
             isolation=isolation,
-            yolo=yolo,
+            unattended=unattended,
+            composer_yolo=composer_yolo,
             max_review_rounds=max_review_rounds,
             max_expansion_attempts=max_expansion_attempts,
             max_qa_rounds=max_qa_rounds,
@@ -74,7 +95,16 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "input_ref": {"type": "string"},
                 "profile": {
                     "type": "string",
-                    "enum": ["quick", "review", "full", "full-yolo", "auto"],
+                    "enum": [
+                        "quick",
+                        "review",
+                        "full",
+                        "default_unattended",
+                        "full-unattended",
+                        "default_yolo",
+                        "full-yolo",
+                        "auto",
+                    ],
                     "default": "auto",
                 },
                 "skip_stages": {
@@ -87,7 +117,9 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "enum": ["none", "worktree", "clone"],
                     "default": "worktree",
                 },
-                "yolo": {"type": "boolean", "default": False},
+                "unattended": {"type": "boolean", "default": False},
+                "composer_yolo": {"type": "boolean", "default": False},
+                "yolo": {"type": "boolean", "deprecated": True},
                 "max_review_rounds": {"type": "integer", "default": 3, "minimum": 1},
                 "max_expansion_attempts": {"type": "integer", "minimum": 1},
                 "max_qa_rounds": {"type": "integer", "minimum": 1},

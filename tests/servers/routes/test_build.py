@@ -49,7 +49,8 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "profile": "review",
                 "skip_stages": ["pr"],
                 "isolation": "worktree",
-                "yolo": False,
+                "unattended": True,
+                "composer_yolo": False,
                 "max_review_rounds": 3,
                 "target_branch": "main",
                 "agent": "backend-developer",
@@ -71,7 +72,8 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.profile == "review"
     assert opts.skip_stages == ["pr"]
     assert opts.isolation == "worktree"
-    assert opts.yolo is False
+    assert opts.unattended is True
+    assert opts.composer_yolo is False
     assert opts.max_review_rounds == 3
     assert opts.target_branch == "main"
     assert opts.assigned_agent == "backend-developer"
