@@ -69,8 +69,12 @@ Canonical section-heading regex:
   `deliverable` sections require an `**Acceptance:**` block; `framing` and
   `verification` sections do not carry acceptance items; `deferred` sections
   require the typed deferral object.
-- Acceptance-item shape: IDs use `A<section>.<n>` dotted suffixes and each item
-  names at least one artifact kind: `file`, `symbol`, `test`, or `behavior`.
+- Acceptance-item shape: IDs use `A<section>.<n>` dotted suffixes — read the
+  shorthand as "section ID followed by `.<n>`" verbatim, with no synthetic
+  letter added. Section `A1` (letter-prefixed) emits `A1.1`, `A1.2`; section
+  `1.1` (numeric) emits `1.1.1`, `1.1.2` (no `A`). The parser enforces
+  `item_id.startswith(f"{section_id}.")`. Each item names at least one
+  artifact kind: `file`, `symbol`, `test`, or `behavior`.
 - Typed deferral object fields: `task_ref`, `reason`, `owner`,
   `original_acceptance_items`; the task must be open and carry provenance label
   `deferred-from:<plan-id>:<section-id>`. A closed task fails the gate.

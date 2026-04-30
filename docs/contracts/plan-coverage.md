@@ -40,20 +40,42 @@ Every section carries first-line front matter:
 
 ## Acceptance Items
 
-Acceptance IDs use dotted suffixes rooted in the section ID. Section `A1`
-emits `A1.1`, `A1.2`, and so on. Section `A1.7` emits `A1.7.1`, `A1.7.2`,
-and so on.
+Acceptance item IDs are formed by appending `.<n>` to the section's own ID.
+The section ID is the prefix, verbatim — no synthetic letters are added.
+The parser enforces this with `item_id.startswith(f"{section_id}.")` in
+`_build_acceptance_item` (`src/gobby/plans/parser.py`).
+
+Concretely:
+
+- Section `A1` (letter-prefixed) emits `A1.1`, `A1.2`, and so on. The `A` in
+  the items is **part of the section ID**, not a synthetic prefix added to
+  acceptance items.
+- Section `A1.7` emits `A1.7.1`, `A1.7.2`, and so on.
+- Section `1.1` (purely numeric) emits `1.1.1`, `1.1.2`, and so on — **no `A`
+  prefix**. Items like `A1.1.1` for a section `1.1` are rejected by the
+  parser because `A1.1.1` does not start with `1.1.`.
+
+The `A<section>.<n>` shorthand used elsewhere in this contract is read as
+"section ID dot n" — for purely numeric sections that means a numeric item
+ID with no letter prefix.
 
 Each item names at least one artifact kind: `file`, `symbol`, `test`, or
 `behavior`.
 
 ```markdown
-**Acceptance:**
+**Acceptance:**  (under section `A1`, letter-prefixed)
 
 - A1.1 - <prose>. file: `src/module.py`.
 - A1.2 - <prose>. symbol: `gobby.module.Symbol`.
 - A1.3 - <prose>. test: `tests/test_module.py::test_behavior`.
 - A1.4 - <prose>. behavior: "documented behavior" in `docs/contract.md`.
+```
+
+```markdown
+**Acceptance:**  (under section `1.1`, purely numeric)
+
+- 1.1.1 - <prose>. file: `src/module.py`.
+- 1.1.2 - <prose>. symbol: `gobby.module.Symbol`.
 ```
 
 ## Deferrals

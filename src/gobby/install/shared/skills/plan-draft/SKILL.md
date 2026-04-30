@@ -69,17 +69,36 @@ Section kind rules:
 - `deferred` sections are out-of-scope for this epic and MUST carry a typed
   deferral object pointing at a real open task.
 
-Acceptance items use dotted suffix IDs rooted in their section ID. Section
-`A1` emits `A1.1`, `A1.2`, and so on. Section `A1.7` emits `A1.7.1`,
-`A1.7.2`, and so on.
+Acceptance item IDs are formed by appending `.<n>` to the section's own ID.
+The section ID is the prefix verbatim — **no synthetic letter is added** for
+purely numeric sections. The parser enforces this with
+`item_id.startswith(f"{section_id}.")` in `_build_acceptance_item`
+(`src/gobby/plans/parser.py`).
+
+- Section `A1` (letter-prefixed) emits `A1.1`, `A1.2`, … The `A` is part of
+  the section ID, not a prefix added to items.
+- Section `A1.7` emits `A1.7.1`, `A1.7.2`, …
+- Section `1.1` (purely numeric) emits `1.1.1`, `1.1.2`, … Items like
+  `A1.1.1` for section `1.1` are rejected by the parser because `A1.1.1`
+  does not start with `1.1.`.
+
+When the contract uses the shorthand `A<section>.<n>`, read it as
+"section ID dot n" — for numeric sections the result has no `A`.
 
 ```markdown
-**Acceptance:**
+**Acceptance:**  (under section `A1`, letter-prefixed)
 
 - A1.1 - <prose>. file: `src/module.py`.
 - A1.2 - <prose>. symbol: `gobby.module.SomeType`.
 - A1.3 - <prose>. test: `tests/test_module.py::test_behavior`.
 - A1.4 - <prose>. behavior: "documented behavior" in `docs/contract.md`.
+```
+
+```markdown
+**Acceptance:**  (under section `1.1`, purely numeric)
+
+- 1.1.1 - <prose>. file: `src/module.py`.
+- 1.1.2 - <prose>. symbol: `gobby.module.SomeType`.
 ```
 
 Each acceptance item MUST name at least one concrete artifact reference. Valid
