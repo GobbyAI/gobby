@@ -56,7 +56,12 @@ def test_holistic_reviewer_prompt_builder_registered() -> None:
 def test_test_architect_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
-    assert "test-architect" in PROMPT_BUILDERS
+    builder = PROMPT_BUILDERS["test-architect"]
+    prompt = builder(SimpleNamespace(ref="#77", title="Design tests"), {"reason": "test arch"})
+
+    assert "Draft the test architecture" in prompt
+    assert "test-architect.yaml agent" in prompt
+    assert "#77" in prompt
 
 
 def test_developer_prompt_builder_registered() -> None:
