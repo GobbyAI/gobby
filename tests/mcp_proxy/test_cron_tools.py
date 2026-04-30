@@ -92,6 +92,13 @@ class TestListCronJobs:
         mock_storage.list_jobs.assert_called_once_with(project_id=PROJECT_ID, enabled=True)
 
 
+def test_internal_writers_not_exposed_via_mcp(registry: InternalToolRegistry) -> None:
+    tool_names = {tool["name"] for tool in registry.list_tools()}
+
+    assert "update_system_job_bookkeeping" not in tool_names
+    assert "reconcile_system_job_definition" not in tool_names
+
+
 class TestCreateCronJob:
     def test_create_success(self, registry, mock_storage) -> None:
         mock_storage.create_job.return_value = _make_job()

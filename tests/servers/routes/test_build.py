@@ -63,6 +63,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         "initial_lifecycle": "plan_review",
         "applied_stages_skipped": ["pr"],
         "tick_dispatched": 0,
+        "retry_caps": None,
     }
     call = build.call_args
     assert call.args[0] == "plan.md"
@@ -75,6 +76,21 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.target_branch == "main"
     assert opts.assigned_agent == "backend-developer"
     assert call.kwargs["project_id"] == "project-1"
+
+
+def test_buildrequest_unattended_and_composer_yolo() -> None:
+    from gobby.servers.routes.build import BuildRequest
+
+    request = BuildRequest(
+        input_ref="#42",
+        unattended=True,
+        composer_yolo=False,
+        yolo=True,
+    )
+
+    assert request.unattended is True
+    assert request.composer_yolo is False
+    assert request.yolo is True
 
 
 def test_post_api_build_returns_400_for_validation_errors() -> None:

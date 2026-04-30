@@ -47,6 +47,18 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["properties"]["agent"]["type"] == "string"
 
 
+def test_unattended_with_composer_yolo_distinct_fields(temp_db) -> None:
+    registry = _registry(temp_db)
+
+    tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
+    schema = tool["inputSchema"]
+
+    assert schema["properties"]["unattended"]["type"] == "boolean"
+    assert schema["properties"]["composer_yolo"]["type"] == "boolean"
+    assert schema["properties"]["yolo"]["type"] == "boolean"
+    assert schema["properties"]["yolo"]["deprecated"] is True
+
+
 @pytest.mark.asyncio
 async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp_db) -> None:
     from gobby.build.service import BuildResult
@@ -69,7 +81,8 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
             profile="quick",
             skip_stages=["qa"],
             isolation="none",
-            yolo=True,
+            unattended=True,
+            composer_yolo=False,
             max_review_rounds=2,
             target_branch="release/0.4",
             agent="backend-developer",
@@ -90,7 +103,8 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     assert opts.profile == "quick"
     assert opts.skip_stages == ["qa"]
     assert opts.isolation == "none"
-    assert opts.yolo is True
+    assert opts.unattended is True
+    assert opts.composer_yolo is False
     assert opts.max_review_rounds == 2
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
