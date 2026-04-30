@@ -36,6 +36,42 @@ def test_dispatch_prompt_builder_keys_present() -> None:
     } <= set(PROMPT_BUILDERS)
 
 
+def test_qa_reviewer_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert "qa-reviewer" in PROMPT_BUILDERS
+
+
+def test_holistic_reviewer_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert "holistic-reviewer" in PROMPT_BUILDERS
+
+
+def test_test_architect_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert "test-architect" in PROMPT_BUILDERS
+
+
+def test_developer_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert "developer" in PROMPT_BUILDERS
+
+
+def test_merge_orchestrator_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert "merge-orchestrator" in PROMPT_BUILDERS
+
+
+def test_merge_worker_prompt_builder_registered() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert "merge-worker" in PROMPT_BUILDERS
+
+
 def test_builder_type_alias_exported() -> None:
     from gobby.dispatch.prompts import PromptBuilder
 

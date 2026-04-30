@@ -50,6 +50,7 @@ def _context(**overrides):
         "children": [],
         "max_expansion_attempts": 3,
         "max_qa_rounds": 2,
+        "max_merge_attempts": 2,
         "max_dispatch_failures": 3,
     }
     values.update(overrides)
@@ -279,3 +280,73 @@ def test_base_rules_order_excludes_merge_rule() -> None:
     assert len(BASE_RULES) == 10
     assert BASE_RULES[7].__name__ == "all_leaves_holistic_rule"
     assert "merge_rule" not in {rule.__name__ for rule in BASE_RULES}
+
+
+def test_final_rules_is_base_rules_plus_merge_rule_at_position_11() -> None:
+    from gobby.dispatch.rules import BASE_RULES, RULES, merge_rule
+
+    assert RULES == [*BASE_RULES, merge_rule]
+    assert len(RULES) == 11
+    assert RULES[10] is merge_rule
+
+
+def test_merge_rule_routes_on_merging_stage() -> None:
+    from gobby.dispatch.actions import SpawnAgentAction
+    from gobby.dispatch.rules import merge_rule
+
+    action = merge_rule(_task(task_type="epic", lifecycle="merging", status="open"), _context())
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.agent_slug == "merge-orchestrator"
+
+
+def test_merge_rule_does_not_advance_lifecycle() -> None:
+    from gobby.dispatch.actions import AdvanceLifecycleAction
+    from gobby.dispatch.rules import merge_rule
+
+    action = merge_rule(_task(task_type="epic", lifecycle="merging", status="open"), _context())
+
+    assert not isinstance(action, AdvanceLifecycleAction)
+
+
+def test_merge_rule_caps_retries() -> None:
+    from gobby.dispatch.actions import EscalateAction
+    from gobby.dispatch.rules import merge_rule
+
+    action = merge_rule(
+        _task(task_type="epic", lifecycle="merging", status="open", dispatch_failure_count=2),
+        _context(max_merge_attempts=2),
+    )
+
+    assert isinstance(action, EscalateAction)
+
+
+def test_merge_rule_escalates_on_max_attempts() -> None:
+    from gobby.dispatch.actions import EscalateAction
+    from gobby.dispatch.rules import merge_rule
+
+    action = merge_rule(
+        _task(task_type="epic", lifecycle="merging", status="open", dispatch_failure_count=2),
+        _context(max_merge_attempts=2),
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "merge_failed:max_attempts"
+
+
+def test_merge_rule_unattended_fallback_on_max_attempts() -> None:
+    from gobby.dispatch.actions import AdvanceLifecycleAction
+    from gobby.dispatch.rules import merge_rule
+
+    action = merge_rule(
+        _task(
+            task_type="epic",
+            lifecycle="merging",
+            status="open",
+            unattended=True,
+            dispatch_failure_count=2,
+        ),
+        _context(max_merge_attempts=2),
+    )
+
+    assert isinstance(action, AdvanceLifecycleAction)

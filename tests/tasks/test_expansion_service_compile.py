@@ -178,6 +178,24 @@ def test_compile_contract_plan_uses_manifest_agent_assignment(
     assert all("(depends:" not in task["title"] for task in spec["tasks"])
 
 
+def test_compile_assigns_agent_per_manifest_entry(
+    service: ExpansionService,
+    sample_project,
+) -> None:
+    parent = _parent(service, sample_project)
+    spec = service.compile_plan_to_spec(_regression_plan_doc(), parent)
+
+    assigned_by_section = {
+        task["source_section_id"]: task["assigned_agent"]
+        for task in spec["tasks"]
+        if task["source_section_id"] is not None
+    }
+
+    assert assigned_by_section["2.1"] == "frontend-developer"
+    assert assigned_by_section["1.1"] == "backend-developer"
+    assert all(task["assigned_agent"] for task in spec["tasks"])
+
+
 def test_compile_contract_plan_prefers_manifest_assigned_agent_over_prose_regex(
     service: ExpansionService,
     sample_project,
@@ -203,3 +221,28 @@ def test_compile_12898_contract_plan_requires_manifest(
     )
     with pytest.raises(ValueError, match="kind: deliverable sections without manifest entries"):
         service.compile_plan_to_spec(parse_plan(plan_path, parse_mode="draft"), parent)
+
+
+def test_compile_rejects_missing_manifest_entry(
+    service: ExpansionService,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    plan = tmp_path / "missing-entry.md"
+    plan.write_text(
+        """
+> **Plan ID:** missing-entry
+
+## 1.1 Implement thing
+`kind: deliverable`
+
+**Acceptance:**
+- 1.1.1 - Thing exists. file: `src/thing.py`
+
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="manifest entries"):
+        service.compile_plan_to_spec(parse_plan(plan, parse_mode="draft"), parent)

@@ -208,6 +208,27 @@ def test_deliverable_with_no_manifest_entry_fails_one_to_one(tmp_path: Path) -> 
     assert "A2" in message
 
 
+def test_expansion_mode_rejects_deliverable_without_manifest_entry(tmp_path: Path) -> None:
+    deliverables = _MINIMAL_DELIVERABLE + textwrap.dedent(
+        """
+        ## A2 Other Section
+        `kind: deliverable`
+        **Acceptance:**
+        - A2.1 — file: `bar.py`
+        """
+    )
+    plan = _plan_with_manifest(
+        tmp_path,
+        deliverables=deliverables,
+        manifest_yaml=_MINIMAL_MANIFEST,
+    )
+
+    with pytest.raises(PlanParseError) as excinfo:
+        parse_plan(plan, parse_mode="expansion")
+
+    assert "A2" in str(excinfo.value)
+
+
 def test_duplicate_manifest_entry_for_one_deliverable_fails(tmp_path: Path) -> None:
     duplicated_yaml = _MINIMAL_MANIFEST + textwrap.dedent(
         """

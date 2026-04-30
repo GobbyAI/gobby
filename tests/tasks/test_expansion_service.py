@@ -169,3 +169,7 @@ def test_apply_run_rejects_planning_leaf_without_creating_children(
 
     children = service.task_manager.list_tasks(parent_task_id=epic.id)
     assert children == []
+
+
+def test_no_expansion_service_start_run_wrapper() -> None:
+    assert not hasattr(ExpansionService, "start_run")
