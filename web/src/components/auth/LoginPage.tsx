@@ -125,8 +125,8 @@ const styles: Record<string, React.CSSProperties> = {
   error: {
     padding: '0.5rem 0.75rem',
     borderRadius: 6,
-    background: 'rgba(255, 80, 80, 0.12)',
-    color: '#ff5050',
+    background: 'var(--color-error-soft)',
+    color: 'var(--color-error)',
     fontSize: '0.85rem',
     textAlign: 'center' as const,
   },

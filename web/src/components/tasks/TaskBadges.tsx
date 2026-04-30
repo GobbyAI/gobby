@@ -18,30 +18,30 @@ import {
 
 const STATUS_COLORS: Record<string, string> = {
   open: TASK_BUCKET_COLORS.ready,
-  in_progress: "#fb923c",
-  needs_review: "#c084fc",
-  review_approved: "#2dd4bf",
-  closed: "#9ca3af",
-  escalated: "#f87171",
+  in_progress: "var(--color-warning-foreground)",
+  needs_review: "var(--color-agent)",
+  review_approved: "var(--color-review)",
+  closed: "var(--text-muted)",
+  escalated: "var(--color-error)",
 };
 
 const PRIORITY_STYLES: Record<
   number,
   { bg: string; color: string; label: string }
 > = {
-  0: { bg: "rgba(239, 68, 68, 0.15)", color: "#f87171", label: "Critical" },
-  1: { bg: "rgba(245, 158, 11, 0.15)", color: "#fbbf24", label: "High" },
-  2: { bg: "rgba(59, 130, 246, 0.12)", color: "#60a5fa", label: "Medium" },
-  3: { bg: "rgba(34, 197, 94, 0.12)", color: "#4ade80", label: "Low" },
-  4: { bg: "rgba(115, 115, 115, 0.15)", color: "#a3a3a3", label: "Backlog" },
+  0: { bg: "var(--color-error-soft)", color: "var(--color-error)", label: "Critical" },
+  1: { bg: "var(--color-warning-soft)", color: "var(--color-warning-foreground)", label: "High" },
+  2: { bg: "var(--color-info-soft)", color: "var(--color-info)", label: "Medium" },
+  3: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)", label: "Low" },
+  4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)", label: "Backlog" },
 };
 
 const TYPE_STYLES: Record<string, { bg: string; color: string }> = {
-  task: { bg: "rgba(59, 130, 246, 0.12)", color: "#60a5fa" },
-  bug: { bg: "rgba(239, 68, 68, 0.12)", color: "#f87171" },
-  feature: { bg: "rgba(34, 197, 94, 0.12)", color: "#4ade80" },
-  epic: { bg: "rgba(139, 92, 246, 0.12)", color: "#a78bfa" },
-  chore: { bg: "rgba(115, 115, 115, 0.15)", color: "#a3a3a3" },
+  task: { bg: "var(--color-info-soft)", color: "var(--color-info)" },
+  bug: { bg: "var(--color-error-soft)", color: "var(--color-error)" },
+  feature: { bg: "var(--color-success-soft)", color: "var(--color-success-foreground)" },
+  epic: { bg: "var(--color-agent-soft)", color: "var(--color-agent)" },
+  chore: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
 };
 
 function chipToken(value: string | number): string {
@@ -79,7 +79,7 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
   return (
     <span
       className="task-badge-dot task-badge-dot--standalone"
-      style={{ backgroundColor: TASK_BUCKET_COLORS[bucket] || "#737373" }}
+      style={{ backgroundColor: TASK_BUCKET_COLORS[bucket] || "var(--text-muted)" }}
       title={label}
       aria-label={`Status: ${label}`}
     />

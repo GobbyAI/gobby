@@ -30,10 +30,10 @@ function formatDate(iso: string): string {
 }
 
 function importanceColor(imp: number): string {
-  if (imp >= 0.8) return '#22c55e'
-  if (imp >= 0.5) return '#3b82f6'
-  if (imp >= 0.3) return '#eab308'
-  return '#737373'
+  if (imp >= 0.8) return 'var(--color-success-foreground)'
+  if (imp >= 0.5) return 'var(--color-info)'
+  if (imp >= 0.3) return 'var(--color-warning-foreground)'
+  return 'var(--text-muted)'
 }
 
 function isPinned(mem: MemoryEntry): boolean {

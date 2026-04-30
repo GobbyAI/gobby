@@ -61,16 +61,16 @@ function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
   if (bucket === 'merge_ready') return { text: 'Approved', color: TASK_BUCKET_COLORS.merge_ready }
   if (bucket === 'closed') {
     switch (state.closed_reason) {
-      case 'completed': return { text: 'Completed', color: '#22c55e' }
-      case 'duplicate': return { text: 'Duplicate', color: '#737373' }
-      case 'wont_fix': return { text: "Won't Fix", color: '#737373' }
-      case 'obsolete': return { text: 'Obsolete', color: '#737373' }
-      case 'already_implemented': return { text: 'Already Done', color: '#3b82f6' }
-      default: return { text: 'Closed', color: '#22c55e' }
+      case 'completed': return { text: 'Completed', color: 'var(--color-success-foreground)' }
+      case 'duplicate': return { text: 'Duplicate', color: 'var(--text-muted)' }
+      case 'wont_fix': return { text: "Won't Fix", color: 'var(--text-muted)' }
+      case 'obsolete': return { text: 'Obsolete', color: 'var(--text-muted)' }
+      case 'already_implemented': return { text: 'Already Done', color: 'var(--color-info)' }
+      default: return { text: 'Closed', color: 'var(--color-success-foreground)' }
     }
   }
   if (state.is_escalated) {
-    return { text: 'Escalated', color: '#f87171' }
+    return { text: 'Escalated', color: 'var(--color-error)' }
   }
   if (bucket === 'blocked') {
     return { text: 'Blocked', color: TASK_BUCKET_COLORS.blocked }
@@ -79,10 +79,10 @@ function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
 }
 
 const VALIDATION_COLORS: Record<string, string> = {
-  passed: '#22c55e',
-  failed: '#ef4444',
-  skipped: '#eab308',
-  pending: '#737373',
+  passed: 'var(--color-success-foreground)',
+  failed: 'var(--color-error)',
+  skipped: 'var(--color-warning-foreground)',
+  pending: 'var(--text-muted)',
 }
 
 // =============================================================================
@@ -123,7 +123,7 @@ export function TaskResults({ task }: TaskResultsProps) {
 
     // Validation result
     if (task.validation_status && task.validation_status !== 'pending') {
-      const vcolor = VALIDATION_COLORS[task.validation_status] || '#737373'
+      const vcolor = VALIDATION_COLORS[task.validation_status] || 'var(--text-muted)'
       result.push({
         key: 'validation',
         label: 'Validation',

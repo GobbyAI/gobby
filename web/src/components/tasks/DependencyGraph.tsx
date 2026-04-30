@@ -258,7 +258,7 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
 
           {/* Nodes */}
           {nodes.map(node => {
-            const color = TASK_BUCKET_COLORS[getTaskBucket(node.task)] || '#737373'
+            const color = TASK_BUCKET_COLORS[getTaskBucket(node.task)] || 'var(--text-muted)'
             const isHovered = hoveredId === node.id
             return (
               <g

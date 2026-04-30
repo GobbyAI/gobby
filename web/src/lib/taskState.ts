@@ -70,21 +70,21 @@ export const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
 }
 
 export const TASK_BUCKET_COLORS: Record<TaskBucket, string> = {
-  ready: '#60a5fa',
-  in_progress: '#fb923c',
-  review: '#c084fc',
-  blocked: '#f87171',
-  merge_ready: '#2dd4bf',
-  closed: '#9ca3af',
+  ready: 'var(--color-info)',
+  in_progress: 'var(--color-warning-foreground)',
+  review: 'var(--color-agent)',
+  blocked: 'var(--color-error)',
+  merge_ready: 'var(--color-review)',
+  closed: 'var(--text-muted)',
 }
 
 export const TASK_BUCKET_BG: Record<TaskBucket, string> = {
-  ready: 'rgba(96, 165, 250, 0.15)',
-  in_progress: 'rgba(251, 146, 60, 0.15)',
-  review: 'rgba(192, 132, 252, 0.15)',
-  blocked: 'rgba(248, 113, 113, 0.15)',
-  merge_ready: 'rgba(45, 212, 191, 0.15)',
-  closed: 'rgba(156, 163, 175, 0.15)',
+  ready: 'var(--color-info-soft)',
+  in_progress: 'var(--color-warning-soft)',
+  review: 'var(--color-agent-soft)',
+  blocked: 'var(--color-error-soft)',
+  merge_ready: 'var(--color-review-soft)',
+  closed: 'color-mix(in srgb, var(--text-muted) 15%, transparent)',
 }
 
 function normalizeLifecycleStage(stage: string | null | undefined): TaskLifecycleStage | null {
@@ -182,8 +182,8 @@ export function getTaskStateTokens(task: TaskStateLike): TaskStateBadgeToken[] {
     tokens.push({
       key: 'claimed',
       label: 'Claimed',
-      color: '#94a3b8',
-      background: 'rgba(148, 163, 184, 0.14)',
+      color: 'var(--text-secondary)',
+      background: 'color-mix(in srgb, var(--text-secondary) 14%, transparent)',
     })
   }
 
@@ -191,8 +191,8 @@ export function getTaskStateTokens(task: TaskStateLike): TaskStateBadgeToken[] {
     tokens.push({
       key: 'escalated',
       label: 'Escalated',
-      color: '#f87171',
-      background: 'rgba(248, 113, 113, 0.15)',
+      color: 'var(--color-error)',
+      background: 'var(--color-error-soft)',
     })
   }
 

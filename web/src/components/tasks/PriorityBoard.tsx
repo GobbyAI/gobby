@@ -16,9 +16,9 @@ interface PriorityColumnDef {
 }
 
 const COLUMNS: PriorityColumnDef[] = [
-  { key: 'now',   label: 'Now',   color: '#ef4444', description: 'Active + Critical/High' },
-  { key: 'next',  label: 'Next',  color: '#f59e0b', description: 'Medium priority, ready' },
-  { key: 'later', label: 'Later', color: '#737373', description: 'Low + Backlog' },
+  { key: 'now',   label: 'Now',   color: 'var(--color-error)', description: 'Active + Critical/High' },
+  { key: 'next',  label: 'Next',  color: 'var(--color-warning-foreground)', description: 'Medium priority, ready' },
+  { key: 'later', label: 'Later', color: 'var(--text-muted)', description: 'Low + Backlog' },
 ]
 
 function classifyTask(task: GobbyTask): 'now' | 'next' | 'later' | null {

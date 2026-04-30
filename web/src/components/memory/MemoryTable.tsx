@@ -14,9 +14,9 @@ interface MemoryTableProps {
 function typeColor(type: string): string {
   switch (type) {
     case 'fact': return 'var(--accent)'
-    case 'preference': return '#c084fc'
-    case 'pattern': return '#34d399'
-    case 'context': return '#fbbf24'
+    case 'preference': return 'var(--color-agent)'
+    case 'pattern': return 'var(--color-review)'
+    case 'context': return 'var(--color-warning-foreground)'
     default: return 'var(--text-muted)'
   }
 }

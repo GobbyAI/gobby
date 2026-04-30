@@ -249,12 +249,12 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
               <div className="flex items-center gap-3 text-[10px] text-muted-foreground shrink-0">
                 <span>{detailStepCount} step{detailStepCount !== 1 ? 's' : ''}</span>
                 {passedStepCount > 0 && (
-                  <span className="text-green-400">
+                  <span className="text-success-foreground">
                     {passedStepCount} passed
                   </span>
                 )}
                 {failedStepCount > 0 && (
-                  <span className="text-red-400">
+                  <span className="text-error">
                     {failedStepCount} failed
                   </span>
                 )}
@@ -282,10 +282,10 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
 
 function ExecutionStatusIcon({ status }: { status: string }) {
   if (status === 'completed' || status === 'success') {
-    return <span className="text-green-400 text-xs">{'\u2713'}</span>
+    return <span className="text-success-foreground text-xs">{'\u2713'}</span>
   }
   if (status === 'failed' || status === 'error') {
-    return <span className="text-red-400 text-xs">{'\u2717'}</span>
+    return <span className="text-error text-xs">{'\u2717'}</span>
   }
   if (status === 'running') {
     return (

@@ -63,7 +63,7 @@ function granularityForHours(hours: number): TimeSeriesGranularity {
 }
 
 const CHART_MARGIN = { top: 5, right: 10, left: 0, bottom: 5 }
-const GRID_STROKE = 'rgba(255,255,255,0.06)'
+const GRID_STROKE = 'color-mix(in srgb, var(--text-primary) 6%, transparent)'
 const AXIS_STYLE = { fontSize: 10, fill: 'var(--text-secondary)' }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -148,15 +148,15 @@ export function TokenEfficiencyCard({ hours, projectId }: Props) {
                 type="monotone"
                 dataKey="tokens_spent"
                 name="tokens_spent"
-                stroke="#3b82f6"
-                fill="rgba(59,130,246,0.2)"
+                stroke="var(--color-info)"
+                fill="color-mix(in srgb, var(--color-info) 20%, transparent)"
               />
               <Area
                 type="monotone"
                 dataKey="tokens_saved"
                 name="tokens_saved"
-                stroke="#22c55e"
-                fill="rgba(34,197,94,0.2)"
+                stroke="var(--color-success-foreground)"
+                fill="color-mix(in srgb, var(--color-success-foreground) 20%, transparent)"
               />
               <Legend
                 iconSize={8}

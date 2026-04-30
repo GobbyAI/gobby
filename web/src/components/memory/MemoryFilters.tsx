@@ -15,9 +15,9 @@ interface MemoryFiltersProps {
 
 const MEMORY_TYPES = [
   { key: 'fact', label: 'Fact', color: 'var(--accent)' },
-  { key: 'preference', label: 'Preference', color: '#c084fc' },
-  { key: 'pattern', label: 'Pattern', color: '#34d399' },
-  { key: 'context', label: 'Context', color: '#fbbf24' },
+  { key: 'preference', label: 'Preference', color: 'var(--color-agent)' },
+  { key: 'pattern', label: 'Pattern', color: 'var(--color-review)' },
+  { key: 'context', label: 'Context', color: 'var(--color-warning-foreground)' },
 ] as const
 
 export function MemoryFilters({
@@ -59,7 +59,7 @@ export function MemoryFilters({
             })
           }
         >
-          <span className="memory-type-dot" style={{ backgroundColor: '#22c55e' }} />
+          <span className="memory-type-dot" style={{ backgroundColor: 'var(--color-success-foreground)' }} />
           24H
           <span className="memory-type-chip-count">{recentCount}</span>
         </button>

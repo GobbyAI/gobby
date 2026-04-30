@@ -117,7 +117,7 @@ function parseEscalation(reason: string | null): ParsedEscalation {
 
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.min(100, Math.max(0, value))
-  const color = pct >= 70 ? '#22c55e' : pct >= 40 ? '#eab308' : '#ef4444'
+  const color = pct >= 70 ? 'var(--color-success-foreground)' : pct >= 40 ? 'var(--color-warning-foreground)' : 'var(--color-error)'
 
   return (
     <div className="escalation-confidence">

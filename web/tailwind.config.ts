@@ -14,6 +14,10 @@ export default {
         destructive: { DEFAULT: 'var(--color-destructive)', foreground: 'var(--color-destructive-foreground)' },
         warning: { DEFAULT: 'var(--color-warning)', foreground: 'var(--color-warning-foreground)' },
         success: { DEFAULT: 'var(--color-success)', foreground: 'var(--color-success-foreground)' },
+        error: { DEFAULT: 'var(--color-error)', soft: 'var(--color-error-soft)' },
+        info: { DEFAULT: 'var(--color-info)', soft: 'var(--color-info-soft)' },
+        agent: { DEFAULT: 'var(--color-agent)', soft: 'var(--color-agent-soft)' },
+        review: { DEFAULT: 'var(--color-review)', soft: 'var(--color-review-soft)' },
       },
       fontSize: {
         '2xs': ['var(--text-2xs)', { lineHeight: '1.25' }],

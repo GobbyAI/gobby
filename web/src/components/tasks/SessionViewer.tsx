@@ -54,10 +54,10 @@ function duration(start: string, end: string): string {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  active: '#22c55e',
-  idle: '#f59e0b',
-  closed: '#737373',
-  error: '#ef4444',
+  active: 'var(--color-success-foreground)',
+  idle: 'var(--color-warning-foreground)',
+  closed: 'var(--text-muted)',
+  error: 'var(--color-error)',
 }
 
 // =============================================================================
@@ -107,7 +107,7 @@ export function SessionViewer({ sessionId }: SessionViewerProps) {
   if (isLoading) return <div className="session-viewer-loading">Loading session...</div>
   if (!session) return <div className="session-viewer-empty">Session not found</div>
 
-  const statusColor = STATUS_COLORS[session.status] || '#737373'
+  const statusColor = STATUS_COLORS[session.status] || 'var(--text-muted)'
   const sourceLabel = SOURCE_LABELS[session.source] || session.source
   const dur = duration(session.created_at, session.updated_at)
 

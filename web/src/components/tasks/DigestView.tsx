@@ -79,42 +79,42 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
         title: 'Blocked',
         icon: '\u26A0',
         tasks: blocked,
-        color: '#f59e0b',
+        color: 'var(--color-warning-foreground)',
       },
       {
         key: 'review',
         title: 'In Review',
         icon: '\u{1F50D}',
         tasks: review,
-        color: '#a855f7',
+        color: 'var(--color-agent)',
       },
       {
         key: 'merge-ready',
         title: 'Merge Ready',
         icon: '\u{1F9F7}',
         tasks: mergeReady,
-        color: '#14b8a6',
+        color: 'var(--color-review)',
       },
       {
         key: 'in-progress',
         title: 'In Progress',
         icon: '\u{1F504}',
         tasks: inProgress,
-        color: '#3b82f6',
+        color: 'var(--color-info)',
       },
       {
         key: 'completed',
         title: period === 'today' ? 'Completed Today' : period === 'week' ? 'Completed This Week' : 'All Completed',
         icon: '\u2705',
         tasks: completed,
-        color: '#22c55e',
+        color: 'var(--color-success-foreground)',
       },
       {
         key: 'new',
         title: period === 'today' ? 'Created Today' : period === 'week' ? 'Created This Week' : 'All Open',
         icon: '\u{1F195}',
         tasks: newTasks,
-        color: '#737373',
+        color: 'var(--text-muted)',
       },
     ]
   }, [tasks, cutoff, period])
@@ -163,7 +163,7 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
                 <span className="digest-section-title">{section.title}</span>
                 <span
                   className="digest-section-count"
-                  style={{ background: section.color + '20', color: section.color }}
+                  style={{ background: `color-mix(in srgb, ${section.color} 12%, transparent)`, color: section.color }}
                 >
                   {section.tasks.length}
                 </span>

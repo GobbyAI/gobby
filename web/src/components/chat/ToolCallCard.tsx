@@ -94,17 +94,17 @@ function InlineDiff({ oldStr, newStr, language }: { oldStr: string; newStr: stri
   const lineProps = useCallback((lineNumber: number): React.HTMLProps<HTMLElement> => {
     const entry = diff[lineNumber - 1]
     if (!entry) return { style: { display: 'block' } }
-    const bg = entry.type === 'add' ? 'rgba(63, 185, 80, 0.15)'
-             : entry.type === 'remove' ? 'rgba(248, 81, 73, 0.3)'
+    const bg = entry.type === 'add' ? 'color-mix(in srgb, var(--color-success-foreground) 15%, transparent)'
+             : entry.type === 'remove' ? 'color-mix(in srgb, var(--color-error) 25%, transparent)'
              : 'transparent'
     return { style: { background: bg, display: 'block' } }
   }, [diff])
 
   const diffLineNumberStyle = useCallback((lineNumber: number) => {
     const entry = diff[lineNumber - 1]
-    const color = entry?.type === 'add' ? '#3fb950'
-               : entry?.type === 'remove' ? '#f85149'
-               : '#555'
+    const color = entry?.type === 'add' ? 'var(--color-success-foreground)'
+               : entry?.type === 'remove' ? 'var(--color-error)'
+               : 'var(--text-muted)'
     return { ...lineNumberStyle, color }
   }, [diff])
 

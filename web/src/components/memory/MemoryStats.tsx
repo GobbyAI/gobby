@@ -7,9 +7,9 @@ interface MemoryStatsProps {
 
 const TYPE_COLORS: Record<string, string> = {
   fact: 'var(--accent)',
-  preference: '#c084fc',
-  pattern: '#34d399',
-  context: '#fbbf24',
+  preference: 'var(--color-agent)',
+  pattern: 'var(--color-review)',
+  context: 'var(--color-warning-foreground)',
 }
 
 export function MemoryStats({ stats, isLoading }: MemoryStatsProps) {

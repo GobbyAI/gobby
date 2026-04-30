@@ -360,11 +360,11 @@ interface TreeEntryProps {
 
 function getGitStatusColor(status: string | undefined): string | undefined {
   if (!status) return undefined
-  if (status === 'M' || status === 'MM' || status === 'AM') return '#facc15' // modified = yellow
-  if (status === '??' || status === 'A') return '#4ade80' // untracked/added = green
-  if (status === 'D') return '#f87171' // deleted = red
-  if (status === 'R') return '#60a5fa' // renamed = blue
-  return '#facc15' // other changes = yellow
+  if (status === 'M' || status === 'MM' || status === 'AM') return 'var(--color-warning-foreground)'
+  if (status === '??' || status === 'A') return 'var(--color-success-foreground)'
+  if (status === 'D') return 'var(--color-error)'
+  if (status === 'R') return 'var(--color-info)'
+  return 'var(--color-warning-foreground)'
 }
 
 function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFiles, onExpandDir, onOpenFile }: TreeEntryProps) {

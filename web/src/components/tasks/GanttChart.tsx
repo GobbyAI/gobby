@@ -330,7 +330,7 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
             const w = Math.max(dateToX(bar.endDate) - dateToX(bar.startDate), 8)
             const y = rowToY(bar.row)
             const bucket = getTaskBucket(bar.task)
-            const color = TASK_BUCKET_COLORS[bucket] || '#737373'
+            const color = TASK_BUCKET_COLORS[bucket] || 'var(--text-muted)'
 
             if (bar.isMilestone) {
               const cx = x + w / 2
@@ -348,7 +348,7 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
                 >
                   <polygon
                     points={`${cx},${cy - size} ${cx + size},${cy} ${cx},${cy + size} ${cx - size},${cy}`}
-                    fill={color}
+                    style={{ fill: color }}
                     className="gantt-milestone"
                   />
                 </g>
@@ -372,15 +372,14 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
                 <rect
                   x={x} y={y + 4} width={w} height={ROW_HEIGHT - 8}
                   rx={3} ry={3}
-                  fill={color}
+                  style={{ fill: color }}
                   className={`gantt-bar ${isDragging ? 'gantt-bar--dragging' : ''}`}
                 />
                 {(bucket === 'closed' || bucket === 'merge_ready') && (
                   <rect
                     x={x} y={y + 4} width={w} height={ROW_HEIGHT - 8}
                     rx={3} ry={3}
-                    fill={color}
-                    opacity={0.3}
+                    style={{ fill: color, opacity: 0.3 }}
                     className="gantt-bar-complete"
                   />
                 )}

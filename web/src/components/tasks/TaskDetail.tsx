@@ -360,10 +360,10 @@ function MetaRow({ label, value, mono }: { label: string; value: string; mono?: 
 // =============================================================================
 
 const VALIDATION_STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
-  pending: { color: '#737373', bg: 'rgba(115, 115, 115, 0.12)', label: 'Pending' },
-  passed: { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)', label: 'Passed' },
-  failed: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)', label: 'Failed' },
-  skipped: { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', label: 'Skipped' },
+  pending: { color: 'var(--text-muted)', bg: 'color-mix(in srgb, var(--text-muted) 15%, transparent)', label: 'Pending' },
+  passed: { color: 'var(--color-success-foreground)', bg: 'var(--color-success-soft)', label: 'Passed' },
+  failed: { color: 'var(--color-error)', bg: 'var(--color-error-soft)', label: 'Failed' },
+  skipped: { color: 'var(--color-warning-foreground)', bg: 'var(--color-warning-soft)', label: 'Skipped' },
 }
 
 function ValidationSection({ task }: { task: GobbyTaskDetail }) {

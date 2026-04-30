@@ -8,10 +8,10 @@ interface RiskDef {
 }
 
 export const RISK_DEFS: Record<RiskLevel, RiskDef> = {
-  critical: { level: 'critical', label: 'Critical', color: '#dc2626', bg: 'rgba(220, 38, 38, 0.1)' },
-  high: { level: 'high', label: 'High', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' },
-  medium: { level: 'medium', label: 'Medium', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' },
-  low: { level: 'low', label: 'Low', color: '#737373', bg: 'rgba(115, 115, 115, 0.08)' },
+  critical: { level: 'critical', label: 'Critical', color: 'var(--color-error)', bg: 'var(--color-error-soft)' },
+  high: { level: 'high', label: 'High', color: 'var(--color-error)', bg: 'color-mix(in srgb, var(--color-error) 8%, transparent)' },
+  medium: { level: 'medium', label: 'Medium', color: 'var(--color-warning-foreground)', bg: 'var(--color-warning-soft)' },
+  low: { level: 'low', label: 'Low', color: 'var(--text-muted)', bg: 'color-mix(in srgb, var(--text-muted) 8%, transparent)' },
   none: { level: 'none', label: '', color: 'transparent', bg: 'transparent' },
 }
 
