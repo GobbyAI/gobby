@@ -21,9 +21,7 @@ from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
-_DOTTED_ID_PATTERN = (
-    r"(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*"
-)
+_DOTTED_ID_PATTERN = r"(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*"
 
 COVERS_LABEL_REGEX: re.Pattern[str] = re.compile(
     r"^covers:(?P<plan_id>[A-Za-z0-9._-]+):"

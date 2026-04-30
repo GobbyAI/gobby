@@ -183,9 +183,7 @@ class TestModeFilter:
     ) -> None:
         # parent_session_id must be set so the registered session inherits agent_depth.
         # We patch agent_depth directly post-register since register() always inserts 0.
-        sid_human = _register(
-            session_manager, sample_project, external_id="human", agent_depth=0
-        )
+        sid_human = _register(session_manager, sample_project, external_id="human", agent_depth=0)
         _register(session_manager, sample_project, external_id="auto", agent_depth=2)
 
         results = session_manager.list(project_id=sample_project["id"], modes=["interactive"])
@@ -201,9 +199,7 @@ class TestModeFilter:
         sample_project: dict,
     ) -> None:
         _register(session_manager, sample_project, external_id="human", agent_depth=0)
-        sid_auto = _register(
-            session_manager, sample_project, external_id="auto", agent_depth=1
-        )
+        sid_auto = _register(session_manager, sample_project, external_id="auto", agent_depth=1)
 
         results = session_manager.list(project_id=sample_project["id"], modes=["auto"])
 

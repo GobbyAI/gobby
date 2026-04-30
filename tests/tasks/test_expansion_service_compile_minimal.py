@@ -220,9 +220,7 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
         "phase-p2": 3,
     }
     # Cross-phase chain: phase N+1's [TEST] depends on phase N's [REF].
-    assert {"task_id": "phase-p2::__test", "depends_on": "phase-p1::__ref"} in spec[
-        "dependencies"
-    ]
+    assert {"task_id": "phase-p2::__test", "depends_on": "phase-p1::__ref"} in spec["dependencies"]
     # Cross-deliverable manifest depends_on: 2.1 → 1.1 wires IMPL → IMPL.
     assert {"task_id": "2.1::impl", "depends_on": "1.1::impl"} in spec["dependencies"]
     assert spec["deferrals"] == [

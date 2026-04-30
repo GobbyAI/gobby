@@ -633,9 +633,7 @@ class TestListSessions:
             ["sess-A", "sess-B"]
         )
 
-    def test_list_task_refs_default_empty_when_helper_silent(
-        self, client, mock_server
-    ) -> None:
+    def test_list_task_refs_default_empty_when_helper_silent(self, client, mock_server) -> None:
         """Sessions absent from the bulk-query result still serialize with empty lists."""
         sessions = [_make_session(id="sess-A")]
         mock_server.session_manager.list.return_value = sessions

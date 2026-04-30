@@ -297,9 +297,7 @@ def test_mark_task_merged_pr_url_only_leaves_merge_sha_null(temp_db, tmp_path) -
     assert _artifact(temp_db, task.id, "merge_commit_sha") is None
 
 
-def test_mark_task_merged_no_artifacts_succeeds_for_unattended_path(
-    temp_db, tmp_path
-) -> None:
+def test_mark_task_merged_no_artifacts_succeeds_for_unattended_path(temp_db, tmp_path) -> None:
     task = _task(temp_db, tmp_path)
     _set(temp_db, task.id, "merging", "open")
 

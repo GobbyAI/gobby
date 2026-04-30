@@ -116,12 +116,8 @@ def test_compile_contract_plan_emits_covers_labels_for_each_tdd_leaf(
 
     # phase-p1 sandwich aggregates 1.1 + 1.2 covers labels (TDD entries only —
     # 1.3a is non-TDD and emitted as a single task outside the sandwich).
-    assert phase_label_unions["phase-p1"] == (
-        expected_labels["1.1"] | expected_labels["1.2"]
-    )
-    assert phase_label_unions["phase-p2"] == (
-        expected_labels["2.1"] | expected_labels["2.2"]
-    )
+    assert phase_label_unions["phase-p1"] == (expected_labels["1.1"] | expected_labels["1.2"])
+    assert phase_label_unions["phase-p2"] == (expected_labels["2.1"] | expected_labels["2.2"])
     assert phase_label_unions["phase-p3"] == expected_labels["3.1"]
 
 
