@@ -70,13 +70,14 @@ class TTSPipeline:
         tts: TTSProvider,
         conversation_id: str,
         clients: dict[Any, dict[str, Any]],
+        max_chunk_chars: int = 180,
     ) -> None:
         from gobby.voice.sentence_buffer import SentenceBuffer
 
         self.tts = tts
         self.conversation_id = conversation_id
         self.clients = clients
-        self.sentence_buffer = SentenceBuffer()
+        self.sentence_buffer = SentenceBuffer(max_chunk_chars=max_chunk_chars)
         self._chunk_index = 0
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._flush_called = False
@@ -102,8 +103,7 @@ class TTSPipeline:
         if self._flush_called:
             return
         self._flush_called = True
-        remaining = self.sentence_buffer.flush()
-        if remaining:
+        for remaining in self.sentence_buffer.flush():
             await self._queue.put(remaining)
         await self._queue.join()
         # Send sentinel so the worker task exits cleanly instead of
@@ -519,7 +519,13 @@ class VoiceMixin:
         if existing:
             asyncio.create_task(existing.cancel())
 
-        pipeline = TTSPipeline(tts, conversation_id, self.clients)
+        voice_config = self._get_voice_config()
+        pipeline = TTSPipeline(
+            tts,
+            conversation_id,
+            self.clients,
+            max_chunk_chars=voice_config.tts_clause_max_chars,
+        )
         self._active_tts_pipelines[conversation_id] = pipeline
         return pipeline
 
