@@ -55,15 +55,18 @@ def _normalize_skip_stage_labels(skip_stage_labels: Iterable[str]) -> list[str]:
     return labels
 
 
-def _skipped_stages(labels: Iterable[str] | None) -> set[str]:
+def _skipped_stages(labels: Iterable[str | None] | None) -> set[str]:
     """Extract build stage names from task labels."""
     if not labels:
         return set()
-    return {
-        label.removeprefix("stage-:")
-        for label in labels
-        if label.startswith("stage-:") and label.removeprefix("stage-:")
-    }
+    stages: set[str] = set()
+    for label in labels:
+        if not isinstance(label, str) or not label.startswith("stage-:"):
+            continue
+        stage = label.removeprefix("stage-:").strip()
+        if stage:
+            stages.add(stage)
+    return stages
 
 
 def _decode_labels(labels_json: str | None) -> list[str]:
