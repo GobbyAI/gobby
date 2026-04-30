@@ -15,6 +15,16 @@ let lastProcessor: {
   onaudioprocess: ((event: { inputBuffer: { getChannelData: (index: number) => Float32Array } }) => void) | null
 } | null = null
 
+interface StartedSource {
+  buffer: AudioBuffer | null
+  connect: ReturnType<typeof vi.fn>
+  onended: ((event?: Event) => void) | null
+  start: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+}
+
+let startedSources: StartedSource[] = []
+
 vi.mock('@ricky0123/vad-web', () => ({
   MicVAD: {
     new: (config: Record<string, unknown>) => voiceMocks.mockMicVADNew(config),
@@ -61,13 +71,16 @@ class MockAudioContext {
   }
 
   createBufferSource() {
-    return {
-      buffer: null,
+    const source: StartedSource = {
+      buffer: null as AudioBuffer | null,
       connect: vi.fn(),
-      start: vi.fn(),
+      start: vi.fn(() => {
+        startedSources.push(source)
+      }),
       stop: vi.fn(),
-      onended: null,
-    } as unknown as AudioBufferSourceNode
+      onended: null as ((event?: Event) => void) | null,
+    }
+    return source as unknown as AudioBufferSourceNode
   }
 
   createBuffer(_channels: number, length: number) {
@@ -78,6 +91,12 @@ class MockAudioContext {
   }
 }
 
+function pcmChunk(marker: number): ArrayBuffer {
+  const buffer = new ArrayBuffer(2)
+  new Int16Array(buffer)[0] = marker
+  return buffer
+}
+
 describe('useVoice', () => {
   let wsRef: { current: { readyState: number; send: ReturnType<typeof vi.fn> } | null }
   let getUserMediaMock: ReturnType<typeof vi.fn>
@@ -86,6 +105,7 @@ describe('useVoice', () => {
     vi.clearAllMocks()
     lastVADConfig = null
     lastProcessor = null
+    startedSources = []
 
     wsRef = {
       current: {
@@ -281,5 +301,47 @@ describe('useVoice', () => {
       expect.objectContaining({ type: 'tts_stop', conversation_id: 'conv-vad' }),
       expect.objectContaining({ type: 'voice_audio', conversation_id: 'conv-vad' }),
     ]))
+  })
+
+  it('drops incoming TTS audio when the playback queue is full', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { result } = renderHook(() => useVoice(
+      wsRef as any,
+      'conv-tts',
+      0,
+      { sttEnabled: false, ttsEnabled: true, voiceInputMode: 'ptt' },
+      true,
+    ))
+
+    for (let index = 1; index <= 52; index++) {
+      act(() => {
+        result.current.handleVoiceMessage({
+          type: 'tts_audio',
+          sample_rate: 24_000,
+          format: 'pcm_s16le',
+          chunk_index: index,
+        })
+        result.current.handleBinaryMessage(pcmChunk(index))
+      })
+    }
+
+    await waitFor(() => {
+      expect(result.current.voiceError).toBe('Audio dropped — connection too slow')
+    })
+    expect(warnSpy).toHaveBeenCalledWith('Voice: Audio queue full, dropping incoming chunk')
+    expect(startedSources).toHaveLength(1)
+
+    for (let count = 0; count < 50; count++) {
+      act(() => {
+        startedSources[startedSources.length - 1].onended?.(new Event('ended'))
+      })
+    }
+
+    expect(startedSources).toHaveLength(51)
+    const playedMarkers = startedSources.map((source) => {
+      const sample = source.buffer?.getChannelData(0)[0] ?? 0
+      return Math.round(sample * 32768)
+    })
+    expect(playedMarkers).toEqual(Array.from({ length: 51 }, (_, index) => index + 1))
   })
 })

@@ -176,8 +176,10 @@ export function useVoice(
       const audioBuffer = ctx.createBuffer(1, float32.length, sampleRate)
       audioBuffer.getChannelData(0).set(float32)
 
-      while (audioQueueRef.current.length >= MAX_AUDIO_QUEUE_SIZE) {
-        audioQueueRef.current.shift()
+      if (audioQueueRef.current.length >= MAX_AUDIO_QUEUE_SIZE) {
+        console.warn('Voice: Audio queue full, dropping incoming chunk')
+        setTransientError('Audio dropped — connection too slow')
+        return
       }
       audioQueueRef.current.push(audioBuffer)
       if (mountedRef.current) setIsSpeaking(true)
@@ -189,7 +191,7 @@ export function useVoice(
     } catch (err) {
       console.error('Voice: Failed to queue audio chunk:', err)
     }
-  }, [getAudioContext, playNextChunk, ttsEnabled])
+  }, [getAudioContext, playNextChunk, setTransientError, ttsEnabled])
 
   const stopTTS = useCallback(() => {
     try {

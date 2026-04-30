@@ -513,13 +513,15 @@ class VoiceMixin:
         tts = self._get_tts()
         if not tts:
             return None
+        voice_config = self._get_voice_config()
+        if voice_config is None:
+            return None
 
         # Cancel existing pipeline if any
         existing = self._active_tts_pipelines.pop(conversation_id, None)
         if existing:
             asyncio.create_task(existing.cancel())
 
-        voice_config = self._get_voice_config()
         pipeline = TTSPipeline(
             tts,
             conversation_id,
