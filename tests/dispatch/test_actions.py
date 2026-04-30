@@ -38,4 +38,3 @@ def test_action_round_trip() -> None:
     )
 
     assert type(action)(**asdict(action)) == action
-
