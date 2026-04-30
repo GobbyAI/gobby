@@ -24,6 +24,10 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--unattended" in result.output
     assert "--yolo" in result.output
     assert "--no-yolo" in result.output
+    assert "--max-expansion-attempts" in result.output
+    assert "--max-qa-rounds" in result.output
+    assert "--max-merge-attempts" in result.output
+    assert "--max-holistic-rounds" in result.output
     assert "--max-review-rounds" in result.output
     assert "--target-branch" in result.output
     assert "--agent" in result.output
@@ -64,6 +68,14 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
                 "--yolo",
                 "--max-review-rounds",
                 "7",
+                "--max-expansion-attempts",
+                "4",
+                "--max-qa-rounds",
+                "5",
+                "--max-merge-attempts",
+                "6",
+                "--max-holistic-rounds",
+                "8",
                 "--target-branch",
                 "release/0.4",
                 "--agent",
@@ -84,6 +96,10 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert opts.unattended is True
     assert opts.composer_yolo is True
     assert opts.max_review_rounds == 7
+    assert opts.max_expansion_attempts == 4
+    assert opts.max_qa_rounds == 5
+    assert opts.max_merge_attempts == 6
+    assert opts.max_holistic_rounds == 8
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
     assert call.kwargs == {"db": db_cls.return_value, "project_id": "project-1"}
