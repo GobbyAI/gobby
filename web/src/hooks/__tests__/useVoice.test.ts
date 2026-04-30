@@ -344,4 +344,52 @@ describe('useVoice', () => {
     })
     expect(playedMarkers).toEqual(Array.from({ length: 51 }, (_, index) => index + 1))
   })
+
+  it('stops TTS and cancels recording on conversation switch', async () => {
+    const trackStop = vi.fn()
+    getUserMediaMock.mockResolvedValueOnce({
+      getTracks: () => [{ stop: trackStop }],
+    })
+
+    const { result, rerender } = renderHook(
+      ({ switchKey }) => useVoice(
+        wsRef as any,
+        'conv-switch',
+        switchKey,
+        { sttEnabled: true, ttsEnabled: true, voiceInputMode: 'ptt' },
+        true,
+      ),
+      { initialProps: { switchKey: 0 } },
+    )
+
+    await act(async () => {
+      await result.current.startRecording()
+    })
+    expect(result.current.isRecording).toBe(true)
+    wsRef.current?.send.mockClear()
+
+    act(() => {
+      result.current.handleVoiceMessage({
+        type: 'tts_audio',
+        sample_rate: 24_000,
+        format: 'pcm_s16le',
+        chunk_index: 1,
+      })
+      result.current.handleBinaryMessage(pcmChunk(7))
+    })
+    expect(startedSources).toHaveLength(1)
+
+    rerender({ switchKey: 1 })
+
+    await waitFor(() => {
+      expect(result.current.isRecording).toBe(false)
+    })
+    expect(startedSources[0].stop).toHaveBeenCalled()
+    expect(trackStop).toHaveBeenCalled()
+    expect(wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'tts_stop', conversation_id: 'conv-switch' }),
+      ]),
+    )
+  })
 })
