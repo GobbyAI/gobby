@@ -162,10 +162,6 @@ body {
 }
 
 .source-icon-codex {
-  color: var(--accent-foreground);
-}
-
-[data-theme="light"] .source-icon-codex {
   color: var(--text-primary);
 }
 

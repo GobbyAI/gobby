@@ -483,7 +483,9 @@
 
 .agent-def-badge--filled {
   border: none;
-  color: var(--accent-foreground);
+  /* Background is set inline from PROVIDER_COLORS — always-bright hues in both themes.
+     Use a fixed dark text color since accent-foreground would flip to white in light. */
+  color: oklch(15% 0 0);
   font-weight: 600;
 }
 
