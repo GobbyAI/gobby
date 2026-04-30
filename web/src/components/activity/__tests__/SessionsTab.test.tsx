@@ -199,6 +199,10 @@ const PIPELINE_SESSION = makeSession({
 
 describe("SessionsTab", () => {
   beforeEach(() => {
+    // SessionsTab persists the watched session id in localStorage. Without
+    // clearing, a prior test's selection leaks into the next one and trips
+    // selectedEntry-gated UI (Summary/Resume/Swap buttons render against null).
+    localStorage.clear();
     mockUseSessionDetail.mockReset();
     mockUseSessionDetail.mockReturnValue({
       session: PAUSED_SESSION,

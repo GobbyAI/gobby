@@ -276,6 +276,6 @@ describe('useWebSocketEvent', () => {
       'session-2',
       'session-1',
     ])
-    expect(fetchMock.mock.calls[1][0]).toContain('/api/sessions?limit=200&project_id=proj-1')
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/sessions?project_id=proj-1&limit=100')
   })
 })
