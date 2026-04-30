@@ -13,7 +13,6 @@ pytestmark = pytest.mark.unit
 
 def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
     from gobby.dispatch.mutex import RuntimeDispatchMutex
-
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
     task = LocalTaskManager(temp_db).create_task(
@@ -39,7 +38,6 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
 
 def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
     from gobby.dispatch.mutex import RuntimeDispatchMutex
-
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
     task = LocalTaskManager(temp_db).create_task(
@@ -54,4 +52,3 @@ def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
         assert RuntimeDispatchMutex.force_release_for_run(storage, "run-terminal") == 1
 
     assert storage.get_mutex(task.id) is None
-
