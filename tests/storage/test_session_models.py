@@ -37,6 +37,9 @@ def _make_session(**overrides: Any) -> Session:
         "usage_output_tokens": 10000,
         "context_window": 200000,
         "terminal_context": {"tty": "/dev/ttys001"},
+        "claimed_task_refs": ["#101"],
+        "created_task_refs": ["#102"],
+        "closed_task_refs": ["#103"],
     }
     defaults.update(overrides)
     return Session(**defaults)
@@ -52,8 +55,7 @@ class TestSessionToBrief:
         brief = session.to_brief()
         full = session.to_dict()
         assert len(brief) < len(full)
-        # Session has 34 fields in to_dict, 13 in to_brief — big difference
-        assert len(full) - len(brief) >= 15
+        assert len(full) - len(brief) >= 10
 
     def test_to_brief_essential_fields_present(self) -> None:
         """to_brief includes essential identification and status fields."""
@@ -72,6 +74,9 @@ class TestSessionToBrief:
         assert brief["created_at"] == "2026-01-22T00:00:00+00:00"
         assert brief["updated_at"] == "2026-01-22T12:00:00+00:00"
         assert brief["seq_num"] == 42
+        assert brief["claimed_task_refs"] == ["#101"]
+        assert brief["created_task_refs"] == ["#102"]
+        assert brief["closed_task_refs"] == ["#103"]
         assert brief["id"] == "sess-abc123"
 
     def test_to_brief_excludes_markdown_blobs(self) -> None:

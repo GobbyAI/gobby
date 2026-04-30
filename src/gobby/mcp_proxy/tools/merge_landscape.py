@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -24,6 +25,17 @@ if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_VERIFICATION_COMMANDS = {
+    "git",
+    "npm",
+    "pnpm",
+    "uv",
+    "yarn",
+}
+_ALLOWED_GIT_VERIFICATION_SUBCOMMANDS = {"diff", "ls-files", "rev-parse", "status"}
+_BLOCKED_GIT_DIFF_FLAGS = {"--ext-diff", "--no-index"}
+_SAFE_ENV_KEYS = {"HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR"}
 
 
 class WorktreeManagerProtocol(Protocol):
@@ -71,6 +83,51 @@ def _resolve_worktree_path(
     if not wt.worktree_path:
         return None, None, f"Worktree '{worktree_id}' has no path on disk"
     return wt.worktree_path, wt.branch_name, None
+
+
+def _verification_environment() -> dict[str, str]:
+    """Return a minimal environment for verification subprocesses."""
+    env = {key: value for key, value in os.environ.items() if key in _SAFE_ENV_KEYS}
+    env["CI"] = "1"
+    if "NO_COLOR" in os.environ:
+        env["NO_COLOR"] = os.environ["NO_COLOR"]
+    return env
+
+
+def _reject_git_verification_args(args: list[str]) -> str | None:
+    if not args:
+        return "git verification requires a subcommand"
+
+    subcommand = args[0]
+    if subcommand not in _ALLOWED_GIT_VERIFICATION_SUBCOMMANDS:
+        return f"git subcommand '{subcommand}' is not permitted for verification"
+
+    if subcommand == "diff":
+        for arg in args[1:]:
+            if arg in _BLOCKED_GIT_DIFF_FLAGS or arg.startswith("--output"):
+                return f"git diff flag '{arg}' is not permitted for verification"
+    return None
+
+
+def _reject_verification_command(argv: list[str]) -> str | None:
+    executable = Path(argv[0]).name
+    if executable not in _ALLOWED_VERIFICATION_COMMANDS:
+        return f"verification command '{executable}' is not permitted"
+
+    if executable == "git":
+        return _reject_git_verification_args(argv[1:])
+
+    if executable in {"npm", "pnpm", "yarn"}:
+        if len(argv) < 3 or argv[1] != "run":
+            return f"{executable} verification must use 'run <script>'"
+        return None
+
+    if executable == "uv":
+        if len(argv) >= 3 and argv[1] == "run" and argv[2] in {"mypy", "pytest", "ruff"}:
+            return None
+        return "uv verification must use 'run pytest', 'run ruff', or 'run mypy'"
+
+    return f"verification command '{executable}' is not permitted"
 
 
 def register_merge_landscape_tools(
@@ -216,13 +273,16 @@ def register_merge_landscape_tools(
             branches.append((wid, branch))
 
         async def merge_tree(a: str, b: str) -> tuple[bool, list[str]]:
-            rc, stdout, _ = await _git_async(
+            rc, stdout, stderr = await _git_async(
                 git_manager,
                 ["merge-tree", "--write-tree", "--name-only", "--no-messages", a, b],
                 cwd=repo_path,
             )
             if rc == 0:
                 return True, []
+            if rc != 1:
+                detail = stderr.strip() or stdout.strip() or "no output"
+                raise RuntimeError(f"git merge-tree failed with rc={rc}: {detail}")
             lines = stdout.splitlines()
             conflict_files: list[str] = []
             for line in lines[1:]:
@@ -234,7 +294,10 @@ def register_merge_landscape_tools(
         pairs: list[dict[str, Any]] = []
         for i, (a_id, a_branch) in enumerate(branches):
             for b_id, b_branch in branches[i + 1 :]:
-                clean, files = await merge_tree(a_branch, b_branch)
+                try:
+                    clean, files = await merge_tree(a_branch, b_branch)
+                except RuntimeError as exc:
+                    return {"success": False, "error": "merge_tree_failed", "message": str(exc)}
                 pairs.append(
                     {
                         "a": a_id,
@@ -247,7 +310,10 @@ def register_merge_landscape_tools(
 
         target_predictions: list[dict[str, Any]] = []
         for wid, branch in branches:
-            clean, files = await merge_tree(target_branch, branch)
+            try:
+                clean, files = await merge_tree(target_branch, branch)
+            except RuntimeError as exc:
+                return {"success": False, "error": "merge_tree_failed", "message": str(exc)}
             target_predictions.append(
                 {
                     "worktree_id": wid,
@@ -385,9 +451,9 @@ def register_merge_landscape_tools(
     @registry.tool(
         name="verify_in_worktree",
         description=(
-            "Run a shell command (test, build, typecheck, etc.) inside the "
-            "worktree directory and return exit code, stdout, stderr. Used as a "
-            "post-merge gate by merge-orchestrator."
+            "Run an allowlisted verification command (test, build, typecheck, etc.) "
+            "inside the worktree directory and return exit code, stdout, stderr. "
+            "Used as a post-merge gate by merge-orchestrator."
         ),
     )
     async def verify_in_worktree(
@@ -405,15 +471,20 @@ def register_merge_landscape_tools(
             return {"success": False, "error": f"failed to parse command: {exc}"}
         if not argv:
             return {"success": False, "error": "command is required"}
+        rejection = _reject_verification_command(argv)
+        if rejection:
+            return {"success": False, "error": rejection}
 
         wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
         if err or not wt_path:
             return {"success": False, "error": err}
+        safe_env = _verification_environment()
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=wt_path,
+                env=safe_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

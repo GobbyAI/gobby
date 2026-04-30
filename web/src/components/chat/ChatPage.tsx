@@ -20,6 +20,7 @@ import { CommandBar } from "./CommandBar";
 import { CommandPalette, type CommandPaletteAction } from "./CommandPalette";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { useActivityPanel } from "../activity/useActivityPanel";
+import type { SessionsFilters } from "../activity/sessionsFilters";
 import { VoiceStatusBar } from "./VoiceStatusBar";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { useCanvasPanel } from "../canvas/hooks/useCanvasPanel";
@@ -63,10 +64,8 @@ interface ChatPageProps {
   allProjectSessionsLoading?: boolean;
   activitySessions?: GobbySession[];
   activitySessionsLoading?: boolean;
-  sessionsFilters?: import("../activity/sessionsFilters").SessionsFilters;
-  onSessionsFiltersChange?: (
-    filters: import("../activity/sessionsFilters").SessionsFilters,
-  ) => void;
+  sessionsFilters?: SessionsFilters;
+  onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   onSttEnabledChange?: (enabled: boolean) => void;
   onTtsEnabledChange?: (enabled: boolean) => void;
 }

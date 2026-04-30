@@ -246,15 +246,29 @@ async def test_build_persists_retry_caps_in_artifacts(temp_db, tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_build_rejects_retry_caps_below_one(temp_db, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "field",
+    [
+        "max_qa_rounds",
+        "max_expansion_attempts",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+        "max_review_rounds",
+    ],
+)
+async def test_build_rejects_retry_caps_below_one(
+    temp_db,
+    tmp_path: Path,
+    field: str,
+) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n")
 
-    with pytest.raises(ValueError, match="max_qa_rounds.*greater than or equal to 1"):
+    with pytest.raises(ValueError, match=f"{field}.*greater than or equal to 1"):
         await _build(
             str(plan_file),
-            _options(max_qa_rounds=0),
+            _options(**{field: 0}),
             db=temp_db,
             project_id=project_id,
         )

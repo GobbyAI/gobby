@@ -722,6 +722,26 @@ async def test_merge_worktree_push_success(
     )
 
 
+def _merge_worktree_push_failure_git_sequence() -> list[MagicMock]:
+    successful_git_call = MagicMock(returncode=0, stdout="", stderr="")
+    local_target_exists = successful_git_call
+    remote_target_missing = MagicMock(returncode=1, stdout="", stderr="")
+    stash_before = MagicMock(returncode=0, stdout="stash@{0}", stderr="")
+    stash_after = MagicMock(returncode=0, stdout="stash@{0}\nstash@{1}", stderr="")
+    push_rejected = MagicMock(returncode=1, stdout="", stderr="rejected: non-fast-forward")
+    return [
+        successful_git_call,  # fetch
+        local_target_exists,  # show-ref refs/heads/main
+        remote_target_missing,  # show-ref refs/remotes/origin/main
+        stash_before,  # stash list before
+        successful_git_call,  # stash push
+        stash_after,  # stash list after
+        successful_git_call,  # merge
+        push_rejected,  # push
+        successful_git_call,  # stash pop
+    ]
+
+
 @pytest.mark.asyncio
 async def test_merge_worktree_push_failure(
     registry, mock_worktree_storage, mock_git_manager
@@ -742,18 +762,7 @@ async def test_merge_worktree_push_failure(
     )
     mock_worktree_storage.get.return_value = wt
 
-    ok = MagicMock(returncode=0, stdout="", stderr="")
-    mock_git_manager._run_git.side_effect = [
-        ok,  # fetch
-        ok,  # show-ref refs/heads/main
-        MagicMock(returncode=1, stdout="", stderr=""),  # show-ref refs/remotes/origin/main
-        MagicMock(returncode=0, stdout="stash@{0}", stderr=""),  # stash list before
-        ok,  # stash push
-        MagicMock(returncode=0, stdout="stash@{0}\nstash@{1}", stderr=""),  # stash list after
-        ok,  # merge
-        MagicMock(returncode=1, stdout="", stderr="rejected: non-fast-forward"),
-        ok,  # stash pop
-    ]
+    mock_git_manager._run_git.side_effect = _merge_worktree_push_failure_git_sequence()
     mock_worktree_storage.mark_merged.return_value = True
 
     result = await registry.call(

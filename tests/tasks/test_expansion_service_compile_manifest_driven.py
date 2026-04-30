@@ -13,7 +13,6 @@ import pytest
 from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks import expansion_service as expansion_module
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -206,11 +205,15 @@ def test_manifest_entry_source_section_must_resolve_to_deliverable(
         service.compile_plan_to_spec(malformed_doc, parent)
 
 
-def test_contract_single_task_id_helper() -> None:
-    single_task_id = getattr(expansion_module, "_contract_single_task_id", None)
+def test_non_tdd_manifest_entry_uses_single_task_id(
+    service: ExpansionService,
+    sample_project,
+    tmp_path: Path,
+) -> None:
+    parent = _parent(service, sample_project)
+    spec = service.compile_plan_to_spec(_parse_manifest_plan(tmp_path), parent)
 
-    assert single_task_id is not None
-    assert single_task_id("2.1") == "2.1::single"
+    assert any(task["task_id"] == "2.1::single" for task in spec["tasks"])
 
 
 def test_entry_fields_preserved(

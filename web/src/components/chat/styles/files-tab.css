@@ -295,16 +295,3 @@
   color: var(--text-muted);
   font-style: italic;
 }
-
-[data-theme="light"] .diff-add {
-  background: color-mix(in srgb, var(--color-success-foreground) 10%, transparent);
-  color: var(--color-success-foreground);
-}
-[data-theme="light"] .diff-remove {
-  background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  color: var(--color-error);
-}
-[data-theme="light"] .diff-hunk {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent);
-  color: var(--color-info);
-}

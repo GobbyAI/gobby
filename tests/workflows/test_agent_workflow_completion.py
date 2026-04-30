@@ -347,7 +347,7 @@ class TestAgentWorkflowCompletion:
         assert result["workflow"] == "plan-adversary-steps"
 
     @pytest.mark.asyncio
-    async def test_on_mcp_success_when_can_require_final_tool_argument(
+    async def test_on_mcp_success_when_condition_checks_tool_argument(
         self, db: LocalDatabase
     ) -> None:
         instance_manager = _register_agent_workflow(

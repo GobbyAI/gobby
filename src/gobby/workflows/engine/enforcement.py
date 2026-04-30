@@ -23,6 +23,7 @@ from gobby.workflows.enforcement.blocking import (
     is_infrastructure_tool,
     is_operator_tool,
 )
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ class EnforcementMixin:
         return None
 
     def _check_step_tool_enforcement(
-        self, event: HookEvent, session_id: str
+        self, event: HookEvent, session_id: str, variables: dict[str, Any]
     ) -> HookResponse | None:
         """Check step-level tool restrictions. Returns block response or None to continue."""
         step, instance, _defn = self._get_step_for_session(session_id)
@@ -327,6 +328,23 @@ class EnforcementMixin:
                             reason=reason,
                         )
 
+                if mcp_key:
+                    handler_tool_input = self._step_handler_tool_input(tool_input)
+                    before_response = self._process_step_before_mcp_tool(
+                        event,
+                        session_id,
+                        variables,
+                        step,
+                        instance,
+                        tool_name,
+                        mcp_server,
+                        mcp_tool_name,
+                        mcp_key,
+                        handler_tool_input,
+                    )
+                    if before_response is not None:
+                        return before_response
+
         return None
 
     @staticmethod
@@ -339,6 +357,147 @@ class EnforcementMixin:
             if pattern.endswith(":*") and mcp_key.startswith(pattern[:-1]):
                 return True
         return False
+
+    @staticmethod
+    def _step_handler_tool_input(tool_input: dict[str, Any]) -> dict[str, Any]:
+        """Return handler input with nested MCP arguments promoted for conditions."""
+        handler_tool_input = dict(tool_input)
+        raw_handler_args = tool_input.get("arguments", tool_input.get("args"))
+        if isinstance(raw_handler_args, str):
+            try:
+                raw_handler_args = json.loads(raw_handler_args)
+            except (json.JSONDecodeError, TypeError):
+                raw_handler_args = None
+        if isinstance(raw_handler_args, dict):
+            handler_tool_input = {**raw_handler_args, **handler_tool_input}
+        return handler_tool_input
+
+    @staticmethod
+    def _is_step_handler_expression(value: str) -> bool:
+        """Return whether a step handler value should be evaluated as an expression."""
+        expression_indicators = (
+            "vars.",
+            "variables.",
+            "tool_input.",
+            "tool_output.",
+            " + ",
+            " - ",
+            " and ",
+            " or ",
+            " not ",
+            ".get(",
+            "len(",
+            "int(",
+            "str(",
+            "bool(",
+        )
+        return any(indicator in value for indicator in expression_indicators)
+
+    def _evaluate_step_handler_value(
+        self,
+        value: Any,
+        ctx: dict[str, Any],
+        effect_type: str,
+    ) -> tuple[bool, Any]:
+        """Evaluate expression-like handler values using the workflow-safe evaluator."""
+        if not isinstance(value, str) or not self._is_step_handler_expression(value):
+            return True, value
+        try:
+            evaluator = SafeExpressionEvaluator(
+                context=ctx,
+                allowed_funcs={
+                    "len": len,
+                    "str": str,
+                    "int": int,
+                    "bool": bool,
+                },
+            )
+            return True, evaluator.evaluate_value(value)
+        except Exception as exc:
+            logger.warning("Failed to evaluate step %s handler value %r: %s", effect_type, value, exc)
+            return False, None
+
+    def _process_step_before_mcp_tool(
+        self,
+        event: HookEvent,
+        session_id: str,
+        variables: dict[str, Any],
+        step: WorkflowStep,
+        instance: Any,
+        tool_name: str,
+        mcp_server: str,
+        mcp_tool_name: str,
+        mcp_key: str,
+        handler_tool_input: dict[str, Any],
+    ) -> HookResponse | None:
+        """Process step workflow on_mcp_before handlers for an allowed MCP call."""
+        _ = event
+        instance_mgr = self.instance_manager
+        vars_changed = False
+
+        for handler in step.on_mcp_before:
+            if handler.get("server") != mcp_server or handler.get("tool") != mcp_tool_name:
+                continue
+
+            merged_vars = {**variables, **instance.variables}
+            ctx = {
+                "vars": merged_vars,
+                "variables": merged_vars,
+                "tool_input": handler_tool_input,
+            }
+            action = str(handler.get("action") or "set_variable")
+            handler_when = handler.get("when")
+            if handler_when and not self._evaluate_condition(handler_when, ctx, action):
+                continue
+
+            if action == "set_variable":
+                var_name = handler.get("variable")
+                ok, var_value = self._evaluate_step_handler_value(
+                    handler.get("value"), ctx, action
+                )
+                if var_name is not None and ok:
+                    instance.variables[var_name] = var_value
+                    variables[var_name] = var_value
+                    vars_changed = True
+                    self._audit_step_set_variable(
+                        session_id,
+                        instance.workflow_name,
+                        step.name,
+                        mcp_key,
+                        str(var_name),
+                        var_value,
+                    )
+                continue
+
+            if action == "block":
+                if vars_changed:
+                    instance_mgr.save_instance(instance)
+                raw_reason = str(
+                    handler.get("reason")
+                    or (
+                        f"MCP tool '{mcp_key}' is blocked by a workflow "
+                        "on_mcp_before handler."
+                    )
+                )
+                reason = (
+                    f"Rule enforced by Gobby: "
+                    f"[step-enforcement:{instance.workflow_name}/{step.name}]\n"
+                    f"{raw_reason}"
+                )
+                self._audit_step_tool_call(
+                    session_id,
+                    instance.workflow_name,
+                    step.name,
+                    tool_name,
+                    "block",
+                    reason=reason,
+                    mcp_key=mcp_key,
+                )
+                return HookResponse(decision="block", reason=reason)
+
+        if vars_changed:
+            instance_mgr.save_instance(instance)
+        return None
 
     async def _complete_agent_workflow_run(
         self,
@@ -497,8 +656,19 @@ class EnforcementMixin:
                     continue
                 if handler.get("action") == "set_variable":
                     var_name = handler.get("variable")
-                    var_value = handler.get("value")
-                    if var_name is not None:
+                    ctx = {
+                        # Instance variables last so workflow-local state wins
+                        # over session-wide observer/handoff state with
+                        # colliding names (e.g. task_claimed).
+                        "vars": {**variables, **instance.variables},
+                        "variables": {**variables, **instance.variables},
+                        "tool_input": handler_tool_input,
+                        "tool_output": tool_output,
+                    }
+                    ok, var_value = self._evaluate_step_handler_value(
+                        handler.get("value"), ctx, str(handler.get("action") or "set_variable")
+                    )
+                    if var_name is not None and ok:
                         instance.variables[var_name] = var_value
                         variables[var_name] = var_value
                         vars_changed = True

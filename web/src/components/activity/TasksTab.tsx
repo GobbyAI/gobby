@@ -318,10 +318,10 @@ export const TasksTab = memo(function TasksTab({
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const activeFilterCount = useMemo(() => {
-    let count = 0;
-    for (const key of DEFAULT_FILTERS) if (!statusFilters.has(key)) count += 1;
-    for (const key of statusFilters) if (!DEFAULT_FILTERS.has(key)) count += 1;
-    return count;
+    const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
+    return [...symmetricDifference].filter(
+      (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
+    ).length;
   }, [statusFilters]);
   const [topHeight, setTopHeight] = useState(50);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);

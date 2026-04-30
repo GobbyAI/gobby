@@ -20,9 +20,9 @@ A collection of refined and alluring poses inspired by Japanese photography styl
 * **Soft Approach**: Captured mid-stride walking toward the camera. The gaze is lowered slightly with a subtle smile, and one hand is gracefully adjusting a sleeve or accessory.
 * **Table-side Intimacy**: Sitting at a cafe table, chin resting softly on the palm of one hand. The other arm lies across the table, drawing the viewer into the personal space.
 * **Languid Supine View**: Lying flat on the back on a soft surface. The head is tilted back slightly toward the camera, with arms stretched loosely above the head, emphasizing a relaxed and alluring form.
-* **The S-Curve Arch**: Kneeling on a soft surface, torso twisted slightly toward the camera, one hand pulling back hair while the other rests on her thigh, emphasizing the waist and hip line.
+* **The S-Curve Arch**: Kneeling on a soft surface, torso twisted slightly toward the camera, one hand pulling back hair while the other rests on their thigh, emphasizing the waist and hip line.
 * **The Leaning Intimacy**: Standing with a slight forward lean, hands gently pulling at the neckline or collar of the outfit, shoulders shrugged to accentuate the collarbones and cleavage.
-* **The Seated Recline**: Sitting sideways with legs tucked, one arm supporting her weight behind her while the other hand trails up her leg or rests on her waist, creating a dynamic diagonal line.
+* **The Seated Recline**: Sitting sideways with legs tucked, one arm supporting their weight behind them while the other hand trails up their leg or rests on their waist, creating a dynamic diagonal line.
 * **The Over-the-Shoulder Tease**: Back to the camera with a deep arch in the lower back, looking back with an intense gaze, hands resting on the small of the back or gently tugging at the hem of the garment.
 * **The Soft Embrace**: Standing or kneeling, arms crossed under the bust to push up and accentuate curves, fingers lightly grazing the skin of the upper arms or shoulders.
 * **The Asymmetrical Femoral-Cross**: Seated upright with legs crossed (right over left). Torso rotated slightly left, left hand resting on the thigh, and right hand touching the collarbone. Head tilted slightly, gazing directly forward.

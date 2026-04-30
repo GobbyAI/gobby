@@ -19,8 +19,9 @@ pytestmark = pytest.mark.unit
 
 def _write_plan(root: Path, name: str = "task-100-demo.md") -> Path:
     plan_dir = root / ".gobby" / "plans"
-    plan_dir.mkdir(parents=True)
+    plan_dir.mkdir(parents=True, exist_ok=True)
     path = plan_dir / name
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         textwrap.dedent(
             """
@@ -123,3 +124,30 @@ def test_archive_plan_moves_file_and_removes_manifest(temp_db, tmp_path: Path) -
     assert (tmp_path / archived.plan_path).exists()
     assert not manifest.exists()
     assert manager.archive_plan("task-100-demo", project_id=project_id) == archived
+
+
+def test_archive_plan_preserves_nested_relative_paths(temp_db, tmp_path: Path) -> None:
+    project_id = _project(temp_db, tmp_path)
+    alpha_path = _write_plan(tmp_path, "alpha/task.md")
+    beta_path = _write_plan(tmp_path, "beta/task.md")
+    manager = LocalPlanManager(temp_db)
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-alpha",
+        plan_path=alpha_path,
+        root_task_ref="#100",
+    )
+    manager.create_plan(
+        project_id=project_id,
+        plan_id="task-beta",
+        plan_path=beta_path,
+        root_task_ref="#101",
+    )
+
+    alpha = manager.archive_plan("task-alpha", project_id=project_id)
+    beta = manager.archive_plan("task-beta", project_id=project_id)
+
+    assert alpha.plan_path == ".gobby/plans/completed/alpha/task.md"
+    assert beta.plan_path == ".gobby/plans/completed/beta/task.md"
+    assert (tmp_path / alpha.plan_path).exists()
+    assert (tmp_path / beta.plan_path).exists()

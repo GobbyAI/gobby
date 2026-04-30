@@ -473,8 +473,10 @@ class WorkflowStep(BaseModel):
 
     on_exit: list[dict[str, Any]] = Field(default_factory=list)
 
-    # MCP tool success/error handlers — execute actions when specific MCP tools complete
+    # MCP tool handlers — execute actions when specific MCP tools are attempted
+    # or complete.
     # Each handler: {server: str, tool: str, action: str, ...action_params}
+    on_mcp_before: list[dict[str, Any]] = Field(default_factory=list)
     on_mcp_success: list[dict[str, Any]] = Field(default_factory=list)
     on_mcp_error: list[dict[str, Any]] = Field(default_factory=list)
 

@@ -59,6 +59,37 @@ interface SessionsTabProps {
   onSwapSession?: (target: SwappedSessionTarget) => void;
 }
 
+function FilterEmptyState({
+  message,
+  hasActiveFilters,
+  activeFilterCount,
+  onClear,
+  hint = "Matching sessions will appear here.",
+}: {
+  message: string;
+  hasActiveFilters: boolean;
+  activeFilterCount: number;
+  onClear: () => void;
+  hint?: string;
+}) {
+  return (
+    <div className="activity-tab-empty">
+      <p>{message}</p>
+      {hasActiveFilters && activeFilterCount > 0 ? (
+        <button
+          type="button"
+          className="text-xs text-accent hover:underline mt-1"
+          onClick={onClear}
+        >
+          Clear filters
+        </button>
+      ) : (
+        <p className="text-xs text-muted-foreground mt-1">{hint}</p>
+      )}
+    </div>
+  );
+}
+
 interface WatchingSessionEntry {
   id: string;
   type: "agent" | "session";
@@ -347,24 +378,33 @@ export const SessionsTab = memo(function SessionsTab({
   }, []);
 
   useEffect(() => {
-    void fetchAgents();
+    const fetchNow = () => {
+      void fetchAgents();
+    };
+    const timeout = window.setTimeout(fetchNow, 0);
     const interval = window.setInterval(() => {
       void fetchAgents();
     }, 5000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearTimeout(timeout);
+      window.clearInterval(interval);
+    };
   }, [fetchAgents]);
 
   useEffect(() => {
-    setExpiringIds((prev) => {
-      const next = new Set<string>();
-      for (const sessionId of prev) {
-        const session = sessions.find((candidate) => candidate.id === sessionId);
-        if (session && session.status !== "expired") {
-          next.add(sessionId);
+    const timeout = window.setTimeout(() => {
+      setExpiringIds((prev) => {
+        const next = new Set<string>();
+        for (const sessionId of prev) {
+          const session = sessions.find((candidate) => candidate.id === sessionId);
+          if (session && session.status !== "expired") {
+            next.add(sessionId);
+          }
         }
-      }
-      return next;
-    });
+        return next;
+      });
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [sessions]);
 
   // Status (Live | Expired) is part of SessionsFilters now; the SegmentedControl
@@ -482,66 +522,69 @@ export const SessionsTab = memo(function SessionsTab({
   const isLoading = isLoadingSessions || agentsLoading;
 
   useEffect(() => {
-    if (isLoading) {
-      return;
-    }
-
-    if (entries.length === 0) {
-      selectionClearedRef.current = false;
-      if (selectedSessionId !== null) {
-        setSelectedSessionId(null);
+    const timeout = window.setTimeout(() => {
+      if (isLoading) {
+        return;
       }
-      return;
-    }
 
-    const hasFocusedEntry =
-      focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
-
-    if (!initialSelectionAppliedRef.current) {
-      initialSelectionAppliedRef.current = true;
-      selectionClearedRef.current = false;
-      const persistedStillPresent =
-        selectedSessionId != null &&
-        entries.some((entry) => entry.id === selectedSessionId);
-      const nextSelection = hasFocusedEntry
-        ? focusSessionId
-        : persistedStillPresent
-          ? selectedSessionId
-          : entries[0].id;
-      if (nextSelection !== selectedSessionId) {
-        setSelectedSessionId(nextSelection);
+      if (entries.length === 0) {
+        selectionClearedRef.current = false;
+        if (selectedSessionId !== null) {
+          setSelectedSessionId(null);
+        }
+        return;
       }
-      if (hasFocusedEntry) {
+
+      const hasFocusedEntry =
+        focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
+
+      if (!initialSelectionAppliedRef.current) {
+        initialSelectionAppliedRef.current = true;
+        selectionClearedRef.current = false;
+        const persistedStillPresent =
+          selectedSessionId != null &&
+          entries.some((entry) => entry.id === selectedSessionId);
+        const nextSelection = hasFocusedEntry
+          ? focusSessionId
+          : persistedStillPresent
+            ? selectedSessionId
+            : entries[0].id;
+        if (nextSelection !== selectedSessionId) {
+          setSelectedSessionId(nextSelection);
+        }
+        if (hasFocusedEntry) {
+          onFocusHandled?.();
+        }
+        return;
+      }
+
+      if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
+        selectionClearedRef.current = false;
+        setSelectedSessionId(focusSessionId);
         onFocusHandled?.();
-      }
-      return;
-    }
-
-    if (hasFocusedEntry && focusSessionId !== selectedSessionId) {
-      selectionClearedRef.current = false;
-      setSelectedSessionId(focusSessionId);
-      onFocusHandled?.();
-      return;
-    }
-
-    if (!selectedSessionId) {
-      if (selectionClearedRef.current) {
         return;
       }
-      setSelectedSessionId(entries[0].id);
-      return;
-    }
 
-    const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
-    if (!stillPresent) {
-      if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
-        selectionClearedRef.current = true;
-        setSelectedSessionId(null);
+      if (!selectedSessionId) {
+        if (selectionClearedRef.current) {
+          return;
+        }
+        setSelectedSessionId(entries[0].id);
         return;
       }
-      selectionClearedRef.current = false;
-      setSelectedSessionId(entries[0].id);
-    }
+
+      const stillPresent = entries.some((entry) => entry.id === selectedSessionId);
+      if (!stillPresent) {
+        if (selectedSessionId === chatSessionId && !hasFocusedEntry) {
+          selectionClearedRef.current = true;
+          setSelectedSessionId(null);
+          return;
+        }
+        selectionClearedRef.current = false;
+        setSelectedSessionId(entries[0].id);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [
     chatSessionId,
     entries,
@@ -563,7 +606,10 @@ export const SessionsTab = memo(function SessionsTab({
   }, [selectedSessionId]);
 
   useEffect(() => {
-    setContentMode("transcript");
+    const timeout = window.setTimeout(() => {
+      setContentMode("transcript");
+    }, 0);
+    return () => window.clearTimeout(timeout);
   }, [selectedSessionId]);
 
   const {
@@ -827,22 +873,12 @@ export const SessionsTab = memo(function SessionsTab({
             <p>{fetchError}</p>
           </div>
         ) : entries.length === 0 ? (
-          <div className="activity-tab-empty">
-            <p>{emptyListMessage}</p>
-            {hasActiveFilters && activeFilterCount > 0 ? (
-              <button
-                type="button"
-                className="text-xs text-accent hover:underline mt-1"
-                onClick={() => setFilters(defaultSessionsFilters())}
-              >
-                Clear filters
-              </button>
-            ) : (
-              <p className="text-xs text-muted-foreground mt-1">
-                Matching sessions will appear here.
-              </p>
-            )}
-          </div>
+          <FilterEmptyState
+            message={emptyListMessage}
+            hasActiveFilters={hasActiveFilters}
+            activeFilterCount={activeFilterCount}
+            onClear={() => setFilters(defaultSessionsFilters())}
+          />
         ) : (
           entries.map((entry) => {
             const isSelected = entry.id === selectedSessionId;

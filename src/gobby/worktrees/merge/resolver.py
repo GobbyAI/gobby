@@ -234,6 +234,14 @@ class MergeResolver:
     def llm_service(self, service: "LLMService | None") -> None:
         self._llm_service = service
 
+    @property
+    def config(self) -> Any | None:
+        return self._config
+
+    @config.setter
+    def config(self, config: Any | None) -> None:
+        self._config = config
+
     async def resolve_file(
         self,
         path: Path | str,

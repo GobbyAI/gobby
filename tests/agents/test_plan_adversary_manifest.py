@@ -93,4 +93,5 @@ class TestScopedEditWriteSurface:
     def test_instructions_forbid_writes_outside_plan_file(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
         lowered = instructions.lower()
-        assert "only" in lowered and ("plan file" in lowered or "plan_file_path" in lowered)
+        assert "only write to" in lowered or "write only to" in lowered
+        assert "plan file" in lowered or "plan_file_path" in lowered

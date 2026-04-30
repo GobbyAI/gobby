@@ -30,6 +30,16 @@ def create_plan_registry(
         root_task_ref: str | None = None,
         project: str | None = None,
     ) -> dict[str, Any]:
+        allowed_plan_kinds = {"implementation", "strategy"}
+        if plan_kind not in allowed_plan_kinds:
+            return {
+                "ok": False,
+                "error": "invalid_plan_kind",
+                "message": (
+                    "plan_kind must be one of: "
+                    f"{', '.join(sorted(allowed_plan_kinds))}"
+                ),
+            }
         project_id = _resolve_project_id(db, project, default_project_id)
         root_ref = root_task_ref or _root_task_from_path(plan_path)
         if root_ref is None:

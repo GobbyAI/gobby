@@ -82,7 +82,7 @@ Converts figure (toy/statue) photos into photorealistic "human cosplayer" images
 ## Examples
 User: "Make this Miku figure real." (User attaches `[image]`)
 Action:
-1. Identify Hatsune Miku (Asian-coded).
-2. Apply logic: Use Japanese/Korean features.
-3. Construct prompt reflecting "Hyper-realistic Japanese cosplayer, Miku costume, high-quality fabric, stage lighting, soft bokeh".
+1. Identify the depicted visual traits: skin tone, hair color/style, eye color, build, costume details, pose, and lighting.
+2. Match those traits directly without applying ethnic or demographic presets.
+3. Construct prompt reflecting "Hyper-realistic cosplayer in Hatsune Miku costume, matching the figure's skin tone/hair/eye color/build, high-quality fabric, stage lighting, soft bokeh".
 4. Generate image.

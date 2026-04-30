@@ -57,7 +57,8 @@ call_tool("gobby-agents", "spawn_agent", {
 
 Surface the worker's `run_id` and `session_id` so the user can follow
 along. Do not poll inside the skill — the worker self-terminates via
-`kill_agent`.
+`end_agent_run`. `kill_agent` is for external targeted termination, not
+normal self-completion.
 
 ### 2+ unmerged worktrees
 

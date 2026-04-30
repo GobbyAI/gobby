@@ -546,7 +546,7 @@
   color: var(--color-warning-foreground);
 }
 .skill-scan-severity--medium {
-  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
+  background: color-mix(in srgb, var(--color-warning-foreground) 10%, transparent);
   color: var(--color-warning-foreground);
 }
 .skill-scan-severity--low {

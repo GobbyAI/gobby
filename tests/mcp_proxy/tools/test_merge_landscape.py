@@ -9,8 +9,8 @@ Each tool gets a happy-path test plus at least one failure mode.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
-import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -69,6 +69,15 @@ def _make_registry(
         git_manager=git_manager,
     )
     return registry
+
+
+def _init_git_repo(path) -> None:
+    subprocess.run(
+        ["git", "init"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
 
 
 # --- analyze_merge_landscape ---
@@ -207,6 +216,29 @@ async def test_predict_conflicts_pair_conflicts(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_predict_conflicts_distinguishes_command_failure(tmp_path) -> None:
+    wt_a = _make_worktree(id="wt-a", branch="missing/a", path=str(tmp_path / "a"))
+    wt_b = _make_worktree(id="wt-b", branch="feat/b", path=str(tmp_path / "b"))
+    worktree_manager = MagicMock()
+    worktree_manager.get.side_effect = lambda wid: {"wt-a": wt_a, "wt-b": wt_b}.get(wid)
+
+    git_manager = MagicMock()
+    git_manager.repo_path = str(tmp_path)
+    git_manager.run_git_command.return_value = _completed(
+        returncode=128,
+        stderr="fatal: bad revision",
+    )
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=git_manager)
+    result = await registry.call("predict_conflicts", {"worktree_ids": ["wt-a", "wt-b"]})
+
+    assert result["success"] is False
+    assert result["error"] == "merge_tree_failed"
+    assert "rc=128" in result["message"]
+    assert "fatal: bad revision" in result["message"]
+
+
+@pytest.mark.asyncio
 async def test_predict_conflicts_empty_input() -> None:
     registry = _make_registry(worktree_manager=MagicMock(), git_manager=MagicMock())
     result = await registry.call("predict_conflicts", {"worktree_ids": []})
@@ -330,6 +362,7 @@ async def test_merge_subset_checkout_failure(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_verify_in_worktree_success(tmp_path) -> None:
+    _init_git_repo(tmp_path)
     wt = _make_worktree(path=str(tmp_path))
     worktree_manager = MagicMock()
     worktree_manager.get.return_value = wt
@@ -337,16 +370,17 @@ async def test_verify_in_worktree_success(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "echo hello"},
+        {"worktree_id": "wt-1", "command": "git status --short"},
     )
 
     assert result["success"] is True
     assert result["exit_code"] == 0
-    assert "hello" in result["stdout"]
+    assert result["stdout"] == ""
 
 
 @pytest.mark.asyncio
 async def test_verify_in_worktree_command_failure(tmp_path) -> None:
+    _init_git_repo(tmp_path)
     wt = _make_worktree(path=str(tmp_path))
     worktree_manager = MagicMock()
     worktree_manager.get.return_value = wt
@@ -354,11 +388,27 @@ async def test_verify_in_worktree_command_failure(tmp_path) -> None:
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": f"{sys.executable} -c 'import sys; sys.exit(7)'"},
+        {"worktree_id": "wt-1", "command": "git rev-parse --verify missing-ref"},
     )
 
     assert result["success"] is False
-    assert result["exit_code"] == 7
+    assert result["exit_code"] != 0
+
+
+@pytest.mark.asyncio
+async def test_verify_in_worktree_rejects_unapproved_command(tmp_path) -> None:
+    wt = _make_worktree(path=str(tmp_path))
+    worktree_manager = MagicMock()
+    worktree_manager.get.return_value = wt
+
+    registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
+    result = await registry.call(
+        "verify_in_worktree",
+        {"worktree_id": "wt-1", "command": "python -c 'print(1)'"},
+    )
+
+    assert result["success"] is False
+    assert "not permitted" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -394,15 +444,36 @@ async def test_verify_in_worktree_empty_command(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_verify_in_worktree_timeout(tmp_path) -> None:
+async def test_verify_in_worktree_timeout(tmp_path, monkeypatch) -> None:
     wt = _make_worktree(path=str(tmp_path))
     worktree_manager = MagicMock()
     worktree_manager.get.return_value = wt
 
+    class SlowProcess:
+        returncode: int | None = None
+
+        async def communicate(self):
+            await asyncio.sleep(10)
+            return b"", b""
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            return self.returncode or -9
+
+    async def slow_subprocess(*_args, **_kwargs):
+        return SlowProcess()
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.merge_landscape.asyncio.create_subprocess_exec",
+        slow_subprocess,
+    )
+
     registry = _make_registry(worktree_manager=worktree_manager, git_manager=MagicMock())
     result = await registry.call(
         "verify_in_worktree",
-        {"worktree_id": "wt-1", "command": "sleep 5", "timeout": 1},
+        {"worktree_id": "wt-1", "command": "git status", "timeout": 1},
     )
 
     assert result["success"] is False

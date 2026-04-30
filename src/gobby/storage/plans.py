@@ -208,7 +208,14 @@ class LocalPlanManager:
 
         project_root = self._project_root(record.project_id)
         source_path = project_root / record.plan_path
-        completed_path = project_root / ".gobby" / "plans" / "completed" / source_path.name
+        relative_plan_path = self._relative_plan_path(project_root, record.plan_path)
+        if relative_plan_path.parts[:2] == (".gobby", "plans"):
+            archive_suffix = Path(*relative_plan_path.parts[2:])
+        else:
+            archive_suffix = relative_plan_path
+        if not archive_suffix.parts:
+            archive_suffix = Path(source_path.name)
+        completed_path = project_root / ".gobby" / "plans" / "completed" / archive_suffix
         previous_path = source_path
         moved = False
         if source_path.exists():

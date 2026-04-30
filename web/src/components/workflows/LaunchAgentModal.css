@@ -207,7 +207,7 @@
 
 .launch-agent-radio.active {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--color-info) 10%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
   font-weight: 500;
 }
@@ -457,8 +457,9 @@
   cursor: pointer;
 }
 
-.tasks-row--selected {
-  background: color-mix(in srgb, var(--color-info) 8%, transparent) !important;
+.tasks-row.tasks-row--selected,
+.tasks-row.tasks-row--selected:hover {
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
 }
 
 /* =============================================================================

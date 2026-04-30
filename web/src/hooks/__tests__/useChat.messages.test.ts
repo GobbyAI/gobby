@@ -210,6 +210,7 @@ describe("useChat message and conversation state", () => {
     act(() => ws.simulateOpen());
 
     act(() => {
+      // sendMessage is positional; this test needs to set only the seventh TTS flag.
       result.current.sendMessage(
         "Read this aloud",
         null,

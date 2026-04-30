@@ -22,39 +22,40 @@ instructions: |
   WORKTREE MERGE FLOW:
   MAX_RESOLVE_RETRIES: 3 per conflict set.
   1. Call merge_worktree with worktree_id and push=true
-  2. If SUCCESS: call kill_agent — you're done
+  2. If SUCCESS: call end_agent_run — you're done
   3. If CONFLICTS (has_conflicts: true):
      a. Call merge_start with worktree_id and the source/target branches
+        (this resets merge_retry_count=0 for deterministic retry enforcement)
      b. Check merge_status for conflict details
      c. Call merge_resolve with use_ai=true for each conflict, tracking attempts
         by the exact unresolved conflict file/id set
      d. Call merge_apply to finalize the resolved merge
      e. Call merge_worktree again with push=true (merge is applied, this just pushes)
-     f. Call kill_agent
+     f. Call end_agent_run
   4. If resolution fails, or the same conflict set reaches MAX_RESOLVE_RETRIES:
-     call merge_abort, report the conflict ids/files and retry count, then kill_agent.
+     call merge_abort, report the conflict ids/files and retry count, then end_agent_run.
 
   CLONE MERGE FLOW:
   1. Sync the clone first: call sync_clone with clone_id
   2. Call merge_clone with clone_id and target_branch
-  3. Call kill_agent (conflict resolution not available for clones)
+  3. Call end_agent_run (conflict resolution not available for clones)
 
   LIFECYCLE MODEL:
   - On successful merge, call gobby-tasks:mark_task_merged with the task id
-    assigned for the merged work before kill_agent.
+    assigned for the merged work before end_agent_run.
   - On unresolved conflict or verification failure, call
     gobby-tasks:mark_task_merge_failed with the task id and reason before
-    kill_agent.
+    end_agent_run.
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - End-of-turn gates may keep the current turn alive until required merge work is complete.
-  - Merge completion and `kill_agent` are explicit workflow termination actions, not raw stop-hook behavior.
+  - Merge completion uses `end_agent_run`; `kill_agent` is for external targeted termination.
 
   CRITICAL RULES:
   - Do NOT call close_task — the coordinator handles task lifecycle.
   - Do NOT spawn other agents.
   - Do NOT use Bash for git commands — the merge tools handle everything.
-  - Do NOT terminate or exit the agent process without calling kill_agent.
+  - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
 
 workflows:
@@ -75,22 +76,23 @@ steps:
       2. Check your session variables for worktree_id or clone_id
       3. WORKTREE: call merge_worktree with worktree_id and push=true
          CLONE: sync_clone first, then merge_clone with clone_id and target_branch
-      4. If merge succeeds with no conflicts, call kill_agent
+      4. If merge succeeds with no conflicts, call end_agent_run
 
       CONFLICT RESOLUTION (worktree only):
       If merge_worktree returns has_conflicts: true:
       1. Call merge_start with worktree_id, source_branch, target_branch
+         (this sets merge_retry_count=0)
       2. Check merge_status for the resolution_id to see conflict details
       3. Call merge_resolve with use_ai=true for each conflict. Track attempts
          by the exact unresolved conflict file/id set and stop after
          MAX_RESOLVE_RETRIES=3 for the same set.
       4. Call merge_apply with the resolution_id to finalize
       5. Call merge_worktree again with push=true (merge is applied, this pushes)
-      6. Call kill_agent
+      6. Call end_agent_run
 
-      CLONE CONFLICTS: call kill_agent (no auto-resolution for clones)
+      CLONE CONFLICTS: call end_agent_run (no auto-resolution for clones)
       RESOLUTION FAILURE OR RETRY CAP: call merge_abort, report the conflict
-      ids/files that hit the cap, then kill_agent
+      ids/files that hit the cap, then end_agent_run
 
       The target branch is in your spawn prompt. Defaults:
       merge_worktree uses the worktree's base_branch, merge_clone uses "main".
@@ -111,21 +113,41 @@ steps:
       - "gobby-merge:merge_abort"
       - "gobby-tasks:mark_task_merged"
       - "gobby-tasks:mark_task_merge_failed"
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
+    on_mcp_success:
+      - server: gobby-merge
+        tool: merge_start
+        action: set_variable
+        variable: merge_retry_count
+        value: 0
+    on_mcp_before:
+      - server: gobby-merge
+        tool: merge_resolve
+        action: block
+        when: "vars.get('merge_retry_count', 0) >= 3"
+        reason: |
+          MAX_RESOLVE_RETRIES reached for merge_resolve. Call gobby-merge:merge_abort,
+          report the conflict ids/files and retry count, then call
+          gobby-agents:end_agent_run. Do not retry merge_resolve.
+      - server: gobby-merge
+        tool: merge_resolve
+        action: set_variable
+        variable: merge_retry_count
+        value: "vars.get('merge_retry_count', 0) + 1"
     # No on_mcp_success — merge_worktree returns success:false on conflicts
     # but on_mcp_success fires on any non-transport-error response, which
     # would incorrectly set merge_complete=true and skip conflict resolution.
     # Agent handles all routing via instructions instead.
 
   - name: terminate
-    description: "Safety net: self-terminate by calling kill_agent"
-    status_message: "Call kill_agent to terminate."
+    description: "Safety net: self-terminate by calling end_agent_run"
+    status_message: "Call end_agent_run to terminate."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

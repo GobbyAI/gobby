@@ -332,25 +332,39 @@ function RefRangeInputs({
   onChangeMax: (value: number | null) => void;
   ariaLabelPrefix: string;
 }) {
+  const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
+  const inputClassName = `w-16 px-1.5 py-0.5 text-xs font-mono bg-transparent border rounded text-foreground focus:outline-none ${
+    isInvalid
+      ? "border-[var(--color-error)] focus:border-[var(--color-error)]"
+      : "border-border focus:border-accent"
+  }`;
+
   return (
-    <div className="flex items-center gap-1 px-2 py-1">
-      <input
-        type="number"
-        className="w-16 px-1.5 py-0.5 text-xs font-mono bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
-        placeholder="from #"
-        value={minValue !== null ? String(minValue) : ""}
-        onChange={(e) => onChangeMin(parseRefBound(e.target.value))}
-        aria-label={`${ariaLabelPrefix} minimum`}
-      />
-      <span className="text-xs text-muted-foreground">→</span>
-      <input
-        type="number"
-        className="w-16 px-1.5 py-0.5 text-xs font-mono bg-transparent border border-border rounded text-foreground focus:outline-none focus:border-accent"
-        placeholder="to #"
-        value={maxValue !== null ? String(maxValue) : ""}
-        onChange={(e) => onChangeMax(parseRefBound(e.target.value))}
-        aria-label={`${ariaLabelPrefix} maximum`}
-      />
+    <div className="px-2 py-1">
+      <div className="flex items-center gap-1">
+        <input
+          type="number"
+          className={inputClassName}
+          placeholder="from #"
+          value={minValue !== null ? String(minValue) : ""}
+          onChange={(e) => onChangeMin(parseRefBound(e.target.value))}
+          aria-label={`${ariaLabelPrefix} minimum`}
+          aria-invalid={isInvalid}
+        />
+        <span className="text-xs text-muted-foreground">→</span>
+        <input
+          type="number"
+          className={inputClassName}
+          placeholder="to #"
+          value={maxValue !== null ? String(maxValue) : ""}
+          onChange={(e) => onChangeMax(parseRefBound(e.target.value))}
+          aria-label={`${ariaLabelPrefix} maximum`}
+          aria-invalid={isInvalid}
+        />
+      </div>
+      {isInvalid && (
+        <div className="mt-1 text-xs text-[var(--color-error)]">Min must be &lt;= Max</div>
+      )}
     </div>
   );
 }

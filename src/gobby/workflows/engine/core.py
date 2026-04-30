@@ -461,7 +461,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
 
                 # 4c. Step-level tool enforcement (preempts declarative rules)
                 if is_before_tool:
-                    step_block = self._check_step_tool_enforcement(event, session_id)
+                    step_block = self._check_step_tool_enforcement(event, session_id, variables)
                     if step_block is not None:
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         # Blocked edit/write never executed — nothing to recover

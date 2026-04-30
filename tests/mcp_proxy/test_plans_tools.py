@@ -84,3 +84,25 @@ async def test_plan_tools_return_invalid_ref_for_blank_plan_ref(temp_db) -> None
 
     assert result["ok"] is False
     assert result["error"] == "invalid_ref"
+
+
+@pytest.mark.asyncio
+async def test_create_plan_rejects_invalid_plan_kind(temp_db, tmp_path: Path) -> None:
+    project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
+    plan_path = _write_plan(tmp_path)
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
+
+    result = await registry.call(
+        "create_plan",
+        {
+            "plan_id": "task-100-demo",
+            "plan_path": str(plan_path),
+            "plan_kind": "speculative",
+            "root_task_ref": "#100",
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_plan_kind"
+    assert "implementation" in result["message"]
+    assert "strategy" in result["message"]

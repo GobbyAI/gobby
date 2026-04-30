@@ -289,5 +289,8 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seq_num": self.seq_num,
+            "claimed_task_refs": self.claimed_task_refs,
+            "created_task_refs": self.created_task_refs,
+            "closed_task_refs": self.closed_task_refs,
             "id": self.id,
         }

@@ -22,17 +22,12 @@ MIN_COMPILED_TASK_COUNT = 34
 MIN_IMPL_OR_SINGLE_TASK_COUNT = 32
 MIN_ANNOTATED_DEPENDENCY_COUNT = 24
 
-# PLAN_PATH points at the checked-in task-planning fixture produced by the
-# lifecycle-dispatch planning workflow; if it is absent in a trimmed checkout,
-# pytest.skip below keeps this slow compile-only coverage out of the run.
 PLAN_PATH = (
     Path(__file__).resolve().parents[2] / ".gobby/plans/task-12725-lifecycle-dispatch-rev1.md"
 )
-if not PLAN_PATH.exists():
-    pytest.skip(
-        "required plan file .gobby/plans/task-12725-lifecycle-dispatch-rev1.md not found",
-        allow_module_level=True,
-    )
+PLAN_PATH_MISSING_REASON = (
+    "required plan file .gobby/plans/task-12725-lifecycle-dispatch-rev1.md not found"
+)
 
 
 @pytest.fixture
@@ -40,6 +35,7 @@ def service(temp_db) -> ExpansionService:
     return ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
 
 
+@pytest.mark.skipif(not PLAN_PATH.exists(), reason=PLAN_PATH_MISSING_REASON)
 def test_plan_12725_compiles_clean(
     service: ExpansionService,
     sample_project,

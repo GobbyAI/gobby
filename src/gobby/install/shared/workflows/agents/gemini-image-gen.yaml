@@ -28,7 +28,8 @@ instructions: |
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
-  - Agent termination is separate and still requires `kill_agent`.
+  - Agent termination is separate and still requires `end_agent_run`.
+  - `kill_agent` is for external targeted termination, not self-completion.
 
   You are the gemini-image-gen agent. Your primary purpose is to generate and
   edit images using the `nano-banana` skill and its specialty recipe references.
@@ -51,7 +52,10 @@ instructions: |
     they are no longer registered as standalone skills.
   - Follow the prompt engineering guidelines provided in the skill contents.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
-  - Do NOT terminate without calling kill_agent.
+  - If the native image-generation/editing tool fails, call top-level
+    `mcp__gobby__set_variable` with `name="generation_failed"` and `value=true`
+    before terminating. The `on_mcp_error` hook below only observes task-closure failures.
+  - Do NOT terminate without calling end_agent_run.
 
 workflows:
   rule_selectors:
@@ -87,7 +91,10 @@ steps:
 
   - name: generate
     description: "Generate or edit images"
-    status_message: "Executing image generation/editing with nano-banana..."
+    status_message: |
+      Executing image generation/editing with nano-banana. If the native image
+      generation or editing tool fails, set generation_failed=true via the
+      top-level mcp__gobby__set_variable tool before moving to termination.
     allowed_tools: "all"
     on_mcp_success:
       - server: gobby-tasks
@@ -109,13 +116,13 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Task complete. Terminating agent."
+    status_message: "Task complete. Call end_agent_run to terminate."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

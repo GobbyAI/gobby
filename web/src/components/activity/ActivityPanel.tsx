@@ -16,6 +16,7 @@ import { FilesTab } from "./FilesTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
+import type { SessionsFilters } from "./sessionsFilters";
 
 export type ActivityTab =
   | "sessions"
@@ -171,10 +172,8 @@ interface ActivityPanelProps {
   projectId?: string | null;
   sessions?: GobbySession[];
   sessionsLoading?: boolean;
-  sessionsFilters?: import("./sessionsFilters").SessionsFilters;
-  onSessionsFiltersChange?: (
-    filters: import("./sessionsFilters").SessionsFilters,
-  ) => void;
+  sessionsFilters?: SessionsFilters;
+  onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   // Files tab
   onAddFileToChat?: (filePath: string) => void;
   // Sessions tab
