@@ -77,6 +77,25 @@ Active values (`open`, `in_progress`, `needs_review`, `review_approved`) are sub
 
 End state: the `status` column is dropped entirely. Read paths return a computed projection during the deprecation window.
 
+### Readiness / blocking projection
+`kind: framing`
+
+Blocking remains orthogonal to stage state. `task_stage_states.state` stays strictly `needs_doing | in_progress | done`; do **not** add `blocked` as a fourth stage state. A blocked task still has a current stage, but automation and ready queues must not advance it until the blocking condition clears.
+
+Canonical computed projection:
+
+- `current_stage` — leftmost manifest row by `position` whose state is not `done`; `null` when every stage is done
+- `is_closed` — `closed_at IS NOT NULL`
+- `is_escalated` — first-class escalation flag / `escalated_at IS NOT NULL`
+- `active_blocked_by` — unresolved external dependencies; excludes parent tasks blocked only by their own descendants, which are completion blocks rather than work blocks
+- `is_blocked` — `is_escalated OR active_blocked_by is non-empty`
+- `is_ready` — not closed, not escalated, no unresolved external blockers, and the current stage is actionable
+- `owner_session_id` — current claim/session owner, preserved as a projection for old callers and UI badges
+
+Dependency blockers resolve by terminality, not by legacy `status`: an upstream dependency blocks downstream work while `upstream.closed_at IS NULL`. This preserves the #12725 invariant that escalated upstream work blocks dependents, without keeping `status='escalated'` as a blocking sentinel. `review_approved` disappears; any transient "approved but not terminal" state is represented by a stage being `done` while the task itself is not yet closed, so dependents still wait until `closed_at` is set.
+
+Dispatcher candidate scans filter by `is_ready` first, then rule evaluation operates on `current_stage` and the manifest rows. LifecycleBoard renders blocked tasks in their stage column with a blocked badge/overlay and a `blocked=true` filter; it does not move them into a synthetic blocked stage.
+
 ### Dispatcher coupling
 `kind: framing`
 
@@ -85,6 +104,7 @@ End state: the `status` column is dropped entirely. Read paths return a computed
 - `_stage_enabled(task, "plan_review")` → `task_has_stage(task, "planning")` reading `task_stage_states`
 - `_skipped_stages(task)` → deleted; "skipped" means "not in manifest"
 - Lifecycle advance helpers write `task_stage_states.state` transitions instead of mutating `lifecycle` enum
+- `list_automation_candidates`, `list_ready_tasks`, `list_blocked_tasks`, and `suggest_next_task` read the readiness projection instead of legacy `status`
 - Rule ordering still anchored on registry `position_hint`
 
 Existing rules in `dispatch/rules.py` are renamed and refactored 1:1 onto the new stage names — no rule semantics change in this epic. New stages without active agents (e.g., post-0.4.0 deferred ones) get pass-through rules that just keep them at `needs_doing` until an agent is registered.
@@ -117,6 +137,7 @@ New view `LifecycleBoard` alongside existing `KanbanBoard` in `web/src/component
 - Cards within a column grouped by tri-state: `needs_doing` (top, pale), `in_progress` (middle, accent), `done` (bottom collapsed by default)
 - Swimlanes by `task_type` so simple fixes don't render in research/ideation columns
 - Stage column hidden by default if no task has it in its manifest (configurable)
+- Blocked tasks stay in their current stage column with a blocked badge/overlay and blocker tooltip; board filters include `blocked=true`
 - Drag a card right = advance current stage to `done`, advance next to `in_progress`
 - Existing `KanbanBoard` (the 6-bucket ready/in_progress/review/blocked/merge_ready/closed view) retained as `StatusBoard` for one release, then removed
 
@@ -138,7 +159,8 @@ Schema migration in `src/gobby/storage/migrations.py` runs in one direction (no 
    - …explicit table covering every observed `(lifecycle, status)` pair, audited against a SQL census before migration runs
 4. Drop `stage-:<name>` labels (now redundant with manifest).
 5. Keep `lifecycle` / `lifecycle_stage` / `status` columns initially as **read-only computed projections** of `task_stage_states` so callers can migrate gradually.
-6. After all callers (CLI, MCP, HTTP, web, dispatcher) read from the manifest, drop the legacy columns in a second migration.
+6. Keep readiness/blocking projections behaviorally equivalent during the window: `list_ready_tasks`, `list_blocked_tasks`, `suggest_next_task`, task `state.is_blocked`, and dispatcher candidate scans return the same results before and after the manifest migration.
+7. After all callers (CLI, MCP, HTTP, web, dispatcher) read from the manifest, drop the legacy columns in a second migration.
 
 `task_lifecycle_events` is kept unchanged — it's still the audit trail and gains rows for stage-state transitions.
 
@@ -195,6 +217,7 @@ Phases 1–3 are blocking: dispatcher can't switch over until storage + APIs are
 
 - **Unit tests**: registry CRUD; manifest mutation invariants (position uniqueness per task, stage-name FK to registry, state enum); type→default-stages resolution; build-time override merge.
 - **Migration tests**: census every observed `(lifecycle, status, labels)` tuple in a fixture DB, run migration, assert per-task manifest matches expected mapping table.
+- **Readiness tests**: before/after parity for `list_ready_tasks`, `list_blocked_tasks`, `suggest_next_task`, `list_automation_candidates`, and task `state.is_blocked`; cover external blockers, ancestor/descendant completion blocks, escalated upstreams, closed upstreams, and terminal non-merge task types such as `research_spike`.
 - **Dispatcher tests**: each rule in `dispatch/rules.py` has a before/after parity test — same `(task fixture, world state)` produces same dispatch action through old code path and new code path.
 - **API tests**: `GET /api/tasks?stage=development&stage_state=in_progress` returns expected set; `PATCH /api/tasks/{id}/stages/{name}` enforces tri-state transitions; MCP tool schemas match.
 - **E2E**: full `epic` task walks ideation → merge with manifest-driven dispatch on a fresh DB; `simple_fix` task only emits dev → pr → merge agents and never instantiates planning/research stages.
