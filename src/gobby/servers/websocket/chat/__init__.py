@@ -7,6 +7,7 @@ Extracted from server.py as part of the Strangler Fig decomposition.
 from gobby.servers.websocket.chat._lifecycle import ChatLifecycleMixin
 from gobby.servers.websocket.chat._messaging import ChatMessagingMixin
 from gobby.servers.websocket.chat._session import ChatSessionMixin
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 
 
 class ChatMixin(ChatSessionMixin, ChatLifecycleMixin, ChatMessagingMixin):

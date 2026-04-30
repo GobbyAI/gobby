@@ -10,6 +10,7 @@ from gobby.servers.websocket.chat._session import (
     ChatSessionMixin,
     _resolve_git_branch,
 )
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 
 pytestmark = pytest.mark.unit
 
@@ -152,6 +153,28 @@ class TestCreateChatSessionInner:
 
             assert session == mock_session
             mock_session.start.assert_awaited_once_with(model="opus")
+
+    @pytest.mark.asyncio
+    async def test_create_chat_session_registers_in_shared_registry(self, mixin: DummyMixin):
+        registry = WebChatSessionRegistry()
+        mixin.web_chat_session_registry = registry
+        mixin._chat_sessions = registry.sessions
+        mixin._active_chat_tasks = registry.active_tasks
+
+        with patch("gobby.servers.websocket.chat._session.ChatSession") as MockSessionClass:
+            mock_session = AsyncMock()
+            mock_session.chat_mode = "code"
+            mock_session.db_session_id = None
+            mock_session.resume_session_id = None
+            mock_session.project_path = None
+            mock_session.project_id = None
+            mock_session.system_prompt_override = None
+            MockSessionClass.return_value = mock_session
+
+            session = await mixin._create_chat_session_inner("conv-shared", model="opus")
+
+            assert session == mock_session
+            assert registry.find_session("conv-shared") == ("conv-shared", mock_session)
 
     @pytest.mark.asyncio
     async def test_create_chat_session_with_pending_websocket_broadcast(self, mixin: DummyMixin):

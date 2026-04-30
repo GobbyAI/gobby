@@ -130,7 +130,11 @@ async def handle_set_project(
                 except Exception as e:
                     logger.warning(f"Failed to update session on project switch: {e}")
         await session.stop()
-        mixin._chat_sessions.pop(conversation_id, None)
+        registry = getattr(mixin, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.unregister(conversation_id)
+        else:
+            mixin._chat_sessions.pop(conversation_id, None)
 
     # Store project for next session creation (works whether or not session existed)
     mixin._pending_projects[conversation_id] = new_project_id
@@ -215,7 +219,11 @@ async def handle_set_worktree(
                 except Exception as e:
                     logger.warning(f"Failed to update session on worktree switch: {e}")
         await session.stop()
-        mixin._chat_sessions.pop(conversation_id, None)
+        registry = getattr(mixin, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.unregister(conversation_id)
+        else:
+            mixin._chat_sessions.pop(conversation_id, None)
 
     # Store worktree path for next session creation
     mixin._pending_worktree_paths[conversation_id] = worktree_path
@@ -310,7 +318,11 @@ async def handle_set_agent(
                 except Exception as e:
                     logger.warning(f"Failed to update session on agent switch: {e}")
         await session.stop()
-        mixin._chat_sessions.pop(conversation_id, None)
+        registry = getattr(mixin, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.unregister(conversation_id)
+        else:
+            mixin._chat_sessions.pop(conversation_id, None)
 
     # Store agent name for next session creation
     mixin._pending_agents[conversation_id] = agent_name
@@ -367,7 +379,11 @@ async def handle_set_provider(
                 except Exception as e:
                     logger.warning(f"Failed to update session on provider switch: {e}")
         await session.stop()
-        mixin._chat_sessions.pop(conversation_id, None)
+        registry = getattr(mixin, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.unregister(conversation_id)
+        else:
+            mixin._chat_sessions.pop(conversation_id, None)
 
     mixin._pending_providers[conversation_id] = provider
 

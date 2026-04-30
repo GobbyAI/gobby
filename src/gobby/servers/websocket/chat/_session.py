@@ -157,6 +157,7 @@ class ChatSessionMixin:
     _pending_providers: dict[str, str]
     _pending_inject_contexts: dict[str, str]
     _session_create_locks: dict[str, asyncio.Lock]
+    web_chat_session_registry: Any
 
     def _get_session_create_lock(self, conversation_id: str) -> asyncio.Lock:
         """Get or create a per-conversation lock for session creation."""
@@ -803,7 +804,11 @@ class ChatSessionMixin:
                     "Failed to apply persona '%s' to session %s: %s", agent_name, session_key, e
                 )
 
-        self._chat_sessions[session_key] = session
+        registry = getattr(self, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.register(session_key, session)
+        else:
+            self._chat_sessions[session_key] = session
 
         # Fire SESSION_START (informational, fire-and-forget)
         start_data: dict[str, Any] = {}

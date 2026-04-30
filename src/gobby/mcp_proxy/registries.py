@@ -69,6 +69,7 @@ def setup_internal_registries(
     cron_scheduler: Any | None = None,
     transcript_reader: Any | None = None,
     communications_manager: Any | None = None,
+    web_chat_session_registry: Any | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -164,6 +165,7 @@ def setup_internal_registries(
             worktree_manager=worktree_storage,
             inter_session_message_manager=inter_session_message_manager,
             transcript_reader=transcript_reader,
+            web_chat_session_registry=web_chat_session_registry,
         )
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")

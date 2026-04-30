@@ -33,6 +33,7 @@ class ChatMessagingMixin:
     _pending_agents: dict[str, str]
     _pending_projects: dict[str, str]
     _pending_inject_contexts: dict[str, str]
+    web_chat_session_registry: Any
 
     if TYPE_CHECKING:
 
@@ -278,7 +279,11 @@ class ChatMessagingMixin:
             )
         )
         task.add_done_callback(self._on_chat_task_done)
-        self._active_chat_tasks[conversation_id] = task
+        registry = getattr(self, "web_chat_session_registry", None)
+        if registry is not None:
+            registry.track_active_task(conversation_id, task)
+        else:
+            self._active_chat_tasks[conversation_id] = task
 
     def _on_chat_task_done(self, task: asyncio.Task[None]) -> None:
         """Log unhandled exceptions from chat tasks."""
@@ -852,7 +857,11 @@ class ChatMessagingMixin:
                         await _aclose()
                     except BaseException:
                         pass
-            self._active_chat_tasks.pop(conversation_id, None)
+            registry = getattr(self, "web_chat_session_registry", None)
+            if registry is not None:
+                registry.clear_active_task(conversation_id, asyncio.current_task())
+            else:
+                self._active_chat_tasks.pop(conversation_id, None)
 
     async def _handle_ask_user_response(self, websocket: Any, data: dict[str, Any]) -> None:
         """Handle ask_user_response message from the web UI.

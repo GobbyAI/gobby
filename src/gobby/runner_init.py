@@ -25,6 +25,7 @@ from gobby.search.embeddings import generate_embedding
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
+from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.sessions.lifecycle import SessionLifecycleManager
@@ -804,6 +805,8 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
+    web_chat_session_registry = WebChatSessionRegistry()
+
     # HTTP Server
     # Bundle services into container
     services = ServiceContainer(
@@ -841,6 +844,7 @@ def init_servers(runner: GobbyRunner) -> None:
         config_store=runner.config_store,
         provider_model_catalog=ProviderModelCatalog(runner.config),
         web_chat_runtime_manager=None,
+        web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,
         dev_mode=runner._dev_mode,
         tool_proxy_getter=lambda: runner.http_server.tool_proxy,
@@ -910,6 +914,7 @@ def init_servers(runner: GobbyRunner) -> None:
             session_manager=runner.session_manager,
             daemon_config=runner.config,
             internal_manager=runner.http_server._internal_manager,
+            web_chat_session_registry=web_chat_session_registry,
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         # Pass WebSocket server reference to HTTP server for broadcasting

@@ -183,6 +183,7 @@ class HTTPServer:
             cron_scheduler=services.cron_scheduler,
             transcript_reader=services.transcript_reader,
             communications_manager=services.communications_manager,
+            web_chat_session_registry=services.web_chat_session_registry,
         )
         registry_count = len(self._internal_manager)
         logger.debug(f"Internal registries initialized: {registry_count} registries")

@@ -90,6 +90,7 @@ class ServiceContainer:
     config_store: Any | None = None  # ConfigStore
     provider_model_catalog: Any | None = None  # ProviderModelCatalog
     web_chat_runtime_manager: Any | None = None  # WebChatRuntimeManager
+    web_chat_session_registry: Any | None = None  # WebChatSessionRegistry
 
     # Caches (lazily populated by savings, etc.)
     _savings_tracker: Any | None = None  # SavingsTracker

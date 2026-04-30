@@ -17,6 +17,7 @@ from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+    from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.database import DatabaseProtocol
     from gobby.storage.sessions import SessionManager
 
@@ -83,10 +84,36 @@ def _resolve_tmux_target(
     return None, None, f"Session {session_id} has no tmux terminal"
 
 
+def _resolve_session_for_compaction(
+    session_id: str,
+    session_manager: SessionManager,
+) -> tuple[str | None, Any | None, str | None]:
+    """Resolve a user-facing session ref for compact_self."""
+    resolved_id = session_id
+    resolver = getattr(session_manager, "resolve_session_reference", None)
+    if callable(resolver):
+        try:
+            from gobby.utils.project_context import get_project_context
+
+            project_ctx = get_project_context()
+            project_id = project_ctx.get("id") if project_ctx else None
+            candidate = resolver(session_id, project_id)
+            if isinstance(candidate, str) and candidate:
+                resolved_id = candidate
+        except ValueError as exc:
+            return None, None, f"Session {session_id} not found: {exc}"
+
+    session = session_manager.get(resolved_id)
+    if session is None:
+        return resolved_id, None, f"Session {session_id} not found"
+    return resolved_id, session, None
+
+
 def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
     db: DatabaseProtocol,
+    web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
 
@@ -127,28 +154,35 @@ def register_terminal_tools(
             "/compress for others). Designed to be called at workflow handoff "
             "boundaries — e.g. /gobby plan calls this after spawning "
             "plan-adversary so the coordinator's bulky requirements-gathering "
-            "context is summarized away while the sub-agent runs. "
-            "Terminal sessions only; web_chat sessions return compacted: False "
-            "with a follow-up reason."
+            "context is summarized away while the sub-agent runs. Web-chat "
+            "sessions use the live daemon ChatSession registry."
         ),
     )
     async def compact_self(session_id: str) -> dict[str, Any]:
-        session = session_manager.get(session_id)
-        if session is None:
-            return {"compacted": False, "reason": f"Session {session_id} not found"}
+        resolved_session_id, session, error = _resolve_session_for_compaction(
+            session_id,
+            session_manager,
+        )
+        if error:
+            return {"compacted": False, "reason": error}
+        assert resolved_session_id is not None
+        assert session is not None
 
         session_type = getattr(session, "session_type", "terminal")
         source = getattr(session, "source", None)
 
         if session_type == "web_chat":
-            return {
-                "compacted": False,
-                "reason": (
-                    "web_chat trigger not yet implemented via MCP — use the "
-                    "/compact command palette entry directly. Tracked in the "
-                    "follow-up task to #13683."
-                ),
-            }
+            if web_chat_session_registry is None:
+                return {
+                    "compacted": False,
+                    "reason": "web_chat session registry is not available",
+                }
+            if (
+                resolved_session_id != session_id
+                and web_chat_session_registry.find_session(resolved_session_id)[1] is None
+            ):
+                return await web_chat_session_registry.compact_session(session_id)
+            return await web_chat_session_registry.compact_session(resolved_session_id)
 
         if session_type != "terminal":
             return {
@@ -163,7 +197,11 @@ def register_terminal_tools(
                 "reason": f"no compaction command known for cli={source!r}",
             }
 
-        target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
+        target, tmux, error = _resolve_tmux_target(
+            resolved_session_id,
+            session_manager,
+            agent_run_manager,
+        )
         if error:
             return {"compacted": False, "reason": error}
         assert target is not None
@@ -173,7 +211,7 @@ def register_terminal_tools(
         if not ok:
             return {
                 "compacted": False,
-                "reason": f"tmux send-keys failed for session {session_id}",
+                "reason": f"tmux send-keys failed for session {resolved_session_id}",
             }
         return {
             "compacted": True,
