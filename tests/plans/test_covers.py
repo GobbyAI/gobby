@@ -65,6 +65,8 @@ def _plan_doc(section_id: str = "A1", *items: AcceptanceItem) -> PlanDocument:
         ),
         ("covers:plan_1.2:A1:A1.1", CoversRecord("plan_1.2", "A1", "A1.1")),
         ("covers:plan-1:1.7:A1.1", CoversRecord("plan-1", "1.7", "A1.1")),
+        ("covers:plan-1:1.3a:1.3a.1", CoversRecord("plan-1", "1.3a", "1.3a.1")),
+        ("covers:plan-1:2.21:2.21.3d", CoversRecord("plan-1", "2.21", "2.21.3d")),
     ],
 )
 def test_parse_valid_label(label: str, record: CoversRecord) -> None:

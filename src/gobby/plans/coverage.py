@@ -21,10 +21,14 @@ from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
 
+_DOTTED_ID_PATTERN = (
+    r"(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?)(?:\.(?:\d+[a-z]?|[A-Z]+[0-9]+[a-z]?))*"
+)
+
 COVERS_LABEL_REGEX: re.Pattern[str] = re.compile(
     r"^covers:(?P<plan_id>[A-Za-z0-9._-]+):"
-    r"(?P<section_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?)):"
-    r"(?P<item_id>(?:\d+(?:\.\d+)*(?:[a-z])?|[A-Z]+[0-9]+(?:\.[0-9]+)*(?:[a-z])?))$"
+    rf"(?P<section_id>{_DOTTED_ID_PATTERN}):"
+    rf"(?P<item_id>{_DOTTED_ID_PATTERN})$"
 )
 type CoversStatus = Literal["valid", "missing_section", "missing_item", "artifact_not_referenced"]
 type PlanInput = PlanDocument | Path | str
