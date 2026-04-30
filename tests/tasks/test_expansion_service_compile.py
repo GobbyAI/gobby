@@ -183,7 +183,12 @@ def test_compile_assigns_agent_per_manifest_entry(
     sample_project,
 ) -> None:
     parent = _parent(service, sample_project)
-    spec = service.compile_plan_to_spec(_regression_plan_doc(), parent)
+    plan_doc = _regression_plan_doc()
+    spec = service.compile_plan_to_spec(plan_doc, parent)
+
+    expected_agents = {
+        entry.source_section: entry.assigned_agent for entry in plan_doc.manifest_entries
+    }
 
     assigned_by_section = {
         task["source_section_id"]: task["assigned_agent"]
@@ -191,6 +196,7 @@ def test_compile_assigns_agent_per_manifest_entry(
         if task["source_section_id"] is not None
     }
 
+    assert assigned_by_section == expected_agents
     assert assigned_by_section["2.1"] == "frontend-developer"
     assert assigned_by_section["1.1"] == "backend-developer"
     assert all(task["assigned_agent"] for task in spec["tasks"])

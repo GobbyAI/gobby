@@ -226,7 +226,9 @@ def test_expansion_mode_rejects_deliverable_without_manifest_entry(tmp_path: Pat
     with pytest.raises(PlanParseError) as excinfo:
         parse_plan(plan, parse_mode="expansion")
 
-    assert "A2" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "A2" in message
+    assert "manifest" in message
 
 
 def test_duplicate_manifest_entry_for_one_deliverable_fails(tmp_path: Path) -> None:

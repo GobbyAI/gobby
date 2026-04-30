@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gobby.workflows.definitions import AgentDefinitionBody
+
 pytestmark = pytest.mark.unit
 
 
@@ -17,7 +19,13 @@ def test_developer_yaml_exists_at_active_root() -> None:
     )
 
     assert path.exists()
-    assert yaml.safe_load(path.read_text(encoding="utf-8"))["name"] == "developer"
+    agent = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    assert agent["name"] == "developer"
+    assert agent["enabled"] is True
+    assert "spawn" in agent["surfaces"]
+    assert any(step["name"] == "implement" for step in agent["steps"])
+    AgentDefinitionBody.model_validate(agent)
 
 
 def test_deprecated_developer_tombstone_left_in_place() -> None:
@@ -27,4 +35,9 @@ def test_deprecated_developer_tombstone_left_in_place() -> None:
     )
 
     assert path.exists()
-    assert yaml.safe_load(path.read_text(encoding="utf-8"))["name"] == "developer"
+    agent = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+    assert agent["name"] == "developer"
+    assert agent["enabled"] is False
+    assert agent["deprecated"] is True
+    AgentDefinitionBody.model_validate(agent)
