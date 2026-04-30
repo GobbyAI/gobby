@@ -1,6 +1,6 @@
 name: qa-reviewer
 description: |
-  QA reviewer agent: reviews code, fixes minor issues, then approves or escalates.
+  QA reviewer agent: reviews code and emits a structured QA verdict.
   Behavior enforced by inline step workflow.
 
 version: "2.1"
@@ -15,11 +15,10 @@ instructions: |
   1. CLAIM: Call claim_task with your assigned_task_id, then get_task for details
   2. REVIEW: Check diff, verify tests, check code quality
   3. DECIDE:
-     - APPROVE: Call mark_task_review_approved if code is good, then call
-       close_task with reason="qa_approved" and the developer commit_sha from
-       the worktree task context
-     - ESCALATE: Call escalate_task with detailed reason if significant issues remain
-       after your review (Fix minor issues yourself — commit fixes before approving)
+     - APPROVE: Call mark_task_review_approved if code is good
+     - REJECT: Call mark_task_review_rejected with concrete blocking findings if code
+       needs changes before approval
+     - ESCALATE: Call escalate_task only for human-intervention blockers
   4. TERMINATE: Call kill_agent to shut down
 
   LIFECYCLE MODEL:
@@ -28,14 +27,16 @@ instructions: |
   - End-of-turn gates may keep the current turn alive until required review work is complete.
   - Agent termination is separate and still requires `kill_agent`.
 
-  Significant review failures are escalations, not reopen operations.
+  Significant implementation failures are review rejections, not reopen operations.
   Human triage can later de_escalate the task to the appropriate next lifecycle stage.
 
   CRITICAL RULES:
-  - After approval, close the task with close_task(reason="qa_approved", commit_sha=<developer commit sha>).
+  - Emit exactly one verdict: mark_task_review_approved, mark_task_review_rejected, or escalate_task.
+  - Do NOT edit files, write files, or commit changes. This agent is read-only.
+  - Do NOT call close_task — dispatcher lifecycle transitions own task closure.
   - Do NOT call reopen_task or de_escalate_task — lifecycle resets are human-driven.
   - Do NOT call git push — the merge agent handles pushing.
-  - Approval plus close_task, or escalation, must happen before the workflow may end the turn and terminate.
+  - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling kill_agent.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
@@ -78,20 +79,37 @@ steps:
         when: "vars.task_claimed"
 
   - name: review
-    description: "Review code, run tests, fix minor issues"
+    description: "Review code, run tests, emit verdict"
     status_message: |
       Review the code changes for the assigned task.
       1. Check diff: git diff, git log
       2. Run tests: uv run pytest <test_file> -v
-      3. Fix minor issues if needed, commit fixes
-      4. APPROVE: call mark_task_review_approved
-      5. ESCALATE (significant issues): call escalate_task with detailed reason
-    allowed_tools: "all"
+      3. APPROVE: call mark_task_review_approved
+      4. REJECT: call mark_task_review_rejected with blocking findings
+      5. ESCALATE: call escalate_task for human-intervention blockers
+    allowed_tools:
+      - Bash
+      - Read
+      - Grep
+      - Glob
+      - LS
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
     blocked_mcp_tools:
+      - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
+    allowed_mcp_tools:
+      - "gobby-tasks:get_task"
+      - "gobby-tasks:get_task_diff"
+      - "gobby-tasks:mark_task_review_approved"
+      - "gobby-tasks:mark_task_review_rejected"
+      - "gobby-tasks:escalate_task"
     on_mcp_success:
       - server: gobby-tasks
         tool: mark_task_review_approved
@@ -99,36 +117,17 @@ steps:
         variable: review_approved
         value: true
       - server: gobby-tasks
+        tool: mark_task_review_approved
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
+        tool: mark_task_review_rejected
+        action: set_variable
+        variable: review_complete
+        value: true
+      - server: gobby-tasks
         tool: escalate_task
-        action: set_variable
-        variable: review_complete
-        value: true
-      - server: gobby-tasks
-        tool: close_task
-        when: "vars.review_approved and tool_input.reason == 'qa_approved' and tool_input.commit_sha"
-        action: set_variable
-        variable: review_complete
-        value: true
-    transitions:
-      - to: terminate
-        when: "vars.review_approved and vars.review_complete"
-
-  - name: close
-    description: "Close approved task"
-    status_message: |
-      Review approved. Call close_task with reason="qa_approved" and
-      commit_sha=<developer commit sha> from the worktree task context.
-    allowed_tools:
-      - mcp__gobby__call_tool
-      - mcp__gobby__list_mcp_servers
-      - mcp__gobby__list_tools
-      - mcp__gobby__get_tool_schema
-    allowed_mcp_tools:
-      - "gobby-tasks:close_task"
-    on_mcp_success:
-      - server: gobby-tasks
-        tool: close_task
-        when: "vars.review_approved and tool_input.reason == 'qa_approved' and tool_input.commit_sha"
         action: set_variable
         variable: review_complete
         value: true

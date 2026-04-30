@@ -40,7 +40,11 @@ def test_dispatch_prompt_builder_keys_present() -> None:
 def test_qa_reviewer_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
-    assert "qa-reviewer" in PROMPT_BUILDERS
+    builder = PROMPT_BUILDERS["qa-reviewer"]
+    prompt = builder(SimpleNamespace(ref="#42", title="Review me"), {"reason": "qa"})
+
+    assert "qa-reviewer.yaml agent" in prompt
+    assert "#42" in prompt
 
 
 def test_holistic_reviewer_prompt_builder_registered() -> None:

@@ -24,7 +24,9 @@ def test_no_write_permissions() -> None:
 
     assert review_step.get("allowed_tools") != "all"
     allowed_tools = set(review_step.get("allowed_tools", []))
+    blocked_mcp_tools = set(review_step.get("blocked_mcp_tools", []))
     assert not {"Edit", "Write"} & allowed_tools
+    assert "gobby-tasks:close_task" in blocked_mcp_tools
 
 
 def test_emits_review_verdict() -> None:
@@ -32,7 +34,12 @@ def test_emits_review_verdict() -> None:
     instructions = agent["instructions"]
     review_step = next(step for step in agent["steps"] if step["name"] == "review")
     success_tools = {item["tool"] for item in review_step.get("on_mcp_success", [])}
+    allowed_mcp_tools = set(review_step.get("allowed_mcp_tools", []))
 
     assert "mark_task_review_approved" in instructions
     assert "mark_task_review_rejected" in instructions
     assert {"mark_task_review_approved", "mark_task_review_rejected"} <= success_tools
+    assert {
+        "gobby-tasks:mark_task_review_approved",
+        "gobby-tasks:mark_task_review_rejected",
+    } <= allowed_mcp_tools
