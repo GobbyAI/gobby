@@ -50,6 +50,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations") as run_migrations,
         patch("gobby.cli.build.asyncio.run", return_value=build_result) as run,
         patch("gobby.cli.build.build", new=AsyncMock()) as build,
     ):
@@ -86,6 +87,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "task-1" in result.output
     assert "test_arch" in result.output
+    run_migrations.assert_called_once_with(db_cls.return_value)
     run.assert_called_once()
     call = build.call_args
     assert call.args[0] == str(plan_file)
@@ -113,3 +115,34 @@ def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
 
     assert result.exit_code == 0
     invoke_skill.assert_called_once()
+
+
+def test_build_stop_cli_runs_migrations_before_control_service() -> None:
+    from gobby.build.service import BuildControlResult, BuildLifecycleEvent
+    from gobby.cli import cli
+
+    control_result = BuildControlResult(
+        project_id="project-1",
+        enabled=False,
+        cron_job_id="cron-1",
+        lifecycle_event=BuildLifecycleEvent(
+            id=1,
+            project_id="project-1",
+            event="build_stop",
+            reason="gobby build stop",
+            by_actor="build",
+            created_at="2026-01-01T00:00:00+00:00",
+        ),
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build.LocalDatabase") as db_cls,
+        patch("gobby.cli.build.run_migrations") as run_migrations,
+        patch("gobby.cli.build.build_stop", return_value=control_result) as build_stop,
+    ):
+        result = CliRunner().invoke(cli, ["build", "stop"])
+
+    assert result.exit_code == 0
+    run_migrations.assert_called_once_with(db_cls.return_value)
+    build_stop.assert_called_once_with(db=db_cls.return_value, project_id="project-1")

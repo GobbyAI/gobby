@@ -17,6 +17,7 @@ from gobby.build import (
 )
 from gobby.config.build import Isolation
 from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 
 from .utils import resolve_project_ref
 
@@ -53,6 +54,17 @@ def _echo_build_control_result(result: BuildControlResult) -> None:
     click.echo(f"Dispatcher cron: {state}")
     click.echo(f"Project: {result.project_id}")
     click.echo(f"Event: {result.lifecycle_event.reason}")
+
+
+def _open_database() -> LocalDatabase:
+    """Open the hub database and apply pending migrations before build storage use."""
+    db = LocalDatabase()
+    try:
+        run_migrations(db)
+    except Exception:
+        db.close()
+        raise
+    return db
 
 
 @click.command("build")
@@ -133,7 +145,7 @@ def build_command(
         assigned_agent=assigned_agent,
     )
     project_id = resolve_project_id()
-    db = LocalDatabase()
+    db = _open_database()
     try:
         result = asyncio.run(build(input_ref, opts, db=db, project_id=project_id))
     except ValueError as exc:
@@ -158,7 +170,7 @@ def build_resume_command() -> None:
 
 def _run_build_stop() -> None:
     project_id = resolve_project_id()
-    db = LocalDatabase()
+    db = _open_database()
     try:
         result = build_stop(db=db, project_id=project_id)
     except ValueError as exc:
@@ -171,7 +183,7 @@ def _run_build_stop() -> None:
 
 def _run_build_resume() -> None:
     project_id = resolve_project_id()
-    db = LocalDatabase()
+    db = _open_database()
     try:
         result = build_resume(db=db, project_id=project_id)
     except ValueError as exc:
