@@ -426,6 +426,7 @@ def _build_contract_entry_work_task(
     description = f"Plan section `{section.section_id}`.\n\n{body}".strip()
     if acceptance_lines:
         description = f"{description}\n\nAcceptance items:\n" + "\n".join(acceptance_lines)
+    validation = _contract_validation_criteria(entry, section)
 
     if title_prefix is None:
         task_id = _contract_single_task_id(section.section_id)
@@ -444,13 +445,25 @@ def _build_contract_entry_work_task(
         "priority": 2,
         "task_type": entry.task_type,
         "category": entry.category,
-        "validation": entry.validation_criteria,
+        "validation": validation,
         "affected_files": affected_files,
         "labels": list(entry.labels),
         "assigned_agent": entry.assigned_agent,
         "additional_skills": [],
         "source_section_id": section.section_id,
     }
+
+
+def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) -> str:
+    lines = [entry.validation_criteria.strip()]
+    artifact_lines = [
+        f"- {item.item_id}: {item.artifact_kind.value}: `{item.artifact_ref}`"
+        for item in section.acceptance_items
+    ]
+    if artifact_lines:
+        lines.append("Acceptance artifacts:")
+        lines.extend(artifact_lines)
+    return "\n".join(line for line in lines if line)
 
 
 def _contract_phase_index(self: Any, plan_doc: PlanDocument) -> dict[str, PlanSection]:

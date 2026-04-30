@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,14 +32,14 @@ PLAN_PATH_MISSING_REASON = (
 
 
 @pytest.fixture
-def service(temp_db) -> ExpansionService:
+def service(temp_db: Any) -> ExpansionService:
     return ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
 
 
 @pytest.mark.skipif(not PLAN_PATH.exists(), reason=PLAN_PATH_MISSING_REASON)
 def test_plan_12725_compiles_clean(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     parent_task = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -60,6 +61,7 @@ def test_plan_12725_compiles_clean(
     }
 
     manifest_by_source = {entry.source_section: entry for entry in doc.manifest_entries}
+    section_by_id = {section.section_id: section for section in doc.sections}
     impl_or_single_tasks = [
         task for task in spec["tasks"] if not task["title"].startswith(("[TEST]", "[REF]"))
     ]
@@ -76,7 +78,13 @@ def test_plan_12725_compiles_clean(
         )
         assert task["category"] == entry.category, section_id
         assert task["task_type"] == entry.task_type, section_id
-        assert task["validation"] == entry.validation_criteria, section_id
+        assert task["validation"].startswith(entry.validation_criteria), section_id
+        section = section_by_id[section_id]
+        for item in section.acceptance_items:
+            assert f"{item.artifact_kind.value}: `{item.artifact_ref}`" in task["validation"], (
+                section_id,
+                item.item_id,
+            )
         assert task["assigned_agent"] == entry.assigned_agent, section_id
         assert sorted(task["labels"]) == sorted(entry.labels), section_id
 

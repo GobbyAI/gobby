@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.plans.coverage import CoversRecord, validate_covers
 from gobby.plans.parser import parse_plan
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.expansion_service import ExpansionService
@@ -154,6 +155,48 @@ Expose the expansion hook used by the scanner.
     return path
 
 
+def _write_validation_artifacts_plan(path: Path) -> Path:
+    path.write_text(
+        """> **Plan ID:** validation-artifacts
+
+# Validation Artifacts Plan
+
+## P1 Phase 1
+`kind: framing`
+
+### 1.1 Agent Contract [category: config]
+`kind: deliverable`
+
+Wire the agent contract.
+
+**Acceptance:**
+- 1.1.1 - Workflow file exists. file: `src/gobby/install/shared/workflows/agents/demo.yaml`
+- 1.1.2 - Non-yolo rejects with instructions. behavior: `non-yolo rejection path`
+- 1.1.3 - Tool surface is tested. test: `tests/agents/test_demo_agent.py::test_tool_surface`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Agent Contract"
+  category: config
+  task_type: task
+  depends_on: []
+  validation_criteria: "src/gobby/install/shared/workflows/agents/demo.yaml"
+  labels:
+    - "covers:validation-artifacts:1.1:1.1.1"
+    - "covers:validation-artifacts:1.1:1.1.2"
+    - "covers:validation-artifacts:1.1:1.1.3"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "1.1"
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
     service: ExpansionService,
     sample_project: dict[str, Any],
@@ -226,6 +269,35 @@ def test_compile_skips_implicit_phase_edge_when_manifest_requires_later_phase_fi
         "dependencies"
     ]
     assert service.validate_compiled_spec(spec)["valid"] is True
+
+
+def test_compile_entry_validation_includes_acceptance_artifact_refs(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Validation artifacts epic",
+        task_type="epic",
+    )
+    plan_doc = parse_plan(
+        _write_validation_artifacts_plan(tmp_path / "validation-artifacts.md"),
+        parse_mode="expansion",
+    )
+
+    spec = service.compile_plan_to_spec(plan_doc, parent)
+    task = next(task for task in spec["tasks"] if task["id"] == "1.1::single")
+
+    assert task["validation"].startswith("src/gobby/install/shared/workflows/agents/demo.yaml")
+    for item_id in ("1.1.1", "1.1.2", "1.1.3"):
+        result = validate_covers(
+            CoversRecord("validation-artifacts", "1.1", item_id),
+            task["validation"],
+            "#leaf",
+            plan_doc,
+        )
+        assert result.status == "valid"
 
 
 def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers(
