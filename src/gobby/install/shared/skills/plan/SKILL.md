@@ -275,6 +275,63 @@ Report the verification output in the exact format `plan-draft` specifies.
 
 ---
 
+## Step 5.5: Mechanical Structural Validation
+
+Step 5 is a narrative review. Step 5.5 is a mechanical schema check that
+catches structural drift the narrative pass cannot reliably enumerate
+(missing `kind:` annotations, malformed acceptance items, dropped phase
+headings whose IDs do not match the contract regex, malformed deferral
+objects, missing manifests at expansion time). It is fast and deterministic
+— always run it, never skip it.
+
+```text
+result = call_tool(
+    server_name="gobby-tasks-ops",
+    tool_name="validate_plan_file",
+    arguments={"plan_file": <artifact_path from Step 4>},
+    session_id="#<self>",
+)
+```
+
+Branch on the response:
+
+- **`valid: True`** — record `phase_count` and `deliverable_count` for the
+  user-facing report (Step 5 already showed the narrative checks; mention
+  the mechanical pass alongside as a single combined report). Proceed to
+  Step 6.
+- **`valid: False`** — display the validator errors **verbatim** to the
+  user. Then attempt an in-place fix:
+  - If the error names a class already taught by `plan-draft` (e.g.
+    `phases missing` → fix phase headings to `## P<N>: Name`; `missing
+    kind` → add `` `kind: ...` `` annotation; `missing acceptance` → add
+    `**Acceptance:**` block; `malformed item ID` → re-number to
+    dotted-prefix-match the section ID), apply the fix, re-run Step 5.5
+    against the same artifact, and repeat until the validator passes.
+  - If the error is structural in a way the skill cannot mechanically
+    repair (corrupted YAML in a deferral object, regex-failing section
+    IDs that require rewriting whole sections), surface the validator
+    output to the user and ask them to confirm the fix before
+    proceeding. Do NOT advance to Step 6 with a failing validator.
+
+Step 5.5 catches the false-negative class the narrative checklist
+misses: a plan can pass all five Step 5 checks (no test tasks, valid
+deps, categories, phase syntax tolerated by the old skill, self-contained
+sections) and still fail the contract because, say, its phase headings
+parse to `section_id: "1"` instead of `section_id: "P1"` and the parser
+silently drops them. The mechanical validator at
+`src/gobby/tasks/expansion/_compile.py::validate_plan_file` checks the
+contract regex `^P\d+$` and the deliverables-without-phases case
+explicitly. The plan-adversary later runs the same gate (plus its
+qualitative review); failing fast here saves an entire adversary round
+and the LLM call that goes with it.
+
+Resume safety: if Step 5.5 returns `valid: False` and the skill is
+interrupted before applying a fix, re-entry from Step 5 (via the resume
+path or a fresh user run) repeats the validator call against the
+current artifact — no separate state machine is needed.
+
+---
+
 ## Step 6: First-Draft Approval
 
 Present the plan to the user and route the decision through the real native **`ExitPlanMode`** / `provide_plan_decision` boundary — do **not** synthesize a "user approved?" prompt. The native boundary is the only place `chat_session_permissions` records a real approval.
