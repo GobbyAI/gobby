@@ -746,6 +746,7 @@ CREATE TABLE cron_jobs (
     action_type TEXT NOT NULL,
     action_config TEXT NOT NULL,
     enabled INTEGER DEFAULT 1,
+    is_system INTEGER NOT NULL DEFAULT 0 CHECK(is_system IN (0, 1)),
     next_run_at TEXT,
     last_run_at TEXT,
     last_status TEXT,

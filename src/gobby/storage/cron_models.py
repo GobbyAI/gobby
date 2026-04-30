@@ -29,6 +29,7 @@ class CronJob:
     run_at: str | None = None
     timezone: str = "UTC"
     enabled: bool = True
+    is_system: bool = False
     next_run_at: str | None = None
     last_run_at: str | None = None
     last_status: str | None = None
@@ -60,6 +61,7 @@ class CronJob:
             run_at=row["run_at"] if "run_at" in keys else None,
             timezone=row["timezone"] if "timezone" in keys and row["timezone"] else "UTC",
             enabled=bool(row["enabled"]) if "enabled" in keys else True,
+            is_system=bool(row["is_system"]) if "is_system" in keys else False,
             next_run_at=row["next_run_at"] if "next_run_at" in keys else None,
             last_run_at=row["last_run_at"] if "last_run_at" in keys else None,
             last_status=row["last_status"] if "last_status" in keys else None,
@@ -83,6 +85,7 @@ class CronJob:
             "action_type": self.action_type,
             "action_config": self.action_config,
             "enabled": self.enabled,
+            "is_system": self.is_system,
             "next_run_at": self.next_run_at,
             "last_run_at": self.last_run_at,
             "last_status": self.last_status,
@@ -101,6 +104,7 @@ class CronJob:
             "interval_seconds": self.interval_seconds,
             "action_type": self.action_type,
             "enabled": self.enabled,
+            "is_system": self.is_system,
             "next_run_at": self.next_run_at,
             "last_status": self.last_status,
             "consecutive_failures": self.consecutive_failures,

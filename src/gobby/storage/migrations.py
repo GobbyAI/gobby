@@ -30,6 +30,7 @@ from gobby.storage.migration_helpers import (
     _setup_skills_fts,
     _setup_tasks_fts,
 )
+from gobby.storage.migrations.add_cron_is_system import up as add_cron_is_system
 from gobby.storage.migrations.add_last_reviewed_plan_hash import up as add_last_reviewed_plan_hash
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         229,
         "Add last reviewed plan hash artifact fields",
         add_last_reviewed_plan_hash,
+    ),
+    (
+        231,
+        "Add system-managed marker to cron jobs",
+        add_cron_is_system,
     ),
 ]
 

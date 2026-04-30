@@ -101,6 +101,7 @@ class CronJobStorage:
         run_at: str | None = None,
         timezone: str = "UTC",
         enabled: bool = True,
+        is_system: bool = False,
     ) -> CronJob:
         """Create a new cron job."""
         job_id = generate_prefixed_id("cj", length=12)
@@ -121,6 +122,7 @@ class CronJobStorage:
             run_at=run_at,
             timezone=timezone,
             enabled=enabled,
+            is_system=is_system,
         )
 
         # Compute initial next_run_at
@@ -133,11 +135,11 @@ class CronJobStorage:
             INSERT INTO cron_jobs (
                 id, project_id, name, description, schedule_type,
                 cron_expr, interval_seconds, run_at, timezone,
-                action_type, action_config, enabled, next_run_at,
+                action_type, action_config, enabled, is_system, next_run_at,
                 last_run_at, last_status, consecutive_failures,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.id,
@@ -152,6 +154,7 @@ class CronJobStorage:
                 job.action_type,
                 json.dumps(job.action_config),
                 1 if job.enabled else 0,
+                1 if job.is_system else 0,
                 job.next_run_at,
                 job.last_run_at,
                 job.last_status,
@@ -184,6 +187,7 @@ class CronJobStorage:
         self,
         project_id: str | None = None,
         enabled: bool | None = None,
+        is_system: bool | None = None,
         limit: int = 50,
     ) -> list[CronJob]:
         """List cron jobs with optional filters."""
@@ -196,6 +200,9 @@ class CronJobStorage:
         if enabled is not None:
             conditions.append("enabled = ?")
             params.append(1 if enabled else 0)
+        if is_system is not None:
+            conditions.append("is_system = ?")
+            params.append(1 if is_system else 0)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
