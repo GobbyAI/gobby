@@ -205,10 +205,10 @@ Run after Phase G. Acceptance gate for closing the recovery.
 
 ## Out of scope (deferred)
 
-- **#12728** — Real PR creation, richer merge / conflict handling,
+- **#13552** — Real PR creation, richer merge / conflict handling,
   `merge_commit_sha` capture in `task_artifacts`. The dispatcher reaches the
   PR / merge boundary using existing tools; full PR automation is tracked
-  separately.
+  separately. (Originally filed as #12728; recreated after cascade-delete.)
 
 ---
 
@@ -236,4 +236,4 @@ Operator quick-reference:
 6. **Phases C / D / E are sequential.** D depends on C's lifecycle tools;
    E's agents depend on D's dispatcher.
 7. **F and G can run in parallel with E** once D is stable.
-8. **Treat #12728 as a separate intake.** Do not re-scope it into Epic 2.
+8. **Treat #13552 as a separate intake.** Do not re-scope it into Epic 2.

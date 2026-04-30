@@ -56,4 +56,4 @@ Retired templates such as `orchestrator.yaml`, `front-half-orchestrator.yaml`,
 `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, and `conductor.yaml` live under
 `workflows/*/deprecated/` as archival tombstones. Active bundled sync reads only top-level
 YAML and soft-deletes installed rows for retired definitions. PR creation and advanced
-merge/conflict work belong to task #12728.
+merge/conflict work belong to task #13552.

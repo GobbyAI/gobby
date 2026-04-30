@@ -150,7 +150,7 @@ the archival YAML disabled with `enabled: false`, `deprecated: true`, a
 
 ## PR And Merge Boundary
 
-Task #12728 owns real PR creation and richer merge/conflict automation. Current
+Task #13552 owns real PR creation and richer merge/conflict automation. Current
 dispatch can reach the PR/merge lifecycle boundary and use existing merge tools,
 but PR authoring and complete conflict-resolution policy are follow-up work.
 

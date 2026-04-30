@@ -343,7 +343,7 @@ for retired definitions, so `orchestrator.yaml`, `front-half-orchestrator.yaml`,
 `dev-orchestrator.yaml`, `delivery-orchestrator.yaml`, the conductor pipeline, and the
 retired `conductor`, `developer`, and `pipeline-worker` agents must stay out of active
 install roots. Real PR creation and richer merge/conflict handling are tracked in task
-#12728; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
+#13552; this dispatcher only reaches the PR/merge boundary and uses existing merge tools
 where they are already available.
 
 ## Code Conventions
