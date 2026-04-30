@@ -4,6 +4,7 @@ import SpriteText from 'three-spritetext'
 import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
 import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
 import { IS_MOBILE, IS_IOS } from '../../utils/platform'
+import { resolveCssVar } from '../../lib/utils'
 import './CodeGraphExplorer.css'
 
 const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS ? 30 : IS_MOBILE ? 50 : 100
@@ -19,37 +20,58 @@ interface CodeGraphExplorerProps {
   projectId: string | null
 }
 
-// ── GitNexus-inspired node colors ──────────────────────────────
+// ── Node / edge colors routed through deutan-safe semantic tokens ───────────
+// Multiple types intentionally collapse onto the same token; the legend
+// disambiguates by name. resolveCssVar() returns canvas-normalized strings
+// for three.js consumers; getNodeColorCss() returns var() form for HTML.
 
-const NODE_COLORS: Record<string, string> = {
-  file: '#3b82f6',
-  folder: '#6366f1',
-  class: '#f59e0b',
-  function: '#10b981',
-  method: '#14b8a6',
-  interface: '#ec4899',
-  module: '#8b5cf6',
-  constant: '#f97316',
-  variable: '#64748b',
-  type: '#a78bfa',
-  unresolved: '#ef4444',
-  external: '#fb7185',
+const NODE_COLOR_VARS: Record<string, string> = {
+  file: '--color-info',
+  folder: '--color-agent',
+  class: '--color-warning-foreground',
+  function: '--color-success-foreground',
+  method: '--color-review',
+  interface: '--color-error',
+  module: '--color-agent',
+  constant: '--color-warning-foreground',
+  variable: '--text-muted',
+  type: '--color-agent',
+  unresolved: '--color-error',
+  external: '--color-error',
 }
 
-const EDGE_COLORS: Record<string, string> = {
-  CALLS: '#7c3aed',
-  IMPORTS: '#1d4ed8',
-  DEFINES: '#0e7490',
+const EDGE_COLOR_VARS: Record<string, string> = {
+  CALLS: '--color-agent',
+  IMPORTS: '--color-info',
+  DEFINES: '--color-review',
 }
 
-const BLAST_COLORS = ['#ef4444', '#f97316', '#eab308', '#a3e635']
+// Blast-radius gradient: hottest (closest) → coolest (farthest).
+const BLAST_COLOR_VARS = [
+  '--color-error',
+  '--color-warning-foreground',
+  '--accent',
+  '--color-success-foreground',
+]
+
+function nodeColorVar(type: string): string {
+  return NODE_COLOR_VARS[type] ?? '--text-muted'
+}
+
+function edgeColorVar(type: string): string {
+  return EDGE_COLOR_VARS[type] ?? '--text-muted'
+}
 
 function getNodeColor(node: GraphNode): string {
   if (node.blast_distance !== undefined && node.blast_distance >= 0) {
-    const idx = Math.min(node.blast_distance, BLAST_COLORS.length - 1)
-    return BLAST_COLORS[idx]
+    const idx = Math.min(node.blast_distance, BLAST_COLOR_VARS.length - 1)
+    return resolveCssVar(BLAST_COLOR_VARS[idx])
   }
-  return NODE_COLORS[node.type] || '#6b7280'
+  return resolveCssVar(nodeColorVar(node.type))
+}
+
+function getNodeColorCss(type: string | undefined): string {
+  return `var(${type ? nodeColorVar(type) : '--text-muted'})`
 }
 
 // ── Force graph data types ─────────────────────────────────────
@@ -102,14 +124,14 @@ function buildForceData(data: CodeGraphData): { nodes: GraphNode[]; links: Graph
       source: l.source,
       target: l.target,
       type: l.type,
-      color: EDGE_COLORS[l.type] || '#2a2a3a',
+      color: resolveCssVar(edgeColorVar(l.type)),
     }))
 
   return { nodes, links }
 }
 
 function edgeColor(relType: string): string {
-  return EDGE_COLORS[relType] || 'rgba(120,120,120,0.4)'
+  return resolveCssVar(edgeColorVar(relType))
 }
 
 function escapeHtml(s: string): string {
@@ -340,14 +362,16 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       const isDimmed = dimmed || searchDimmed
 
       const sprite = new SpriteText(label)
-      sprite.color = isDimmed ? '#333333' : color
+      sprite.color = isDimmed ? resolveCssVar('--text-muted') : color
       sprite.fontFace = 'JetBrains Mono, SF Mono, Menlo, monospace'
 
       if (IS_MOBILE) {
         sprite.textHeight = 2
       } else {
         sprite.textHeight = 3
-        sprite.backgroundColor = isDimmed ? 'rgba(20,20,20,0.3)' : 'rgba(10,10,20,0.75)'
+        sprite.backgroundColor = isDimmed
+          ? resolveCssVar('--bg-primary', 0.3)
+          : resolveCssVar('--bg-primary', 0.75)
         sprite.borderColor = isDimmed ? 'transparent' : color
         sprite.borderWidth = 0.3
         sprite.borderRadius = 3
@@ -356,7 +380,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       return sprite
     } catch {
       const fallback = new SpriteText('?')
-      fallback.color = '#888'
+      fallback.color = resolveCssVar('--text-muted')
       fallback.textHeight = 3
       return fallback
     }
@@ -368,7 +392,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     const tgtId = typeof link.target === 'object' ? link.target.id : link.target
 
     if (blastData) {
-      if (!blastData.has(srcId) || !blastData.has(tgtId)) return 'rgba(60,60,60,0.1)'
+      if (!blastData.has(srcId) || !blastData.has(tgtId)) return resolveCssVar('--text-muted', 0.1)
     }
     if (isSearchActive) {
       const srcLabel = typeof link.source === 'object'
@@ -379,9 +403,9 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
         : link.target
       const srcMatch = String(srcLabel).toLowerCase().includes(searchLower)
       const tgtMatch = String(tgtLabel).toLowerCase().includes(searchLower)
-      if (!srcMatch && !tgtMatch) return 'rgba(60,60,60,0.15)'
+      if (!srcMatch && !tgtMatch) return resolveCssVar('--text-muted', 0.15)
     }
-    return link.color || edgeColor(link.type) || 'rgba(120,120,120,0.4)'
+    return link.color || edgeColor(link.type) || resolveCssVar('--text-muted', 0.4)
   }, [blastData, isSearchActive, searchLower])
 
   const linkLabel = useCallback((link: any) => link.type as string, [])
@@ -533,7 +557,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
                 className="code-graph-search-result"
                 onClick={() => handleSearchResultClick(r)}
               >
-                <span className="code-graph-search-kind" style={{ color: (r.kind ? NODE_COLORS[r.kind] : undefined) || '#6b7280' }}>
+                <span className="code-graph-search-kind" style={{ color: getNodeColorCss(r.kind) }}>
                   {r.kind || r.type}
                 </span>
                 <span className="code-graph-search-name">{r.name}</span>
@@ -554,16 +578,16 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
 
       {/* Legend */}
       <div className="code-graph-legend">
-        {Object.entries(NODE_COLORS).slice(0, 7).map(([type, color]) => (
+        {Object.keys(NODE_COLOR_VARS).slice(0, 7).map(type => (
           <div key={type} className="code-graph-legend-item">
-            <span className="code-graph-legend-dot" style={{ background: color }} />
+            <span className="code-graph-legend-dot" style={{ background: getNodeColorCss(type) }} />
             <span>{type}</span>
           </div>
         ))}
         <div className="code-graph-legend-separator" />
-        {Object.entries(EDGE_COLORS).map(([type, color]) => (
+        {Object.keys(EDGE_COLOR_VARS).map(type => (
           <div key={type} className="code-graph-legend-item">
-            <span className="code-graph-legend-line" style={{ background: color }} />
+            <span className="code-graph-legend-line" style={{ background: `var(${edgeColorVar(type)})` }} />
             <span>{type.toLowerCase()}</span>
           </div>
         ))}
@@ -573,7 +597,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       {selectedNode && (
         <div className="code-graph-detail">
           <div className="code-graph-detail-header">
-            <span className="code-graph-detail-type" style={{ color: NODE_COLORS[selectedNode.type] || '#6b7280' }}>
+            <span className="code-graph-detail-type" style={{ color: getNodeColorCss(selectedNode.type) }}>
               {selectedNode.type}
             </span>
             <button className="code-graph-detail-close" onClick={() => setSelectedNode(null)}>&times;</button>
@@ -606,9 +630,9 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
         nodeLabel={(node: any) => {
           const name = escapeHtml(String(node.name || ''))
           const parts = [`<b>${name}</b>`]
-          if (node.kind) parts.push(`<br/><span style="color:${NODE_COLORS[node.type] || '#6b7280'};text-transform:uppercase;font-size:9px">${escapeHtml(String(node.kind))}</span>`)
-          if (node.signature) parts.push(`<br/><span style="color:#e6b450;font-size:9px">${escapeHtml(String(node.signature))}</span>`)
-          if (node.file_path && node.type !== 'file') parts.push(`<br/><span style="color:#888;font-size:9px">${escapeHtml(String(node.file_path))}${node.line_start ? ':' + node.line_start : ''}</span>`)
+          if (node.kind) parts.push(`<br/><span style="color:${getNodeColorCss(node.type)};text-transform:uppercase;font-size:9px">${escapeHtml(String(node.kind))}</span>`)
+          if (node.signature) parts.push(`<br/><span style="color:var(--color-warning-foreground);font-size:9px">${escapeHtml(String(node.signature))}</span>`)
+          if (node.file_path && node.type !== 'file') parts.push(`<br/><span style="color:var(--text-muted);font-size:9px">${escapeHtml(String(node.file_path))}${node.line_start ? ':' + node.line_start : ''}</span>`)
           return `<div style="text-align:center;font-family:monospace;font-size:11px;line-height:1.4">${parts.join('')}</div>`
         }}
         linkSource="source"
