@@ -39,3 +39,19 @@ def test_plan_state_archived(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert result.state == "archived"
+
+
+def test_missing_plan_file_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.hooks.event_handlers import _plan
+
+    def raise_missing_file(*args, **kwargs):
+        raise FileNotFoundError("plan file not found")
+
+    monkeypatch.setattr(_plan.LocalPlanManager, "archive_plan", raise_missing_file)
+
+    result = _plan.on_epic_terminal(
+        SimpleNamespace(task_ref="#200", status="closed", closure_reason="completed"),
+        db=object(),
+    )
+
+    assert result is None

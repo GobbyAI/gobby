@@ -9,6 +9,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
@@ -76,17 +77,22 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
         session_id = get_current_session_id()
         if not session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         # Resolve task reference (supports #N, path, UUID formats)
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-        except (TaskNotFoundError, ValueError) as e:
+        except TaskNotFoundError as e:
+            return task_error(str(e), TaskToolErrorCode.TASK_NOT_FOUND)
+        except ValueError as e:
             return {"error": str(e)}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"error": f"Task {task_id} not found"}
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:
@@ -107,6 +113,12 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             }
 
         # Check if already claimed by another session
+        if task.status == "closed":
+            return task_error(
+                f"Cannot claim task {resolved_id}: task is closed",
+                TaskToolErrorCode.TASK_CLOSED,
+            )
+
         current_owner = get_claimed_session_id(task)
         delegated_claim = False
         if current_owner and current_owner != resolved_session_id and not force:
@@ -123,15 +135,15 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             and not force
             and not delegated_claim
         ):
-            return {
-                "success": False,
-                "error": "Task already claimed by another session",
-                "claimed_by": current_owner,
-                "message": (
+            return task_error(
+                "Task already claimed by another session",
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                claimed_by=current_owner,
+                message=(
                     f"Task is already claimed by session '{current_owner}'. "
                     "Use force=True to override."
                 ),
-            }
+            )
 
         try:
             updated = ctx.task_manager.claim_task(
@@ -140,7 +152,13 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 force=force or delegated_claim,
             )
         except ValueError as e:
-            return {"error": str(e)}
+            message = str(e)
+            lowered = message.lower()
+            if "task is closed" in lowered:
+                return task_error(message, TaskToolErrorCode.TASK_CLOSED)
+            if "already claimed" in lowered:
+                return task_error(message, TaskToolErrorCode.TASK_CLAIM_CONFLICT)
+            return {"error": message}
 
         if not updated:
             return {"error": f"Failed to claim task {task_id}"}

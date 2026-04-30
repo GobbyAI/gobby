@@ -60,6 +60,9 @@ def build_synthetic_tool_output(result: Any) -> dict[str, Any]:
         error_msg = result.get("error")
         if error_msg:
             wrapped["error"] = error_msg
+        error_code = result.get("error_code")
+        if error_code:
+            wrapped["error_code"] = error_code
     return wrapped
 
 

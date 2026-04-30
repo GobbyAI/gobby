@@ -29,7 +29,7 @@ def on_epic_terminal(event: object, *, db: Any) -> PlanRecord | None:
             project_id=project_id,
             reason=_archive_reason(event),
         )
-    except PlanNotFoundError:
+    except (FileNotFoundError, PlanNotFoundError):
         return None
 
 

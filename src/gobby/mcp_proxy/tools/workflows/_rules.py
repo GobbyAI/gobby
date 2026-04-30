@@ -30,7 +30,6 @@ def _rule_brief(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "name": row.name,
         "event": body.get("event"),
         "group": body.get("group"),
-        "audience": body.get("audience"),
         "enabled": row.enabled,
     }
 

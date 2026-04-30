@@ -9,12 +9,31 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
+
+
+def _status_error(message: str, status: str | None) -> dict[str, Any]:
+    code = (
+        TaskToolErrorCode.TASK_CLOSED
+        if status == "closed"
+        else TaskToolErrorCode.TASK_INVALID_STATUS
+    )
+    return task_error(message, code)
+
+
+def _lifecycle_value_error(message: str) -> dict[str, Any]:
+    lowered = message.lower()
+    if "status 'closed'" in lowered or "current status: closed" in lowered:
+        return task_error(message, TaskToolErrorCode.TASK_CLOSED)
+    if "status" in lowered or "lifecycle" in lowered:
+        return task_error(message, TaskToolErrorCode.TASK_INVALID_STATUS)
+    return {"error": message}
 
 
 def _clear_prior_claim_session_variables(
@@ -132,25 +151,30 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
 
         session_id = get_current_session_id()
         if not session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-        except (TaskNotFoundError, ValueError) as e:
+        except TaskNotFoundError as e:
+            return task_error(str(e), TaskToolErrorCode.TASK_NOT_FOUND)
+        except ValueError as e:
             return {"error": str(e)}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"error": f"Task {task_id} not found"}
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
         if task.status in ("escalated", "closed"):
-            return {"error": f"Cannot escalate task with status '{task.status}'."}
+            return _status_error(f"Cannot escalate task with status '{task.status}'.", task.status)
 
         try:
             ctx.task_manager.escalate_task(resolved_id, reason=reason)
         except ValueError as e:
-            return {"error": str(e)}
+            return _lifecycle_value_error(str(e))
 
         _clear_prior_claim_session_variables(
             ctx,
@@ -231,26 +255,30 @@ def register_mark_task_review_approved(
 
         session_id = get_current_session_id()
         if not session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except TaskNotFoundError as e:
-            return {"error": str(e)}
+            return task_error(str(e), TaskToolErrorCode.TASK_NOT_FOUND)
         except ValueError as e:
             return {"error": str(e)}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"error": f"Task {task_id} not found"}
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
         # Validate: current status must be needs_review, in_progress, or escalated
         if task.status not in ("needs_review", "in_progress", "escalated"):
-            return {
-                "error": f"Cannot approve task with status '{task.status}'. "
-                "Task must be in 'needs_review', 'in_progress', or 'escalated' status to approve."
-            }
+            return _status_error(
+                f"Cannot approve task with status '{task.status}'. "
+                "Task must be in 'needs_review', 'in_progress', or 'escalated' status to approve.",
+                task.status,
+            )
 
         # Resolve session_id
         try:
@@ -282,7 +310,7 @@ def register_mark_task_review_approved(
                 approval_notes=approval_notes,
             )
         except ValueError as e:
-            return {"error": str(e)}
+            return _lifecycle_value_error(str(e))
         if not updated:
             return {"error": f"Failed to approve task {task_id}"}
 
@@ -380,23 +408,29 @@ def register_mark_task_review_rejected(
 
         session_id = get_current_session_id()
         if not session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-        except (TaskNotFoundError, ValueError) as e:
+        except TaskNotFoundError as e:
+            return task_error(str(e), TaskToolErrorCode.TASK_NOT_FOUND)
+        except ValueError as e:
             return {"error": str(e)}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"error": f"Task {task_id} not found"}
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
         if task.status not in ("needs_review", "in_progress"):
-            return {
-                "error": f"Cannot reject review for task with status '{task.status}'. "
-                "Task must be in 'needs_review' or 'in_progress' status to reject review."
-            }
+            return _status_error(
+                f"Cannot reject review for task with status '{task.status}'. "
+                "Task must be in 'needs_review' or 'in_progress' status to reject review.",
+                task.status,
+            )
 
         try:
             resolved_session_id = ctx.resolve_session_id(session_id)
@@ -410,7 +444,7 @@ def register_mark_task_review_rejected(
                 round_number=round_number,
             )
         except ValueError as e:
-            return {"error": str(e)}
+            return _lifecycle_value_error(str(e))
 
         if not updated:
             return {"error": f"Failed to reject review for task {task_id}"}
@@ -513,20 +547,30 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
 
         session_id = get_current_session_id()
         if not session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         # Resolve task reference (supports #N, path, UUID formats)
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
         except TaskNotFoundError as e:
-            return {"error": str(e)}
+            return task_error(str(e), TaskToolErrorCode.TASK_NOT_FOUND)
         except ValueError as e:
             return {"error": str(e)}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"error": f"Task {task_id} not found"}
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
+
+        if task.status in ("closed", "escalated"):
+            return _status_error(
+                f"Cannot mark task with status '{task.status}' as needs_review. "
+                "Task must be active (not closed or escalated).",
+                task.status,
+            )
 
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:
@@ -559,7 +603,7 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
                 review_notes=review_notes,
             )
         except ValueError as e:
-            return {"error": str(e)}
+            return _lifecycle_value_error(str(e))
         if not updated:
             return {"error": f"Failed to mark task {task_id} for review"}
 
@@ -634,21 +678,30 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
 
         session_id = get_current_session_id()
         if not session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
+            return task_error(
+                "No session context available. Ensure session_id is set.",
+                TaskToolErrorCode.SESSION_REQUIRED,
+            )
 
         try:
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-        except (TaskNotFoundError, ValueError) as e:
+        except TaskNotFoundError as e:
+            return task_error(
+                f"Invalid task_id: {e}",
+                TaskToolErrorCode.TASK_NOT_FOUND,
+            )
+        except ValueError as e:
             return {"error": f"Invalid task_id: {e}"}
 
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
-            return {"error": f"Task {task_id} not found"}
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
 
         if task.status != "escalated":
-            return {
-                "error": f"Task {task_id} is not escalated (current status: {task.status})",
-            }
+            return _status_error(
+                f"Task {task_id} is not escalated (current status: {task.status})",
+                task.status,
+            )
 
         try:
             updated = ctx.task_manager.de_escalate_task(
@@ -658,7 +711,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 reset_validation=reset_validation,
             )
         except ValueError as e:
-            return {"error": str(e)}
+            return _lifecycle_value_error(str(e))
 
         if not updated:
             return {"error": f"Failed to de-escalate task {task_id}"}

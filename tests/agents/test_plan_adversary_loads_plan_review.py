@@ -93,6 +93,14 @@ class TestAdversarySkillLoading:
             for entry in mcp_error
         ]
         assert ("gobby-tasks", "claim_task", "task_claimed") in handlers
+        claim_handlers = [
+            entry
+            for entry in mcp_error
+            if _field(entry, "server") == "gobby-tasks"
+            and _field(entry, "tool") == "claim_task"
+        ]
+        assert claim_handlers
+        assert _field(claim_handlers[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
 
 
 class TestAdversaryInstructionsPreserveContracts:
@@ -142,6 +150,14 @@ class TestAdversaryInstructionsPreserveContracts:
         assert ("gobby-tasks", "mark_task_review_approved", "review_complete") in triples
         assert ("gobby-tasks", "mark_task_review_rejected", "review_complete") in triples
         assert ("gobby-tasks", "escalate_task", "review_complete") in triples
+        for tool in ("mark_task_review_approved", "mark_task_review_rejected", "escalate_task"):
+            matches = [
+                entry
+                for entry in mcp_error
+                if _field(entry, "server") == "gobby-tasks" and _field(entry, "tool") == tool
+            ]
+            assert matches
+            assert _field(matches[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
 
     def test_critical_rules_preserved(self, agent: AgentDefinitionBody) -> None:
         """Worker-safety critical rules must survive the trim."""

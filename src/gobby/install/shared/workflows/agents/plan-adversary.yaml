@@ -186,8 +186,7 @@ steps:
     on_mcp_error:
       - server: gobby-tasks
         tool: claim_task
-        when: >-
-          "task is closed" in str(tool_output)
+        when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: task_claimed
         value: true
@@ -254,22 +253,19 @@ steps:
     on_mcp_error:
       - server: gobby-tasks
         tool: mark_task_review_approved
-        when: >-
-          "status 'closed'" in str(tool_output) or "task is closed" in str(tool_output)
+        when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete
         value: true
       - server: gobby-tasks
         tool: mark_task_review_rejected
-        when: >-
-          "status 'closed'" in str(tool_output) or "task is closed" in str(tool_output)
+        when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete
         value: true
       - server: gobby-tasks
         tool: escalate_task
-        when: >-
-          "status 'closed'" in str(tool_output) or "task is closed" in str(tool_output)
+        when: tool_output.error_code == "TASK_CLOSED"
         action: set_variable
         variable: review_complete
         value: true
