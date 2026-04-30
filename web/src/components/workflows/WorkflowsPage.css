@@ -54,11 +54,6 @@
   padding: 0 0 0;
 }
 
-.workflows-tab-row .tab-bar {
-  margin-bottom: 0;
-  flex-shrink: 0;
-}
-
 .workflows-tab-row-right {
   display: flex;
   align-items: center;
@@ -757,59 +752,6 @@
 
 .workflows-yaml-editor .codemirror-container {
   height: 100%;
-}
-
-/* =============================================================================
-   Tab bar
-   ============================================================================= */
-
-.tab-bar {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
-}
-
-.tab-item {
-  padding: 8px 16px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: calc(var(--font-size-base) * 0.75);
-  font-weight: 500;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.15s;
-  margin-bottom: -1px;
-}
-
-.tab-item:hover {
-  color: var(--text-primary);
-}
-
-.tab-item.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  margin-left: 6px;
-  border-radius: 9px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: calc(var(--font-size-base) * 0.625);
-  font-weight: 600;
-}
-
-.tab-item.active .tab-badge {
-  background: var(--accent);
-  color: var(--accent-foreground);
 }
 
 /* =============================================================================

@@ -165,6 +165,7 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           tabs={TABS}
           activeTab={activeTab}
           onTabChange={(id) => setActiveTab(id as ActiveTab)}
+          className="mb-0 shrink-0"
         />
         <div className="workflows-tab-row-right">
           <input
