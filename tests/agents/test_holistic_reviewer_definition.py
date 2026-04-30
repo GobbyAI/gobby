@@ -38,4 +38,6 @@ def test_reads_subtree() -> None:
     ]
 
     assert "gobby-tasks:get_task" in claim_step["allowed_mcp_tools"]
-    assert "subtasks" in agent["instructions"].lower() or "subtasks" in review_text.lower()
+    assert "gobby-tasks:list_tasks" in claim_step["allowed_mcp_tools"]
+    assert "list_tasks(parent_task_id=" in agent["instructions"]
+    assert "list_tasks(parent_task_id=assigned_task_id)" in review_text
