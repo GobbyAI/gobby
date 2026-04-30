@@ -337,7 +337,6 @@
 .memory-importance-fill {
   height: 100%;
   border-radius: 2px;
-  transition: width 0.2s;
 }
 
 .importance-critical .memory-importance-fill {

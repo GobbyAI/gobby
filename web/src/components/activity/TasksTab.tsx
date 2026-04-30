@@ -266,7 +266,7 @@ function FilterDropdown({
     <>
       <div className="fixed inset-0 z-[99]" onClick={onClose} />
       <div
-        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl p-1.5 flex flex-col gap-0.5 min-w-[10rem]"
+        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl p-1.5 flex flex-col gap-0.5 min-w-[10rem] max-w-[min(20rem,calc(100vw-2rem))]"
         style={{ background: "var(--bg-secondary)" }}
       >
         {filterGroups.map((group) => (

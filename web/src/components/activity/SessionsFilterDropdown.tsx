@@ -120,7 +120,7 @@ export function SessionsFilterDropdown({
       />
       <div
         ref={panelRef}
-        className="absolute top-full right-2 z-[100] w-[280px] max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
+        className="absolute top-full right-2 z-[100] w-[min(280px,calc(100vw-1.5rem))] max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
         style={{ background: "var(--bg-secondary)" }}
         role="dialog"
         aria-label="Session filters"

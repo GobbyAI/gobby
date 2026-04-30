@@ -34,7 +34,7 @@ export const SelectContent = forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        'relative z-50 max-h-60 min-w-[8rem] overflow-hidden rounded-md border border-border bg-background shadow-md',
+        'relative z-50 max-h-60 min-w-[8rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border border-border bg-background shadow-md',
         position === 'popper' && 'translate-y-1',
         className
       )}

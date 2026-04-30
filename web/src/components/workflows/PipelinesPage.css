@@ -452,7 +452,7 @@
 .pipeline-steps-timeline .pipeline-step {
   position: relative;
   margin-left: 0.75rem;
-  border-left: 2px solid var(--border);
+  border-left: 1px solid var(--border);
   padding-left: 0.75rem;
   border-radius: 0;
   background: transparent;
@@ -854,8 +854,8 @@
   font-family: inherit;
   font-size: calc(var(--font-size-base) * 0.75);
   background: color-mix(in srgb, var(--bg-tertiary) 60%, black);
-  border-left: 2px solid var(--border);
-  border-radius: 0 4px 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   padding: 0.625rem 0.75rem;
   margin: 0;
   white-space: pre-wrap;

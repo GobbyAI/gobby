@@ -124,9 +124,9 @@
   font-size: calc(var(--font-size-base) * 0.85);
   color: var(--text-secondary);
   padding: 0.5rem 0.75rem;
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
   border-radius: 0.375rem;
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 
 .launch-agent-field {
