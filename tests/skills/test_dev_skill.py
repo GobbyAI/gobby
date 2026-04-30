@@ -2,43 +2,24 @@
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-from typing import Any
-
 import pytest
-import yaml
+
+from tests.skills.interactive_skill_helpers import (
+    assert_interactive_skill_contract,
+    read_skill,
+)
 
 pytestmark = pytest.mark.unit
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL_PATH = REPO_ROOT / "src/gobby/install/shared/skills/dev/SKILL.md"
-
-
-def _read_skill() -> str:
-    assert SKILL_PATH.exists(), f"{SKILL_PATH} should exist"
-    return SKILL_PATH.read_text(encoding="utf-8")
-
-
-def _frontmatter(body: str) -> dict[str, Any]:
-    match = re.match(r"^---\n(?P<yaml>.*?)\n---\n", body, flags=re.DOTALL)
-    assert match is not None, "skill should use YAML frontmatter"
-    data = yaml.safe_load(match.group("yaml"))
-    assert isinstance(data, dict)
-    return data
+SKILL_PATH = "src/gobby/install/shared/skills/dev/SKILL.md"
+WORKFLOW_PATH = "src/gobby/install/shared/workflows/dev.yaml"
 
 
 def test_id_opt_in_present() -> None:
-    body = _read_skill()
-    frontmatter = _frontmatter(body)
-
-    assert frontmatter["name"] == "dev"
-    assert frontmatter["metadata"]["gobby"]["audience"] == "interactive"
-    assert frontmatter["metadata"]["gobby"]["depth"] == 0
-    assert "/gobby dev" in body
-    assert "I/D" in body
-    assert re.search(r"\bI\)\s*Interactive\b", body) is not None
-    assert re.search(r"\bD\)\s*Delegated\b", body) is not None
-    assert 'value="interactive" | "delegated"' in body
-    assert "developer" in body
-    assert "src/gobby/install/shared/workflows/dev.yaml" in body
+    assert_interactive_skill_contract(
+        read_skill(SKILL_PATH),
+        name="dev",
+        command="/gobby dev",
+        agent="developer",
+        workflow_path=WORKFLOW_PATH,
+    )
