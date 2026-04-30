@@ -44,6 +44,10 @@ class _Unset:
 UNSET = _Unset()
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 def compute_next_run(job: CronJob) -> datetime | None:
     """Compute the next run time for a cron job.
 
@@ -315,7 +319,7 @@ class CronJobStorage:
                     "action repair."
                 )
 
-        fields["updated_at"] = datetime.now(UTC).isoformat()
+        fields["updated_at"] = _utc_now_iso()
 
         return self._update_job_fields(job_id, **fields)
 
@@ -380,7 +384,7 @@ class CronJobStorage:
             job_id,
             action_type=action_type,
             action_config=action_config,
-            updated_at=datetime.now(UTC).isoformat(),
+            updated_at=_utc_now_iso(),
         )
 
     def delete_job(self, job_id: str) -> bool:
@@ -421,7 +425,7 @@ class CronJobStorage:
             updated = self._update_job_fields(
                 job_id,
                 enabled=updates["enabled"],
-                updated_at=datetime.now(UTC).isoformat(),
+                updated_at=_utc_now_iso(),
             )
             if updated is None:
                 return None

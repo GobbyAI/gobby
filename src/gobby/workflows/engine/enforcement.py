@@ -414,7 +414,9 @@ class EnforcementMixin:
             )
             return True, evaluator.evaluate_value(value)
         except Exception as exc:
-            logger.warning("Failed to evaluate step %s handler value %r: %s", effect_type, value, exc)
+            logger.warning(
+                "Failed to evaluate step %s handler value %r: %s", effect_type, value, exc
+            )
             return False, None
 
     def _process_step_before_mcp_tool(
@@ -452,9 +454,7 @@ class EnforcementMixin:
 
             if action == "set_variable":
                 var_name = handler.get("variable")
-                ok, var_value = self._evaluate_step_handler_value(
-                    handler.get("value"), ctx, action
-                )
+                ok, var_value = self._evaluate_step_handler_value(handler.get("value"), ctx, action)
                 if var_name is not None and ok:
                     instance.variables[var_name] = var_value
                     variables[var_name] = var_value
@@ -474,10 +474,7 @@ class EnforcementMixin:
                     instance_mgr.save_instance(instance)
                 raw_reason = str(
                     handler.get("reason")
-                    or (
-                        f"MCP tool '{mcp_key}' is blocked by a workflow "
-                        "on_mcp_before handler."
-                    )
+                    or (f"MCP tool '{mcp_key}' is blocked by a workflow on_mcp_before handler.")
                 )
                 reason = (
                     f"Rule enforced by Gobby: "

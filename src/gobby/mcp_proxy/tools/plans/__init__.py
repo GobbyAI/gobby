@@ -35,10 +35,7 @@ def create_plan_registry(
             return {
                 "ok": False,
                 "error": "invalid_plan_kind",
-                "message": (
-                    "plan_kind must be one of: "
-                    f"{', '.join(sorted(allowed_plan_kinds))}"
-                ),
+                "message": (f"plan_kind must be one of: {', '.join(sorted(allowed_plan_kinds))}"),
             }
         project_id = _resolve_project_id(db, project, default_project_id)
         root_ref = root_task_ref or _root_task_from_path(plan_path)

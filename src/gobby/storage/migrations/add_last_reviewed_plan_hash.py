@@ -26,9 +26,7 @@ def up(db: LocalDatabase) -> None:
             db.execute(f"ALTER TABLE task_artifacts ADD COLUMN {column} TEXT")  # nosec B608
     for column in _INTEGER_COLUMNS:
         if column not in existing:
-            db.execute(
-                f"ALTER TABLE task_artifacts ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
-            )  # nosec B608
+            db.execute(f"ALTER TABLE task_artifacts ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")  # nosec B608
 
 
 def down(db: LocalDatabase) -> None:
