@@ -123,7 +123,7 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
     # entry.source_section -> id of the per-entry IMPL or single task.
     # Used to wire cross-deliverable depends_on edges below.
     entry_work_task_id: dict[str, str] = {}
-    prior_phase_ref_id: str | None = None
+    tdd_phase_chain: list[tuple[str, str]] = []
 
     for phase_id in phase_id_order:
         phase_section = phase_section_by_phase_id[phase_id]
@@ -168,8 +168,6 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
             tasks.append(phase_test_task)
             phase["task_ids"].append(phase_test_id)
             phase["tdd_sandwich_emitted"] = True
-            if prior_phase_ref_id is not None:
-                dependencies.append({"task_id": phase_test_id, "depends_on": prior_phase_ref_id})
 
             # Per-entry [IMPL] tasks.
             impl_ids: list[str] = []
@@ -202,7 +200,7 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
             phase["task_ids"].append(phase_ref_id)
             for impl_id in impl_ids:
                 dependencies.append({"task_id": phase_ref_id, "depends_on": impl_id})
-            prior_phase_ref_id = phase_ref_id
+            tdd_phase_chain.append((phase_test_id, phase_ref_id))
         else:
             phase["tdd_sandwich_emitted"] = False
 
@@ -237,6 +235,30 @@ def compile_plan_to_spec(self: Any, plan_doc: PlanDocument, task: Task) -> dict[
                     "depends_on": entry_work_task_id[dep_section],
                 }
             )
+
+    # Implicit phase sequencing is a default, not a stronger requirement than
+    # explicit manifest dependencies. Some plans intentionally have an earlier
+    # phase task depend on a later phase prerequisite; adding a phase N+1 TEST →
+    # phase N REF edge in that case would create a cycle and hide the real
+    # dependency order expressed by the manifest.
+    for (prior_test_id, prior_ref_id), (phase_test_id, _phase_ref_id) in zip(
+        tdd_phase_chain, tdd_phase_chain[1:], strict=False
+    ):
+        if _dependency_path_exists(
+            dependencies,
+            start_task_id=prior_ref_id,
+            target_task_id=phase_test_id,
+        ):
+            logger.info(
+                "Skipping implicit phase dependency that conflicts with manifest edges",
+                extra={
+                    "task_id": phase_test_id,
+                    "depends_on": prior_ref_id,
+                    "prior_phase_test_id": prior_test_id,
+                },
+            )
+            continue
+        dependencies.append({"task_id": phase_test_id, "depends_on": prior_ref_id})
 
     return {
         "version": 1,
@@ -663,6 +685,33 @@ def validate_compiled_spec(self: Any, compiled_spec: dict[str, Any]) -> dict[str
         "phase_count": len(phases),
         "plan_file": compiled_spec.get("plan_file"),
     }
+
+
+def _dependency_path_exists(
+    dependencies: list[dict[str, str]],
+    *,
+    start_task_id: str,
+    target_task_id: str,
+) -> bool:
+    """Return whether start_task_id already reaches target_task_id through blockers."""
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in dependencies:
+        task_id = edge.get("task_id")
+        depends_on = edge.get("depends_on")
+        if task_id and depends_on:
+            adjacency[task_id].append(depends_on)
+
+    seen: set[str] = set()
+    stack = [start_task_id]
+    while stack:
+        task_id = stack.pop()
+        if task_id == target_task_id:
+            return True
+        if task_id in seen:
+            continue
+        seen.add(task_id)
+        stack.extend(adjacency.get(task_id, []))
+    return False
 
 
 async def _generate_raw_spec(self: Any, run: ExpansionRun, task: Task) -> dict[str, Any]:

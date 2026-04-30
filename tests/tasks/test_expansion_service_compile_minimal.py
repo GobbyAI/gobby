@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,7 +16,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def service(temp_db) -> ExpansionService:
+def service(temp_db: Any) -> ExpansionService:
     return ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
 
 
@@ -93,9 +94,69 @@ original_acceptance_items:
     return path
 
 
+def _write_cross_phase_prerequisite_plan(path: Path) -> Path:
+    path.write_text(
+        """> **Plan ID:** cross-phase-prerequisite
+
+# Cross Phase Prerequisite Plan
+
+## P1 Phase 1
+`kind: framing`
+
+### 1.1 Scanner [category: code] (depends: 2.1)
+`kind: deliverable`
+
+Implement the scanner that imports the expansion hook.
+
+**Acceptance:**
+- 1.1.1 - Scanner imports the hook. file: `src/scanner.py`
+
+## P2 Phase 2
+`kind: framing`
+
+### 2.1 Expansion Hook [category: code]
+`kind: deliverable`
+
+Expose the expansion hook used by the scanner.
+
+**Acceptance:**
+- 2.1.1 - Hook exists. file: `src/expansion_hook.py`
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "Scanner"
+  category: code
+  task_type: task
+  depends_on:
+    - "2.1"
+  validation_criteria: "Scanner acceptance is satisfied."
+  labels:
+    - "covers:cross-phase-prerequisite:1.1:1.1.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.1"
+- title: "Expansion Hook"
+  category: code
+  task_type: task
+  depends_on: []
+  validation_criteria: "Expansion hook acceptance is satisfied."
+  labels:
+    - "covers:cross-phase-prerequisite:2.1:2.1.1"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.1"
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = service.task_manager.create_task(
@@ -143,9 +204,33 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
     )
 
 
+def test_compile_skips_implicit_phase_edge_when_manifest_requires_later_phase_first(
+    service: ExpansionService,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    parent = service.task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Cross-phase epic",
+        task_type="epic",
+    )
+    plan_doc = parse_plan(
+        _write_cross_phase_prerequisite_plan(tmp_path / "cross-phase-prerequisite.md"),
+        parse_mode="expansion",
+    )
+
+    spec = service.compile_plan_to_spec(plan_doc, parent)
+
+    assert {"task_id": "1.1::impl", "depends_on": "2.1::impl"} in spec["dependencies"]
+    assert {"task_id": "phase-p2::__test", "depends_on": "phase-p1::__ref"} not in spec[
+        "dependencies"
+    ]
+    assert service.validate_compiled_spec(spec)["valid"] is True
+
+
 def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers(
     service: ExpansionService,
-    sample_project,
+    sample_project: dict[str, Any],
     tmp_path: Path,
 ) -> None:
     parent = service.task_manager.create_task(
@@ -168,8 +253,9 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
 
     applied = service.apply_run(run.id, session_id=None)
 
-    assert len(applied.created_task_ids) == 6
-    created = [service.task_manager.get_task(task_id) for task_id in applied.created_task_ids]
+    created_task_ids = applied.created_task_ids or []
+    assert len(created_task_ids) == 6
+    created = [service.task_manager.get_task(task_id) for task_id in created_task_ids]
     assert all(task is not None for task in created)
     titles = [task.title for task in created if task is not None]
     # Exactly one phase-level [TEST] Phase N and [REF] Phase N per phase —
