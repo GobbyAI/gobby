@@ -34,7 +34,7 @@ def plan_review_rule(task: object, context: object) -> Action | None:
         return None
 
     artifacts = _artifacts(context)
-    if _has_label(task, "stage-:plan_review"):
+    if _stage_skipped(task, "plan_review"):
         return _advance(task, "test_arch", "open", "plan_review_skipped")
     if not _field(artifacts, "plan_file_path"):
         return None
@@ -48,7 +48,7 @@ def plan_review_rule(task: object, context: object) -> Action | None:
 def test_arch_rule(task: object, context: object) -> Action | None:
     if _state(task) != ("test_arch", "open"):
         return None
-    if _has_label(task, "stage-:test_arch"):
+    if _stage_skipped(task, "test_arch"):
         return _advance(task, "expanding", "open", "test_arch_skipped")
     if _maxed_out(task, _artifacts(context), context, "test_arch_attempts", "max_review_rounds"):
         return _fallback(task, "test_arch", "expanding", "open")
@@ -58,7 +58,7 @@ def test_arch_rule(task: object, context: object) -> Action | None:
 def expansion_rule(task: object, context: object) -> Action | None:
     if _state(task) != ("expanding", "open"):
         return None
-    if _has_label(task, "stage-:expanding"):
+    if _stage_skipped(task, "expanding"):
         return _advance(task, "in_development", "open", "expansion_skipped")
     artifacts = _artifacts(context)
     if _maxed_out(task, artifacts, context, "expansion_attempts", "max_expansion_attempts"):
@@ -73,13 +73,14 @@ def isolation_rule(task: object, context: object) -> Action | None:
     isolation = _isolation(task)
     if isolation not in {"worktree", "clone"}:
         return None
-    if _has_isolation_pair(_artifacts(context), isolation):
+    artifacts = _artifacts(context)
+    if _has_isolation_pair(artifacts, isolation):
         return None
     return CreateIsolationAction(
         task_id=_task_id(task),
         task_ref=_task_ref(task),
         isolation=isolation,
-        base_branch=_field(_artifacts(context), "target_branch"),
+        base_branch=_field(artifacts, "target_branch"),
     )
 
 
@@ -89,7 +90,9 @@ def dev_rule(task: object, context: object) -> Action | None:
     if is_blocked_by_deps(task) or not _field(task, "assigned_agent"):
         return None
     isolation = _isolation(task)
-    if isolation in {"worktree", "clone"} and not _has_isolation_pair(_artifacts(context), isolation):
+    if isolation in {"worktree", "clone"} and not _has_isolation_pair(
+        _artifacts(context), isolation
+    ):
         return None
     return _spawn(task, context, str(_field(task, "assigned_agent")))
 
@@ -97,7 +100,7 @@ def dev_rule(task: object, context: object) -> Action | None:
 def qa_rule(task: object, context: object) -> Action | None:
     if _state(task) != ("in_development", "needs_review") or not _is_leaf(task):
         return None
-    if _has_label(task, "stage-:qa"):
+    if _stage_skipped(task, "qa"):
         return _advance(task, "holistic_review", "review_approved", "qa_skipped")
     artifacts = _artifacts(context)
     if _maxed_out(task, artifacts, context, "qa_attempts", "max_qa_rounds"):
@@ -123,7 +126,7 @@ def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
 def holistic_rule(task: object, context: object) -> Action | None:
     if _state(task) != ("holistic_review", "open"):
         return None
-    if _has_label(task, "stage-:holistic_review"):
+    if _stage_skipped(task, "holistic_review"):
         return _advance(task, "pr", "open", "holistic_review_skipped")
     if _field(task, "task_type") != "epic":
         return None
@@ -139,7 +142,7 @@ def holistic_rule(task: object, context: object) -> Action | None:
 def pr_rule(task: object, context: object) -> Action | None:
     if _state(task) != ("pr", "open"):
         return None
-    if _has_label(task, "stage-:pr") or _is_unattended(task):
+    if _stage_skipped(task, "pr") or _is_unattended(task):
         return _advance(task, "merging", "open", "pr_unattended")
     return EscalateAction(task_id=_task_id(task), reason="pr_creation_required")
 
@@ -178,6 +181,10 @@ def _task_ref(task: object) -> str:
 
 def _has_label(task: object, label: str) -> bool:
     return label in set(_field(task, "labels", ()) or ())
+
+
+def _stage_skipped(task: object, stage: str) -> bool:
+    return _has_label(task, f"{_SKIP_PREFIX}{stage}")
 
 
 def _artifacts(context: object) -> object:
@@ -268,11 +275,7 @@ def _spawn(task: object, context: object, agent_slug: str) -> SpawnAgentAction:
 def _prompt_context(context: object) -> dict[str, object]:
     if isinstance(context, dict):
         return dict(context)
-    return {
-        name: value
-        for name, value in vars(context).items()
-        if not name.startswith("_")
-    }
+    return {name: value for name, value in vars(context).items() if not name.startswith("_")}
 
 
 def _advance(task: object, lifecycle: str, status: str, reason: str) -> AdvanceLifecycleAction:

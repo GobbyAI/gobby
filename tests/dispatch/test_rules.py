@@ -79,9 +79,7 @@ def test_test_arch_rule_fires_and_skip_advances() -> None:
 
     assert isinstance(_evaluate(_task(lifecycle="test_arch", status="open")), SpawnAgentAction)
 
-    skipped = _evaluate(
-        _task(lifecycle="test_arch", status="open", labels=["stage-:test_arch"])
-    )
+    skipped = _evaluate(_task(lifecycle="test_arch", status="open", labels=["stage-:test_arch"]))
     assert isinstance(skipped, AdvanceLifecycleAction)
     assert (skipped.to_lifecycle, skipped.to_status) == ("expanding", "open")
 
@@ -241,9 +239,7 @@ def test_stage_skips_advance(stage: str, to_lifecycle: str, to_status: str) -> N
 def test_stage_skip_pr_advances_to_merging_under_unattended() -> None:
     from gobby.dispatch.actions import AdvanceLifecycleAction
 
-    action = _evaluate(
-        _task(lifecycle="pr", status="open", labels=["stage-:pr"], unattended=True)
-    )
+    action = _evaluate(_task(lifecycle="pr", status="open", labels=["stage-:pr"], unattended=True))
 
     assert isinstance(action, AdvanceLifecycleAction)
     assert (action.to_lifecycle, action.to_status) == ("merging", "open")
@@ -253,7 +249,12 @@ def test_unattended_advances_on_max_retries() -> None:
     from gobby.dispatch.actions import AdvanceLifecycleAction
 
     action = _evaluate(
-        _task(lifecycle="in_development", status="needs_review", unattended=True, validation_fail_count=2),
+        _task(
+            lifecycle="in_development",
+            status="needs_review",
+            unattended=True,
+            validation_fail_count=2,
+        ),
         _context(max_qa_rounds=2),
     )
 
@@ -272,10 +273,9 @@ def test_attended_escalates_with_reason() -> None:
     assert action.reason
 
 
-def test_base_rules_has_ten_entries_with_all_leaves_holistic_at_position_8_and_excludes_merge_rule() -> None:
+def test_base_rules_order_excludes_merge_rule() -> None:
     from gobby.dispatch.rules import BASE_RULES
 
     assert len(BASE_RULES) == 10
     assert BASE_RULES[7].__name__ == "all_leaves_holistic_rule"
     assert "merge_rule" not in {rule.__name__ for rule in BASE_RULES}
-

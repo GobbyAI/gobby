@@ -226,7 +226,9 @@ def advance_lifecycle(
 
     task = get_task(db, task_id)
     effects = side_effects or {}
-    from_lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
+    from_lifecycle = (
+        task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
+    )
     from_status = task.status
     if (
         (from_lifecycle, from_status, to_lifecycle, to_status)
@@ -234,7 +236,9 @@ def advance_lifecycle(
         and task.task_type == "epic"
         and not _all_leaves_parked_or_terminal(db, task_id)
     ):
-        raise ValueError("Epic cannot enter holistic_review until all leaves are parked or terminal.")
+        raise ValueError(
+            "Epic cannot enter holistic_review until all leaves are parked or terminal."
+        )
 
     artifact_updates = dict(effects.get("artifact_updates") or {})
     for column in effects.get("clear_artifacts") or ():
@@ -255,9 +259,7 @@ def advance_lifecycle(
         claimed_by_session_id=None if effects.get("clear_claim", True) else UNSET,
         escalated_at=None if effects.get("clear_escalation") else UNSET,
         escalation_reason=(
-            None
-            if effects.get("clear_escalation")
-            else effects.get("escalation_reason", UNSET)
+            None if effects.get("clear_escalation") else effects.get("escalation_reason", UNSET)
         ),
         closed_at=now if to_status == "closed" else UNSET,
         closed_reason=effects.get("closed_reason", UNSET),
@@ -517,13 +519,17 @@ def mark_task_review_approved(
             {"reason": "test_arch_approved", "clear_counters": ("test_arch_attempts",)},
         )
     if lifecycle == "in_development" and task.status == "needs_review":
-        return advance_lifecycle(db, task_id, "holistic_review", "review_approved", {"reason": "qa_approved"})
+        return advance_lifecycle(
+            db, task_id, "holistic_review", "review_approved", {"reason": "qa_approved"}
+        )
     if lifecycle == "holistic_review" and task.status == "open":
         return advance_lifecycle(db, task_id, "pr", "open", {"reason": "holistic_approved"})
     if lifecycle == "pr" and task.status == "needs_review":
         return advance_lifecycle(db, task_id, "merging", "open", {"reason": "pr_approved"})
 
-    approved = advance_lifecycle(db, task_id, lifecycle, "review_approved", {"reason": "review_approved"})
+    approved = advance_lifecycle(
+        db, task_id, lifecycle, "review_approved", {"reason": "review_approved"}
+    )
     if description is not UNSET:
         update_task(db, task_id, description=description)
         return get_task(db, task_id)
