@@ -137,8 +137,8 @@ class CronScheduler:
                 # Create run and advance next_run_at immediately to prevent re-dispatch
                 run = self.storage.create_run(job.id)
                 next_run = compute_next_run(job)
-                self.storage.update_job(
-                    job.id,
+                self._update_job_bookkeeping(
+                    job,
                     next_run_at=next_run.isoformat() if next_run else None,
                 )
                 logger.info(f"Dispatching cron job {job.id} ({job.name}), run {run.id}")
@@ -166,8 +166,8 @@ class CronScheduler:
             now = datetime.now(UTC).isoformat()
             if result.status == "completed":
                 # Reset failure counter (next_run_at already set before dispatch)
-                self.storage.update_job(
-                    job.id,
+                self._update_job_bookkeeping(
+                    job,
                     last_run_at=now,
                     last_status="completed",
                     consecutive_failures=0,
@@ -175,8 +175,8 @@ class CronScheduler:
             else:
                 # Increment failure counter (next_run_at already set before dispatch)
                 failures = job.consecutive_failures + 1
-                self.storage.update_job(
-                    job.id,
+                self._update_job_bookkeeping(
+                    job,
                     last_run_at=now,
                     last_status="failed",
                     consecutive_failures=failures,
@@ -202,6 +202,11 @@ class CronScheduler:
             return 0
         idx = min(consecutive_failures - 1, len(delays) - 1)
         return delays[idx]
+
+    def _update_job_bookkeeping(self, job: CronJob, **fields: object) -> CronJob | None:
+        if job.is_system:
+            return self.storage.update_system_job_bookkeeping(job.id, **fields)
+        return self.storage.update_job(job.id, **fields)
 
     async def run_now(self, job_id: str) -> CronRun | None:
         """Trigger immediate execution of a job (bypasses schedule).

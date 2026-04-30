@@ -681,6 +681,15 @@ def init_orchestration(runner: GobbyRunner) -> None:
             agent_runner=runner.agent_runner,
             pipeline_executor=runner.pipeline_executor,
         )
+        cron_executor.register_handler(
+            "dispatch.tick",
+            cron_executor._execute_dispatcher,
+        )
+        if runner.project_id:
+            from gobby.runner import install_dispatcher_cron_row
+
+            install_dispatcher_cron_row(runner.database, project_id=runner.project_id)
+            logger.info("Installed system cron job: gobby:dispatcher")
 
         # Register pipeline heartbeat handler
         try:

@@ -93,7 +93,7 @@ class CronJobStorage:
         project_id: str,
         name: str,
         schedule_type: Literal["cron", "interval", "once"],
-        action_type: Literal["agent_spawn", "pipeline", "shell", "handler"],
+        action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
         action_config: dict[str, Any],
         description: str | None = None,
         cron_expr: str | None = None,
@@ -237,6 +237,35 @@ class CronJobStorage:
             "updated_at",
         }
     )
+    _SYSTEM_BOOKKEEPING_FIELDS = frozenset(
+        {
+            "next_run_at",
+            "last_run_at",
+            "last_status",
+            "consecutive_failures",
+        }
+    )
+
+    def _update_job_fields(self, job_id: str, **fields: Any) -> CronJob | None:
+        """Update trusted cron row fields without the public operator policy."""
+        if not fields:
+            return self.get_job(job_id)
+
+        invalid_fields = set(fields.keys()) - self._VALID_UPDATE_FIELDS
+        if invalid_fields:
+            raise ValueError(f"Invalid field names: {invalid_fields}")
+
+        if "action_config" in fields and isinstance(fields["action_config"], dict):
+            fields["action_config"] = json.dumps(fields["action_config"])
+
+        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
+        values = list(fields.values()) + [job_id]
+        self.db.execute(
+            f"UPDATE cron_jobs SET {set_clause} WHERE id = ?",  # nosec B608
+            tuple(values),
+        )
+
+        return self.get_job(job_id)
 
     def update_job(self, job_id: str, **fields: Any) -> CronJob | None:
         """Update cron job fields."""
@@ -249,19 +278,44 @@ class CronJobStorage:
 
         fields["updated_at"] = datetime.now(UTC).isoformat()
 
-        # Serialize action_config to JSON if present
-        if "action_config" in fields and isinstance(fields["action_config"], dict):
-            fields["action_config"] = json.dumps(fields["action_config"])
+        return self._update_job_fields(job_id, **fields)
 
-        set_clause = ", ".join(f"{key} = ?" for key in fields.keys())
-        values = list(fields.values()) + [job_id]
+    def update_system_job_bookkeeping(self, job_id: str, **fields: Any) -> CronJob | None:
+        """Update scheduler-owned fields on a system cron job."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise ValueError(f"Cannot update system bookkeeping for non-system cron job {job_id}")
 
-        self.db.execute(
-            f"UPDATE cron_jobs SET {set_clause} WHERE id = ?",  # nosec B608
-            tuple(values),
+        invalid_fields = set(fields.keys()) - self._SYSTEM_BOOKKEEPING_FIELDS
+        if invalid_fields:
+            raise ValueError(f"Invalid system bookkeeping field names: {invalid_fields}")
+
+        return self._update_job_fields(job_id, **fields)
+
+    def reconcile_system_job_definition(
+        self,
+        job_id: str,
+        *,
+        action_type: Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"],
+        action_config: dict[str, Any],
+    ) -> CronJob | None:
+        """Repair bundled action fields on an existing system cron job."""
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if not job.is_system:
+            raise ValueError(f"Cannot reconcile definition for non-system cron job {job_id}")
+        if job.action_type == action_type and job.action_config == action_config:
+            return job
+
+        return self._update_job_fields(
+            job_id,
+            action_type=action_type,
+            action_config=action_config,
+            updated_at=datetime.now(UTC).isoformat(),
         )
-
-        return self.get_job(job_id)
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a cron job and its runs."""
