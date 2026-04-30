@@ -105,7 +105,7 @@ export class AppErrorBoundary extends Component<
                 borderRadius: 4,
                 border: "none",
                 background: "var(--accent)",
-                color: "#fff",
+                color: "var(--accent-foreground)",
                 cursor: "pointer",
                 fontSize: "0.8rem",
               }}

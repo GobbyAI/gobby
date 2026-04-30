@@ -49,5 +49,5 @@
 
 .tab-item.active .tab-badge {
   background: var(--accent);
-  color: var(--accent-foreground, #fff);
+  color: var(--accent-foreground);
 }

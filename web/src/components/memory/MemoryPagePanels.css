@@ -2,7 +2,7 @@
 .memory-detail-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--surface-scrim);
   z-index: 90;
   opacity: 0;
   pointer-events: none;
@@ -124,7 +124,7 @@
 .memory-form-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--surface-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -645,7 +645,7 @@
   right: 20px;
   z-index: 1000;
   background: var(--color-error);
-  color: #fff;
+  color: var(--accent-foreground);
   padding: 0.5rem 1rem;
   border-radius: 6px;
   font-size: var(--text-base);

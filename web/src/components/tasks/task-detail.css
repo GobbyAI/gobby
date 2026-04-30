@@ -8,7 +8,7 @@
 .task-detail-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--surface-scrim);
   z-index: 90;
 }
 
@@ -259,7 +259,7 @@
 .task-detail-action-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 .task-detail-action-btn--primary:hover:not(:disabled) {
@@ -414,7 +414,7 @@
 .task-handoff-target-btn.active {
   background: var(--bg-secondary);
   color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .task-handoff-field {
@@ -514,7 +514,7 @@
   border: none;
   border-radius: 4px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: calc(var(--font-size-base) * 0.68);
   font-weight: 500;
   cursor: pointer;
@@ -625,7 +625,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   z-index: 100;
   padding: 4px;
 }
@@ -937,7 +937,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   z-index: 50;
   padding: 3px;
 }

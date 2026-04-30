@@ -717,7 +717,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
   min-width: 180px;
 }
 
@@ -863,7 +863,7 @@
 .quick-capture-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface-scrim);
   z-index: 1000;
 }
 
@@ -877,7 +877,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-xl);
   z-index: 1001;
   padding: 16px;
 }
@@ -940,7 +940,7 @@
 .quick-capture-type-btn.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 .quick-capture-submit {
@@ -948,7 +948,7 @@
   background: var(--accent);
   border: none;
   border-radius: 6px;
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: var(--text-md);
   font-weight: 500;
   cursor: pointer;
@@ -1740,7 +1740,7 @@
 
 .audit-log-filter-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   border-color: var(--accent);
 }
 

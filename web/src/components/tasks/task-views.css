@@ -110,7 +110,7 @@
 .task-create-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface-scrim);
   z-index: 200;
 }
 
@@ -127,7 +127,7 @@
   border-radius: 0.75rem;
   z-index: 210;
   overflow-y: auto;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-xl);
 }
 
 .task-create-header {
@@ -371,12 +371,12 @@
 
 .kanban-card-action:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 .kanban-card-action--close:hover {
   background: var(--color-success-foreground);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 /* Blocked cards */
@@ -453,7 +453,7 @@
 
 .kanban-toolbar-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   border-color: var(--accent);
 }
 
@@ -680,7 +680,7 @@
 
 .priority-card-action:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 .priority-done-summary {
@@ -817,7 +817,7 @@
 .gantt-bar--dragging {
   opacity: 1;
   filter: brightness(1.2);
-  stroke: #fff;
+  stroke: var(--text-primary);
   stroke-width: 1;
 }
 

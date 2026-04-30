@@ -329,7 +329,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md);
   z-index: 20;
   min-width: 200px;
   padding: 0.25rem;

@@ -147,7 +147,7 @@
   border: none;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: calc(var(--font-size-base) * 0.75);
   font-weight: 500;
   cursor: pointer;
@@ -231,7 +231,7 @@
 .workflows-filter-chip--active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 /* Content area */
@@ -450,7 +450,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--text-primary);
   position: absolute;
   top: 2px;
   left: 2px;
@@ -525,7 +525,7 @@
   padding: 0 5px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: calc(var(--font-size-base) * 0.625);
   font-weight: 600;
   line-height: 1;
@@ -542,7 +542,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .workflows-filter-popover-section {
@@ -619,7 +619,7 @@
 .workflows-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--surface-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -701,7 +701,7 @@
   border: none;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: var(--text-md);
   font-weight: 500;
   cursor: pointer;
@@ -809,7 +809,7 @@
 
 .tab-item.active .tab-badge {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 /* =============================================================================

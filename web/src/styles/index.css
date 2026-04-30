@@ -154,7 +154,7 @@ body {
 }
 
 .source-icon-codex {
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 [data-theme="light"] .source-icon-codex {
@@ -302,7 +302,7 @@ body {
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--surface-scrim);
   z-index: 999;
 }
 

@@ -17,7 +17,7 @@
   right: 20px;
   z-index: 1000;
   background: var(--color-error);
-  color: #fff;
+  color: var(--accent-foreground);
   padding: 0.5rem 1rem;
   border-radius: 6px;
   font-size: calc(var(--font-size-base) * 0.85);
@@ -31,7 +31,7 @@
   right: 20px;
   z-index: 1000;
   background: var(--color-error);
-  color: #fff;
+  color: var(--accent-foreground);
   padding: 0.5rem 1rem;
   border-radius: 6px;
   font-size: calc(var(--font-size-base) * 0.85);
@@ -342,7 +342,7 @@
   flex-direction: column;
   overflow-y: auto;
   animation: slideInRight 0.2s ease;
-  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+  box-shadow: -4px 0 12px oklch(0% 0 0 / 0.1);
 }
 
 @keyframes slideInRight {
@@ -580,7 +580,7 @@
 .skill-form-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface-scrim);
   z-index: 100;
   display: flex;
   align-items: center;
@@ -798,7 +798,7 @@
 .skill-import-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface-scrim);
   z-index: 100;
   display: flex;
   align-items: center;

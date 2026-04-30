@@ -17,13 +17,13 @@
   left: 50%;
   transform: translateX(-50%);
   background: var(--color-error);
-  color: #fff;
+  color: var(--accent-foreground);
   padding: 10px 20px;
   border-radius: 8px;
   font-size: calc(var(--font-size-base) * 0.75);
   z-index: 1000;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 /* Toolbar */
@@ -73,7 +73,7 @@
   border: none;
   border-radius: 6px;
   background: var(--accent-color);
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: calc(var(--font-size-base) * 0.75);
   font-weight: 500;
   cursor: pointer;
@@ -141,7 +141,7 @@
 
 .intg-filter-chip--active {
   background: var(--accent-color);
-  color: #fff;
+  color: var(--accent-foreground);
   border-color: var(--accent-color);
 }
 
@@ -505,7 +505,7 @@
 .intg-detail-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-scrim);
   z-index: 800;
 }
 
@@ -522,7 +522,7 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.2);
+  box-shadow: -4px 0 20px oklch(0% 0 0 / 0.2);
   animation: intg-slide-in 0.2s ease-out;
 }
 
@@ -637,7 +637,7 @@
 .intg-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -653,7 +653,7 @@
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-lg);
 }
 
 .intg-modal-header {
@@ -829,7 +829,7 @@
   border: none;
   border-radius: 6px;
   background: var(--accent-color);
-  color: #fff;
+  color: var(--accent-foreground);
   font-size: calc(var(--font-size-base) * 0.75);
   font-weight: 500;
   cursor: pointer;

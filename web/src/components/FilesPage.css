@@ -370,7 +370,7 @@
   background: var(--color-success-foreground);
   border: none;
   border-radius: 0.25rem;
-  color: #fff;
+  color: var(--accent-foreground);
   cursor: pointer;
   font-size: calc(var(--font-size-base) * 0.75);
   font-weight: 500;
@@ -448,7 +448,7 @@
 .files-confirm-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--surface-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -504,7 +504,7 @@
   background: var(--color-error);
   border: none;
   border-radius: 0.25rem;
-  color: #fff;
+  color: var(--accent-foreground);
   cursor: pointer;
   font-size: calc(var(--font-size-base) * 0.8);
   font-weight: 500;

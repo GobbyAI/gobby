@@ -62,7 +62,7 @@
 .config-tab.active {
   background: var(--bg-secondary);
   color: var(--text-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .config-toolbar-btn {
@@ -87,7 +87,7 @@
 
 .config-toolbar-btn.primary {
   background: var(--accent-color, var(--color-info));
-  color: #fff;
+  color: var(--accent-foreground);
   border-color: var(--accent-color, var(--color-info));
 }
 
@@ -265,7 +265,7 @@
   left: 2px;
   width: 16px;
   height: 16px;
-  background: #fff;
+  background: var(--text-primary);
   border-radius: 50%;
   transition: transform 0.2s;
 }
@@ -660,7 +660,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--surface-scrim);
   display: flex;
   align-items: center;
   justify-content: center;

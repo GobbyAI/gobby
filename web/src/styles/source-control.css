@@ -389,7 +389,7 @@
   display: flex;
   flex-direction: column;
   z-index: 50;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+  box-shadow: -4px 0 24px oklch(0% 0 0 / 0.3);
 }
 
 .sc-detail-panel__header {

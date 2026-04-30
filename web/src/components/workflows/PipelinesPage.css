@@ -38,7 +38,7 @@
   padding: 0.05rem 0.35rem;
   border-radius: 999px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   font-weight: 600;
   line-height: 1.2;
 }
@@ -640,7 +640,7 @@
 .reporting-type-tab.active {
   background: var(--bg-primary);
   color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ── Table container ── */
@@ -1079,12 +1079,12 @@
 }
 
 [data-theme="light"] .reporting-code-block pre {
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--surface-tint-subtle);
   border-left-color: var(--border);
 }
 
 [data-theme="light"] .reporting-stat {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--surface-tint-subtle);
   border-color: var(--border);
 }
 

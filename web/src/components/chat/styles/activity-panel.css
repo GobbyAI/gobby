@@ -402,7 +402,7 @@
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   background: var(--bg-secondary);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-lg);
 }
 
 .activity-panel-mobile-menu__item {

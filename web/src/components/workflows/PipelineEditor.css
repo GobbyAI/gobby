@@ -100,7 +100,7 @@
 .pipeline-editor-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
   font-weight: 500;
 }
 
@@ -444,7 +444,7 @@
   padding: 4px;
   min-width: 160px;
   z-index: 10;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .pipeline-editor-add-option {

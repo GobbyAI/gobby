@@ -47,7 +47,7 @@ class KnowledgeGraphErrorBoundary extends Component<
             {this.props.onFallback && (
               <button
                 onClick={this.props.onFallback}
-                style={{ padding: '0.35rem 0.75rem', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}
+                style={{ padding: '0.35rem 0.75rem', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--accent-foreground)', cursor: 'pointer', fontSize: '0.8rem' }}
               >
                 Switch to List
               </button>
@@ -330,7 +330,7 @@ export function MemoryPage({ projectId }: MemoryPageProps = {}) {
               <div>WebGL is not available on this device.</div>
               <button
                 onClick={() => setViewMode('list')}
-                style={{ marginTop: '0.75rem', padding: '0.35rem 0.75rem', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}
+                style={{ marginTop: '0.75rem', padding: '0.35rem 0.75rem', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--accent-foreground)', cursor: 'pointer', fontSize: '0.8rem' }}
               >
                 Switch to List
               </button>

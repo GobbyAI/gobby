@@ -127,7 +127,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--text-primary);
   position: absolute;
   top: 1px;
   left: 1px;
@@ -289,7 +289,7 @@
 .rule-edit-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-foreground);
 }
 
 .rule-edit-btn--primary:hover {

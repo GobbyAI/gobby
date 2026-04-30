@@ -228,7 +228,7 @@
 .reports-detail-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--surface-scrim);
   z-index: 90;
 }
 
@@ -721,13 +721,13 @@
 }
 
 [data-theme="light"] .reports-detail-code {
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--surface-tint-subtle);
 }
 
 [data-theme="light"] .reports-detail-stat {
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--surface-tint-subtle);
 }
 
 [data-theme="light"] .reports-detail-tag {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-tint-subtle);
 }

@@ -160,7 +160,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     border: 'none',
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--accent-foreground)',
     fontSize: '0.95rem',
     fontWeight: 600,
     cursor: 'pointer',
