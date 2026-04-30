@@ -20,3 +20,23 @@ def test_all_registered_builders_callable() -> None:
         assert isinstance(prompt, str)
         assert "#1" in prompt or "Task" in prompt
 
+
+def test_dispatch_prompt_builder_keys_present() -> None:
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert {
+        "backend-developer",
+        "expansion-qa",
+        "holistic-reviewer",
+        "merge-orchestrator",
+        "plan-adversary",
+        "planner",
+        "qa-reviewer",
+        "test-architect",
+    } <= set(PROMPT_BUILDERS)
+
+
+def test_builder_type_alias_exported() -> None:
+    from gobby.dispatch.prompts import PromptBuilder
+
+    assert PromptBuilder
