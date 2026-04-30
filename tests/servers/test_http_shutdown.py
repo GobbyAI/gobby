@@ -248,6 +248,39 @@ class TestProcessShutdown:
         assert "Error terminating Streamable HTTP sessions during shutdown: boom" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_shutdown_treats_mcp_disconnect_cancellation_as_expected(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Lifespan cancellation during MCP disconnect should not escape shutdown."""
+        mock_mcp_manager = AsyncMock()
+        mock_mcp_manager.disconnect_all.side_effect = asyncio.CancelledError
+
+        services = ServiceContainer(
+            config=MagicMock(),
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            task_manager=MagicMock(),
+            mcp_manager=mock_mcp_manager,
+        )
+        server = HTTPServer(
+            services=services,
+            port=8000,
+            test_mode=True,
+        )
+        server._terminate_streamable_http_sessions = AsyncMock()
+
+        with (
+            caplog.at_level("INFO"),
+            patch("gobby.servers.http.inc_counter") as mock_inc,
+        ):
+            await server._process_shutdown()
+
+        server._terminate_streamable_http_sessions.assert_awaited_once()
+        mock_mcp_manager.disconnect_all.assert_awaited_once()
+        assert "Shutdown processing cancelled during graceful shutdown" in caplog.text
+        assert all(call.args != ("shutdown_failed_total",) for call in mock_inc.call_args_list)
+
+    @pytest.mark.asyncio
     async def test_shutdown_handles_mcp_disconnect_error(self) -> None:
         """Test shutdown handles MCP disconnect error gracefully."""
         mock_mcp_manager = AsyncMock()

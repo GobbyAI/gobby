@@ -522,6 +522,14 @@ class HTTPServer:
                 extra={"duration_seconds": duration_seconds},
             )
 
+        except asyncio.CancelledError:
+            duration_seconds = time.perf_counter() - start_time
+
+            logger.info(
+                "Shutdown processing cancelled during graceful shutdown",
+                extra={"duration_seconds": duration_seconds},
+            )
+
         except Exception as e:
             duration_seconds = time.perf_counter() - start_time
             inc_counter("shutdown_failed_total")

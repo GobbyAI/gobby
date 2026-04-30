@@ -502,21 +502,10 @@ class MCPClientManager:
     async def disconnect_all(self) -> None:
         """Disconnect all active connections."""
         self._running = False
-
-        if self._health_check_task:
-            self._health_check_task.cancel()
-            try:
-                await self._health_check_task
-            except asyncio.CancelledError:
-                pass
-            self._health_check_task = None
-
-        # Cancel any pending reconnect tasks
-        for task in list(self._reconnect_tasks):
-            task.cancel()
-        if self._reconnect_tasks:
-            await asyncio.gather(*self._reconnect_tasks, return_exceptions=True)
-        self._reconnect_tasks.clear()
+        health_check_task = self._health_check_task
+        reconnect_tasks = list(self._reconnect_tasks)
+        disconnect_tasks: list[asyncio.Task[None]] = []
+        cancellation: asyncio.CancelledError | None = None
 
         async def disconnect_with_timeout(name: str, connection: Any) -> None:
             try:
@@ -526,16 +515,69 @@ class MCPClientManager:
             except Exception as e:
                 logger.warning(f"Error disconnecting {name}: {e}")
 
-        tasks = []
-        for name, connection in self._connections.items():
-            if connection.is_connected:
-                tasks.append(asyncio.create_task(disconnect_with_timeout(name, connection)))
-                self.health[name].state = ConnectionState.DISCONNECTED
+        try:
+            if health_check_task:
+                health_check_task.cancel()
+                await asyncio.gather(health_check_task, return_exceptions=True)
+                self._health_check_task = None
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # Cancel any pending reconnect tasks
+            for task in reconnect_tasks:
+                task.cancel()
+            if reconnect_tasks:
+                await asyncio.gather(*reconnect_tasks, return_exceptions=True)
+            self._reconnect_tasks.clear()
 
-        self._connections.clear()
+            for name, connection in self._connections.items():
+                if connection.is_connected:
+                    disconnect_tasks.append(
+                        asyncio.create_task(disconnect_with_timeout(name, connection))
+                    )
+                    self.health[name].state = ConnectionState.DISCONNECTED
+
+            if disconnect_tasks:
+                await asyncio.gather(*disconnect_tasks, return_exceptions=True)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+            logger.debug("MCP disconnect cleanup cancelled; finalizing state cleanup")
+        finally:
+            all_reconnect_tasks = [*reconnect_tasks, *self._reconnect_tasks]
+            cleanup_tasks: list[asyncio.Task[None]] = []
+
+            if health_check_task and not health_check_task.done():
+                health_check_task.cancel()
+                cleanup_tasks.append(health_check_task)
+
+            for task in all_reconnect_tasks:
+                task.cancel()
+                if task not in cleanup_tasks:
+                    cleanup_tasks.append(task)
+
+            for task in disconnect_tasks:
+                if not task.done():
+                    task.cancel()
+                if task not in cleanup_tasks:
+                    cleanup_tasks.append(task)
+
+            self._health_check_task = None
+            self._reconnect_tasks.clear()
+
+            for name in list(self._connections):
+                if name in self.health:
+                    self.health[name].state = ConnectionState.DISCONNECTED
+                lazy_state = self._lazy_connector.get_state(name)
+                if lazy_state is not None:
+                    lazy_state.connected_at = None
+            self._connections.clear()
+
+            if cleanup_tasks:
+                try:
+                    await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+                except asyncio.CancelledError:
+                    logger.debug("Cancelled while awaiting MCP disconnect cleanup tasks")
+
+        if cancellation is not None:
+            raise cancellation
 
     async def ensure_connected(self, server_name: str) -> ClientSession:
         """
