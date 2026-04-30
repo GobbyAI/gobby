@@ -2,19 +2,25 @@ tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
   block-gobby-tasks-cli:
-    description: "Block the `gobby tasks` CLI in Bash — use the gobby-tasks MCP server instead."
+    description: "Block mutating `gobby tasks` CLI subcommands in Bash — use the gobby-tasks MCP server instead. Read-only subcommands are allowed."
     event: before_tool
     enabled: true
     priority: 30
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "\\b(uv\\s+run\\s+)?gobby\\s+tasks\\b"
+        command_pattern: "\\b(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de_escalate|claim|sync|compact|import|clean)\\b"
         reason: |
-          The `gobby tasks` CLI is for humans. Use the gobby-tasks MCP server instead:
+          The `gobby tasks` CLI bypasses MCP-side enforcement (validation gates,
+          progressive discovery, hook policy). Mutations must go through the
+          gobby-tasks MCP server so those guarantees hold:
             - list_mcp_servers() → confirm gobby-tasks is available
             - list_tools(server_name='gobby-tasks') → see task tools
             - get_tool_schema(server_name='gobby-tasks', tool_name='<tool>') → fetch params
             - call_tool(server_name='gobby-tasks', tool_name='<tool>', args={...})
-          Common equivalents: create_task, claim_task, update_task, close_task,
-          list_ready_tasks, get_task, list_tasks.
+          Common equivalents: create_task, claim_task, update_task, close_task.
+
+          Read-only subcommands stay open via Bash for ad-hoc use:
+            - `gobby tasks list`, `ready`, `blocked`, `stats`, `show`
+            - `gobby tasks expand validate-plan <path>`
+            - `gobby tasks validation_history`, `doctor`
