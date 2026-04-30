@@ -250,5 +250,7 @@ def test_compile_rejects_missing_manifest_entry(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="manifest entries"):
+    with pytest.raises(ValueError, match="manifest entries") as excinfo:
         service.compile_plan_to_spec(parse_plan(plan, parse_mode="draft"), parent)
+
+    assert "1.1" in str(excinfo.value)
