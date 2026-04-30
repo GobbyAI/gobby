@@ -164,11 +164,9 @@ def test_backend_developer_documents_default_fallback_audit_marker() -> None:
     assert "Defaulted to `backend-developer`" in instructions
 
 
-def test_planner_clears_rejected_verdict_label_before_review_handoff() -> None:
-    instructions = _agent("planner")["instructions"]
+def test_planner_relies_on_review_handoff_to_clear_rejected_verdict_label() -> None:
+    instructions = " ".join(_agent("planner")["instructions"].split())
 
-    rejected_label_pos = instructions.index("planning-current-verdict:rejected")
-    remove_label_pos = instructions.index("remove_label")
-    review_pos = instructions.index("mark_task_needs_review")
-
-    assert rejected_label_pos < remove_label_pos < review_pos
+    assert "mark_task_needs_review" in instructions
+    assert "Do not call remove_label for `planning-current-verdict:rejected`" in instructions
+    assert "clears it atomically with the resubmission" in instructions
