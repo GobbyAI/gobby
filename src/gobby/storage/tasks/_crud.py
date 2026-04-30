@@ -320,6 +320,53 @@ def get_task(db: DatabaseProtocol, task_id: str, project_id: str | None = None) 
     return task
 
 
+def is_blocked_by_deps(task: object) -> bool:
+    """Return whether a task has unresolved blocking dependencies."""
+    active_blocked_by = getattr(task, "active_blocked_by", None)
+    if active_blocked_by is not None:
+        return bool(active_blocked_by)
+    blocked_by = getattr(task, "blocked_by", None)
+    return bool(blocked_by)
+
+
+def list_automation_candidates(
+    db: DatabaseProtocol,
+    *,
+    project_id: str | None = None,
+) -> list[Task]:
+    """List unclaimed, unleased, dependency-ready tasks eligible for dispatch."""
+    now = datetime.now(UTC).isoformat()
+    params: list[Any] = [now]
+    project_filter = ""
+    if project_id is not None:
+        project_filter = "AND tasks.project_id = ?"
+        params.append(project_id)
+
+    rows = db.fetchall(
+        f"""
+        SELECT tasks.*
+        FROM tasks
+        LEFT JOIN task_dispatch_mutex mutex ON mutex.task_id = tasks.id
+        WHERE tasks.allow_automation = 1
+          AND tasks.claimed_by_session_id IS NULL
+          AND tasks.lifecycle != 'merged'
+          AND tasks.closed_at IS NULL
+          AND tasks.escalated_at IS NULL
+          AND (
+              mutex.task_id IS NULL
+              OR mutex.lease_until IS NULL
+              OR mutex.lease_until < ?
+          )
+          {project_filter}
+        ORDER BY tasks.priority ASC, tasks.seq_num ASC, tasks.created_at ASC
+        """,  # nosec B608 - project_filter is static SQL selected above.
+        tuple(params),
+    )
+    tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_blocking_state(db, tasks)
+    return [task for task in tasks if not is_blocked_by_deps(task)]
+
+
 def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     """Find a task by ID prefix. Returns None if no match or multiple matches."""
     # First try exact match
