@@ -80,6 +80,10 @@ async def build(
     task_manager = LocalTaskManager(db)
     input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id)
 
+    _composer_scope_cap(
+        input_kind=input_kind,
+        composer_authority="upstream" if opts.composer_yolo else "stub",
+    )
     _validate_profile_for_input(opts.profile, input_kind)
     _validate_clones_dir(opts)
     _validate_retry_caps(opts)

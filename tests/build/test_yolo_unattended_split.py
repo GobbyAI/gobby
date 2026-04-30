@@ -1,5 +1,6 @@
 """Red tests for the unattended/composer-yolo build split."""
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -56,7 +57,7 @@ def test_yolo_flag_is_noop_with_composer_stub(monkeypatch: pytest.MonkeyPatch) -
     assert opts.unattended is False
 
 
-def test_flag_propagation_distinct_fields_on_json_surfaces(temp_db) -> None:
+def test_flag_propagation_distinct_fields_on_json_surfaces(temp_db: Any) -> None:
     from unittest.mock import MagicMock
 
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
@@ -69,7 +70,7 @@ def test_flag_propagation_distinct_fields_on_json_surfaces(temp_db) -> None:
         config=MagicMock(),
     )
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
-    schema = tool["inputSchema"]
+    schema = cast(dict[str, Any], tool["inputSchema"])
     assert schema["properties"]["unattended"]["type"] == "boolean"
     assert schema["properties"]["composer_yolo"]["type"] == "boolean"
     assert "unattended" in BuildRequest.model_fields
@@ -88,6 +89,30 @@ def test_composer_cap_allows_upstream_for_ideate() -> None:
     from gobby.build.service import _composer_scope_cap
 
     assert _composer_scope_cap(input_kind="ideate", composer_authority="upstream") == "upstream"
+
+
+@pytest.mark.asyncio
+async def test_build_rejects_composer_yolo_for_plan_file(
+    temp_db: Any,
+    tmp_path: Path,
+    sample_project: dict[str, object],
+) -> None:
+    from gobby.build.service import BuildOptions, build
+
+    plan_file = tmp_path / "plan.md"
+    plan_file.write_text("# Plan\n", encoding="utf-8")
+
+    opts = BuildOptions(
+        profile="auto",
+        skip_stages=[],
+        isolation="worktree",
+        unattended=False,
+        composer_yolo=True,
+        max_review_rounds=3,
+    )
+
+    with pytest.raises(ValueError, match="composer.*upstream"):
+        await build(str(plan_file), opts, db=temp_db, project_id=cast(str, sample_project["id"]))
 
 
 class _ClosableDb:
