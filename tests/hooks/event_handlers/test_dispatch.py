@@ -64,13 +64,17 @@ def test_expansion_completion_advances_lifecycle_when_apply_created_children(
     assert releases == ["expansion-1"]
 
 
-def test_compile_only_completion_does_not_advance_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_compile_only_completion_does_not_advance_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from gobby.hooks.event_handlers import _dispatch
 
     releases: list[str] = []
     advances: list[object] = []
     monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-    monkeypatch.setattr(_dispatch, "advance_lifecycle", lambda *args, **kwargs: advances.append(args))
+    monkeypatch.setattr(
+        _dispatch, "advance_lifecycle", lambda *args, **kwargs: advances.append(args)
+    )
 
     _dispatch.on_expansion_run_completed("task-1", "expansion-1", apply_created_children=False)
 
@@ -102,8 +106,7 @@ def test_expansion_failure_increments_attempts_and_releases_mutex(
 
 
 def test_expansion_failure_on_exhaust_escalates_or_falls_back() -> None:
-    from gobby.dispatch.actions import Action
-
+    from gobby.dispatch.actions import EscalateAction
     from gobby.hooks.event_handlers import _dispatch
 
     action = _dispatch.on_expansion_run_failed(
@@ -115,7 +118,7 @@ def test_expansion_failure_on_exhaust_escalates_or_falls_back() -> None:
         unattended=False,
     )
 
-    assert isinstance(action, Action)
+    assert isinstance(action, EscalateAction)
 
 
 def test_expansion_cancellation_releases_mutex_without_advance(
@@ -126,7 +129,9 @@ def test_expansion_cancellation_releases_mutex_without_advance(
     releases: list[str] = []
     advances: list[object] = []
     monkeypatch.setattr(_dispatch.RuntimeDispatchMutex, "force_release_for_run", releases.append)
-    monkeypatch.setattr(_dispatch, "advance_lifecycle", lambda *args, **kwargs: advances.append(args))
+    monkeypatch.setattr(
+        _dispatch, "advance_lifecycle", lambda *args, **kwargs: advances.append(args)
+    )
 
     _dispatch.on_expansion_run_cancelled("task-1", "expansion-1")
 
@@ -134,14 +139,20 @@ def test_expansion_cancellation_releases_mutex_without_advance(
     assert releases == ["expansion-1"]
 
 
-def test_expansion_rule_does_not_refire_after_handler_advances() -> None:
-    from gobby.dispatch.rules import evaluate
-
+def test_expansion_rule_does_not_refire_after_handler_advances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from gobby.hooks.event_handlers import _dispatch
 
-    task = SimpleNamespace(lifecycle="expanding", status="open", id="task-1", labels=[])
+    advances: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        _dispatch,
+        "advance_lifecycle",
+        lambda task_id, *, to_lifecycle, to_status, side_effects=None: advances.append(
+            (task_id, to_lifecycle, to_status)
+        ),
+    )
+
     _dispatch.on_expansion_run_completed("task-1", "expansion-1", apply_created_children=True)
-    task.lifecycle = "in_development"
 
-    assert getattr(evaluate(task, SimpleNamespace()), "kind", None) != "start_expansion"
-
+    assert advances == [("task-1", "in_development", "open")]
