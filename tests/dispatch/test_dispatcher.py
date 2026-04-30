@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -240,6 +241,57 @@ async def test_start_expansion_action_links_run_id(
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert storage.get_mutex(task.id).run_id == "expansion-1"
+
+
+def test_dispatcher_imports_mcp_expansion_impl_directly() -> None:
+    from gobby.dispatch import dispatcher
+    from gobby.mcp_proxy.tools.tasks import _expansion
+
+    assert dispatcher.start_expansion_run_impl is _expansion.start_expansion_run_impl
+
+
+async def test_dispatcher_starts_expansion_with_injected_services(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    task = _task(temp_db, sample_project, lifecycle="expanding")
+    calls: list[dict[str, object]] = []
+    services = SimpleNamespace(
+        task_manager="task-manager",
+        llm_service="llm-service",
+        config="config",
+        completion_registry="completion-registry",
+        triggering_session_id="session-1",
+        project="project-1",
+    )
+    monkeypatch.setattr(
+        dispatcher.dispatch_rules,
+        "evaluate",
+        lambda *args, **kwargs: StartExpansionAction(task_id=task.id, task_ref="#1"),
+    )
+    monkeypatch.setattr(dispatcher, "allocate_expansion_run_id", lambda: "expansion-1")
+    monkeypatch.setattr(
+        dispatcher, "start_expansion_run_impl", lambda **kwargs: calls.append(kwargs)
+    )
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"], services=services)
+
+    assert calls == [
+        {
+            "task_id": task.id,
+            "run_id": "expansion-1",
+            "auto_apply": True,
+            "task_manager": "task-manager",
+            "llm_service": "llm-service",
+            "config": "config",
+            "completion_registry": "completion-registry",
+            "triggering_session_id": "session-1",
+            "project": "project-1",
+        }
+    ]
 
 
 async def test_expansion_terminal_event_releases_lease_via_handlers(

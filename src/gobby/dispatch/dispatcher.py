@@ -24,6 +24,7 @@ from gobby.dispatch.mutex import (
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
 )
+from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 from gobby.storage.database import DatabaseProtocol, LocalDatabase
 from gobby.storage.tasks._artifacts import (
     TaskArtifactManager,
@@ -269,10 +270,6 @@ def spawn_agent(
 
 def allocate_expansion_run_id() -> str:
     return str(uuid.uuid4())
-
-
-def start_expansion_run_impl(**kwargs: object) -> dict[str, object]:
-    return {"success": True, "run_id": kwargs["run_id"], "status": "running"}
 
 
 def sweep_expired_leases(storage: TaskDispatchMutexManager) -> int:
