@@ -555,6 +555,25 @@ set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 
 The spawn path auto-injects `assigned_task_id` and auto-claims the anchor for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here. The anchor (not the planning epic) is what the adversary marks at terminal.
 
+Immediately after the spawn (and after any planner re-spawn in revision
+rounds), trigger a self-compaction:
+
+```text
+call_tool(
+    server_name="gobby-sessions",
+    tool_name="compact_self",
+    arguments={"session_id": "#<self>"},
+)
+```
+
+This frees the coordinator's context (which by this point is loaded with
+requirements gathering, plan drafting, and exploration agent results) while
+the sub-agent runs. The verdict landing via daemon wake (Step 7.5) re-enters
+with a fresh, summarized context. Terminal sessions fire the right slash
+command per CLI (claude/codex `/compact`, gemini/qwen/droid `/compress`);
+web_chat sessions return `compacted: False` with a follow-up note today and
+are no-op'd until #13684 lands the daemon-level ChatSession registry.
+
 ### 7.5. Yield until the adversary wake
 
 Surface "Adversary reviewing; I will resume when the daemon wakes this session."

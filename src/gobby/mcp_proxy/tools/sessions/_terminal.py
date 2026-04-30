@@ -1,8 +1,8 @@
 """Terminal interaction tools for tmux-backed sessions.
 
-Exposes send_keys and capture_output as MCP tools on gobby-sessions,
-enabling orchestration (conductor, heartbeat, pipelines, other agents)
-to interact with running terminal sessions.
+Exposes send_keys, capture_output, and compact_self as MCP tools on
+gobby-sessions, enabling orchestration (conductor, heartbeat, pipelines,
+other agents) to interact with running terminal sessions.
 """
 
 from __future__ import annotations
@@ -21,6 +21,17 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+
+# Maps session.source (CLI provider name) to the slash command that triggers
+# context compaction in the running CLI subprocess. Claude Code uses /compact;
+# every other supported CLI uses /compress.
+_CLI_COMPACT_COMMANDS: dict[str, str] = {
+    "claude": "/compact",
+    "codex": "/compact",
+    "gemini": "/compress",
+    "qwen": "/compress",
+    "droid": "/compress",
+}
 
 
 def _resolve_tmux_target(
@@ -107,6 +118,69 @@ def register_terminal_tools(
                 "error": f"tmux send-keys failed for session {session_id}",
             }
         return {"success": True}
+
+    @registry.tool(
+        name="compact_self",
+        description=(
+            "Trigger context compaction in the calling session's CLI by firing "
+            "the appropriate slash command (/compact for Claude Code, "
+            "/compress for others). Designed to be called at workflow handoff "
+            "boundaries — e.g. /gobby plan calls this after spawning "
+            "plan-adversary so the coordinator's bulky requirements-gathering "
+            "context is summarized away while the sub-agent runs. "
+            "Terminal sessions only; web_chat sessions return compacted: False "
+            "with a follow-up reason."
+        ),
+    )
+    async def compact_self(session_id: str) -> dict[str, Any]:
+        session = session_manager.get(session_id)
+        if session is None:
+            return {"compacted": False, "reason": f"Session {session_id} not found"}
+
+        session_type = getattr(session, "session_type", "terminal")
+        source = getattr(session, "source", None)
+
+        if session_type == "web_chat":
+            return {
+                "compacted": False,
+                "reason": (
+                    "web_chat trigger not yet implemented via MCP — use the "
+                    "/compact command palette entry directly. Tracked in the "
+                    "follow-up task to #13683."
+                ),
+            }
+
+        if session_type != "terminal":
+            return {
+                "compacted": False,
+                "reason": f"unsupported session_type: {session_type}",
+            }
+
+        command = _CLI_COMPACT_COMMANDS.get(source) if source else None
+        if command is None:
+            return {
+                "compacted": False,
+                "reason": f"no compaction command known for cli={source!r}",
+            }
+
+        target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
+        if error:
+            return {"compacted": False, "reason": error}
+        assert target is not None
+        assert tmux is not None
+
+        ok = await tmux.send_keys(target, f"{command}\n", literal=True)
+        if not ok:
+            return {
+                "compacted": False,
+                "reason": f"tmux send-keys failed for session {session_id}",
+            }
+        return {
+            "compacted": True,
+            "command": command,
+            "cli": source,
+            "via": "tmux",
+        }
 
     @registry.tool(
         name="capture_output",
