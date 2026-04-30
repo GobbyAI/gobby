@@ -116,8 +116,13 @@ class TestCallToolSessionResolution:
         assert resolved == "platform-uuid-7"
 
     @pytest.mark.asyncio
-    async def test_call_tool_hoists_nested_session_id_before_resolution(self) -> None:
-        """Nested wrapper session_id is resolved after canonicalization."""
+    async def test_call_tool_does_not_hoist_nested_session_id(self) -> None:
+        """Nested arguments.session_id is a target-tool param, not wrapper context.
+
+        Contract per gobby-#12773: only top-level session_id is wrapper context;
+        nested session_id stays in the inner arguments and is NOT used for
+        session resolution.
+        """
         handler, session_manager = self._make_handler(resolve_to="platform-uuid-7")
 
         await handler.call_tool(
@@ -129,17 +134,19 @@ class TestCallToolSessionResolution:
             }
         )
 
-        session_manager.resolve_session_reference.assert_called_once_with(
-            "11111111-1111-1111-1111-111111111111", None
-        )
+        session_manager.resolve_session_reference.assert_not_called()
+
         call_args = handler.tool_proxy.call_tool.call_args
         resolved = call_args.kwargs.get("session_id")
         if resolved is None:
             resolved = call_args.args[3]
-        assert resolved == "platform-uuid-7"
+        assert resolved is None
         assert call_args.args[0] == "gobby-tasks"
         assert call_args.args[1] == "suggest_next_task"
-        assert call_args.args[2] == {"parent_task_id": "#1"}
+        assert call_args.args[2] == {
+            "session_id": "11111111-1111-1111-1111-111111111111",
+            "parent_task_id": "#1",
+        }
 
     @pytest.mark.asyncio
     async def test_call_tool_skips_session_context_when_unresolvable(
