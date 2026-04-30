@@ -143,7 +143,7 @@ def test_cli_writes_evidence_from_flag(tmp_path: Path) -> None:
     ]
 
 
-def test_cli_normalizes_root_task_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_preserves_root_task_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan_path, plan_hash = _plan_file(tmp_path)
     manifest = tmp_path / "out.coverage.yaml"
 
@@ -173,31 +173,33 @@ def test_cli_normalizes_root_task_header(tmp_path: Path, monkeypatch: pytest.Mon
     plan_module = importlib.import_module("gobby.cli.plan")
     monkeypatch.setattr(plan_module, "evaluate", fake_evaluate)
 
-    result = CliRunner().invoke(
-        cli,
-        [
-            "plan",
-            "coverage",
-            "--plan",
-            str(plan_path),
-            "--plan-id",
-            "plan",
-            "--plan-hash",
-            plan_hash,
-            "--task-tree",
-            "db",
-            "--root-task",
-            "#12725",
-            "--project-id",
-            "project",
-            "--manifest",
-            str(manifest),
-        ],
-    )
+    args = [
+        "plan",
+        "coverage",
+        "--plan",
+        str(plan_path),
+        "--plan-id",
+        "plan",
+        "--plan-hash",
+        plan_hash,
+        "--task-tree",
+        "db",
+        "--root-task",
+        "#12725",
+        "--project-id",
+        "project",
+        "--manifest",
+        str(manifest),
+    ]
+    result = CliRunner().invoke(cli, args)
 
     assert result.exit_code == 0
     raw = yaml.safe_load(manifest.read_text(encoding="utf-8"))
-    assert raw["header"]["root_task_ref"] == "12725"
+    assert raw["header"]["root_task_ref"] == "#12725"
+
+    repeat = CliRunner().invoke(cli, args)
+
+    assert repeat.exit_code == 0
 
 
 def test_cli_exit_code_stale_matrix(tmp_path: Path) -> None:
