@@ -219,8 +219,7 @@
 /* Blockquotes */
 .message-content blockquote {
   margin: 0.75rem 0 0.75rem 1rem;
-  padding-left: 0.875rem;
-  border-left: 2px solid var(--border);
+  padding-left: 1rem;
   color: var(--text-muted);
   font-style: italic;
 }

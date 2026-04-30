@@ -177,7 +177,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                       className={cn(
                         'w-full text-left px-3 py-2 pl-7 text-sm transition-colors border-b border-border/20',
                         selectedServer === serverName && selectedTool === tool.name
-                          ? 'bg-accent/15 text-foreground border-l-2 border-l-accent'
+                          ? 'bg-accent/15 text-foreground'
                           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                       )}
                       onClick={() => handleSelectTool(serverName, tool.name)}
