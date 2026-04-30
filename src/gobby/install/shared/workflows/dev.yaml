@@ -1,0 +1,49 @@
+name: dev
+type: pipeline
+description: |
+  Interactive /gobby dev workflow. Dispatches the shared developer agent for
+  a single task so the development loop can run independent of gobby build.
+
+version: "1.0"
+enabled: true
+
+inputs:
+  task_id:
+    type: string
+    required: true
+    description: "Task ID to assign to the developer agent"
+  mode:
+    type: string
+    default: "interactive"
+    description: "Invocation mode: interactive or delegated"
+  provider:
+    type: string
+    default: "codex"
+    description: "LLM provider override"
+  model:
+    type: string
+    default: ""
+    description: "Model override (empty = provider default)"
+  worktree_id:
+    type: string
+    default: ""
+    description: "Worktree ID for isolation (empty = inherit or auto-create)"
+
+steps:
+  - id: spawn_developer
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        task_id: "${{ inputs.task_id }}"
+        assigned_task_id: "${{ inputs.task_id }}"
+        provider: "${{ inputs.provider }}"
+        model: "${{ inputs.model }}"
+        worktree_id: "${{ inputs.worktree_id }}"
+        parent_session_id: "${{ session_id }}"
+        prompt: |
+          Work on task ${{ inputs.task_id }} as the developer agent.
+          Claim it, implement it, validate with focused tests, commit the
+          changes, then close it or hand it off for QA according to the
+          developer agent lifecycle contract.
