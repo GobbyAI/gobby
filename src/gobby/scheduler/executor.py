@@ -65,6 +65,8 @@ class CronExecutor:
                 output = await self._execute_shell(job)
             elif job.action_type == "handler":
                 output = await self._execute_handler(job)
+            elif job.action_type == "dispatcher":
+                output = await self._execute_dispatcher(job)
             else:
                 raise ValueError(f"Unknown action_type: {job.action_type}")
 
@@ -285,3 +287,22 @@ class CronExecutor:
             available = list(self._handlers.keys())
             raise ValueError(f"No handler registered: '{name}'. Available: {available}")
         return await handler(job)
+
+    async def _execute_dispatcher(self, job: CronJob) -> str:
+        """Execute the dispatcher heartbeat action."""
+        from gobby.dispatch.dispatcher import run_heartbeat
+
+        config = job.action_config
+        result = await run_heartbeat(
+            db=self.storage.db,
+            project_id=config.get("project_id", job.project_id),
+            startup=bool(config.get("startup", False)),
+            max_active_agents=config.get("max_active_agents"),
+        )
+        return (
+            "Dispatcher heartbeat completed: "
+            f"scanned={result.scanned}, "
+            f"executed={result.executed}, "
+            f"skipped={result.skipped}, "
+            f"cap_reached={result.cap_reached}"
+        )

@@ -17,8 +17,18 @@ async def test_dispatcher_action_invokes_run_heartbeat(
     from gobby.dispatch import dispatcher
 
     calls: list[str] = []
-    monkeypatch.setattr(dispatcher, "run_heartbeat", lambda **kwargs: calls.append(kwargs["project_id"]))
 
+    async def run_heartbeat(**kwargs):
+        calls.append(kwargs["project_id"])
+        return dispatcher.HeartbeatResult(scanned=1, executed=0, skipped=1)
+
+    monkeypatch.setattr(dispatcher, "run_heartbeat", run_heartbeat)
+
+    temp_db.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) "
+        "VALUES (?, ?, datetime('now'), datetime('now'))",
+        ("project-1", "Test Project"),
+    )
     storage = CronJobStorage(temp_db)
     job = storage.create_job(
         project_id="project-1",
@@ -28,10 +38,9 @@ async def test_dispatcher_action_invokes_run_heartbeat(
         action_config={"project_id": "project-1"},
         interval_seconds=60,
     )
-    run = storage.create_run(job.id, scheduled_time="2026-01-01T00:00:00+00:00")
+    run = storage.create_run(job.id)
 
     result = await CronExecutor(storage).execute(job, run)
 
-    assert result.status == "success"
+    assert result.status == "completed"
     assert calls == ["project-1"]
-
