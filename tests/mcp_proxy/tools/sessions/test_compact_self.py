@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -269,6 +270,64 @@ class TestCompactSelfWebChatPath:
 
         assert result["compacted"] is False
         assert "No live web_chat session" in result["reason"]
+
+    def test_web_chat_compaction_drains_precompact_manual_hook_output(self) -> None:
+        session = MagicMock()
+        session.session_type = "web_chat"
+        session.source = "claude"
+
+        live_session = MagicMock()
+        live_session.db_session_id = "db-id"
+        live_session.conversation_id = "conv-1"
+        precompact_outputs: list[dict[str, str]] = []
+        live_session._on_pre_compact = AsyncMock(
+            return_value={"decision": "allow", "context": "pipeline output"}
+        )
+
+        async def compact_stream(command: str):
+            precompact_outputs.append(
+                await live_session._on_pre_compact({"trigger": "manual"})
+            )
+            yield DoneEvent(tool_calls_count=0)
+
+        live_session.send_message.side_effect = compact_stream
+
+        web_chat_registry = WebChatSessionRegistry()
+        web_chat_registry.register("conv-1", live_session)
+        registry = self._register_web_chat(session, web_chat_registry)
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id="db-id"))
+
+        assert result["compacted"] is True
+        live_session.send_message.assert_called_once_with("/compact")
+        live_session._on_pre_compact.assert_awaited_once_with({"trigger": "manual"})
+        assert precompact_outputs == [{"decision": "allow", "context": "pipeline output"}]
+
+    def test_web_chat_command_matches_command_palette_compact_command(self) -> None:
+        palette_source = Path("web/src/components/app/useAppCommandPalette.ts").read_text()
+        assert 'sendMessage(\n      "/compact",' in palette_source
+
+        session = MagicMock()
+        session.session_type = "web_chat"
+        session.source = "claude"
+
+        live_session = MagicMock()
+        live_session.db_session_id = "db-id"
+        live_session.conversation_id = "conv-1"
+        live_session.send_message.side_effect = lambda command: _done_stream()
+
+        web_chat_registry = WebChatSessionRegistry()
+        web_chat_registry.register("conv-1", live_session)
+        registry = self._register_web_chat(session, web_chat_registry)
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id="db-id"))
+
+        assert result["command"] == "/compact"
+        live_session.send_message.assert_called_once_with("/compact")
 
     @pytest.mark.asyncio
     async def test_active_web_chat_session_queues_post_turn_compaction(self) -> None:
