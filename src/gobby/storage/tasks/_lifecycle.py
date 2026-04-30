@@ -208,17 +208,26 @@ def delete_task(
     cascade: bool = False,
     unlink: bool = False,
     _visited: set[str] | None = None,
+    _origin_path_cache: str | None = None,
 ) -> bool:
     """Delete a task.
 
     Args:
         db: Database protocol instance
         task_id: The task ID to delete
-        cascade: If True, delete children AND dependent tasks recursively
+        cascade: If True, delete children AND dependent tasks recursively.
+                 Dependent cascade follows ``blocks`` edges to tasks that depend
+                 on the target — but it does NOT walk into ancestors of the
+                 original deletion target (parent / grandparent / root). Pathological
+                 wirings where a parent depends on its own children would otherwise
+                 cause cascade to climb the parent tree and wipe unrelated subtrees.
         unlink: If True, remove dependency links but preserve dependent tasks
                 (ignored if cascade=True)
         _visited: Internal parameter to track visited tasks and prevent infinite recursion
                   when a parent task depends on its children (circular dependency)
+        _origin_path_cache: Internal parameter — path_cache of the original deletion
+                  target. Captured on the first call and propagated through recursion
+                  so the dependent cascade can skip ancestors of the origin.
 
     Returns:
         True if task was deleted, False if task not found.
@@ -235,10 +244,17 @@ def delete_task(
         return True
     _visited.add(task_id)
 
-    # Check if task exists first
-    existing = db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,))
+    # Check if task exists first; capture path_cache so we can detect ancestors
+    # of the original deletion target during dependent cascade.
+    existing = db.fetchone("SELECT path_cache FROM tasks WHERE id = ?", (task_id,))
     if not existing:
         return False
+
+    # Capture origin path_cache on the first call. Empty string is fine for
+    # legacy rows missing path_cache — the ancestor check below treats those
+    # as non-ancestors (no false positives).
+    if _origin_path_cache is None:
+        _origin_path_cache = existing["path_cache"] or ""
 
     if not cascade:
         # Check for children
@@ -269,17 +285,39 @@ def delete_task(
         # Recursive delete children
         children = db.fetchall("SELECT id FROM tasks WHERE parent_task_id = ?", (task_id,))
         for child in children:
-            delete_task(db, child["id"], cascade=True, _visited=_visited)
+            delete_task(
+                db,
+                child["id"],
+                cascade=True,
+                _visited=_visited,
+                _origin_path_cache=_origin_path_cache,
+            )
 
-        # Delete tasks that depend on this task (only 'blocks' dependencies)
+        # Delete tasks that depend on this task (only 'blocks' dependencies),
+        # excluding ancestors of the original deletion target. path_cache is
+        # a dot-separated chain of seq_nums (e.g. "12725.13499.13503"); a task
+        # whose path_cache is a prefix of the origin's is an ancestor and
+        # following it would wipe unrelated subtrees rooted higher up.
         dependents = db.fetchall(
-            """SELECT t.id FROM tasks t
+            """SELECT t.id, t.path_cache FROM tasks t
                JOIN task_dependencies d ON d.task_id = t.id
                WHERE d.depends_on = ? AND d.dep_type = 'blocks'""",
             (task_id,),
         )
         for dep in dependents:
-            delete_task(db, dep["id"], cascade=True, _visited=_visited)
+            dep_path = dep["path_cache"] or ""
+            if dep_path and _origin_path_cache and (
+                dep_path == _origin_path_cache
+                or _origin_path_cache.startswith(dep_path + ".")
+            ):
+                continue
+            delete_task(
+                db,
+                dep["id"],
+                cascade=True,
+                _visited=_visited,
+                _origin_path_cache=_origin_path_cache,
+            )
 
     # Note: if unlink=True, dependency links are removed by ON DELETE CASCADE
     # when the task is deleted - no explicit action needed

@@ -270,6 +270,54 @@ class TestLocalTaskManager:
         with pytest.raises(ValueError):
             task_manager.get_task(child2.id)
 
+    def test_delete_cascade_does_not_walk_into_ancestors(
+        self, task_manager, dep_manager, project_id
+    ) -> None:
+        """Cascade dependent walk must not climb into ancestors of the origin.
+
+        Repro of the data-loss bug that wiped task #12725 and its closed
+        sub-plan-A children: deleting a deeply-nested task whose ancestors had
+        been wired with ``depends_on`` edges to descendants (parent epic
+        depends on its grandchild leaf) caused the cascade to follow those
+        edges *upward*, then back down through the ancestor's other subtrees,
+        deleting unrelated work.
+        """
+        root_epic = task_manager.create_task(project_id=project_id, title="Root Epic")
+        sub_epic = task_manager.create_task(
+            project_id=project_id, title="Sub Epic", parent_task_id=root_epic.id
+        )
+        leaf = task_manager.create_task(
+            project_id=project_id, title="Leaf", parent_task_id=sub_epic.id
+        )
+        sibling_subtree_root = task_manager.create_task(
+            project_id=project_id, title="Sibling Subtree", parent_task_id=root_epic.id
+        )
+        sibling_leaf = task_manager.create_task(
+            project_id=project_id,
+            title="Sibling Leaf",
+            parent_task_id=sibling_subtree_root.id,
+        )
+
+        # Pathological dependency wiring: ancestors depend on descendants.
+        # leaf BLOCKS sub_epic (sub_epic depends_on leaf)
+        # leaf BLOCKS root_epic (root_epic depends_on leaf)
+        dep_manager.add_dependency(sub_epic.id, leaf.id, "blocks")
+        dep_manager.add_dependency(root_epic.id, leaf.id, "blocks")
+
+        task_manager.delete_task(sub_epic.id, cascade=True)
+
+        # Target and its descendants are gone.
+        with pytest.raises(ValueError):
+            task_manager.get_task(sub_epic.id)
+        with pytest.raises(ValueError):
+            task_manager.get_task(leaf.id)
+
+        # Ancestor must survive — even though it depends on a descendant.
+        assert task_manager.get_task(root_epic.id) is not None
+        # Unrelated sibling subtree must survive too.
+        assert task_manager.get_task(sibling_subtree_root.id) is not None
+        assert task_manager.get_task(sibling_leaf.id) is not None
+
     def test_delete_with_dependents_unlink_preserves(
         self, task_manager, dep_manager, project_id
     ) -> None:
