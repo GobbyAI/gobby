@@ -430,7 +430,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 agent_type = variables.get("_agent_type")
                 rules = self._filter_by_agent_scope(rules, agent_type)
 
-                # 4. Filter by active rules (selector-based)
+                # 4. Filter by audience
+                rules = self._filter_by_audience(rules, variables)
+
+                # 5. Filter by active rules (selector-based)
                 rules = self._filter_by_active_rules(rules, variables)
 
                 if span.is_recording():
@@ -863,6 +866,35 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 and ("*" in body.agent_scope or agent_type in body.agent_scope)
             )
         ]
+
+    def _filter_by_audience(
+        self,
+        rules: list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]],
+        variables: dict[str, Any],
+    ) -> list[tuple[WorkflowDefinitionRow, RuleDefinitionBody]]:
+        """Filter rules by broad runtime audience."""
+        return [(row, body) for row, body in rules if self._audience_matches(body, variables)]
+
+    def _audience_matches(
+        self,
+        body: RuleDefinitionBody,
+        variables: dict[str, Any],
+    ) -> bool:
+        audience = body.audience
+        if audience is None or audience == "all":
+            return True
+
+        explicit = variables.get("_audience")
+        agent_type = variables.get("_agent_type")
+        is_spawned = bool(variables.get("is_spawned_agent"))
+
+        if audience == explicit or audience == agent_type:
+            return True
+        if audience == "autonomous":
+            return is_spawned or agent_type == "autonomous"
+        if audience == "interactive":
+            return not is_spawned and agent_type in (None, "default", "interactive")
+        return False
 
     def _filter_by_active_rules(
         self,

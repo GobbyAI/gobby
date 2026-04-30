@@ -30,6 +30,7 @@ def _rule_brief(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "name": row.name,
         "event": body.get("event"),
         "group": body.get("group"),
+        "audience": body.get("audience"),
         "enabled": row.enabled,
     }
 
@@ -48,6 +49,7 @@ def _rule_summary(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "effects": body.get("effects") or ([body["effect"]] if body.get("effect") else None),
         "group": body.get("group"),
         "when": body.get("when"),
+        "audience": body.get("audience"),
         "agent_scope": body.get("agent_scope"),
         "enabled": row.enabled,
         "priority": row.priority,
@@ -70,6 +72,7 @@ def _rule_detail(row: WorkflowDefinitionRow) -> dict[str, Any]:
         "when": body.get("when"),
         "match": body.get("match"),
         "effects": body.get("effects") or ([body["effect"]] if body.get("effect") else None),
+        "audience": body.get("audience"),
         "agent_scope": body.get("agent_scope"),
         "enabled": row.enabled,
         "priority": row.priority,

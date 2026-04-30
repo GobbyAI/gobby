@@ -35,6 +35,28 @@ def get_bundled_rules_path() -> Path:
     return get_install_dir() / "shared" / "workflows" / "rules"
 
 
+def get_bundled_rules_paths() -> list[Path]:
+    """Get active bundled rule roots."""
+    from gobby.paths import get_install_dir
+
+    install_dir = get_install_dir()
+    return [
+        install_dir / "shared" / "workflows" / "rules",
+        install_dir / "shared" / "rules",
+    ]
+
+
+def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:
+    """Return non-deprecated YAML files from active rule roots."""
+    files: list[tuple[Path, Path]] = []
+    for root in rules_paths:
+        for yaml_file in sorted(root.rglob("*.yaml")):
+            if "deprecated" in yaml_file.relative_to(root).parts:
+                continue
+            files.append((root, yaml_file))
+    return files
+
+
 def sync_bundled_rules(
     db: DatabaseProtocol,
     rules_path: Path | None = None,
@@ -54,8 +76,7 @@ def sync_bundled_rules(
     Returns:
         Dict with success status and counts.
     """
-    if rules_path is None:
-        rules_path = get_bundled_rules_path()
+    rules_paths = get_bundled_rules_paths() if rules_path is None else [rules_path]
 
     # Repair rows where workflow_type was silently changed from 'rule'
     repaired = db.execute(
@@ -77,15 +98,16 @@ def sync_bundled_rules(
         "errors": [],
     }
 
-    if not rules_path.exists():
-        logger.debug("Rules path not found", extra={"path": str(rules_path)})
+    existing_paths = [path for path in rules_paths if path.exists()]
+    if not existing_paths:
+        logger.debug("Rules path not found", extra={"paths": [str(path) for path in rules_paths]})
         return result
 
     manager = LocalWorkflowDefinitionManager(db)
     on_disk: set[str] = set()
 
-    for yaml_file in sorted(rules_path.rglob("*.yaml")):
-        if "deprecated" in yaml_file.relative_to(rules_path).parts:
+    for current_rules_path, yaml_file in _iter_active_rule_files(existing_paths):
+        if "deprecated" in yaml_file.relative_to(current_rules_path).parts:
             continue
         try:
             raw_content = yaml_file.read_text(encoding="utf-8")
@@ -102,13 +124,14 @@ def sync_bundled_rules(
                 continue
 
             # File-level defaults
-            rel_parts = yaml_file.relative_to(rules_path).parts
+            rel_parts = yaml_file.relative_to(current_rules_path).parts
             dir_group = rel_parts[0] if len(rel_parts) > 1 else None
             file_group = data.get("group") or dir_group
             file_tags = data.get("tags") or []
             if tag not in file_tags:
                 file_tags = [*file_tags, tag]
             file_sources = data.get("sources")
+            file_audience = data.get("audience")
 
             for rule_name, rule_data in rules_dict.items():
                 if not isinstance(rule_data, dict):
@@ -141,6 +164,7 @@ def sync_bundled_rules(
                         file_group=file_group,
                         file_tags=file_tags,
                         file_sources=file_sources,
+                        file_audience=file_audience,
                         sync_tag=tag,
                         result=result,
                     )
@@ -223,6 +247,7 @@ def _sync_single_rule(
     file_group: str | None,
     file_tags: list[str] | None,
     file_sources: list[str] | None,
+    file_audience: str | None,
     sync_tag: str,
     result: dict[str, Any],
 ) -> None:
@@ -249,6 +274,9 @@ def _sync_single_rule(
         body_dict["group"] = group
     if rule_data.get("agent_scope"):
         body_dict["agent_scope"] = rule_data["agent_scope"]
+    audience = rule_data.get("audience", file_audience)
+    if audience:
+        body_dict["audience"] = audience
     if rule_data.get("tools"):
         body_dict["tools"] = rule_data["tools"]
 

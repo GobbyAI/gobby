@@ -250,6 +250,7 @@ class RuleDefinitionBody(BaseModel):
     tools: list[str] | None = None  # Pre-filter: skip rule if tool doesn't match
     effects: list[RuleEffect] | None = None
     group: str | None = None
+    audience: str | None = None  # all, interactive, autonomous, or a concrete audience name
     agent_scope: list[str] | None = None  # Only active for these agent types
 
     @model_validator(mode="after")

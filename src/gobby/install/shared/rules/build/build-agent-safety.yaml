@@ -1,0 +1,14 @@
+audience: autonomous
+tags: [build, build-agent, enforcement, gobby]
+
+rules:
+  build-agent-block-full-pytest:
+    description: "Block full pytest runs from autonomous build agents."
+    event: before_tool
+    enabled: true
+    priority: 45
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "^uv run pytest\\s*$|^pytest\\s*$"
+        reason: "Run focused tests for the files or package you changed."

@@ -41,10 +41,11 @@ class TemplateHashCache:
         from gobby.agents.sync import get_bundled_agents_path
         from gobby.skills.sync import get_bundled_skills_path
         from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
-        from gobby.workflows.sync_rules import get_bundled_rules_path
+        from gobby.workflows.sync_rules import get_bundled_rules_paths
         from gobby.workflows.sync_variables import get_bundled_variables_path
 
-        self._load_rules(get_bundled_rules_path())
+        for rules_path in get_bundled_rules_paths():
+            self._load_rules(rules_path)
         self._load_pipelines(get_bundled_pipelines_path())
         self._load_variables(get_bundled_variables_path())
         self._load_agents(get_bundled_agents_path())
@@ -62,6 +63,8 @@ class TemplateHashCache:
         from gobby.workflows.sync_rules import resolve_sync_placeholders
 
         for yaml_path in sorted(rules_dir.glob("**/*.yaml")):
+            if "deprecated" in yaml_path.relative_to(rules_dir).parts:
+                continue
             try:
                 data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
@@ -71,11 +74,14 @@ class TemplateHashCache:
                 if not isinstance(rules_dict, dict):
                     continue
 
-                file_group = data.get("group")
+                rel_parts = yaml_path.relative_to(rules_dir).parts
+                dir_group = rel_parts[0] if len(rel_parts) > 1 else None
+                file_group = data.get("group") or dir_group
+                file_audience = data.get("audience")
                 for rule_name, rule_data in rules_dict.items():
                     if not isinstance(rule_data, dict):
                         continue
-                    body_dict = _build_rule_body(rule_data, file_group)
+                    body_dict = _build_rule_body(rule_data, file_group, file_audience)
                     definition_json = resolve_sync_placeholders(
                         json.dumps(body_dict, sort_keys=True)
                     )
@@ -247,6 +253,7 @@ def get_template_hash_cache() -> TemplateHashCache:
 def _build_rule_body(
     rule_data: dict[str, Any],
     file_group: str | None = None,
+    file_audience: str | None = None,
 ) -> dict[str, Any]:
     """Build a rule body dict from YAML data, matching sync_rules.py logic."""
     body_dict: dict[str, Any] = {
@@ -265,6 +272,9 @@ def _build_rule_body(
         body_dict["group"] = group
     if rule_data.get("agent_scope"):
         body_dict["agent_scope"] = rule_data["agent_scope"]
+    audience = rule_data.get("audience", file_audience)
+    if audience:
+        body_dict["audience"] = audience
     if rule_data.get("tools"):
         body_dict["tools"] = rule_data["tools"]
     return body_dict
