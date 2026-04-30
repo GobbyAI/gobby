@@ -109,12 +109,18 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
 
     spec = service.compile_plan_to_spec(plan_doc, parent)
 
+    # Per-phase sandwich: phase-p1 = TEST + 1.1::impl + REF; phase-p2 same shape.
     assert len(spec["tasks"]) == 6
     assert {phase["id"]: len(phase["task_ids"]) for phase in spec["phases"]} == {
         "phase-p1": 3,
         "phase-p2": 3,
     }
-    assert {"task_id": "2.1::test", "depends_on": "1.1::ref"} in spec["dependencies"]
+    # Cross-phase chain: phase N+1's [TEST] depends on phase N's [REF].
+    assert {"task_id": "phase-p2::__test", "depends_on": "phase-p1::__ref"} in spec[
+        "dependencies"
+    ]
+    # Cross-deliverable manifest depends_on: 2.1 → 1.1 wires IMPL → IMPL.
+    assert {"task_id": "2.1::impl", "depends_on": "1.1::impl"} in spec["dependencies"]
     assert spec["deferrals"] == [
         {
             "section_id": "2.2",
@@ -165,8 +171,13 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
     assert len(applied.created_task_ids) == 6
     created = [service.task_manager.get_task(task_id) for task_id in applied.created_task_ids]
     assert all(task is not None for task in created)
-    titles = {task.title for task in created if task is not None}
-    assert not any(title.startswith("[TEST] Phase") for title in titles)
+    titles = [task.title for task in created if task is not None]
+    # Exactly one phase-level [TEST] Phase N and [REF] Phase N per phase —
+    # the contract compile emits the sandwich, the apply step must NOT
+    # double-wrap (tdd_sandwich_emitted=True suppresses the apply-side
+    # wrapper). Two phases → two TEST + two REF.
+    assert sum(1 for title in titles if title.startswith("[TEST] Phase")) == 2
+    assert sum(1 for title in titles if title.startswith("[REF] Phase")) == 2
     assert any(
         "covers:minimal-contract:1.1:1.1.1" in (task.labels or [])
         for task in created

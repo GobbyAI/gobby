@@ -239,12 +239,8 @@ def test_entry_fields_preserved(
     assert "validation_criteria" not in bootstrap
 
     core_tasks = [task for task in spec["tasks"] if task["source_section_id"] == "1.2"]
-    assert [task["title"] for task in core_tasks] == [
-        "[TEST] Core from manifest",
-        "[IMPL] Core from manifest",
-        "[REF] Core from manifest",
-    ]
-    assert [task["category"] for task in core_tasks] == ["test", "code", "refactor"]
+    assert [task["title"] for task in core_tasks] == ["[IMPL] Core from manifest"]
+    assert [task["category"] for task in core_tasks] == ["code"]
     assert {task["validation"] for task in core_tasks} == {"Core validation from manifest"}
     assert {tuple(task["labels"]) for task in core_tasks} == {
         ("covers:manifest-driven:1.2:1.2.1", "manifest:core")
@@ -260,13 +256,26 @@ def test_cross_tdd_mode_dependencies(
     parent = _parent(service, sample_project)
     spec = service.compile_plan_to_spec(_parse_manifest_plan(tmp_path), parent)
 
-    assert _deps_for(spec, "1.2::test") == {"1.1::single"}
-    assert _deps_for(spec, "1.3::test") == {"1.2::ref"}
-    assert _deps_for(spec, "2.1::single") == {"1.3::ref"}
-    assert _deps_for(spec, "2.2::single") == {"2.1::single"}
-    assert _deps_for(spec, "3.1::test") == {"2.2::single"}
-    assert _deps_for(spec, "1.2::impl") == {"1.2::test"}
-    assert _deps_for(spec, "1.2::ref") == {"1.2::impl"}
+    # Cross-deliverable depends_on edges link IMPL/single tasks directly,
+    # regardless of TDD status — the per-phase sandwich wraps but does not
+    # rewire cross-deliverable dependencies.
+    assert "1.1::single" in _deps_for(spec, "1.2::impl")
+    assert "1.2::impl" in _deps_for(spec, "1.3::impl")
+    assert "1.3::impl" in _deps_for(spec, "2.1::single")
+    assert "2.1::single" in _deps_for(spec, "2.2::single")
+    assert "2.2::single" in _deps_for(spec, "3.1::impl")
+
+    # Within-phase TDD sandwich: every [IMPL] depends on its phase [TEST];
+    # phase [REF] depends on every [IMPL] in that phase.
+    assert "phase-p1::__test" in _deps_for(spec, "1.2::impl")
+    assert "phase-p1::__test" in _deps_for(spec, "1.3::impl")
+    assert {"1.2::impl", "1.3::impl"} <= _deps_for(spec, "phase-p1::__ref")
+    assert "phase-p3::__test" in _deps_for(spec, "3.1::impl")
+    assert "3.1::impl" in _deps_for(spec, "phase-p3::__ref")
+
+    # Cross-phase chain skips phase-p2 (no TDD entries → no sandwich).
+    # phase-p3's [TEST] therefore depends on phase-p1's [REF], not p2.
+    assert "phase-p1::__ref" in _deps_for(spec, "phase-p3::__test")
 
 
 def test_phase_nesting_p1_p2_p3(
@@ -277,21 +286,29 @@ def test_phase_nesting_p1_p2_p3(
     parent = _parent(service, sample_project)
     spec = service.compile_plan_to_spec(_parse_manifest_plan(tmp_path), parent)
 
+    # phase-p1: TDD entries [1.2, 1.3] wrapped in sandwich; non-TDD 1.1 single
+    # follows the sandwich.
+    # phase-p2: no TDD entries → no sandwich, just two singles.
+    # phase-p3: TDD entry 3.1 wrapped in sandwich.
     assert {phase["id"]: phase["task_ids"] for phase in spec["phases"]} == {
         "phase-p1": [
-            "1.1::single",
-            "1.2::test",
+            "phase-p1::__test",
             "1.2::impl",
-            "1.2::ref",
-            "1.3::test",
             "1.3::impl",
-            "1.3::ref",
+            "phase-p1::__ref",
+            "1.1::single",
         ],
         "phase-p2": ["2.1::single", "2.2::single"],
-        "phase-p3": ["3.1::test", "3.1::impl", "3.1::ref"],
+        "phase-p3": ["phase-p3::__test", "3.1::impl", "phase-p3::__ref"],
     }
     assert spec["deliverable_count"] == 6
-    assert len(spec["tasks"]) == 12
+    # 6 entries (1 task each) + sandwich wrappers in p1 (TEST+REF) + p3 (TEST+REF) = 10
+    assert len(spec["tasks"]) == 10
+    # phase-p2 has no TDD entries → no sandwich emitted.
+    phase_by_id = {phase["id"]: phase for phase in spec["phases"]}
+    assert phase_by_id["phase-p1"]["tdd_sandwich_emitted"] is True
+    assert phase_by_id["phase-p2"]["tdd_sandwich_emitted"] is False
+    assert phase_by_id["phase-p3"]["tdd_sandwich_emitted"] is True
 
 
 def test_missing_manifest_raises(

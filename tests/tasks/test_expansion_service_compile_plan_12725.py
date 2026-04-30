@@ -14,7 +14,11 @@ from gobby.tasks.expansion_service import ExpansionService
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 MIN_DELIVERABLE_COUNT = 32
-MIN_COMPILED_TASK_COUNT = 74
+# Per-phase TDD sandwich: each TDD-phase adds two wrappers ([TEST] Phase N
+# and [REF] Phase N) on top of one IMPL/single task per manifest entry.
+# A floor that is robust to plan growth: MIN_DELIVERABLE_COUNT + 2 wrappers
+# for at least one phase having TDD entries.
+MIN_COMPILED_TASK_COUNT = 34
 MIN_IMPL_OR_SINGLE_TASK_COUNT = 32
 MIN_ANNOTATED_DEPENDENCY_COUNT = 24
 
@@ -93,8 +97,10 @@ def test_plan_12725_compiles_clean(
     )
 
     for entry in annotated_entries:
+        # Cross-deliverable depends_on edges link IMPL/single tasks directly:
+        # source uses ::impl for TDD entries and ::single for non-TDD.
         caller_lead = (
-            f"{entry.source_section}::test" if entry.tdd else f"{entry.source_section}::single"
+            f"{entry.source_section}::impl" if entry.tdd else f"{entry.source_section}::single"
         )
         for blocker_section in entry.depends_on:
             blocker_entry = manifest_by_source.get(blocker_section)
@@ -103,7 +109,7 @@ def test_plan_12725_compiles_clean(
                 f"{blocker_section}, which is not a manifest entry"
             )
             blocker_terminal = (
-                f"{blocker_section}::ref" if blocker_entry.tdd else f"{blocker_section}::single"
+                f"{blocker_section}::impl" if blocker_entry.tdd else f"{blocker_section}::single"
             )
             assert blocker_terminal in edges_by_caller.get(caller_lead, set()), (
                 f"missing dependency edge: {caller_lead} -> {blocker_terminal} "

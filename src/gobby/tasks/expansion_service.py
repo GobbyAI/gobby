@@ -456,7 +456,17 @@ class ExpansionService:
         }
 
     def compile_plan_to_spec(self, plan_doc: PlanDocument, task: Task) -> dict[str, Any]:
-        """Compile a Plan-Coverage Contract document into a compiled expansion spec."""
+        """Compile a Plan-Coverage Contract document into a compiled expansion spec.
+
+        TDD shape (per ``docs/guides/tdd-enforcement.md``): each phase containing
+        TDD-eligible (``tdd: true``) manifest entries is wrapped with a single
+        phase-level ``[TEST] Phase N: Write failing tests`` task at the start
+        and a single ``[REF] Phase N: Refactor with green tests`` task at the
+        end. Per-entry ``[IMPL]`` tasks sit in the middle. Non-TDD entries
+        emit single tasks without a prefix. Cross-phase: phase ``N+1``'s
+        ``[TEST]`` depends on phase ``N``'s ``[REF]``. Cross-deliverable
+        ``depends_on`` edges link IMPL/single tasks directly.
+        """
         plan_id = _contract_plan_id(plan_doc)
         section_by_id = {section.section_id: section for section in plan_doc.sections}
         phase_by_section_id = self._contract_phase_index(plan_doc)
@@ -468,35 +478,143 @@ class ExpansionService:
         dependencies: list[dict[str, str]] = []
         deferrals = self._contract_deferrals(plan_doc)
 
+        # Group manifest entries by phase id, preserving declaration order.
+        entries_by_phase_id: dict[str, list[ManifestEntry]] = {}
+        phase_section_by_phase_id: dict[str, PlanSection | None] = {}
+        phase_id_order: list[str] = []
         for entry in plan_doc.manifest_entries:
-            section = section_by_id[entry.source_section]
             phase_section = phase_by_section_id.get(entry.source_section)
+            phase_source_id = (
+                phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
+            )
+            phase_id = _contract_phase_spec_id(phase_source_id)
+            if phase_id not in entries_by_phase_id:
+                entries_by_phase_id[phase_id] = []
+                phase_section_by_phase_id[phase_id] = phase_section
+                phase_id_order.append(phase_id)
+            entries_by_phase_id[phase_id].append(entry)
+
+        # entry.source_section -> id of the per-entry IMPL or single task.
+        # Used to wire cross-deliverable depends_on edges below.
+        entry_work_task_id: dict[str, str] = {}
+        prior_phase_ref_id: str | None = None
+
+        for phase_id in phase_id_order:
+            phase_section = phase_section_by_phase_id[phase_id]
             phase = self._ensure_contract_phase(
                 phases=phases,
                 phase_by_id=phase_by_id,
                 phase_section=phase_section,
                 task=task,
             )
+            phase_entries = entries_by_phase_id[phase_id]
+            tdd_entries = [e for e in phase_entries if e.tdd]
+            non_tdd_entries = [e for e in phase_entries if not e.tdd]
 
-            emitted_tasks = self._contract_entry_tasks(
-                plan_doc=plan_doc,
-                entry=entry,
-                section=section,
-                phase_id=phase["id"],
+            # Aggregate phase test_intent from TDD entries before emitting the
+            # phase-level [TEST] task so its description / validation can cite
+            # cross-section behaviors.
+            for entry in tdd_entries:
+                section = section_by_id[entry.source_section]
+                phase["test_intent"]["behaviors"].extend(
+                    item.prose for item in section.acceptance_items
+                )
+                phase["test_intent"]["suggested_test_files"] = sorted(
+                    set(phase["test_intent"]["suggested_test_files"])
+                    | set(_find_test_files(_contract_affected_files(section)))
+                )
+
+            phase_number = _contract_phase_number(
+                phase_section.section_id if phase_section is not None else _DEFAULT_PHASE_ID
             )
-            self._record_contract_phase_tasks(
-                phase=phase,
-                section=section,
-                emitted_tasks=emitted_tasks,
-            )
-            tasks.extend(emitted_tasks)
-            self._append_contract_entry_dependencies(
-                entry=entry,
-                section_by_id=section_by_id,
-                manifest_entry_by_section=manifest_entry_by_section,
-                emitted_tasks=emitted_tasks,
-                dependencies=dependencies,
-            )
+
+            if tdd_entries:
+                # Phase-level [TEST] at the start.
+                phase_test_id = _stable_test_id(phase_id)
+                phase_test_task = self._build_contract_phase_sandwich_task(
+                    kind="test",
+                    phase_id=phase_id,
+                    phase=phase,
+                    phase_number=phase_number,
+                    tdd_entries=tdd_entries,
+                    section_by_id=section_by_id,
+                )
+                tasks.append(phase_test_task)
+                phase["task_ids"].append(phase_test_id)
+                phase["tdd_sandwich_emitted"] = True
+                if prior_phase_ref_id is not None:
+                    dependencies.append(
+                        {"task_id": phase_test_id, "depends_on": prior_phase_ref_id}
+                    )
+
+                # Per-entry [IMPL] tasks.
+                impl_ids: list[str] = []
+                for entry in tdd_entries:
+                    section = section_by_id[entry.source_section]
+                    impl_task = self._build_contract_entry_work_task(
+                        plan_doc=plan_doc,
+                        entry=entry,
+                        section=section,
+                        phase_id=phase_id,
+                        title_prefix="IMPL",
+                    )
+                    tasks.append(impl_task)
+                    phase["task_ids"].append(impl_task["id"])
+                    dependencies.append(
+                        {"task_id": impl_task["id"], "depends_on": phase_test_id}
+                    )
+                    entry_work_task_id[entry.source_section] = impl_task["id"]
+                    impl_ids.append(impl_task["id"])
+
+                # Phase-level [REF] at the end.
+                phase_ref_id = _stable_ref_id(phase_id)
+                phase_ref_task = self._build_contract_phase_sandwich_task(
+                    kind="ref",
+                    phase_id=phase_id,
+                    phase=phase,
+                    phase_number=phase_number,
+                    tdd_entries=tdd_entries,
+                    section_by_id=section_by_id,
+                )
+                tasks.append(phase_ref_task)
+                phase["task_ids"].append(phase_ref_id)
+                for impl_id in impl_ids:
+                    dependencies.append({"task_id": phase_ref_id, "depends_on": impl_id})
+                prior_phase_ref_id = phase_ref_id
+            else:
+                phase["tdd_sandwich_emitted"] = False
+
+            # Non-TDD entries: emit a single task each (no prefix).
+            for entry in non_tdd_entries:
+                section = section_by_id[entry.source_section]
+                single_task = self._build_contract_entry_work_task(
+                    plan_doc=plan_doc,
+                    entry=entry,
+                    section=section,
+                    phase_id=phase_id,
+                    title_prefix=None,
+                )
+                tasks.append(single_task)
+                phase["task_ids"].append(single_task["id"])
+                entry_work_task_id[entry.source_section] = single_task["id"]
+
+        # Cross-deliverable dependencies — wire IMPL→IMPL or single→IMPL across
+        # the graph using each entry's manifest depends_on list.
+        for entry in plan_doc.manifest_entries:
+            for dep_section in entry.depends_on:
+                blocker = section_by_id.get(dep_section)
+                blocker_entry = manifest_entry_by_section.get(dep_section)
+                if blocker is None or blocker.kind is not Kind.deliverable or blocker_entry is None:
+                    raise ValueError(
+                        f"manifest entry source_section={entry.source_section!r} depends on "
+                        f"{dep_section!r}, which has no manifest entry"
+                    )
+                dependencies.append(
+                    {
+                        "task_id": entry_work_task_id[entry.source_section],
+                        "depends_on": entry_work_task_id[dep_section],
+                    }
+                )
 
         return {
             "version": 1,
@@ -583,148 +701,109 @@ class ExpansionService:
         phase_by_id[phase_id] = phase
         return phase
 
-    def _record_contract_phase_tasks(
+    def _build_contract_phase_sandwich_task(
         self,
         *,
+        kind: str,
+        phase_id: str,
         phase: dict[str, Any],
-        section: PlanSection,
-        emitted_tasks: tuple[dict[str, Any], ...],
-    ) -> None:
-        phase["task_ids"].extend(task_item["id"] for task_item in emitted_tasks)
-        phase["test_intent"]["behaviors"].extend(item.prose for item in section.acceptance_items)
-        phase["test_intent"]["suggested_test_files"] = sorted(
-            set(phase["test_intent"]["suggested_test_files"])
-            | set(emitted_tasks[0].get("affected_files") or [])
+        phase_number: int,
+        tdd_entries: list[ManifestEntry],
+        section_by_id: dict[str, PlanSection],
+    ) -> dict[str, Any]:
+        """Build a phase-level ``[TEST]`` (kind=``"test"``) or ``[REF]`` (kind=``"ref"``) task.
+
+        Aggregates labels, affected-file hints, and the assigned agent across
+        the TDD entries so the phase wrapper carries the union of provenance.
+        """
+        is_test = kind == "test"
+        title = (
+            f"[TEST] Phase {phase_number}: Write failing tests"
+            if is_test
+            else f"[REF] Phase {phase_number}: Refactor with green tests"
+        )
+        description = (
+            self._build_phase_test_description(phase, phase_number)
+            if is_test
+            else self._build_phase_refactor_description(phase, phase_number)
+        )
+        validation = (
+            self._build_phase_test_validation(phase)
+            if is_test
+            else "All tests remain green after refactoring."
         )
 
-    def _append_contract_entry_dependencies(
-        self,
-        *,
-        entry: ManifestEntry,
-        section_by_id: dict[str, PlanSection],
-        manifest_entry_by_section: dict[str, ManifestEntry],
-        emitted_tasks: tuple[dict[str, Any], ...],
-        dependencies: list[dict[str, str]],
-    ) -> None:
-        caller_id = emitted_tasks[0]["id"]
-        for dependency in entry.depends_on:
-            blocker = section_by_id.get(dependency)
-            blocker_entry = manifest_entry_by_section.get(dependency)
-            if blocker is None or blocker.kind is not Kind.deliverable or blocker_entry is None:
-                raise ValueError(
-                    f"manifest entry source_section={entry.source_section!r} depends on "
-                    f"{dependency!r}, which has no manifest entry"
-                )
-            dependencies.append(
-                {
-                    "task_id": caller_id,
-                    "depends_on": self._contract_entry_terminal_id(
-                        dependency,
-                        blocker_entry,
-                    ),
-                }
-            )
+        labels: set[str] = set()
+        affected_files: set[str] = set()
+        for entry in tdd_entries:
+            labels.update(entry.labels)
+            section = section_by_id[entry.source_section]
+            section_files = _contract_affected_files(section)
+            if is_test:
+                affected_files.update(_find_test_files(section_files))
+            else:
+                affected_files.update(section_files)
 
-        if entry.tdd:
-            test_task, impl_task, ref_task = emitted_tasks
-            dependencies.append({"task_id": impl_task["id"], "depends_on": test_task["id"]})
-            dependencies.append({"task_id": ref_task["id"], "depends_on": impl_task["id"]})
+        assigned_agent = tdd_entries[0].assigned_agent if tdd_entries else None
 
-    def _contract_entry_terminal_id(self, section_id: str, entry: ManifestEntry) -> str:
-        if entry.tdd:
-            _test_id, _impl_id, ref_id = _contract_task_ids(section_id)
-            return ref_id
-        return _contract_single_task_id(section_id)
+        return {
+            "id": _stable_test_id(phase_id) if is_test else _stable_ref_id(phase_id),
+            "phase_id": phase_id,
+            "title": title,
+            "description": description,
+            "priority": 2,
+            "task_type": "task",
+            "category": "test" if is_test else "refactor",
+            "validation": validation,
+            "affected_files": sorted(affected_files),
+            "labels": sorted(labels),
+            "assigned_agent": assigned_agent,
+            "additional_skills": [],
+            "source_section_id": None,
+        }
 
-    def _contract_entry_tasks(
+    def _build_contract_entry_work_task(
         self,
         *,
         plan_doc: PlanDocument,
         entry: ManifestEntry,
         section: PlanSection,
         phase_id: str,
-    ) -> tuple[dict[str, Any], ...]:
-        base_title = entry.title
+        title_prefix: str | None,
+    ) -> dict[str, Any]:
+        """Build the per-entry work task — ``[IMPL]``-prefixed for TDD entries
+        (``title_prefix="IMPL"``) or unprefixed for non-TDD entries
+        (``title_prefix=None``)."""
         body = _contract_section_body(plan_doc, section)
-        category = entry.category
-        labels = list(entry.labels)
         affected_files = _contract_affected_files(section)
         acceptance_lines = _contract_acceptance_lines(section)
-        acceptance_block = "\n".join(acceptance_lines)
-        base_description = f"Plan section `{section.section_id}`.\n\n{body}".strip()
-        if acceptance_block:
-            base_description = f"{base_description}\n\nAcceptance items:\n{acceptance_block}"
-        assigned_agent = entry.assigned_agent
-        additional_skills: list[str] = []
-        description = base_description
-        priority = 2
+        description = f"Plan section `{section.section_id}`.\n\n{body}".strip()
+        if acceptance_lines:
+            description = f"{description}\n\nAcceptance items:\n" + "\n".join(acceptance_lines)
 
-        if not entry.tdd:
-            return (
-                {
-                    "id": _contract_single_task_id(section.section_id),
-                    "phase_id": phase_id,
-                    "title": base_title,
-                    "description": description,
-                    "priority": priority,
-                    "task_type": entry.task_type,
-                    "category": category,
-                    "validation": entry.validation_criteria,
-                    "affected_files": affected_files,
-                    "labels": labels,
-                    "assigned_agent": assigned_agent,
-                    "additional_skills": additional_skills,
-                    "source_section_id": section.section_id,
-                },
-            )
+        if title_prefix is None:
+            task_id = _contract_single_task_id(section.section_id)
+            title = entry.title
+        else:
+            _test_id, impl_id, _ref_id = _contract_task_ids(section.section_id)
+            task_id = impl_id
+            title = f"[{title_prefix}] {entry.title}"
 
-        test_id, impl_id, ref_id = _contract_task_ids(section.section_id)
-        test_task = {
-            "id": test_id,
+        return {
+            "id": task_id,
             "phase_id": phase_id,
-            "title": f"[TEST] {base_title}",
+            "title": title,
             "description": description,
-            "priority": priority,
+            "priority": 2,
             "task_type": entry.task_type,
-            "category": "test",
-            "validation": entry.validation_criteria,
-            "affected_files": _find_test_files(affected_files),
-            "labels": labels,
-            "assigned_agent": assigned_agent,
-            "additional_skills": additional_skills,
-            "source_section_id": section.section_id,
-        }
-        impl_task = {
-            "id": impl_id,
-            "phase_id": phase_id,
-            "title": f"[IMPL] {base_title}",
-            "description": description,
-            "priority": priority,
-            "task_type": entry.task_type,
-            "category": category,
+            "category": entry.category,
             "validation": entry.validation_criteria,
             "affected_files": affected_files,
-            "labels": labels,
-            "assigned_agent": assigned_agent,
-            "additional_skills": additional_skills,
+            "labels": list(entry.labels),
+            "assigned_agent": entry.assigned_agent,
+            "additional_skills": [],
             "source_section_id": section.section_id,
         }
-        ref_task = {
-            "id": ref_id,
-            "phase_id": phase_id,
-            "title": f"[REF] {base_title}",
-            "description": description,
-            "priority": priority,
-            "task_type": entry.task_type,
-            "category": "refactor",
-            "validation": entry.validation_criteria,
-            "affected_files": affected_files,
-            "labels": labels,
-            "assigned_agent": assigned_agent,
-            "additional_skills": additional_skills,
-            "source_section_id": section.section_id,
-        }
-        return test_task, impl_task, ref_task
 
     def _contract_phase_index(self, plan_doc: PlanDocument) -> dict[str, PlanSection]:
         section_by_id = {section.section_id: section for section in plan_doc.sections}
