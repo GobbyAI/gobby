@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -20,6 +21,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--profile" in result.output
     assert "--skip-stage" in result.output
     assert "--isolation" in result.output
+    assert "--unattended" in result.output
     assert "--yolo" in result.output
     assert "--no-yolo" in result.output
     assert "--max-review-rounds" in result.output
@@ -27,7 +29,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--agent" in result.output
 
 
-def test_build_cli_parses_flags_and_calls_shared_service(tmp_path) -> None:
+def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None:
     from gobby.build.service import BuildResult
     from gobby.cli import cli
 
@@ -58,6 +60,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path) -> None:
                 "qa,pr",
                 "--isolation",
                 "clone",
+                "--unattended",
                 "--yolo",
                 "--max-review-rounds",
                 "7",
@@ -78,7 +81,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path) -> None:
     assert opts.profile == "review"
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
-    assert opts.unattended is False
+    assert opts.unattended is True
     assert opts.composer_yolo is True
     assert opts.max_review_rounds == 7
     assert opts.target_branch == "release/0.4"

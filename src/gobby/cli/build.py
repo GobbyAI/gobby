@@ -53,6 +53,13 @@ def _echo_build_result(result: BuildResult) -> None:
     help="Execution isolation mode.",
 )
 @click.option(
+    "--unattended",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Run dispatch automation without interactive review gates.",
+)
+@click.option(
     "--yolo/--no-yolo",
     default=False,
     show_default=True,
@@ -76,6 +83,7 @@ def build_command(
     profile: str | None,
     skip_stage: str | None,
     isolation: str,
+    unattended: bool,
     yolo: bool,
     max_review_rounds: int,
     target_branch: str | None,
@@ -94,7 +102,7 @@ def build_command(
         profile=profile,
         skip_stages=_parse_skip_stages(skip_stage),
         isolation=cast(Isolation, isolation),
-        unattended=False,
+        unattended=unattended,
         composer_yolo=yolo,
         max_review_rounds=max_review_rounds,
         max_expansion_attempts=max_expansion_attempts,
