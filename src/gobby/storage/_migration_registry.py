@@ -93,8 +93,8 @@ def _add_lifecycle_dispatch_schema(db: LocalDatabase) -> None:
     _add_task_column_if_missing(
         db,
         columns,
-        "yolo",
-        "yolo INTEGER NOT NULL DEFAULT 0 CHECK(yolo IN (0, 1))",
+        "unattended",
+        "unattended INTEGER NOT NULL DEFAULT 0 CHECK(unattended IN (0, 1))",
     )
     _add_task_column_if_missing(
         db,
@@ -207,6 +207,13 @@ def _add_is_local_flags(db: LocalDatabase) -> None:
     )
 
 
+def _rename_yolo_to_unattended(db: LocalDatabase) -> None:
+    """Rename the legacy unattended-dispatch column."""
+    from gobby.storage.migrations.rename_yolo_to_unattended import up
+
+    up(db)
+
+
 def _local_backfill_predicate(provider_column: str, model_column: str) -> tuple[str, list[str]]:
     provider_placeholders = ", ".join("?" for _ in _LOCAL_BACKFILL_PROVIDER_NAMES)
     model_clauses = " OR ".join(
@@ -241,5 +248,10 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         223,
         "Add local-model flags to sessions and agent runs",
         _add_is_local_flags,
+    ),
+    (
+        230,
+        "Rename tasks.yolo to tasks.unattended",
+        _rename_yolo_to_unattended,
     ),
 ]

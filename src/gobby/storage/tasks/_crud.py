@@ -55,6 +55,17 @@ def _normalize_skip_stage_labels(skip_stage_labels: Iterable[str]) -> list[str]:
     return labels
 
 
+def _skipped_stages(labels: Iterable[str] | None) -> set[str]:
+    """Extract build stage names from task labels."""
+    if not labels:
+        return set()
+    return {
+        label.removeprefix("stage-:")
+        for label in labels
+        if label.startswith("stage-:") and label.removeprefix("stage-:")
+    }
+
+
 def _decode_labels(labels_json: str | None) -> list[str]:
     """Decode task labels from storage, tolerating legacy nulls."""
     if not labels_json:
@@ -66,6 +77,11 @@ def _decode_labels(labels_json: str | None) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, str)]
+
+
+def _is_unattended(task: Any) -> bool:
+    """Return whether dispatch should avoid human escalation for a task."""
+    return bool(getattr(task, "unattended", False))
 
 
 def _session_exists(db: DatabaseProtocol, session_id: str) -> bool:
@@ -331,9 +347,11 @@ def cascade_build_state_to_subtree(
     db: DatabaseProtocol,
     epic_id: str,
     isolation: Isolation | str,
-    yolo: bool,
+    unattended: bool | None,
     skip_stage_labels: Iterable[str],
     allow_automation: bool,
+    *,
+    yolo: bool | None = None,
 ) -> int:
     """Apply build dispatch state to an epic and every descendant task.
 
@@ -343,6 +361,8 @@ def cascade_build_state_to_subtree(
 
     Returns the number of tasks updated, including the root epic.
     """
+    if unattended is None:
+        unattended = bool(yolo)
     normalized_isolation = Isolation(isolation).value
     labels_to_add = _normalize_skip_stage_labels(skip_stage_labels)
     now = datetime.now(UTC).isoformat()
@@ -381,7 +401,7 @@ def cascade_build_state_to_subtree(
                 (
                     json.dumps(labels),
                     int(allow_automation),
-                    int(yolo),
+                    int(unattended),
                     normalized_isolation,
                     now,
                     cast(str, row["id"]),
@@ -393,7 +413,7 @@ def cascade_build_state_to_subtree(
             UPDATE tasks
             SET labels = ?,
                 allow_automation = ?,
-                yolo = ?,
+                unattended = ?,
                 isolation = ?,
                 updated_at = ?
             WHERE id = ?
@@ -437,6 +457,7 @@ def update_task(
     validation_override_reason: MaybeUnset[str | None] = UNSET,
     lifecycle: MaybeUnset[str | None] = UNSET,
     allow_automation: MaybeUnset[bool | None] = UNSET,
+    unattended: MaybeUnset[bool | None] = UNSET,
     yolo: MaybeUnset[bool | None] = UNSET,
     isolation: MaybeUnset[Isolation | str | None] = UNSET,
     assigned_agent: MaybeUnset[str | None] = UNSET,
@@ -532,9 +553,11 @@ def update_task(
     if allow_automation is not UNSET:
         updates.append("allow_automation = ?")
         params.append(int(bool(allow_automation)))
-    if yolo is not UNSET:
-        updates.append("yolo = ?")
-        params.append(int(bool(yolo)))
+    if unattended is UNSET and yolo is not UNSET:
+        unattended = yolo
+    if unattended is not UNSET:
+        updates.append("unattended = ?")
+        params.append(int(bool(unattended)))
     if isolation is not UNSET:
         if isolation is None:
             raise ValueError("isolation cannot be None")

@@ -301,7 +301,7 @@ CREATE TABLE tasks (
             'merged'
         )),
     allow_automation INTEGER NOT NULL DEFAULT 0 CHECK(allow_automation IN (0, 1)),
-    yolo INTEGER NOT NULL DEFAULT 0 CHECK(yolo IN (0, 1)),
+    unattended INTEGER NOT NULL DEFAULT 0 CHECK(unattended IN (0, 1)),
     isolation TEXT NOT NULL DEFAULT 'worktree' CHECK(isolation IN ('none', 'worktree', 'clone')),
     assigned_agent TEXT,
     additional_skills TEXT,

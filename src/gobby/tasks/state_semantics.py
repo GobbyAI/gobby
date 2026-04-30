@@ -216,7 +216,7 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
         "escalation_reason": getattr(task, "escalation_reason", None),
         "lifecycle": getattr(task, "lifecycle", "open"),
         "allow_automation": bool(getattr(task, "allow_automation", False)),
-        "yolo": bool(getattr(task, "yolo", False)),
+        "unattended": bool(getattr(task, "unattended", False)),
         "isolation": getattr(task, "isolation", "worktree"),
         "assigned_agent": getattr(task, "assigned_agent", None),
         "additional_skills": getattr(task, "additional_skills", None),

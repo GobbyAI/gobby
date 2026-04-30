@@ -188,7 +188,7 @@ class Task:
     # Automation dispatch fields
     lifecycle: Lifecycle = Lifecycle.open
     allow_automation: bool = False
-    yolo: bool = False
+    unattended: bool = False
     isolation: Isolation = Isolation.worktree
     assigned_agent: str | None = None
     additional_skills: list[str] | None = None
@@ -292,7 +292,7 @@ class Task:
                 else Lifecycle.open
             ),
             allow_automation=bool(row["allow_automation"]) if "allow_automation" in keys else False,
-            yolo=bool(row["yolo"]) if "yolo" in keys else False,
+            unattended=bool(row["unattended"]) if "unattended" in keys else False,
             isolation=(
                 Isolation(row["isolation"])
                 if "isolation" in keys and row["isolation"] is not None
@@ -352,7 +352,7 @@ class Task:
             "due_date": self.due_date,
             "lifecycle": self.lifecycle,
             "allow_automation": self.allow_automation,
-            "yolo": self.yolo,
+            "unattended": self.unattended,
             "isolation": self.isolation,
             "assigned_agent": self.assigned_agent,
             "additional_skills": self.additional_skills,
@@ -399,7 +399,7 @@ class Task:
             "github_pr_number": self.github_pr_number,
             "lifecycle": self.lifecycle,
             "allow_automation": self.allow_automation,
-            "yolo": self.yolo,
+            "unattended": self.unattended,
             "isolation": self.isolation,
             "assigned_agent": self.assigned_agent,
             "additional_skills": self.additional_skills,

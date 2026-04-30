@@ -322,6 +322,7 @@ class LocalTaskManager:
         validation_override_reason: MaybeUnset[str | None] = UNSET,
         lifecycle: MaybeUnset[str | None] = UNSET,
         allow_automation: MaybeUnset[bool | None] = UNSET,
+        unattended: MaybeUnset[bool | None] = UNSET,
         yolo: MaybeUnset[bool | None] = UNSET,
         isolation: MaybeUnset[Isolation | str | None] = UNSET,
         assigned_agent: MaybeUnset[str | None] = UNSET,
@@ -392,6 +393,7 @@ class LocalTaskManager:
             validation_override_reason=validation_override_reason,
             lifecycle=lifecycle,
             allow_automation=allow_automation,
+            unattended=unattended,
             yolo=yolo,
             isolation=isolation,
             assigned_agent=assigned_agent,
@@ -409,16 +411,20 @@ class LocalTaskManager:
         self,
         epic_id: str,
         isolation: Isolation | str,
-        yolo: bool,
+        unattended: bool | None,
         skip_stage_labels: Iterable[str],
         allow_automation: bool,
+        *,
+        yolo: bool | None = None,
     ) -> int:
         """Apply build dispatch state to an epic and every descendant task."""
+        if unattended is None:
+            unattended = bool(yolo)
         updated_count = _cascade_build_state_to_subtree(
             self.db,
             epic_id=epic_id,
             isolation=isolation,
-            yolo=yolo,
+            unattended=unattended,
             skip_stage_labels=skip_stage_labels,
             allow_automation=allow_automation,
         )

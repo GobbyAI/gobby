@@ -50,7 +50,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         temp_db,
         epic.id,
         Isolation.clone,
-        yolo=True,
+        unattended=True,
         skip_stage_labels=["stage-:qa", "stage-:test_arch", "stage-:qa", ""],
         allow_automation=True,
     )
@@ -59,7 +59,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
     for task_id in (epic.id, child_epic.id, leaf.id, sibling.id):
         task = task_manager.get_task(task_id)
         assert task.allow_automation is True
-        assert task.yolo is True
+        assert task.unattended is True
         assert task.isolation is Isolation.clone
         assert {"stage-:qa", "stage-:test_arch"}.issubset(set(task.labels or []))
         assert (task.labels or []).count("stage-:qa") == 1

@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 TASK_COLUMNS = {
     "lifecycle",
     "allow_automation",
-    "yolo",
+    "unattended",
     "isolation",
     "assigned_agent",
     "additional_skills",
@@ -56,7 +56,7 @@ def _assert_lifecycle_schema(db: LocalDatabase) -> None:
     assert LIFECYCLE_INDEXES.issubset(_index_names(db))
     assert _task_column(db, "lifecycle")["dflt_value"] == "'open'"
     assert _task_column(db, "allow_automation")["dflt_value"] == "0"
-    assert _task_column(db, "yolo")["dflt_value"] == "0"
+    assert _task_column(db, "unattended")["dflt_value"] == "0"
     assert _task_column(db, "isolation")["dflt_value"] == "'worktree'"
 
     artifacts_sql = db.fetchone(

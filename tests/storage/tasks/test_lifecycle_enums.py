@@ -27,7 +27,7 @@ EXPECTED_ISOLATIONS = ["none", "worktree", "clone"]
 NEW_TASK_FIELDS = {
     "lifecycle",
     "allow_automation",
-    "yolo",
+    "unattended",
     "isolation",
     "assigned_agent",
     "additional_skills",
@@ -57,7 +57,7 @@ def test_task_dataclass_defines_dispatch_fields_with_safe_defaults() -> None:
     assert NEW_TASK_FIELDS.issubset(task_fields)
     assert task_fields["lifecycle"].default is Lifecycle.open
     assert task_fields["allow_automation"].default is False
-    assert task_fields["yolo"].default is False
+    assert task_fields["unattended"].default is False
     assert task_fields["isolation"].default is Isolation.worktree
     assert task_fields["assigned_agent"].default is None
     assert task_fields["additional_skills"].default is None
@@ -79,7 +79,7 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
         updated_at="2026-01-01T00:00:00+00:00",
         lifecycle=Lifecycle.expanding,
         allow_automation=True,
-        yolo=True,
+        unattended=True,
         isolation=Isolation.clone,
         assigned_agent="backend-developer",
         additional_skills=["sql-review", "perf-review"],
@@ -92,7 +92,7 @@ def test_task_serializers_surface_dispatch_fields(serializer: str) -> None:
 
     assert payload["lifecycle"] == Lifecycle.expanding
     assert payload["allow_automation"] is True
-    assert payload["yolo"] is True
+    assert payload["unattended"] is True
     assert payload["isolation"] == Isolation.clone
     assert payload["assigned_agent"] == "backend-developer"
     assert payload["additional_skills"] == ["sql-review", "perf-review"]

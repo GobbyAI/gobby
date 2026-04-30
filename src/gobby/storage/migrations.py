@@ -19,6 +19,8 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+__path__ = [str(Path(__file__).with_suffix(""))]
+
 from gobby.storage._migration_registry import MIGRATIONS as _REGISTRY_MIGRATIONS
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migration_helpers import (
