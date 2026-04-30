@@ -50,7 +50,7 @@ instructions: |
   acceptance item per data row with stable IDs.
 
   PLAN-FILE WRITE SCOPE:
-  Edit and Write are permitted ONLY for the plan file at
+  Edit and Write are permitted; write only to the plan file at
   `task_artifacts.plan_file_path`. Writing to any other path violates the
   agent contract. The only legitimate plan-file write is appending the
   `## M1 Task Manifest` section on approval (see MANIFEST EMISSION below).

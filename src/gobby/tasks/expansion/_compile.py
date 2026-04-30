@@ -367,8 +367,10 @@ def _build_contract_phase_sandwich_task(
 
     assigned_agent = tdd_entries[0].assigned_agent if tdd_entries else None
 
+    task_id = _stable_test_id(phase_id) if is_test else _stable_ref_id(phase_id)
     return {
-        "id": _stable_test_id(phase_id) if is_test else _stable_ref_id(phase_id),
+        "id": task_id,
+        "task_id": task_id,
         "phase_id": phase_id,
         "title": title,
         "description": description,
@@ -413,6 +415,7 @@ def _build_contract_entry_work_task(
 
     return {
         "id": task_id,
+        "task_id": task_id,
         "phase_id": phase_id,
         "title": title,
         "description": description,
