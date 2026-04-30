@@ -71,6 +71,18 @@ def validate_plan_file(self: Any, plan_path: Path) -> dict[str, Any]:
         for section in plan_doc.sections
         if _CONTRACT_PHASE_ID_RE.match(section.section_id)
     }
+    if not phases:
+        return {
+            "valid": False,
+            "errors": [
+                "Plan has deliverable sections but no phase sections. Phases must "
+                "use canonical IDs matching ^P\\d+$ (e.g. `## P1: Setup`). "
+                "Headings like `## Phase 1: Setup` or `## 1: Setup` are silently "
+                "dropped by the parser and cannot anchor expansion. See "
+                "src/gobby/install/shared/skills/plan-draft/SKILL.md "
+                "§ 'Phase Heading Syntax'."
+            ],
+        }
     return {
         "valid": True,
         "path": str(plan_path),

@@ -45,7 +45,7 @@ Canonical heading regex:
 ```
 
 The documented rejection message MUST name the failing cause. Reject on these
-eight cases:
+nine cases:
 
 | Cause | Rejection message |
 | --- | --- |
@@ -56,6 +56,7 @@ eight cases:
 | malformed item ID | `Plan-Coverage Contract rejection: malformed item ID` |
 | malformed deferral | `Plan-Coverage Contract rejection: malformed deferral` |
 | zero artifact references | `Plan-Coverage Contract rejection: zero artifact references` |
+| phases missing | `Plan-Coverage Contract rejection: phases missing` |
 | table-row decomposition | `Plan-Coverage Contract rejection: table-row decomposition` |
 
 Mechanical parser-level rejection covers the first seven cases:
@@ -72,7 +73,20 @@ Mechanical parser-level rejection covers the first seven cases:
   `task_ref`, `reason`, `owner`, and `original_acceptance_items`; the referenced
   task must be open and carry `deferred-from:<plan-id>:<section-id>`.
 
-The eighth rejection is qualitative because table intent cannot be parsed
+The eighth rejection ("phases missing") is a post-parse semantic check, not a
+parser-level rejection: in `parse_mode="draft"` the parser silently drops
+headings that do not match the canonical regex, so a plan authored to the
+pre-contract template (`## Phase 1: Setup`) parses without error but produces
+zero phase sections. After parsing, count sections whose ID matches the
+contract phase regex `^P\d+$` (`_CONTRACT_PHASE_ID_RE` in
+`src/gobby/tasks/expansion/_common.py`). Reject if the plan has one or more
+`kind: deliverable` sections but zero phase sections — the expansion compiler
+cannot anchor TDD wrappers without phases. The same check is enforced
+defensively in `validate_plan_file`
+(`src/gobby/tasks/expansion/_compile.py`); double-validation between the
+adversary gate and the validator is intentional defense-in-depth.
+
+The ninth rejection is qualitative because table intent cannot be parsed
 reliably. Any `deliverable` section whose body uses a markdown table to
 enumerate work items MUST emit one acceptance item per table data row with
 stable IDs. Reject a deliverable whose acceptance-item count is lower than its
