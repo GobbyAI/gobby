@@ -213,7 +213,17 @@ def _entries(db: TestDatabase, sql: str) -> list[PlanRegistryEntry]:
 def _is_plan_markdown(path: Path) -> bool:
     if path.name == "README.md" or path.name.startswith("."):
         return False
-    return path.read_text(encoding="utf-8").lstrip().startswith("#")
+    return _strip_leading_html_comments(path.read_text(encoding="utf-8")).lstrip().startswith("#")
+
+
+def _strip_leading_html_comments(text: str) -> str:
+    stripped = text.lstrip()
+    while stripped.startswith("<!--"):
+        end = stripped.find("-->")
+        if end == -1:
+            return stripped
+        stripped = stripped[end + 3 :].lstrip()
+    return stripped
 
 
 def _root_ref(path: Path) -> str:
