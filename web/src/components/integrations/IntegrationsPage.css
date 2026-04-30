@@ -17,7 +17,7 @@
   left: 50%;
   transform: translateX(-50%);
   background: var(--color-error);
-  color: var(--accent-foreground);
+  color: var(--text-on-error);
   padding: 10px 20px;
   border-radius: 8px;
   font-size: calc(var(--font-size-base) * 0.75);
@@ -522,7 +522,7 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  box-shadow: -4px 0 20px oklch(0% 0 0 / 0.2);
+  box-shadow: var(--shadow-panel-left, -4px 0 20px oklch(0% 0 0 / 0.2));
   animation: intg-slide-in 0.2s ease-out;
 }
 

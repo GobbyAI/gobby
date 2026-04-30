@@ -12,7 +12,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import TaskAlreadyClaimedError, TaskClosedError, TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
@@ -151,14 +151,20 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 session_id=resolved_session_id,
                 force=force or delegated_claim,
             )
+        except TaskClosedError as e:
+            return task_error(str(e), TaskToolErrorCode.TASK_CLOSED)
+        except TaskAlreadyClaimedError as e:
+            return task_error(
+                "Task already claimed by another session",
+                TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                claimed_by=e.claimed_by,
+                message=(
+                    f"Task is already claimed by session '{e.claimed_by}'. "
+                    "Use force=True to override."
+                ),
+            )
         except ValueError as e:
-            message = str(e)
-            lowered = message.lower()
-            if "task is closed" in lowered:
-                return task_error(message, TaskToolErrorCode.TASK_CLOSED)
-            if "already claimed" in lowered:
-                return task_error(message, TaskToolErrorCode.TASK_CLAIM_CONFLICT)
-            return {"error": message}
+            return {"error": str(e)}
 
         if not updated:
             return {"error": f"Failed to claim task {task_id}"}

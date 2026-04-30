@@ -158,3 +158,23 @@ async def test_lifecycle_invalid_status_returns_task_invalid_status(
     assert result["success"] is False
     assert result["status"] == "error"
     assert result["error_code"] == TaskToolErrorCode.TASK_INVALID_STATUS.value
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_value_error_with_unrelated_status_word_is_generic(
+    mock_task_manager: MagicMock,
+    mock_sync_manager: MagicMock,
+) -> None:
+    task = _make_task(status="open")
+    message = "Cannot update username status cache"
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.escalate_task.side_effect = ValueError(message)
+    registry = _create_registry(mock_task_manager, mock_sync_manager)
+
+    with session_context_for_test("session-abc"):
+        result = await registry.call(
+            "escalate_task",
+            {"task_id": task.id, "reason": "blocked"},
+        )
+
+    assert result == {"error": message}

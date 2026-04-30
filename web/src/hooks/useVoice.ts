@@ -136,10 +136,11 @@ export function useVoice(
 
     if (type === 'voice_transcription') {
       setIsTranscribing(false)
-      setVoiceError(null)
+      clearTransientError()
     } else if (type === 'voice_status') {
       const voiceStatus = data.status as string
       if (voiceStatus === 'error') {
+        clearTransientError()
         setVoiceError(data.error as string || 'Voice error')
         setIsTranscribing(false)
       } else if (voiceStatus === 'empty') {
@@ -147,10 +148,10 @@ export function useVoice(
         setTransientError('No speech detected — try speaking louder or closer to the mic')
       } else if (voiceStatus === 'transcribing') {
         setIsTranscribing(true)
-        setVoiceError(null)
+        clearTransientError()
       } else if (voiceStatus === 'preparing') {
         markVoicePreparing()
-        setVoiceError(null)
+        clearTransientError()
         startStatusPolling()
       }
       if ('voice_ready' in data || 'voice_loading' in data) {
@@ -168,6 +169,7 @@ export function useVoice(
   }, [
     applyVoiceStatus,
     clearPendingTTSMeta,
+    clearTransientError,
     handleTTSAudioMeta,
     markVoicePreparing,
     setIsTranscribing,

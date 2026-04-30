@@ -4,12 +4,16 @@ import { MicVAD, utils } from '@ricky0123/vad-web'
 import type { VoiceInputMode } from '../useSettings'
 
 const MIN_PTT_DURATION_MS = 250
+const VOICE_CAPTURE_WORKLET_URL = '/audio-worklets/voice-capture-processor.js'
+const DEFAULT_ONNX_WASM_BASE_PATH = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.1/dist/'
+const ONNX_WASM_BASE_PATH =
+  import.meta.env.VITE_VAD_ONNX_WASM_BASE_PATH || DEFAULT_ONNX_WASM_BASE_PATH
 
 interface RecordingContext {
   ctx: AudioContext
   stream: MediaStream
   source: MediaStreamAudioSourceNode
-  processor: ScriptProcessorNode
+  workletNode: AudioWorkletNode
   sampleRate: number
 }
 
@@ -74,7 +78,13 @@ export function useVoiceCapture({
     if (!rec) return
 
     try {
-      rec.processor.disconnect()
+      rec.workletNode.port.onmessage = null
+      rec.workletNode.port.close()
+    } catch {
+      // noop
+    }
+    try {
+      rec.workletNode.disconnect()
     } catch {
       // noop
     }
@@ -178,7 +188,7 @@ export function useVoiceCapture({
       try {
         const vad = await MicVAD.new({
           baseAssetPath: '/',
-          onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.1/dist/',
+          onnxWASMBasePath: ONNX_WASM_BASE_PATH,
           positiveSpeechThreshold: 0.6,
           negativeSpeechThreshold: 0.35,
           minSpeechFrames: 6,
@@ -252,27 +262,36 @@ export function useVoiceCapture({
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,
         },
       })
 
       const ctx = new AudioContext({ sampleRate: 16000 })
       const source = ctx.createMediaStreamSource(stream)
-      const processor = ctx.createScriptProcessor(4096, 1, 1)
+      if (!ctx.audioWorklet) {
+        throw new Error('AudioWorklet is not available in this browser')
+      }
+      await ctx.audioWorklet.addModule(VOICE_CAPTURE_WORKLET_URL)
+      const workletNode = new AudioWorkletNode(ctx, 'voice-capture-processor', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: 1,
+      })
       samplesRef.current = []
       recordingStartRef.current = performance.now()
 
-      processor.onaudioprocess = (event) => {
-        samplesRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)))
+      workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        samplesRef.current.push(new Float32Array(event.data))
       }
 
-      source.connect(processor)
-      processor.connect(ctx.destination)
+      source.connect(workletNode)
+      workletNode.connect(ctx.destination)
 
       recCtxRef.current = {
         ctx,
         stream,
         source,
-        processor,
+        workletNode,
         sampleRate: ctx.sampleRate,
       }
       if (mountedRef.current) setIsRecording(true)

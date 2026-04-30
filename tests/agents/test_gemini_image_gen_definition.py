@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -16,7 +17,7 @@ AGENT_PATH = REPO_ROOT / "src/gobby/install/shared/workflows/agents/gemini-image
 STRAY_WORKFLOW_PATH = REPO_ROOT / ".gobby/workflows/gemini-image-gen.yaml"
 
 
-def _agent() -> dict:
+def _agent() -> dict[str, Any]:
     return yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
 
 
@@ -38,7 +39,11 @@ def test_gemini_image_agent_uses_image_generation_model() -> None:
 
 def test_gemini_image_agent_self_completes_with_end_agent_run() -> None:
     agent = _agent()
-    terminate_step = next(step for step in agent["steps"] if step["name"] == "terminate")
+    terminate_step = next(
+        (step for step in agent["steps"] if step["name"] == "terminate"),
+        None,
+    )
 
+    assert terminate_step is not None
     assert "gobby-agents:end_agent_run" in terminate_step["allowed_mcp_tools"]
     assert "gobby-agents:kill_agent" not in terminate_step["allowed_mcp_tools"]

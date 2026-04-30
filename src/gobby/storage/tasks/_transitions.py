@@ -16,7 +16,13 @@ from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
 from gobby.storage.tasks._lifecycle_events import record_lifecycle_event
-from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
+from gobby.storage.tasks._models import (
+    UNSET,
+    MaybeUnset,
+    Task,
+    TaskAlreadyClaimedError,
+    TaskClosedError,
+)
 from gobby.tasks.state_semantics import is_task_closed, normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
@@ -306,9 +312,9 @@ def claim_task(
     current_owner = get_effective_claim_owner(task, db)
 
     if is_task_closed(task):
-        raise ValueError(f"Cannot claim task {task_id}: task is closed")
+        raise TaskClosedError(f"Cannot claim task {task_id}: task is closed")
     if current_owner and current_owner != session_id and not force:
-        raise ValueError(f"Task {task_id} is already claimed by session '{current_owner}'")
+        raise TaskAlreadyClaimedError(task_id, current_owner)
 
     status = project_claim_status(task.status)
     update_task(

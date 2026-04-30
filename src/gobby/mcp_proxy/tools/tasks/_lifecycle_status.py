@@ -5,6 +5,7 @@ needs_review tool registrations.
 """
 
 import logging
+import re
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -17,6 +18,14 @@ from gobby.tasks.state_semantics import get_claimed_session_id
 
 logger = logging.getLogger(__name__)
 
+_TASK_STATUSES = "open|in_progress|needs_review|review_approved|closed|escalated"
+_STATUS_PATTERNS = (
+    re.compile(rf"\bstatus\s+'(?P<status>{_TASK_STATUSES})'\b"),
+    re.compile(rf"\bcurrent status:\s*(?P<status>{_TASK_STATUSES})\b"),
+    re.compile(rf"\btask status\s+'(?P<status>{_TASK_STATUSES})'\b"),
+)
+_LIFECYCLE_PATTERN = re.compile(r"\blifecycle\s+'[^']+'\b")
+
 
 def _status_error(message: str, status: str | None) -> dict[str, Any]:
     code = (
@@ -27,11 +36,19 @@ def _status_error(message: str, status: str | None) -> dict[str, Any]:
     return task_error(message, code)
 
 
+def _extract_status(message: str) -> str | None:
+    for pattern in _STATUS_PATTERNS:
+        match = pattern.search(message.lower())
+        if match:
+            return match.group("status")
+    return None
+
+
 def _lifecycle_value_error(message: str) -> dict[str, Any]:
-    lowered = message.lower()
-    if "status 'closed'" in lowered or "current status: closed" in lowered:
-        return task_error(message, TaskToolErrorCode.TASK_CLOSED)
-    if "status" in lowered or "lifecycle" in lowered:
+    status = _extract_status(message)
+    if status is not None:
+        return _status_error(message, status)
+    if _LIFECYCLE_PATTERN.search(message.lower()):
         return task_error(message, TaskToolErrorCode.TASK_INVALID_STATUS)
     return {"error": message}
 

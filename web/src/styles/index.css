@@ -36,6 +36,8 @@
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.3);
   --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.35);
   --shadow-xl: 0 20px 40px oklch(0% 0 0 / 0.4);
+  --shadow-popover-up: 0 -4px 12px oklch(0% 0 0 / 0.3);
+  --shadow-panel-left: -4px 0 20px oklch(0% 0 0 / 0.2);
 
   --accent: oklch(82% 0.20 125);
   --accent-hover: oklch(75% 0.22 125);
@@ -99,6 +101,8 @@
   --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.12);
   --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.15);
   --shadow-xl: 0 20px 40px oklch(0% 0 0 / 0.2);
+  --shadow-popover-up: 0 -4px 12px oklch(0% 0 0 / 0.12);
+  --shadow-panel-left: -4px 0 20px oklch(0% 0 0 / 0.12);
 
   --accent: oklch(50% 0.18 125);
   --accent-hover: oklch(42% 0.18 125);

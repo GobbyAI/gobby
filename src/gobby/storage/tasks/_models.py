@@ -119,6 +119,21 @@ class TaskNotFoundError(Exception):
     pass
 
 
+class TaskClosedError(ValueError):
+    """Raised when a task operation is blocked by a closed task."""
+
+    pass
+
+
+class TaskAlreadyClaimedError(ValueError):
+    """Raised when a task is already claimed by another session."""
+
+    def __init__(self, task_id: str, claimed_by: str) -> None:
+        self.task_id = task_id
+        self.claimed_by = claimed_by
+        super().__init__(f"Task {task_id} is already claimed by session '{claimed_by}'")
+
+
 class TaskHasChildrenError(ValueError):
     """Raised when deleting a task that has children without cascade."""
 

@@ -10,8 +10,8 @@
   color: var(--color-error);
 }
 [data-theme="light"] .stop-button {
-  background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  color: var(--color-error);
+  background: var(--color-error);
+  color: var(--text-on-error);
   border-color: var(--color-error);
 }
 
@@ -260,7 +260,7 @@
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   margin-bottom: 0.5rem;
-  box-shadow: 0 -4px 12px oklch(0% 0 0 / 0.3);
+  box-shadow: var(--shadow-popover-up, 0 -4px 12px oklch(0% 0 0 / 0.3));
   z-index: 10;
 }
 
@@ -355,7 +355,7 @@
 
 .stop-button {
   background: var(--color-error);
-  color: var(--accent-foreground);
+  color: var(--text-on-error);
   border: 1px solid var(--color-error);
 }
 

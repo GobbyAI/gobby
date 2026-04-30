@@ -9,10 +9,13 @@ const voiceMocks = vi.hoisted(() => ({
 }))
 
 let lastVADConfig: Record<string, any> | null = null
-let lastProcessor: {
+let lastWorkletNode: {
   connect: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
-  onaudioprocess: ((event: { inputBuffer: { getChannelData: (index: number) => Float32Array } }) => void) | null
+  port: {
+    close: ReturnType<typeof vi.fn>
+    onmessage: ((event: MessageEvent<Float32Array>) => void) | null
+  }
 } | null = null
 
 interface StartedSource {
@@ -39,6 +42,9 @@ class MockAudioContext {
   sampleRate = 48_000
   state: AudioContextState = 'running'
   destination = {}
+  audioWorklet = {
+    addModule: vi.fn(async () => {}),
+  }
 
   constructor(_opts?: AudioContextOptions) {}
 
@@ -59,15 +65,6 @@ class MockAudioContext {
       connect: vi.fn(),
       disconnect: vi.fn(),
     } as unknown as MediaStreamAudioSourceNode
-  }
-
-  createScriptProcessor() {
-    lastProcessor = {
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-      onaudioprocess: null,
-    }
-    return lastProcessor as unknown as ScriptProcessorNode
   }
 
   createBufferSource() {
@@ -91,6 +88,31 @@ class MockAudioContext {
   }
 }
 
+class MockAudioWorkletNode {
+  constructor(
+    _ctx: BaseAudioContext,
+    _name: string,
+    _options?: AudioWorkletNodeOptions,
+  ) {
+    lastWorkletNode = {
+      connect: this.connect,
+      disconnect: this.disconnect,
+      port: this.port,
+    }
+  }
+
+  connect = vi.fn()
+  disconnect = vi.fn()
+  port = {
+    close: vi.fn(),
+    onmessage: null as ((event: MessageEvent<Float32Array>) => void) | null,
+  }
+}
+
+function workletMessage(data: Float32Array): MessageEvent<Float32Array> {
+  return { data } as MessageEvent<Float32Array>
+}
+
 function pcmChunk(marker: number): ArrayBuffer {
   const buffer = new ArrayBuffer(2)
   new Int16Array(buffer)[0] = marker
@@ -104,7 +126,7 @@ describe('useVoice', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     lastVADConfig = null
-    lastProcessor = null
+    lastWorkletNode = null
     startedSources = []
 
     wsRef = {
@@ -118,6 +140,7 @@ describe('useVoice', () => {
       OPEN: 1,
     })
     vi.stubGlobal('AudioContext', MockAudioContext)
+    vi.stubGlobal('AudioWorkletNode', MockAudioWorkletNode)
 
     getUserMediaMock = vi.fn(async () => ({
       getTracks: () => [{ stop: vi.fn() }],
@@ -211,15 +234,13 @@ describe('useVoice', () => {
       await result.current.startRecording()
     })
 
-    expect(getUserMediaMock).toHaveBeenCalled()
-    expect(lastProcessor?.onaudioprocess).toBeTruthy()
+    expect(getUserMediaMock).toHaveBeenCalledWith({
+      audio: expect.objectContaining({ autoGainControl: true }),
+    })
+    expect(lastWorkletNode?.port.onmessage).toBeTruthy()
 
     act(() => {
-      lastProcessor?.onaudioprocess?.({
-        inputBuffer: {
-          getChannelData: () => new Float32Array(16_000).fill(0.25),
-        },
-      })
+      lastWorkletNode?.port.onmessage?.(workletMessage(new Float32Array(16_000).fill(0.25)))
     })
 
     await act(async () => {
@@ -257,11 +278,7 @@ describe('useVoice', () => {
     })
 
     act(() => {
-      lastProcessor?.onaudioprocess?.({
-        inputBuffer: {
-          getChannelData: () => new Float32Array([0.2, -0.1]),
-        },
-      })
+      lastWorkletNode?.port.onmessage?.(workletMessage(new Float32Array([0.2, -0.1])))
     })
 
     await act(async () => {
