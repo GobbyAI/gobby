@@ -1,4 +1,4 @@
-"""Red tests for task dispatch mutex storage."""
+"""Tests for task dispatch mutex storage."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _manager_class() -> type:
     return task_module.TaskDispatchMutexManager
 
 
-def test_acquire_mutex_respects_live_holder_and_allows_owner_refresh(
+def test_acquire_release_round_trip(
     temp_db,
     sample_project,
 ) -> None:
@@ -58,6 +58,9 @@ def test_acquire_mutex_respects_live_holder_and_allows_owner_refresh(
     assert mutex.lease_holder == "state-dispatcher:1"
     assert mutex.action_kind == "lifecycle"
 
+    assert manager.release_mutex(task.id, holder="state-dispatcher:1")
+    assert manager.get_mutex(task.id) is None
+
 
 def test_expired_mutex_can_be_reacquired_by_new_holder(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
@@ -87,6 +90,25 @@ def test_expired_mutex_can_be_reacquired_by_new_holder(temp_db, sample_project) 
     assert manager.get_mutex(task.id).lease_holder == "new-holder"
 
 
+def test_force_release(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Force release mutex",
+    )
+    manager = _manager_class()(temp_db)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="owner",
+        kind="field",
+        run_id=None,
+        ttl_seconds=30,
+    )
+    assert manager.force_release(task.id) is True
+    assert manager.get_mutex(task.id) is None
+    assert manager.force_release(task.id) is False
+
+
 def test_release_mutex_only_releases_matching_holder(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
@@ -108,7 +130,30 @@ def test_release_mutex_only_releases_matching_holder(temp_db, sample_project) ->
     assert manager.get_mutex(task.id) is None
 
 
-def test_sweep_expired_removes_only_stale_leases(temp_db, sample_project) -> None:
+def test_attach_run_id_links_run_to_lease(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Attach run id",
+    )
+    manager = _manager_class()(temp_db)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="owner",
+        kind="agent",
+        run_id=None,
+        ttl_seconds=30,
+    )
+
+    assert manager.attach_run_id(task.id, "run-123") is True
+    mutex = manager.get_mutex(task.id)
+    assert mutex is not None
+    assert mutex.run_id == "run-123"
+    assert manager.clear_by_run_id("run-123") == 1
+    assert manager.get_mutex(task.id) is None
+
+
+def test_sweep_expired(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     stale = task_manager.create_task(project_id=sample_project["id"], title="Stale")
     fresh = task_manager.create_task(project_id=sample_project["id"], title="Fresh")
@@ -128,3 +173,28 @@ def test_sweep_expired_removes_only_stale_leases(temp_db, sample_project) -> Non
     assert manager.sweep_expired(now=now + timedelta(seconds=10)) == 1
     assert manager.get_mutex(stale.id) is None
     assert manager.get_mutex(fresh.id) is not None
+
+
+def test_startup_sweep_clears_expired(temp_db, sample_project) -> None:
+    from gobby.storage.migrations import run_migrations
+
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Startup sweep",
+    )
+    manager = _manager_class()(temp_db)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    assert manager.acquire_mutex(
+        task.id,
+        holder="old",
+        kind="field",
+        ttl_seconds=5,
+        now=now,
+        run_id=None,
+    )
+    assert manager.get_mutex(task.id) is not None
+
+    run_migrations(temp_db)
+
+    assert manager.get_mutex(task.id) is None

@@ -47,7 +47,7 @@ class TaskDispatchMutexManager:
         self.db = db
 
     def ensure_table(self) -> None:
-        """Create the table for focused tests before the canonical migration lands."""
+        """Create the table when a focused test uses an unmigrated database."""
         with self.db.transaction() as conn:
             conn.execute(
                 """
@@ -129,6 +129,14 @@ class TaskDispatchMutexManager:
             )
             return cursor.rowcount > 0
 
+    def force_release(self, task_id: str) -> bool:
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM task_dispatch_mutex WHERE task_id = ?",
+                (task_id,),
+            )
+            return cursor.rowcount > 0
+
     def clear_by_run_id(self, run_id: str) -> int:
         with self.db.transaction() as conn:
             cursor = conn.execute(
@@ -136,6 +144,20 @@ class TaskDispatchMutexManager:
                 (run_id,),
             )
             return cursor.rowcount
+
+    def attach_run_id(self, mutex_id: str, run_id: str) -> bool:
+        updated_at = _coerce_timestamp(None)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE task_dispatch_mutex
+                   SET run_id = ?,
+                       updated_at = ?
+                 WHERE task_id = ?
+                """,
+                (run_id, updated_at, mutex_id),
+            )
+            return cursor.rowcount > 0
 
     def sweep_expired(self, *, now: datetime | str | None = None) -> int:
         now_iso = _coerce_timestamp(now)
@@ -178,8 +200,16 @@ def release_mutex(db: DatabaseProtocol, task_id: str, holder: str) -> bool:
     return TaskDispatchMutexManager(db).release_mutex(task_id, holder)
 
 
+def force_release(db: DatabaseProtocol, task_id: str) -> bool:
+    return TaskDispatchMutexManager(db).force_release(task_id)
+
+
 def clear_by_run_id(db: DatabaseProtocol, run_id: str) -> int:
     return TaskDispatchMutexManager(db).clear_by_run_id(run_id)
+
+
+def attach_run_id(db: DatabaseProtocol, mutex_id: str, run_id: str) -> bool:
+    return TaskDispatchMutexManager(db).attach_run_id(mutex_id, run_id)
 
 
 def sweep_expired(db: DatabaseProtocol, *, now: datetime | str | None = None) -> int:

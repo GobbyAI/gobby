@@ -400,7 +400,9 @@ def run_migrations(db: LocalDatabase) -> int:
     # Existing databases may be missing the bootstrapped root session due to
     # prior drift or partial upgrades; restore it idempotently on every startup.
     from gobby.storage.sessions import ensure_system_session
+    from gobby.storage.tasks import TaskDispatchMutexManager
 
     ensure_system_session(db)
+    TaskDispatchMutexManager(db).sweep_expired()
 
     return total_applied
