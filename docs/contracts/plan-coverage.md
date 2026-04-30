@@ -83,6 +83,16 @@ covers:<plan-id>:<section-id>:<item-id>
 Free-form `plan-ref:` labels are not honored; only structured `covers:` labels
 are valid coverage signal.
 
+## Retired Classification Escape Hatches
+
+Grandfather and legacy classification escape hatches are retired. The typed
+plan-coverage contract is the single routing source for plan expansion,
+coverage evidence, and plan-kind interpretation.
+
+No install-shared state file may override that contract. Reintroducing hidden
+grandfather state or legacy classification files under `src/gobby/install/shared/`
+is a contract violation and must fail pre-flight validation.
+
 ## Task Manifest
 
 Implementation plans carry a single `## M1 Task Manifest` section at the end of
