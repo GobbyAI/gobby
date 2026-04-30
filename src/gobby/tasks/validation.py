@@ -31,6 +31,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_COMMIT_WINDOW = 10
 DEFAULT_MAX_CHARS = 50000
 RELATED_TEST_MAX_FILES = 5
+VALIDATION_GATES = {
+    ("plan_review", "needs_review"): "plan_review",
+    ("test_arch", "needs_review"): "test_arch",
+    ("in_development", "needs_review"): "qa",
+    ("holistic_review", "needs_review"): "holistic_review",
+    ("holistic_review", "open"): "holistic_review",
+    ("pr", "needs_review"): "pr",
+    ("merging", "open"): "merge_readiness",
+}
 
 _RELATED_TEST_STOPWORDS = frozenset(
     {

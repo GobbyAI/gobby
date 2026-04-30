@@ -10,14 +10,272 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
+from gobby.storage.tasks._lifecycle_events import record_lifecycle_event
 from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
 from gobby.tasks.state_semantics import is_task_closed, normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
+
+VALID_LIFECYCLES = frozenset(
+    {
+        "open",
+        "plan_review",
+        "test_arch",
+        "expanding",
+        "in_development",
+        "holistic_review",
+        "pr",
+        "merging",
+        "merged",
+    }
+)
+VALID_STATUSES = frozenset(
+    {"open", "in_progress", "needs_review", "review_approved", "closed", "escalated"}
+)
+POST_BUILD_TRANSITIONS = frozenset(
+    {
+        ("plan_review", "open", "approved"),
+        ("plan_review", "open", "rejected"),
+        ("test_arch", "open", "approved"),
+        ("test_arch", "open", "rejected"),
+        ("expanding", "open", "success"),
+        ("expanding", "open", "failure"),
+        ("in_development", "open", "dev_complete"),
+        ("in_development", "needs_review", "qa_approved"),
+        ("in_development", "needs_review", "qa_rejected"),
+        ("in_development", "open", "all_leaves_parked"),
+        ("holistic_review", "open", "approved"),
+        ("holistic_review", "open", "rejected"),
+        ("pr", "open", "pr_opened"),
+        ("pr", "escalated", "pr_opened"),
+        ("pr", "needs_review", "approved"),
+        ("merging", "open", "merged"),
+        ("merging", "open", "merge_failed"),
+    }
+)
+POST_BUILD_DESTINATIONS = frozenset(
+    {
+        ("test_arch", "open"),
+        ("plan_review", "open"),
+        ("expanding", "open"),
+        ("in_development", "open"),
+        ("in_development", "needs_review"),
+        ("holistic_review", "review_approved"),
+        ("holistic_review", "open"),
+        ("pr", "open"),
+        ("pr", "needs_review"),
+        ("merging", "open"),
+        ("merged", "closed"),
+        ("merging", "escalated"),
+    }
+)
+
+
+def _state(lifecycle: str | None, status: str | None) -> str:
+    return f"{lifecycle or 'open'}:{status or 'open'}"
+
+
+def _artifact_columns(db: DatabaseProtocol) -> set[str]:
+    return {row["name"] for row in db.fetchall("PRAGMA table_info(task_artifacts)")}
+
+
+def _ensure_artifact_row(db: DatabaseProtocol, task_id: str) -> None:
+    db.execute(
+        """
+        INSERT INTO task_artifacts (task_id, updated_at)
+        VALUES (?, datetime('now'))
+        ON CONFLICT(task_id) DO UPDATE SET updated_at = task_artifacts.updated_at
+        """,
+        (task_id,),
+    )
+
+
+def _apply_artifact_updates(
+    db: DatabaseProtocol,
+    task_id: str,
+    updates: dict[str, str | int | None],
+) -> None:
+    if not updates:
+        return
+    available = _artifact_columns(db)
+    filtered = {key: value for key, value in updates.items() if key in available}
+    if not filtered:
+        return
+    _ensure_artifact_row(db, task_id)
+    assignments = [f"{column} = ?" for column in filtered]
+    params = [*filtered.values(), task_id]
+    db.execute(
+        f"""
+        UPDATE task_artifacts
+        SET {", ".join(assignments)}, updated_at = datetime('now')
+        WHERE task_id = ?
+        """,  # nosec B608 - columns are filtered against table metadata.
+        tuple(params),
+    )
+
+
+def _increment_artifact_counter(db: DatabaseProtocol, task_id: str, column: str) -> int:
+    if column not in _artifact_columns(db):
+        return 0
+    _ensure_artifact_row(db, task_id)
+    db.execute(
+        f"""
+        UPDATE task_artifacts
+        SET {column} = COALESCE({column}, 0) + 1,
+            updated_at = datetime('now')
+        WHERE task_id = ?
+        """,  # nosec B608 - column is caller-owned static artifact metadata.
+        (task_id,),
+    )
+    row = db.fetchone(f"SELECT {column} FROM task_artifacts WHERE task_id = ?", (task_id,))
+    return int(row[column] or 0) if row is not None else 0
+
+
+def _cascade_merged_close(db: DatabaseProtocol, task_id: str) -> None:
+    now = datetime.now(UTC).isoformat()
+    rows = db.fetchall(
+        """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM tasks WHERE parent_task_id = ?
+            UNION ALL
+            SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent_task_id = subtree.id
+        )
+        SELECT id FROM subtree
+        """,
+        (task_id,),
+    )
+    for row in rows:
+        update_task(
+            db,
+            row["id"],
+            lifecycle="merged",
+            status="closed",
+            assignee=None,
+            claimed_by_session_id=None,
+            closed_at=now,
+            closed_reason="merged",
+        )
+        record_lifecycle_event(
+            db,
+            row["id"],
+            None,
+            _state("merged", "closed"),
+            "cascade_merged",
+            by_actor="advance_lifecycle",
+        )
+
+
+def _reset_cited_subtasks(db: DatabaseProtocol, cited_subtasks: list[str] | None) -> None:
+    for subtask_id in cited_subtasks or []:
+        advance_lifecycle(
+            db,
+            subtask_id,
+            "in_development",
+            "open",
+            side_effects={"reason": "holistic_rejection_cited_subtask", "clear_claim": True},
+        )
+
+
+def _all_leaves_parked_or_terminal(db: DatabaseProtocol, task_id: str) -> bool:
+    rows = db.fetchall(
+        """
+        WITH RECURSIVE subtree(id, task_type, lifecycle, status, closed_at, escalated_at) AS (
+            SELECT id, task_type, lifecycle, status, closed_at, escalated_at
+            FROM tasks
+            WHERE parent_task_id = ?
+            UNION ALL
+            SELECT tasks.id, tasks.task_type, tasks.lifecycle, tasks.status,
+                   tasks.closed_at, tasks.escalated_at
+            FROM tasks
+            JOIN subtree ON tasks.parent_task_id = subtree.id
+        )
+        SELECT lifecycle, status, closed_at, escalated_at
+        FROM subtree
+        WHERE task_type != 'epic'
+        """,
+        (task_id,),
+    )
+    if not rows:
+        return False
+    for row in rows:
+        parked = row["lifecycle"] == "holistic_review" and row["status"] == "review_approved"
+        terminal = bool(row["closed_at"] or row["escalated_at"])
+        merged = row["lifecycle"] == "merged" and row["status"] == "closed"
+        if not (parked or terminal or merged):
+            return False
+    return True
+
+
+def advance_lifecycle(
+    db: DatabaseProtocol,
+    task_id: str,
+    to_lifecycle: str,
+    to_status: str,
+    side_effects: dict[str, Any] | None = None,
+) -> Task:
+    """Advance a task lifecycle tuple, apply side effects, and audit the transition."""
+    if to_lifecycle not in VALID_LIFECYCLES:
+        raise ValueError(f"Invalid lifecycle '{to_lifecycle}'")
+    if to_status not in VALID_STATUSES:
+        raise ValueError(f"Invalid task status '{to_status}'")
+
+    task = get_task(db, task_id)
+    effects = side_effects or {}
+    from_lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
+    from_status = task.status
+    if (
+        (from_lifecycle, from_status, to_lifecycle, to_status)
+        == ("in_development", "open", "holistic_review", "open")
+        and task.task_type == "epic"
+        and not _all_leaves_parked_or_terminal(db, task_id)
+    ):
+        raise ValueError("Epic cannot enter holistic_review until all leaves are parked or terminal.")
+
+    artifact_updates = dict(effects.get("artifact_updates") or {})
+    for column in effects.get("clear_artifacts") or ():
+        artifact_updates[column] = None
+    for column in effects.get("clear_counters") or ():
+        artifact_updates[column] = 0
+    for column in effects.get("increment_counters") or ():
+        _increment_artifact_counter(db, task_id, column)
+    _apply_artifact_updates(db, task_id, artifact_updates)
+
+    now = datetime.now(UTC).isoformat()
+    update_task(
+        db,
+        task_id,
+        lifecycle=to_lifecycle,
+        status=to_status,
+        assignee=None if effects.get("clear_claim", True) else UNSET,
+        claimed_by_session_id=None if effects.get("clear_claim", True) else UNSET,
+        escalated_at=None if effects.get("clear_escalation") else UNSET,
+        escalation_reason=(
+            None
+            if effects.get("clear_escalation")
+            else effects.get("escalation_reason", UNSET)
+        ),
+        closed_at=now if to_status == "closed" else UNSET,
+        closed_reason=effects.get("closed_reason", UNSET),
+    )
+    if effects.get("cascade_close"):
+        _cascade_merged_close(db, task_id)
+    if effects.get("cited_subtasks"):
+        _reset_cited_subtasks(db, effects.get("cited_subtasks"))
+
+    record_lifecycle_event(
+        db,
+        task_id,
+        _state(from_lifecycle, from_status),
+        _state(to_lifecycle, to_status),
+        str(effects.get("reason") or "advance_lifecycle"),
+        by_actor=str(effects.get("by_actor") or "advance_lifecycle"),
+    )
+    return get_task(db, task_id)
 
 
 def project_claim_status(current_status: str) -> str:
@@ -163,6 +421,7 @@ def de_escalate_task(
     *,
     reason: str,
     target_status: str | None = None,
+    target_lifecycle: str | None = None,
     reset_validation: bool = False,
 ) -> Task:
     """Return an escalated task to an explicit next status."""
@@ -180,6 +439,7 @@ def de_escalate_task(
     update_task(
         db,
         task_id,
+        lifecycle=target_lifecycle if target_lifecycle is not None else UNSET,
         status=normalized_target,
         description=description,
         escalated_at=None,
@@ -227,22 +487,47 @@ def mark_task_review_approved(
 ) -> Task:
     """Approve a task after review and release ownership."""
     task = get_task(db, task_id)
-    if task.status not in ("needs_review", "in_progress", "escalated"):
+    lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
+    if task.status not in ("needs_review", "in_progress", "escalated", "open"):
         raise ValueError(
             f"Cannot approve task with status '{task.status}'. "
             "Task must be in 'needs_review', 'in_progress', or 'escalated' status to approve."
         )
+    if task.status == "open" and lifecycle not in {"plan_review", "test_arch", "holistic_review"}:
+        raise ValueError(f"Cannot approve open task in lifecycle '{lifecycle}'.")
 
     description: MaybeUnset[str | None] = UNSET
     if approval_notes:
         description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
 
-    return release_task_claim(
-        db,
-        task_id,
-        status="review_approved",
-        description=description,
-    )
+    if lifecycle == "plan_review" and task.status == "open":
+        return advance_lifecycle(
+            db,
+            task_id,
+            "test_arch",
+            "open",
+            {"reason": "plan_approved", "clear_counters": ("plan_review_attempts",)},
+        )
+    if lifecycle == "test_arch" and task.status == "open":
+        return advance_lifecycle(
+            db,
+            task_id,
+            "expanding",
+            "open",
+            {"reason": "test_arch_approved", "clear_counters": ("test_arch_attempts",)},
+        )
+    if lifecycle == "in_development" and task.status == "needs_review":
+        return advance_lifecycle(db, task_id, "holistic_review", "review_approved", {"reason": "qa_approved"})
+    if lifecycle == "holistic_review" and task.status == "open":
+        return advance_lifecycle(db, task_id, "pr", "open", {"reason": "holistic_approved"})
+    if lifecycle == "pr" and task.status == "needs_review":
+        return advance_lifecycle(db, task_id, "merging", "open", {"reason": "pr_approved"})
+
+    approved = advance_lifecycle(db, task_id, lifecycle, "review_approved", {"reason": "review_approved"})
+    if description is not UNSET:
+        update_task(db, task_id, description=description)
+        return get_task(db, task_id)
+    return approved
 
 
 def mark_task_review_rejected(
@@ -251,14 +536,19 @@ def mark_task_review_rejected(
     *,
     rejection_notes: str | None = None,
     round_number: int | None = None,
+    plan_hash: str | None = None,
+    cited_subtasks: list[str] | None = None,
 ) -> Task:
     """Reject a task after review and return it to open status."""
     task = get_task(db, task_id)
-    if task.status not in ("needs_review", "in_progress"):
+    lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
+    if task.status not in ("needs_review", "in_progress", "open"):
         raise ValueError(
             f"Cannot reject review for task with status '{task.status}'. "
             "Task must be in 'needs_review' or 'in_progress' status to reject review."
         )
+    if task.status == "open" and lifecycle not in {"plan_review", "test_arch", "holistic_review"}:
+        raise ValueError(f"Cannot reject open task in lifecycle '{lifecycle}'.")
 
     normalized_round = None
     if round_number is not None:
@@ -297,18 +587,118 @@ def mark_task_review_rejected(
         labels = [label for label in labels if not label.startswith("planning-round:")]
         labels.append(f"planning-round:{normalized_round}")
 
-    update_task(
+    side_effects: dict[str, Any]
+    if lifecycle == "plan_review":
+        side_effects = {
+            "reason": "plan_rejected",
+            "artifact_updates": {"last_reviewed_plan_hash": plan_hash},
+            "increment_counters": ("plan_review_attempts",),
+        }
+        target_lifecycle = "plan_review"
+    elif lifecycle == "test_arch":
+        side_effects = {
+            "reason": "test_arch_rejected",
+            "increment_counters": ("test_arch_attempts",),
+        }
+        target_lifecycle = "plan_review"
+    elif lifecycle == "in_development":
+        side_effects = {"reason": "qa_rejected", "increment_counters": ("qa_attempts",)}
+        target_lifecycle = "in_development"
+    elif lifecycle == "holistic_review":
+        side_effects = {
+            "reason": "holistic_rejected",
+            "increment_counters": ("holistic_attempts",),
+            "cited_subtasks": cited_subtasks or [],
+        }
+        target_lifecycle = "holistic_review"
+    else:
+        side_effects = {"reason": "review_rejected"}
+        target_lifecycle = lifecycle
+
+    rejected = advance_lifecycle(db, task_id, target_lifecycle, "open", side_effects)
+    if description is not UNSET or normalized_round is not None:
+        update_task(
+            db,
+            task_id,
+            description=description,
+            labels=labels if normalized_round is not None else UNSET,
+        )
+        return get_task(db, task_id)
+    return rejected
+
+
+def mark_task_pr_opened(db: DatabaseProtocol, task_id: str, pr_url: str) -> Task:
+    """Move PR-stage work into external review and persist the opened PR URL."""
+    task = get_task(db, task_id)
+    lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
+    if lifecycle != "pr" or task.status not in ("open", "escalated"):
+        raise ValueError("PR can only be opened from (pr, open) or (pr, escalated)")
+    return advance_lifecycle(
         db,
         task_id,
-        status="open",
-        description=description,
-        labels=labels if normalized_round is not None else UNSET,
-        assignee=None,
-        claimed_by_session_id=None,
-        escalated_at=None,
-        escalation_reason=None,
+        "pr",
+        "needs_review",
+        {
+            "reason": "pr_opened",
+            "artifact_updates": {"pr_url": pr_url},
+            "clear_escalation": True,
+        },
     )
-    return get_task(db, task_id)
+
+
+def mark_task_merged(
+    db: DatabaseProtocol,
+    task_id: str,
+    *,
+    pr_url: str | None = None,
+    merge_sha: str | None = None,
+) -> Task:
+    """Mark a task subtree as merged and terminal."""
+    return advance_lifecycle(
+        db,
+        task_id,
+        "merged",
+        "closed",
+        {
+            "reason": "merged",
+            "artifact_updates": {"pr_url": pr_url, "merge_commit_sha": merge_sha},
+            "cascade_close": True,
+            "closed_reason": "merged",
+        },
+    )
+
+
+def mark_task_merge_failed(
+    db: DatabaseProtocol,
+    task_id: str,
+    reason: str,
+    *,
+    attended: bool = False,
+) -> Task:
+    """Record merge failure retry or attended escalation."""
+    if attended:
+        return advance_lifecycle(
+            db,
+            task_id,
+            "merging",
+            "escalated",
+            {
+                "reason": "merge_failed:max_attempts",
+                "escalation_reason": f"merge_failed:{reason}",
+                "increment_counters": ("merge_attempts",),
+                "clear_claim": True,
+            },
+        )
+    return advance_lifecycle(
+        db,
+        task_id,
+        "merging",
+        "open",
+        {
+            "reason": f"merge_failed:{reason}",
+            "increment_counters": ("merge_attempts",),
+        },
+    )
 
 
 def close_task(
