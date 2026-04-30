@@ -20,6 +20,30 @@ from gobby.utils.id import generate_prefixed_id
 logger = logging.getLogger(__name__)
 
 
+SYSTEM_ROW_UPDATE_ALLOWED_FIELDS = frozenset(
+    {
+        "enabled",
+        "schedule_type",
+        "cron_expr",
+        "interval_seconds",
+        "run_at",
+        "timezone",
+    }
+)
+
+
+class SystemRowProtected(ValueError):
+    """Raised when operator-facing code tries to mutate a system cron row."""
+
+
+class _Unset:
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+
 def compute_next_run(job: CronJob) -> datetime | None:
     """Compute the next run time for a cron job.
 
@@ -276,23 +300,62 @@ class CronJobStorage:
         if invalid_fields:
             raise ValueError(f"Invalid field names: {invalid_fields}")
 
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        if job.is_system:
+            disallowed_fields = set(fields.keys()) - SYSTEM_ROW_UPDATE_ALLOWED_FIELDS
+            if disallowed_fields:
+                field = sorted(disallowed_fields)[0]
+                raise SystemRowProtected(
+                    f"Cron row {job_id} is a gobby-managed system-managed row; "
+                    "operator update rejected "
+                    f"for field {field!r}. Use update_system_job_bookkeeping for "
+                    "scheduler state or reconcile_system_job_definition for bundled "
+                    "action repair."
+                )
+
         fields["updated_at"] = datetime.now(UTC).isoformat()
 
         return self._update_job_fields(job_id, **fields)
 
-    def update_system_job_bookkeeping(self, job_id: str, **fields: Any) -> CronJob | None:
+    def update_system_job_bookkeeping(
+        self,
+        job_id: str,
+        *,
+        next_run_at: object = UNSET,
+        last_run_at: object = UNSET,
+        last_status: object = UNSET,
+        consecutive_failures: object = UNSET,
+        **invalid_fields: object,
+    ) -> CronJob | None:
         """Update scheduler-owned fields on a system cron job."""
         job = self.get_job(job_id)
         if job is None:
             return None
         if not job.is_system:
-            raise ValueError(f"Cannot update system bookkeeping for non-system cron job {job_id}")
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; update_system_job_bookkeeping "
+                "is reserved for gobby-managed system cron rows."
+            )
 
-        invalid_fields = set(fields.keys()) - self._SYSTEM_BOOKKEEPING_FIELDS
         if invalid_fields:
-            raise ValueError(f"Invalid system bookkeeping field names: {invalid_fields}")
+            field = sorted(invalid_fields)[0]
+            raise SystemRowProtected(
+                f"Cron row {job_id} is a gobby-managed system-managed row; "
+                "system bookkeeping update "
+                f"rejected field {field!r}. Only scheduler state fields are allowed."
+            )
 
-        return self._update_job_fields(job_id, **fields)
+        fields = {
+            "next_run_at": next_run_at,
+            "last_run_at": last_run_at,
+            "last_status": last_status,
+            "consecutive_failures": consecutive_failures,
+        }
+        update_fields = {key: value for key, value in fields.items() if value is not UNSET}
+
+        return self._update_job_fields(job_id, **update_fields)
 
     def reconcile_system_job_definition(
         self,
@@ -306,7 +369,10 @@ class CronJobStorage:
         if job is None:
             return None
         if not job.is_system:
-            raise ValueError(f"Cannot reconcile definition for non-system cron job {job_id}")
+            raise SystemRowProtected(
+                f"Cron row {job_id} is non-system; reconcile_system_job_definition "
+                "is reserved for gobby-managed system cron rows."
+            )
         if job.action_type == action_type and job.action_config == action_config:
             return job
 
@@ -319,6 +385,13 @@ class CronJobStorage:
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a cron job and its runs."""
+        job = self.get_job(job_id)
+        if job is not None and job.is_system:
+            raise SystemRowProtected(
+                f"Cron row {job_id} is a gobby-managed system-managed row; "
+                "operator delete rejected."
+            )
+
         with self.db.transaction() as conn:
             # Delete runs first (foreign key)
             conn.execute("DELETE FROM cron_runs WHERE cron_job_id = ?", (job_id,))
@@ -343,6 +416,19 @@ class CronJobStorage:
             updates["next_run_at"] = next_run.isoformat() if next_run else None
         else:
             updates["next_run_at"] = None
+
+        if job.is_system:
+            updated = self._update_job_fields(
+                job_id,
+                enabled=updates["enabled"],
+                updated_at=datetime.now(UTC).isoformat(),
+            )
+            if updated is None:
+                return None
+            return self.update_system_job_bookkeeping(
+                job_id,
+                next_run_at=updates["next_run_at"],
+            )
 
         return self.update_job(job_id, **updates)
 
