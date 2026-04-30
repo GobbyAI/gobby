@@ -306,9 +306,12 @@ def delete_task(
         )
         for dep in dependents:
             dep_path = dep["path_cache"] or ""
-            if dep_path and _origin_path_cache and (
-                dep_path == _origin_path_cache
-                or _origin_path_cache.startswith(dep_path + ".")
+            if (
+                dep_path
+                and _origin_path_cache
+                and (
+                    dep_path == _origin_path_cache or _origin_path_cache.startswith(dep_path + ".")
+                )
             ):
                 continue
             delete_task(

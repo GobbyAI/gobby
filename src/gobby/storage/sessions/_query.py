@@ -112,8 +112,7 @@ def _build_session_filters(
                 params.append(task_ref_max)
             bound_sql = " AND ".join(bounds)
             role_clauses.append(
-                f"EXISTS (SELECT 1 FROM tasks "
-                f"WHERE {col} = sessions.id AND {bound_sql})"  # nosec B608
+                f"EXISTS (SELECT 1 FROM tasks WHERE {col} = sessions.id AND {bound_sql})"  # nosec B608
             )
         if role_clauses:
             conditions.append(f"({' OR '.join(role_clauses)})")

@@ -560,9 +560,7 @@ class ExpansionService:
                     )
                     tasks.append(impl_task)
                     phase["task_ids"].append(impl_task["id"])
-                    dependencies.append(
-                        {"task_id": impl_task["id"], "depends_on": phase_test_id}
-                    )
+                    dependencies.append({"task_id": impl_task["id"], "depends_on": phase_test_id})
                     entry_work_task_id[entry.source_section] = impl_task["id"]
                     impl_ids.append(impl_task["id"])
 
