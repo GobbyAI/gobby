@@ -90,18 +90,26 @@ def test_test_architect_outputs_structured_prose_not_expansion_tasks() -> None:
     assert "[category: test] leaves" in instructions
 
 
-def test_qa_reviewer_gates_close_task_on_prior_review_approval() -> None:
+def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
     agent = _agent("qa-reviewer")
     review = _step(agent, "review")
     transitions = review["transitions"]
 
-    assert 'reason="qa_approved"' in agent["instructions"]
+    instructions = agent["instructions"]
+    assert "mark_task_review_approved" in instructions
+    assert "mark_task_review_rejected" in instructions
+    assert "escalate_task" in instructions
+    assert 'reason="qa_approved"' not in instructions
+    assert "Do NOT call close_task" in instructions
+
+    blocked_tools = _blocked_mcp_tools(review)
+    assert "gobby-tasks:close_task" in blocked_tools
+
     success_hooks = review["on_mcp_success"]
     assert any(hook["tool"] == "mark_task_review_approved" for hook in success_hooks)
-    assert any(hook["tool"] == "close_task" for hook in success_hooks)
-    assert transitions == [
-        {"to": "terminate", "when": "vars.review_approved and vars.review_complete"}
-    ]
+    assert any(hook["tool"] == "mark_task_review_rejected" for hook in success_hooks)
+    assert not any(hook["tool"] == "close_task" for hook in success_hooks)
+    assert transitions == [{"to": "terminate", "when": "vars.review_complete"}]
 
 
 @pytest.mark.parametrize(
