@@ -111,3 +111,74 @@ async def test_create_plan_rejects_invalid_plan_kind(
     assert result["error"] == "invalid_plan_kind"
     assert "implementation" in result["message"]
     assert "strategy" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_returns_valid_for_canonical_plan(
+    temp_db: LocalDatabase, tmp_path: Path
+) -> None:
+    plan_path = _write_plan(tmp_path)
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    assert "validate_plan" in {tool["name"] for tool in registry.list_tools()}
+
+    result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+
+    assert result["valid"] is True
+    assert result["phase_count"] >= 1
+    assert result["deliverable_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_returns_same_payload_as_tasks_ops(
+    temp_db: LocalDatabase, tmp_path: Path
+) -> None:
+    """gobby-plans:validate_plan must mirror gobby-tasks-ops:validate_plan_file."""
+    from unittest.mock import MagicMock
+
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.tasks.expansion_service import ExpansionService
+
+    plan_path = _write_plan(tmp_path)
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    plans_result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+
+    service = ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
+    tasks_ops_result = service.validate_plan_file(plan_path)
+
+    assert plans_result == tasks_ops_result
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_rejects_plan_with_old_phase_form(
+    temp_db: LocalDatabase, tmp_path: Path
+) -> None:
+    plan_dir = tmp_path / ".gobby" / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "broken.md"
+    plan_path.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** broken
+
+            ## Phase 1: Setup
+            `kind: framing`
+
+            ### 1.1 Work [category: docs]
+            `kind: deliverable`
+
+            Body.
+
+            **Acceptance:**
+            - 1.1.1 — Docs exist. file: `docs/demo.md`
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+    registry = create_plan_registry(temp_db, default_project_id="project-1")
+
+    result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+
+    assert result["valid"] is False
+    assert any("phase sections" in err for err in result["errors"])

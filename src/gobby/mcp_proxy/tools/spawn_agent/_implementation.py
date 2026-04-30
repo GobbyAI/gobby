@@ -103,6 +103,16 @@ async def spawn_agent_impl(
     Returns:
         Dict with success status, run_id, child_session_id, isolation metadata
     """
+    # 0. Plan-validation gate for planning agents.
+    # planner / plan-adversary spawns refuse to start when the task's
+    # plan artifact fails the Plan-Coverage Contract validator. Catches
+    # structural drift the parser silently drops before wasting an LLM call.
+    from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
+
+    gate_failure = validate_plan_for_agent_spawn(agent_lookup_name, task_id, task_manager)
+    if gate_failure is not None:
+        return gate_failure
+
     # 1. Merge config: agent_body defaults < params
     _raw_isolation: str | None = isolation
     if _raw_isolation is None and agent_body:

@@ -227,6 +227,40 @@ def create_plan_registry(
         func=delete_plan,
     )
 
+    def validate_plan(plan_file: str) -> dict[str, Any]:
+        from gobby.storage.tasks import LocalTaskManager
+        from gobby.tasks.expansion._compile import validate_plan_file as _validate
+
+        plan_path = Path(plan_file)
+        if not plan_path.is_absolute():
+            plan_path = Path.cwd() / plan_path
+        # validate_plan_file is mounted as a method on ExpansionService for
+        # convenience but its body never touches `self`; calling it as a free
+        # function with `None` keeps gobby-plans free of the wider service
+        # construction (LLM service, run manager, dep manager) it does not need.
+        _ = LocalTaskManager  # imported for symmetry; not required for validation
+        return _validate(None, plan_path)
+
+    registry.register(
+        name="validate_plan",
+        description=(
+            "Validate a plan file against the Plan-Coverage Contract. Mirrors "
+            "gobby-tasks-ops:validate_plan_file so plan-related callers do not "
+            "have to cross server boundaries."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "plan_file": {
+                    "type": "string",
+                    "description": "Plan file path (absolute or relative to cwd)",
+                },
+            },
+            "required": ["plan_file"],
+        },
+        func=validate_plan,
+    )
+
     return registry
 
 

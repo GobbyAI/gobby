@@ -1,0 +1,169 @@
+"""Tests for the spawn-time plan validation gate.
+
+Specifically: ``planner`` and ``plan-adversary`` spawns refuse to start when
+the task's ``plan_file_path`` artifact fails the Plan-Coverage Contract
+validator. Other agents pass through, and the gate is a no-op when no plan
+artifact is recorded.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from gobby.tasks.expansion._plan_gate import (
+    PLANNING_AGENTS,
+    validate_plan_for_agent_spawn,
+)
+
+pytestmark = pytest.mark.unit
+
+
+def _write_broken_plan(path: Path) -> Path:
+    """Phase headings use the pre-contract `## Phase N` form — silently dropped."""
+    path.write_text(
+        """> **Plan ID:** broken
+
+# Broken
+
+## Phase 1: Setup
+`kind: framing`
+
+### 1.1 Foundation [category: code]
+`kind: deliverable`
+
+Implement.
+
+**Acceptance:**
+- 1.1.1 - Done. file: `src/foo.py`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_clean_plan(path: Path) -> Path:
+    """Canonical `## P<N>` form."""
+    path.write_text(
+        """> **Plan ID:** clean
+
+# Clean
+
+## P1: Setup
+`kind: framing`
+
+### 1.1 Foundation [category: code]
+`kind: deliverable`
+
+Implement.
+
+**Acceptance:**
+- 1.1.1 - Done. file: `src/foo.py`
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _make_task_manager_with_artifact(plan_file_path: str | None) -> MagicMock:
+    artifacts = MagicMock()
+    artifacts.plan_file_path = plan_file_path
+    manager = MagicMock()
+    manager.get_artifacts = MagicMock(return_value=artifacts)
+    return manager
+
+
+def test_planning_agents_constant() -> None:
+    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary"})
+
+
+def test_non_planning_agent_passes_through() -> None:
+    manager = _make_task_manager_with_artifact("/tmp/whatever.md")
+    result = validate_plan_for_agent_spawn(
+        agent_name="developer", task_id="t1", task_manager=manager
+    )
+    assert result is None
+    manager.get_artifacts.assert_not_called()
+
+
+def test_no_task_id_passes_through() -> None:
+    manager = _make_task_manager_with_artifact("/tmp/whatever.md")
+    result = validate_plan_for_agent_spawn(agent_name="planner", task_id=None, task_manager=manager)
+    assert result is None
+
+
+def test_no_task_manager_passes_through() -> None:
+    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=None)
+    assert result is None
+
+
+def test_no_plan_artifact_passes_through() -> None:
+    manager = _make_task_manager_with_artifact(None)
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary", task_id="t1", task_manager=manager
+    )
+    assert result is None
+
+
+def test_planner_spawn_against_clean_plan_succeeds(tmp_path: Path) -> None:
+    plan = _write_clean_plan(tmp_path / "clean.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+
+    assert result is None
+
+
+def test_planner_spawn_against_malformed_plan_returns_structured_failure(
+    tmp_path: Path,
+) -> None:
+    plan = _write_broken_plan(tmp_path / "broken.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+
+    assert result is not None
+    assert result["success"] is False
+    assert result["error"].startswith("PlanValidationError:")
+    assert result["plan_file_path"] == str(plan)
+    assert isinstance(result["validator_errors"], list)
+    assert any("phase sections" in err for err in result["validator_errors"])
+
+
+def test_plan_adversary_spawn_against_malformed_plan_returns_structured_failure(
+    tmp_path: Path,
+) -> None:
+    plan = _write_broken_plan(tmp_path / "broken.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary", task_id="t1", task_manager=manager
+    )
+
+    assert result is not None
+    assert result["success"] is False
+    assert "PlanValidationError" in result["error"]
+
+
+def test_missing_plan_file_returns_structured_failure(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist.md"
+    manager = _make_task_manager_with_artifact(str(missing))
+
+    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+
+    assert result is not None
+    assert result["success"] is False
+    assert "PlanValidationError" in result["error"]
+
+
+def test_artifact_lookup_failure_passes_through(tmp_path: Path) -> None:
+    """If get_artifacts raises, do not block the spawn — fail open. The
+    underlying validator stays defensively strict for plans we can read."""
+    manager = MagicMock()
+    manager.get_artifacts = MagicMock(side_effect=RuntimeError("db error"))
+
+    result = validate_plan_for_agent_spawn(agent_name="planner", task_id="t1", task_manager=manager)
+
+    assert result is None
