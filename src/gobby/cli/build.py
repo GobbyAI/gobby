@@ -7,7 +7,14 @@ from typing import cast
 
 import click
 
-from gobby.build import BuildOptions, BuildResult, build
+from gobby.build import (
+    BuildControlResult,
+    BuildOptions,
+    BuildResult,
+    build,
+    build_resume,
+    build_stop,
+)
 from gobby.config.build import Isolation
 from gobby.storage.database import LocalDatabase
 
@@ -39,6 +46,13 @@ def _echo_build_result(result: BuildResult) -> None:
     if result.applied_stages_skipped:
         click.echo(f"Skipped stages: {', '.join(result.applied_stages_skipped)}")
     click.echo(f"Dispatcher tick: {result.tick_dispatched}")
+
+
+def _echo_build_control_result(result: BuildControlResult) -> None:
+    state = "enabled" if result.enabled else "disabled"
+    click.echo(f"Dispatcher cron: {state}")
+    click.echo(f"Project: {result.project_id}")
+    click.echo(f"Event: {result.lifecycle_event.reason}")
 
 
 @click.command("build")
@@ -94,6 +108,12 @@ def build_command(
     assigned_agent: str | None,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
+    if input_ref == "stop":
+        _run_build_stop()
+        return
+    if input_ref == "resume":
+        _run_build_resume()
+        return
     if input_ref is None:
         invoke_build_skill()
         return
@@ -122,3 +142,41 @@ def build_command(
         db.close()
 
     _echo_build_result(result)
+
+
+@click.command("stop")
+def build_stop_command() -> None:
+    """Stop future dispatcher build ticks."""
+    _run_build_stop()
+
+
+@click.command("resume")
+def build_resume_command() -> None:
+    """Resume dispatcher build ticks."""
+    _run_build_resume()
+
+
+def _run_build_stop() -> None:
+    project_id = resolve_project_id()
+    db = LocalDatabase()
+    try:
+        result = build_stop(db=db, project_id=project_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        db.close()
+
+    _echo_build_control_result(result)
+
+
+def _run_build_resume() -> None:
+    project_id = resolve_project_id()
+    db = LocalDatabase()
+    try:
+        result = build_resume(db=db, project_id=project_id)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        db.close()
+
+    _echo_build_control_result(result)

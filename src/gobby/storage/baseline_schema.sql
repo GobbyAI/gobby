@@ -413,6 +413,17 @@ CREATE TABLE task_lifecycle_events (
 );
 CREATE INDEX idx_lifecycle_events_task ON task_lifecycle_events(task_id, created_at);
 
+CREATE TABLE project_lifecycle_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    by_actor TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX idx_project_lifecycle_events_project
+    ON project_lifecycle_events(project_id, created_at);
+
 CREATE TABLE expansion_runs (
     id TEXT PRIMARY KEY,
     parent_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

@@ -7,48 +7,68 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-def test_stop_disables_dispatcher_cron() -> None:
+def test_stop_disables_dispatcher_cron(temp_db) -> None:
     from gobby.build.service import build_stop
+    from gobby.runner import DISPATCHER_CRON_JOB_NAME
+    from gobby.storage.cron import CronJobStorage
 
-    result = build_stop(project_id="project-1")
+    result = build_stop(db=temp_db, project_id="project-1")
+
     assert result.enabled is False
+    assert CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME).enabled is False
 
 
-def test_resume_enables_dispatcher_cron() -> None:
-    from gobby.build.service import build_resume
+def test_resume_enables_dispatcher_cron(temp_db) -> None:
+    from gobby.build.service import build_resume, build_stop
+    from gobby.runner import DISPATCHER_CRON_JOB_NAME
+    from gobby.storage.cron import CronJobStorage
 
-    result = build_resume(project_id="project-1")
+    build_stop(db=temp_db, project_id="project-1")
+
+    result = build_resume(db=temp_db, project_id="project-1")
+
     assert result.enabled is True
+    assert CronJobStorage(temp_db).get_job_by_name(DISPATCHER_CRON_JOB_NAME).enabled is True
 
 
-def test_lifecycle_event_appended() -> None:
+def test_lifecycle_event_appended(temp_db) -> None:
     from gobby.build.service import build_stop
 
-    result = build_stop(project_id="project-1")
+    result = build_stop(db=temp_db, project_id="project-1")
+
     assert result.lifecycle_event.reason == "gobby build stop"
+    row = temp_db.fetchone(
+        "SELECT reason FROM project_lifecycle_events WHERE project_id = ?",
+        ("project-1",),
+    )
+    assert row["reason"] == "gobby build stop"
 
 
-def test_in_flight_agents_unaffected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_in_flight_agents_unaffected(monkeypatch: pytest.MonkeyPatch, temp_db) -> None:
     killed: list[str] = []
-    monkeypatch.setattr("gobby.build.service.kill_agent", lambda run_id: killed.append(run_id), raising=False)
+    monkeypatch.setattr(
+        "gobby.build.service.kill_agent", lambda run_id: killed.append(run_id), raising=False
+    )
 
     from gobby.build.service import build_stop
 
-    build_stop(project_id="project-1")
+    build_stop(db=temp_db, project_id="project-1")
 
     assert killed == []
 
 
-def test_kick_no_op_when_dispatcher_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_kick_no_op_when_dispatcher_disabled() -> None:
     from gobby.build.service import _kick_dispatcher_tick
 
-    assert _kick_dispatcher_tick(dispatcher_enabled=False) == 0
+    assert await _kick_dispatcher_tick(dispatcher_enabled=False) == 0
 
 
-def test_kick_fires_when_dispatcher_enabled() -> None:
+@pytest.mark.asyncio
+async def test_kick_fires_when_dispatcher_enabled() -> None:
     from gobby.build.service import _kick_dispatcher_tick
 
-    assert _kick_dispatcher_tick(dispatcher_enabled=True) == 1
+    assert await _kick_dispatcher_tick(dispatcher_enabled=True) == 1
 
 
 def test_no_task_flag_exposed() -> None:

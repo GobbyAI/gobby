@@ -214,6 +214,28 @@ def _rename_yolo_to_unattended(db: LocalDatabase) -> None:
     up(db)
 
 
+def _add_project_lifecycle_events(db: LocalDatabase) -> None:
+    """Add project-level lifecycle audit events."""
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_lifecycle_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            event TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            by_actor TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_project_lifecycle_events_project
+            ON project_lifecycle_events (project_id, created_at)
+        """
+    )
+
+
 def _local_backfill_predicate(provider_column: str, model_column: str) -> tuple[str, list[str]]:
     provider_placeholders = ", ".join("?" for _ in _LOCAL_BACKFILL_PROVIDER_NAMES)
     model_clauses = " OR ".join(
@@ -253,5 +275,10 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         230,
         "Rename tasks.yolo to tasks.unattended",
         _rename_yolo_to_unattended,
+    ),
+    (
+        232,
+        "Add project lifecycle events",
+        _add_project_lifecycle_events,
     ),
 ]

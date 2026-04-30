@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, TypedDict
 
 from gobby.config.build import SKIPPABLE_STAGES, Isolation
+from gobby.runner import install_dispatcher_cron_row
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifacts
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,6 +59,28 @@ class BuildResult:
     retry_caps: RetryCaps | None = None
 
 
+@dataclass(frozen=True)
+class BuildLifecycleEvent:
+    """Project-level build lifecycle audit event."""
+
+    id: int
+    project_id: str
+    event: str
+    reason: str
+    by_actor: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class BuildControlResult:
+    """Result returned by build stop/resume entry points."""
+
+    project_id: str
+    enabled: bool
+    cron_job_id: str
+    lifecycle_event: BuildLifecycleEvent
+
+
 AUTOMATED_LEAF_CATEGORIES = frozenset({"code", "config", "docs", "test"})
 InputKind = Literal["plan_file", "epic", "leaf"]
 
@@ -91,19 +119,19 @@ async def build(
 
     if input_kind == "plan_file":
         assert isinstance(task_or_plan, Path)
-        return _build_plan_file(
+        return await _build_plan_file(
             task_manager, task_or_plan, opts, skip_stages, project_id, target_branch
         )
 
     assert isinstance(task_or_plan, Task)
     task = task_or_plan
     if input_kind == "leaf":
-        return _build_leaf(task_manager, task, opts, skip_stages)
+        return await _build_leaf(task_manager, task, opts, skip_stages, db, project_id)
 
-    return _build_epic(task_manager, task, opts, skip_stages, target_branch)
+    return await _build_epic(task_manager, task, opts, skip_stages, target_branch, db, project_id)
 
 
-def _build_plan_file(
+async def _build_plan_file(
     task_manager: LocalTaskManager,
     plan_file: Path,
     opts: BuildOptions,
@@ -141,16 +169,18 @@ def _build_plan_file(
         created=True,
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
-        tick_dispatched=_kick_dispatcher_tick(),
+        tick_dispatched=await _kick_dispatcher_tick(task_manager.db, project_id),
         retry_caps=_retry_cap_artifacts(opts),
     )
 
 
-def _build_leaf(
+async def _build_leaf(
     task_manager: LocalTaskManager,
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
+    db: DatabaseProtocol,
+    project_id: str,
 ) -> BuildResult:
     if opts.isolation != "none":
         raise ValueError("isolation requires an epic; leaf builds must use isolation none")
@@ -177,17 +207,19 @@ def _build_leaf(
         created=False,
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
-        tick_dispatched=_kick_dispatcher_tick(),
+        tick_dispatched=await _kick_dispatcher_tick(db, project_id),
         retry_caps=_retry_cap_artifacts(opts),
     )
 
 
-def _build_epic(
+async def _build_epic(
     task_manager: LocalTaskManager,
     task: Task,
     opts: BuildOptions,
     skip_stages: list[str],
     target_branch: str | None,
+    db: DatabaseProtocol,
+    project_id: str,
 ) -> BuildResult:
     artifacts = task_manager.artifacts.get_artifacts(task.id)
     _validate_epic_isolation_artifacts(opts.isolation, artifacts)
@@ -210,8 +242,54 @@ def _build_epic(
         created=False,
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
-        tick_dispatched=_kick_dispatcher_tick(),
+        tick_dispatched=await _kick_dispatcher_tick(db, project_id),
         retry_caps=_retry_cap_artifacts(opts),
+    )
+
+
+def build_stop(
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+) -> BuildControlResult:
+    """Stop future dispatcher ticks for the project build queue."""
+    return _set_dispatcher_enabled(db=db, project_id=project_id, enabled=False)
+
+
+def build_resume(
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+) -> BuildControlResult:
+    """Resume dispatcher ticks for the project build queue."""
+    return _set_dispatcher_enabled(db=db, project_id=project_id, enabled=True)
+
+
+def _set_dispatcher_enabled(
+    *,
+    db: DatabaseProtocol,
+    project_id: str,
+    enabled: bool,
+) -> BuildControlResult:
+    job = install_dispatcher_cron_row(db, project_id=project_id)
+    updated = CronJobStorage(db).update_job(job.id, enabled=enabled)
+    if updated is None:
+        raise RuntimeError(f"Dispatcher cron row disappeared during build control: {job.id}")
+
+    event_name = "build_resume" if enabled else "build_stop"
+    reason = "gobby build resume" if enabled else "gobby build stop"
+    event = _record_project_build_event(
+        db,
+        project_id=project_id,
+        event=event_name,
+        reason=reason,
+        by_actor="build",
+    )
+    return BuildControlResult(
+        project_id=project_id,
+        enabled=updated.enabled,
+        cron_job_id=updated.id,
+        lifecycle_event=event,
     )
 
 
@@ -405,13 +483,95 @@ def _retry_cap_artifacts(opts: BuildOptions) -> RetryCaps:
     }
 
 
-def _kick_dispatcher_tick() -> int:
-    """Placeholder for dispatcher-tick wiring; tracked as a separate follow-up task."""
-    return 0
+async def _kick_dispatcher_tick(
+    db: DatabaseProtocol | None = None,
+    project_id: str | None = None,
+    *,
+    dispatcher_enabled: bool | None = None,
+) -> int:
+    """Fire one dispatcher heartbeat when the bundled cron row is enabled."""
+    if dispatcher_enabled is None:
+        if db is None or project_id is None:
+            dispatcher_enabled = True
+        else:
+            job = install_dispatcher_cron_row(db, project_id=project_id)
+            dispatcher_enabled = job.enabled
+
+    if not dispatcher_enabled:
+        logger.info(
+            "dispatcher_tick_skipped",
+            extra={"project_id": project_id, "reason": "dispatcher_cron_disabled"},
+        )
+        return 0
+
+    if db is None:
+        return 1
+
+    from gobby.dispatch.dispatcher import run_heartbeat
+
+    await run_heartbeat(db=db, project_id=project_id)
+    return 1
+
+
+def _record_project_build_event(
+    db: DatabaseProtocol,
+    *,
+    project_id: str,
+    event: str,
+    reason: str,
+    by_actor: str,
+) -> BuildLifecycleEvent:
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_lifecycle_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            event TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            by_actor TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_project_lifecycle_events_project
+            ON project_lifecycle_events (project_id, created_at)
+        """
+    )
+    created_at = datetime.now(UTC).isoformat()
+    cursor = db.execute(
+        """
+        INSERT INTO project_lifecycle_events (project_id, event, reason, by_actor, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (project_id, event, reason, by_actor, created_at),
+    )
+    event_id = cursor.lastrowid
+    if event_id is None:
+        raise RuntimeError("SQLite did not return a project lifecycle event id")
+    return BuildLifecycleEvent(
+        id=event_id,
+        project_id=project_id,
+        event=event,
+        reason=reason,
+        by_actor=by_actor,
+        created_at=created_at,
+    )
 
 
 def _looks_like_task_ref(input_ref: str) -> bool:
     return input_ref.startswith("#") or input_ref.isdigit()
 
 
-__all__ = ["AUTOMATED_LEAF_CATEGORIES", "BuildOptions", "BuildResult", "RetryCaps", "build"]
+__all__ = [
+    "AUTOMATED_LEAF_CATEGORIES",
+    "BuildControlResult",
+    "BuildLifecycleEvent",
+    "BuildOptions",
+    "BuildResult",
+    "RetryCaps",
+    "build",
+    "build_resume",
+    "build_stop",
+]

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.cron_models import CronJob
-    from gobby.storage.database import LocalDatabase
+    from gobby.storage.database import DatabaseProtocol, LocalDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.prompts import LocalPromptManager
@@ -79,7 +79,7 @@ DISPATCHER_CRON_INTERVAL_SECONDS = 60
 DISPATCHER_CRON_ACTION_CONFIG: dict[str, Any] = {"handler": DISPATCHER_CRON_HANDLER}
 
 
-def _ensure_dispatcher_project_row(db: LocalDatabase, project_id: str) -> None:
+def _ensure_dispatcher_project_row(db: DatabaseProtocol, project_id: str) -> None:
     db.execute(
         """
         INSERT OR IGNORE INTO projects (id, name, created_at, updated_at)
@@ -89,7 +89,7 @@ def _ensure_dispatcher_project_row(db: LocalDatabase, project_id: str) -> None:
     )
 
 
-def install_dispatcher_cron_row(db: LocalDatabase, *, project_id: str) -> CronJob:
+def install_dispatcher_cron_row(db: DatabaseProtocol, *, project_id: str) -> CronJob:
     """Install or reconcile the bundled dispatcher cron row."""
     from gobby.storage.cron import CronJobStorage
 
