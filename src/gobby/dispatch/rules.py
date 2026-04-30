@@ -22,7 +22,7 @@ _SKIP_PREFIX = "stage-:"
 
 def evaluate(task: object, context: object, rules: Sequence[Rule] | None = None) -> Action | None:
     """Return the first action emitted by the ordered rule list."""
-    for rule in rules or BASE_RULES:
+    for rule in rules or RULES:
         action = rule(task, context)
         if action is not None:
             return action
@@ -147,6 +147,17 @@ def pr_rule(task: object, context: object) -> Action | None:
     return EscalateAction(task_id=_task_id(task), reason="pr_creation_required")
 
 
+def merge_rule(task: object, context: object) -> Action | None:
+    if _state(task) != ("merging", "open") or _field(task, "task_type") != "epic":
+        return None
+
+    if _maxed_out(task, _artifacts(context), context, "merge_attempts", "max_merge_attempts"):
+        if _is_unattended(task):
+            return _advance(task, "merging", "open", "merge_failed:max_attempts_unattended")
+        return EscalateAction(task_id=_task_id(task), reason="merge_failed:max_attempts")
+    return _spawn(task, context, "merge-orchestrator")
+
+
 BASE_RULES: list[Rule] = [
     plan_review_rule,
     test_arch_rule,
@@ -159,6 +170,8 @@ BASE_RULES: list[Rule] = [
     holistic_rule,
     pr_rule,
 ]
+
+RULES: list[Rule] = [*BASE_RULES, merge_rule]
 
 
 def _field(obj: object, name: str, default: Any = None) -> Any:
@@ -317,8 +330,10 @@ __all__ = [
     "is_blocked_by_deps",
     "isolation_rule",
     "leaf_park_rule",
+    "merge_rule",
     "plan_review_rule",
     "pr_rule",
     "qa_rule",
+    "RULES",
     "test_arch_rule",
 ]
