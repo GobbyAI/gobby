@@ -639,10 +639,10 @@
 }
 
 @media (pointer: coarse) {
-  .knowledge-graph-search input {
+  .knowledge-graph-container .knowledge-graph-search input {
     min-height: 44px;
-    padding: 8px 10px !important;
-    font-size: var(--text-md) !important;
+    padding: 8px 10px;
+    font-size: var(--text-md);
   }
 }
 

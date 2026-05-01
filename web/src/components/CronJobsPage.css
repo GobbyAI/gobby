@@ -482,7 +482,7 @@
   .cron-runs-table-output {
     max-width: none;
     white-space: normal;
-    word-break: break-word;
+    overflow-wrap: break-word;
     overflow: visible;
     text-overflow: clip;
   }

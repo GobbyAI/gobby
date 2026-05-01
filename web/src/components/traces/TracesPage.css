@@ -285,7 +285,7 @@
     font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    word-break: break-word;
+    overflow-wrap: break-word;
   }
 }
 

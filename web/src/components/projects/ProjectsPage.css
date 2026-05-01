@@ -528,7 +528,7 @@
   margin: 0;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
   .projects-summary-dl {
     grid-template-columns: 1fr;
     gap: 4px 0;
@@ -548,7 +548,7 @@
   font-size: calc(var(--font-size-base) * 0.85);
   color: var(--text-primary);
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .projects-summary-empty {

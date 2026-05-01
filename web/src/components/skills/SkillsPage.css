@@ -43,21 +43,6 @@
   background: var(--color-success-foreground);
 }
 
-/* App-level toast */
-.app-toast {
-  position: fixed;
-  top: 60px;
-  right: 20px;
-  z-index: 1000;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  font-size: calc(var(--font-size-base) * 0.85);
-  cursor: pointer;
-  animation: fadeIn 0.2s ease;
-}
-
 /* Toolbar */
 .skills-toolbar {
   display: flex;
@@ -1092,5 +1077,7 @@
   .skills-detail {
     width: 100vw;
     max-width: none;
+    border-left: none;
+    box-shadow: none;
   }
 }

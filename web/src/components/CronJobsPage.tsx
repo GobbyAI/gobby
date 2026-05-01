@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useCronJobs } from '../hooks/useCronJobs'
 import type { CronJob, CronRun, CreateCronJobRequest, UpdateCronJobRequest } from '../hooks/useCronJobs'
 import { SidebarPanel } from './shared/SidebarPanel'
@@ -107,8 +107,16 @@ function jobToFormValues(job: CronJob): JobFormValues {
   }
 }
 
+function parseActionConfig(actionConfigStr: string): Record<string, unknown> {
+  try {
+    return JSON.parse(actionConfigStr) as Record<string, unknown>
+  } catch {
+    throw new Error('Invalid actionConfig JSON')
+  }
+}
+
 function formValuesToCreateRequest(v: JobFormValues): CreateCronJobRequest {
-  const actionConfig = JSON.parse(v.actionConfigStr) as Record<string, unknown>
+  const actionConfig = parseActionConfig(v.actionConfigStr)
   const req: CreateCronJobRequest = {
     name: v.name.trim(),
     action_type: v.actionType,
@@ -123,7 +131,7 @@ function formValuesToCreateRequest(v: JobFormValues): CreateCronJobRequest {
 }
 
 function formValuesToUpdateRequest(v: JobFormValues): UpdateCronJobRequest {
-  const actionConfig = JSON.parse(v.actionConfigStr) as Record<string, unknown>
+  const actionConfig = parseActionConfig(v.actionConfigStr)
   const req: UpdateCronJobRequest = {
     name: v.name.trim(),
     description: v.description.trim() || undefined,
@@ -451,6 +459,35 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
   const [editingJob, setEditingJob] = useState<CronJob | null>(null)
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false)
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current)
+    }
+    setToastMessage(message)
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null)
+      toastTimerRef.current = null
+    }, 3000)
+  }, [])
+
+  const dismissToast = useCallback(() => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current)
+      toastTimerRef.current = null
+    }
+    setToastMessage(null)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+    }
+  }, [])
 
   const handleCreate = useCallback(async (values: JobFormValues) => {
     setIsSubmittingCreate(true)
@@ -460,14 +497,17 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
       if (job) {
         setShowCreateDialog(false)
         selectJob(job)
+      } else {
+        console.error('Failed to create job')
+        showToast('Failed to create job')
       }
     } catch (e) {
       console.error('Failed to create job:', e)
-      alert('Failed to create job')
+      showToast(e instanceof Error ? e.message : 'Failed to create job')
     } finally {
       setIsSubmittingCreate(false)
     }
-  }, [createJob, selectJob])
+  }, [createJob, selectJob, showToast])
 
   const handleEditSave = useCallback(async (values: JobFormValues) => {
     if (!editingJob) return
@@ -478,15 +518,16 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
       if (updated) {
         setEditingJob(null)
       } else {
-        alert('Failed to save job')
+        console.error('Failed to save job')
+        showToast('Failed to save job')
       }
     } catch (e) {
       console.error('Failed to save job:', e)
-      alert('Failed to save job')
+      showToast(e instanceof Error ? e.message : 'Failed to save job')
     } finally {
       setIsSubmittingEdit(false)
     }
-  }, [editingJob, updateJob])
+  }, [editingJob, showToast, updateJob])
 
   const handleToggle = useCallback(async () => {
     try {
@@ -526,6 +567,12 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
 
   return (
     <div className="cron-page">
+      {toastMessage && (
+        <div className="app-toast" role="status" onClick={dismissToast}>
+          {toastMessage}
+        </div>
+      )}
+
       <div className="cron-toolbar">
         <h2 className="cron-toolbar-title">Cron Jobs</h2>
         <input
