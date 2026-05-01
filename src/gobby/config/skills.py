@@ -1,7 +1,7 @@
 """
 Skills configuration for Gobby daemon.
 
-Provides configuration for skill discovery and active-skill manifest formatting.
+Provides configuration for skill discovery and hub search.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class HubConfig(BaseModel):
 
 class SkillsConfig(BaseModel):
     """
-    Configuration for skill discovery and active-skill manifests.
+    Configuration for skill discovery.
 
     Controls whether and how skills are advertised for on-demand loading.
     """

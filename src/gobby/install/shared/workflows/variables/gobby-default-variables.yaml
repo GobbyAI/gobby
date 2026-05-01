@@ -87,9 +87,12 @@ variables:
   memory_nudge_fired:
     value: false
     description: "True after memory-capture-nudge has fired once this session"
+  skill_discovery_instructions_shown:
+    value: false
+    description: "True after skill hub discovery instructions have been shown once this session"
   _agent_context_injected:
     value: false
-    description: "True after agent instructions and active-skill manifests have been sent on first before_agent"
+    description: "True after agent identity and instructions have been sent on first before_agent"
   _agent_identity_reinject:
     value: false
     description: "True when the next before_agent should re-inject role/goal/personality after a persona switch"

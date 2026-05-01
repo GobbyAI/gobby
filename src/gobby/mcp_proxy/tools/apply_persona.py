@@ -150,7 +150,6 @@ def build_session_persona_context(
     identity_only: bool = False,
 ) -> tuple[str | None, set[str] | None]:
     """Build prompt context for a persona-capable agent definition."""
-    from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
     from gobby.skills.manager import SkillManager
     from gobby.workflows.selectors import resolve_skills_for_agent
 
@@ -167,15 +166,6 @@ def build_session_persona_context(
 
     all_skills = SkillManager(db).list_skills()
     active_skills = resolve_skills_for_agent(agent_body, all_skills)
-    if not identity_only:
-        formatted, _, _ = select_and_format_agent_skills(
-            agent_body,
-            all_skills,
-            active_skills,
-            cli_source,
-        )
-        if formatted:
-            parts.append(formatted)
 
     return ("\n\n".join(parts) if parts else None), active_skills
 

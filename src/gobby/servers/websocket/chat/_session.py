@@ -18,7 +18,6 @@ from gobby.hooks.events import HookEvent, HookEventType
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.tool_approvals import normalize_approved_tool_keys
-from gobby.servers.websocket.chat._lifecycle import _inject_agent_skills
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.machine_id import get_machine_id
 
@@ -49,10 +48,8 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
     """Build the non-duplicated identity preamble for web-chat sessions.
 
-    Gemini web chat sends instructions and skill manifests through the first
-    BEFORE_AGENT lifecycle hook, so its session bootstrap should only carry
-    stable identity fields. Other providers can still use the full prompt
-    preamble plus skill manifests.
+    Gemini/Qwen web chat sends instructions through the first BEFORE_AGENT
+    lifecycle hook, so bootstrap only carries stable identity fields there.
     """
     parts: list[str] = []
     if getattr(agent_body, "role", None):
@@ -727,18 +724,6 @@ class ChatSessionMixin:
                         preamble = agent_body.build_prompt_preamble()
                     if preamble:
                         context_parts.append(preamble)
-                    # Gemini/Qwen web chat defer instructions + skill manifests to BEFORE_AGENT
-                    # so the first prompt does not duplicate context blocks.
-                    if effective_provider not in {"gemini", "qwen"}:
-                        skills_text = await asyncio.to_thread(
-                            _inject_agent_skills,
-                            agent_body,
-                            session_manager.db,
-                            effective_pid,
-                            cli_source,
-                        )
-                        if skills_text:
-                            context_parts.append(skills_text)
                     if context_parts:
                         session.system_prompt_override = "\n\n".join(context_parts)
             except Exception as e:

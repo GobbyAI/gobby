@@ -614,6 +614,26 @@ class TestDeleteConfig:
         assert config_state["config"].daemon_port == default_port
         assert config_state["config"].daemon_port != 61001
 
+    def test_delete_config_removes_last_dynamic_hub_key(
+        self,
+        config_registry,
+        config_store: ConfigStore,
+        config_state: dict[str, DaemonConfig],
+    ) -> None:
+        """Deleting the final override for a dynamic hub removes the hub from memory."""
+        set_tool = config_registry.get_tool("set_config")
+        delete_tool = config_registry.get_tool("delete_config")
+
+        key = "skills.hubs.nano-banana-skills.type"
+        assert set_tool(key=key, value="github-collection")["success"] is True
+        assert "nano-banana-skills" in config_state["config"].skills.hubs
+
+        result = delete_tool(key=key)
+
+        assert result["success"] is True
+        assert key not in config_store.list_keys()
+        assert "nano-banana-skills" not in config_state["config"].skills.hubs
+
     def test_delete_config_returns_error_for_missing_key(self, config_registry) -> None:
         """Deleting a key with no DB override returns a not-found error."""
         delete_tool = config_registry.get_tool("delete_config")

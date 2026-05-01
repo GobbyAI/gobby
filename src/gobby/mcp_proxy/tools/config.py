@@ -262,6 +262,15 @@ def create_config_registry(
             # Validate the post-delete state before mutating DB or memory.
             flat = _flat_config()
             flat.pop(key, None)
+            remaining_override_keys = override_keys - {key}
+            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json"))
+            parent_prefix = key.rsplit(".", 1)[0] + "." if "." in key else ""
+            if (
+                parent_prefix
+                and not any(k.startswith(parent_prefix) for k in remaining_override_keys)
+                and not any(k.startswith(parent_prefix) for k in defaults_flat)
+            ):
+                flat = {k: v for k, v in flat.items() if not k.startswith(parent_prefix)}
             new_config = DaemonConfigCls(**unflatten_config(flat))
 
             if had_secret:

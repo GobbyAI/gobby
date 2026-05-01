@@ -12,10 +12,6 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.servers.chat_session_base import ChatSessionProtocol
 
-if TYPE_CHECKING:
-    from gobby.storage.database import DatabaseProtocol
-    from gobby.workflows.definitions import AgentDefinitionBody
-
 logger = logging.getLogger(__name__)
 
 _RULE_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]")
@@ -57,25 +53,6 @@ def _warn_block_fallback(
         rule_name,
         detail,
     )
-
-
-def _inject_agent_skills(
-    agent_body: AgentDefinitionBody,
-    db: DatabaseProtocol,
-    project_id: str,
-    cli_source: str = "claude",
-) -> str | None:
-    """Build an audience-aware active-skill manifest for an agent definition."""
-    from gobby.hooks.event_handlers._session import select_and_format_agent_skills
-    from gobby.skills.manager import SkillManager
-    from gobby.workflows.selectors import resolve_skills_for_agent
-
-    all_skills = SkillManager(db).list_skills()
-    active_skills = resolve_skills_for_agent(agent_body, all_skills)
-    formatted, _, _ = select_and_format_agent_skills(
-        agent_body, all_skills, active_skills, cli_source
-    )
-    return formatted
 
 
 class ChatLifecycleMixin:

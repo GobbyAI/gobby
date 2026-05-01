@@ -336,10 +336,6 @@ class TestCreateChatSessionInner:
         with (
             patch("gobby.servers.websocket.chat._session.get_machine_id", return_value="mach1"),
             patch("gobby.workflows.agent_resolver.resolve_agent") as mock_resolve_agent,
-            patch(
-                "gobby.servers.websocket.chat._session._inject_agent_skills",
-                return_value="## Skills\nCanvas",
-            ) as mock_inject_skills,
         ):
             agent_body = MagicMock()
             agent_body.provider = "gemini"
@@ -390,7 +386,7 @@ class TestCreateChatSessionInner:
                 "## Personality\nBlunt and technical"
             )
             agent_body.build_prompt_preamble.assert_not_called()
-            mock_inject_skills.assert_not_called()
+            assert "<active_skills>" not in (mock_session.system_prompt_override or "")
 
     @pytest.mark.asyncio
     async def test_pending_persona_uses_next_session_provider_and_project_context(

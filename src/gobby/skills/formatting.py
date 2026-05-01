@@ -1,6 +1,6 @@
 """Skill formatting helpers.
 
-Functions for rendering skill lists, active skill manifests, and fetch directives.
+Functions for rendering skill lists and fetch directives.
 """
 
 from __future__ import annotations
@@ -29,21 +29,6 @@ def format_skill_fetch_context(name: str, args: str | None = None) -> str:
     if args:
         parts.append(f"User arguments: {args}")
     return "\n\n".join(parts)
-
-
-def active_skill_manifest(skills: Sequence[Any]) -> str:
-    """Render an agent-visible manifest of active skills without skill bodies."""
-    lines = ["<active_skills>"]
-    seen: set[str] = set()
-    for skill in skills:
-        name = getattr(skill, "name", None)
-        if not isinstance(name, str) or not name or name in seen:
-            continue
-        seen.add(name)
-        lines.append(f"- name: {name}")
-        lines.append(f"  ref: gobby-skills:get_skill name={json.dumps(name)}")
-    lines.append("</active_skills>")
-    return "\n".join(lines) if seen else ""
 
 
 class SkillLike(Protocol):
@@ -92,26 +77,6 @@ def format_skills_markdown_table(skills_list: list[Any]) -> str:
         lines.append(f"| {name_safe} | {desc_safe} | {category} | {enabled} |")
 
     return "\n".join(lines)
-
-
-def render_skills_for_context(skills_with_formats: list[tuple[Any, str]]) -> str:
-    """Format skills with pre-resolved injection formats.
-
-    Emits only an active-skill manifest. Full skill bodies are loaded on demand
-    through gobby-skills:get_skill so hooks never inline skill content.
-
-    Args:
-        skills_with_formats: List of (ParsedSkill, resolved_format) tuples
-
-    Returns:
-        Active skill manifest, or empty string if nothing was rendered.
-    """
-    return active_skill_manifest([skill for skill, _fmt in skills_with_formats])
-
-
-# Backwards-compatible aliases
-_format_skills_with_formats = render_skills_for_context
-format_skills_with_formats = render_skills_for_context
 
 
 def recommend_skills_for_task(
