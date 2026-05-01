@@ -285,9 +285,7 @@ class TestCompactSelfWebChatPath:
         )
 
         async def compact_stream(command: str):
-            precompact_outputs.append(
-                await live_session._on_pre_compact({"trigger": "manual"})
-            )
+            precompact_outputs.append(await live_session._on_pre_compact({"trigger": "manual"}))
             yield DoneEvent(tool_calls_count=0)
 
         live_session.send_message.side_effect = compact_stream

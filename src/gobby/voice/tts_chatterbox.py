@@ -250,7 +250,9 @@ class ChatterboxTurboProvider(BaseTTSProvider):
         token_cap = max_generation_tokens or self._config.tts_chatterbox_max_generation_tokens
 
         if not callable(original_inference_turbo):
-            logger.warning("Chatterbox token cap disabled: model.t3.inference_turbo is not callable")
+            logger.warning(
+                "Chatterbox token cap disabled: model.t3.inference_turbo is not callable"
+            )
             return model.generate(
                 text,
                 temperature=self._config.tts_temperature,

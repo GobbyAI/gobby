@@ -445,7 +445,9 @@ async def _fetch_embeddings(
                 if "try pulling it first" not in error_message or not _is_ollama_endpoint(api_base):
                     logger.error(f"Embedding model not found: {e}")
                     raise RuntimeError(f"Model not found: {e}") from e
-                assert api_base is not None  # guaranteed: _is_ollama_endpoint(api_base) was True above
+                assert (
+                    api_base is not None
+                )  # guaranteed: _is_ollama_endpoint(api_base) was True above
                 reloaded = await _try_reload_model(model, api_base)
                 if not reloaded:
                     raise RuntimeError(f"Model not found: {e}") from e
@@ -490,7 +492,9 @@ async def _fetch_embeddings(
                 last_error = e
                 if attempt == max_retries:
                     break
-                delay = min(base_delay * (2**attempt), _DEFAULT_MAX_DELAY) * random.uniform(0.8, 1.2)  # nosec B311
+                delay = min(base_delay * (2**attempt), _DEFAULT_MAX_DELAY) * random.uniform(
+                    0.8, 1.2
+                )  # nosec B311
                 logger.warning(
                     f"Rate limited (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s"
                 )

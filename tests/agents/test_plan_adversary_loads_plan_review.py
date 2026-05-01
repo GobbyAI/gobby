@@ -96,8 +96,7 @@ class TestAdversarySkillLoading:
         claim_handlers = [
             entry
             for entry in mcp_error
-            if _field(entry, "server") == "gobby-tasks"
-            and _field(entry, "tool") == "claim_task"
+            if _field(entry, "server") == "gobby-tasks" and _field(entry, "tool") == "claim_task"
         ]
         assert claim_handlers
         assert _field(claim_handlers[0], "when") == 'tool_output.error_code == "TASK_CLOSED"'
