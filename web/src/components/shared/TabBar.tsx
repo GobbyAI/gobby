@@ -15,7 +15,12 @@ interface TabBarProps {
 
 export function TabBar({ tabs, activeTab, onTabChange, className }: TabBarProps) {
   return (
-    <div className={cn('mb-3 overflow-x-auto overflow-y-hidden', className)}>
+    <div
+      className={cn(
+        'mb-3 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        className,
+      )}
+    >
       <div className="flex min-w-max border-b border-[var(--border)]">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id
