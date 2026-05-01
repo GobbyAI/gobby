@@ -528,6 +528,17 @@
   margin: 0;
 }
 
+@media (max-width: 480px) {
+  .projects-summary-dl {
+    grid-template-columns: 1fr;
+    gap: 4px 0;
+  }
+
+  .projects-summary-dl dt:not(:first-of-type) {
+    margin-top: 8px;
+  }
+}
+
 .projects-summary-dl dt {
   font-size: calc(var(--font-size-base) * 0.8);
   color: var(--text-muted);
@@ -537,6 +548,7 @@
   font-size: calc(var(--font-size-base) * 0.85);
   color: var(--text-primary);
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .projects-summary-empty {
@@ -587,8 +599,9 @@
 }
 
 .projects-overview-stats-row {
-  display: flex;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 16px 24px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
