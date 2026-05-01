@@ -705,7 +705,7 @@ export function ChatPage({
     <div className="relative flex h-full overflow-hidden bg-background text-foreground">
       {ConfirmDialogElement}
       {/* Main chat column */}
-      <div className="flex flex-col flex-1 min-w-[400px]">
+      <div className="flex flex-col flex-1 min-w-[320px]">
         {/* Command Bar */}
         <CommandBar
           sessionRef={effectiveSessionRef}
@@ -715,7 +715,8 @@ export function ChatPage({
           }
           sessionSource={viewingMeta?.source ?? mainSessionMeta?.source ?? chat.provider ?? null}
           onOpenPalette={() => setShowCommandPalette(true)}
-          onNewChat={handleNewChat}
+          onTogglePanel={togglePanel}
+          isPanelPinned={isPinned}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
           agentProjectDefs={agentProjectDefs}
@@ -772,8 +773,6 @@ export function ChatPage({
               canControlViewedSession ? handleResumeViewedSession : undefined
             }
             onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
-            onTogglePanel={togglePanel}
-            isPanelPinned={isPinned}
           />
 
           {/* Chat input */}
@@ -781,6 +780,7 @@ export function ChatPage({
             <ChatInput
               onSend={onSend}
               onStop={chat.onStop}
+              onNewChat={handleNewChat}
               isStreaming={chat.isStreaming}
               disabled={chatInputDisabled}
               disabledPlaceholder={chatInputDisabledPlaceholder}

@@ -5,6 +5,7 @@ import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { Button } from './ui/Button'
 import { MicIcon, PaperclipIcon, SendIcon, SpeakerIcon, StopIcon } from './ChatInputIcons'
+import { PlusIcon } from './icons/PlusIcon'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ModeSelector } from './ModeSelector'
 import { BranchIndicator } from './BranchIndicator'
@@ -23,6 +24,7 @@ interface ChatInputProps {
     options?: ChatSendOptions,
   ) => void
   onStop?: () => void
+  onNewChat?: () => void
   isStreaming?: boolean
   disabled?: boolean
   disabledPlaceholder?: string
@@ -103,6 +105,7 @@ function shouldHandleSlashCommandLocally(input: string): boolean {
 export function ChatInput({
   onSend,
   onStop,
+  onNewChat,
   isStreaming = false,
   disabled = false,
   disabledPlaceholder,
@@ -782,15 +785,29 @@ export function ChatInput({
                 </Button>
               )}
             </div>
-            {!canSelectModel && onWorktreeChange ? (
+            {(!canSelectModel && onWorktreeChange) || onNewChat ? (
               <div className="chat-input-toolbar__right">
-                <BranchIndicator
-                  currentBranch={currentBranch ?? null}
-                  worktreePath={worktreePath ?? null}
-                  projectId={projectId ?? null}
-                  onWorktreeChange={onWorktreeChange}
-                  disabled={disabled || worktreePickerDisabled}
-                />
+                {!canSelectModel && onWorktreeChange ? (
+                  <BranchIndicator
+                    currentBranch={currentBranch ?? null}
+                    worktreePath={worktreePath ?? null}
+                    projectId={projectId ?? null}
+                    onWorktreeChange={onWorktreeChange}
+                    disabled={disabled || worktreePickerDisabled}
+                  />
+                ) : null}
+                {onNewChat ? (
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={onNewChat}
+                    disabled={disabled}
+                    title="New chat"
+                    aria-label="New chat"
+                  >
+                    <PlusIcon />
+                  </Button>
+                ) : null}
               </div>
             ) : null}
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />

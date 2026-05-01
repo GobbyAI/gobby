@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { CommandBar } from "../CommandBar";
 
@@ -11,7 +12,6 @@ describe("CommandBar", () => {
         title="Viewed web chat"
         sessionSource="codex"
         onOpenPalette={vi.fn()}
-        onNewChat={vi.fn()}
       />,
     );
 
@@ -32,12 +32,30 @@ describe("CommandBar", () => {
         sessionRef={null}
         title={null}
         onOpenPalette={vi.fn()}
-        onNewChat={vi.fn()}
       />,
     );
 
     expect(screen.getByTestId("chat-session-selector")).toHaveTextContent(
       "New Session",
     );
+  });
+
+  it("renders the activity-panel toggle when onTogglePanel is provided", async () => {
+    const onTogglePanel = vi.fn();
+
+    render(
+      <CommandBar
+        sessionRef="#42"
+        title="Session"
+        onOpenPalette={vi.fn()}
+        onTogglePanel={onTogglePanel}
+        isPanelPinned={true}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Hide activity panel" }),
+    );
+    expect(onTogglePanel).toHaveBeenCalledTimes(1);
   });
 });

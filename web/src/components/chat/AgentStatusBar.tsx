@@ -12,8 +12,6 @@ interface AgentStatusBarProps {
   onAttach?: () => void
   onResume?: () => void
   onDetach?: () => void
-  onTogglePanel?: () => void
-  isPanelPinned?: boolean
 }
 
 const CONTEXT_USAGE_REFRESH_MS = 15_000
@@ -56,25 +54,6 @@ function formatSessionStateText(
   return 'Watching live'
 }
 
-function PanelIcon({ pinned }: { pinned: boolean }) {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <line x1="15" y1="3" x2="15" y2="21" />
-      {pinned && <line x1="18" y1="9" x2="21" y2="9" opacity="0.5" />}
-    </svg>
-  )
-}
-
 export function AgentStatusBar({
   viewingMeta,
   interactionMode,
@@ -85,8 +64,6 @@ export function AgentStatusBar({
   onAttach,
   onResume,
   onDetach,
-  onTogglePanel,
-  isPanelPinned = false,
 }: AgentStatusBarProps) {
   const usageClock = useSyncExternalStore(
     contextUsageUpdatedAt == null ? subscribeToClockDisabled : subscribeToClock,
@@ -101,26 +78,10 @@ export function AgentStatusBar({
   const canAttach = !isAttached && !isAutonomousSession && Boolean(onAttach)
   const canResume = !isAttached && !isAutonomousSession && Boolean(onResume)
   const canDetach = isAttached && Boolean(onDetach)
-  const hasActions =
-    Boolean(onTogglePanel) ||
-    canAttach ||
-    canResume ||
-    canDetach
 
   return (
     <div className="agent-status-bar" data-testid="agent-status-bar">
       <div className="agent-status-bar__summary">
-        <div className="agent-status-bar__context">
-          <ContextUsageIndicator
-            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
-            outputTokens={contextUsage?.outputTokens ?? 0}
-            contextWindow={contextUsage?.contextWindow ?? null}
-            staleMs={contextUsageStaleMs}
-            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
-            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
-            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
-          />
-        </div>
         {viewingMeta && stateText ? (
           <div className="chat-session-status">
             <span className="chat-session-status__state">{stateText}</span>
@@ -132,48 +93,46 @@ export function AgentStatusBar({
           </div>
         ) : null}
       </div>
-      {hasActions ? (
-        <div className="agent-status-bar__actions">
-          {onTogglePanel && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon btn-sm"
-              onClick={onTogglePanel}
-              aria-label={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-              title={isPanelPinned ? 'Hide activity panel' : 'Show activity panel'}
-            >
-              <PanelIcon pinned={isPanelPinned} />
-            </button>
-          )}
-          {!isAttached && !isAutonomousSession && onAttach && (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={onAttach}
-            >
-              Attach
-            </button>
-          )}
-          {!isAttached && !isAutonomousSession && onResume && (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={onResume}
-            >
-              Resume
-            </button>
-          )}
-          {isAttached && onDetach && (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={onDetach}
-            >
-              Detach
-            </button>
-          )}
+      <div className="agent-status-bar__actions">
+        {canAttach && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={onAttach}
+          >
+            Attach
+          </button>
+        )}
+        {canResume && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={onResume}
+          >
+            Resume
+          </button>
+        )}
+        {canDetach && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={onDetach}
+          >
+            Detach
+          </button>
+        )}
+        <div className="agent-status-bar__context">
+          <ContextUsageIndicator
+            totalInputTokens={contextUsage?.totalInputTokens ?? 0}
+            outputTokens={contextUsage?.outputTokens ?? 0}
+            contextWindow={contextUsage?.contextWindow ?? null}
+            staleMs={contextUsageStaleMs}
+            uncachedInputTokens={contextUsage?.uncachedInputTokens ?? 0}
+            cacheReadTokens={contextUsage?.cacheReadTokens ?? 0}
+            cacheCreationTokens={contextUsage?.cacheCreationTokens ?? 0}
+          />
         </div>
-      ) : null}
+      </div>
     </div>
   )
 }

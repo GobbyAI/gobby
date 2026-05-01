@@ -157,11 +157,11 @@ const noopFetchDiff = async (): Promise<string> => "";
 
 // Width constants shared between the inline style, ResizeHandle, and the
 // `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
-// `min-w-[400px]` on the chat column in ChatPage.tsx so the maxWidth calc
+// `min-w-[320px]` on the chat column in ChatPage.tsx so the maxWidth calc
 // always leaves enough room for the chat to keep its floor.
 const PANEL_MIN_WIDTH = 280;
 const PANEL_MAX_WIDTH = 1200;
-const CHAT_MIN_WIDTH = 400;
+const CHAT_MIN_WIDTH = 320;
 const LAYOUT_BUFFER = 24;
 
 type ActivityTabConfig = (typeof TABS)[number];
