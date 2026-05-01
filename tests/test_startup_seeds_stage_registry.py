@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.runner import GobbyRunner
+from gobby.storage.tasks._stage_registry_loader import StageRegistrySyncResult
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -24,6 +25,11 @@ def test_registry_populated_after_startup(mock_config) -> None:
                 "gobby.storage.tasks._stage_registry_loader.StageRegistryLoader.sync",
                 autospec=True,
             )
+        )
+        sync.return_value = StageRegistrySyncResult(
+            upserted=0,
+            skipped=14,
+            bundled_hash="hash",
         )
 
         runner = GobbyRunner()
