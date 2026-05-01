@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -24,6 +25,7 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 
@@ -34,13 +36,89 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
+    if not condition:
+        return True
+    try:
+        evaluator = SafeExpressionEvaluator(
+            context={"vars": variables, "variables": variables},
+            allowed_funcs={
+                "len": len,
+                "bool": bool,
+                "str": str,
+                "int": int,
+                "list": list,
+                "dict": dict,
+                "any": any,
+                "all": all,
+            },
+        )
+        return evaluator.evaluate(condition)
+    except Exception as exc:
+        logger.warning("Failed to evaluate initial step transition %r: %s", condition, exc)
+        return False
+
+
+def _advance_initial_step(
+    agent_body: AgentDefinitionBody,
+    current_step: str,
+    variables: dict[str, Any],
+) -> str:
+    steps = {step.name: step for step in (agent_body.steps or [])}
+    max_transitions = len(steps) + 1
+
+    for _ in range(max_transitions):
+        step = steps.get(current_step)
+        if step is None:
+            return current_step
+
+        for transition in step.transitions:
+            if not _transition_condition_met(transition.when, variables):
+                continue
+            if transition.to not in steps:
+                logger.warning(
+                    "Initial step transition to unknown step %r in agent %r",
+                    transition.to,
+                    agent_body.name,
+                )
+                continue
+            current_step = transition.to
+            break
+        else:
+            return current_step
+
+    logger.warning(
+        "Stopped initial step transition chain for agent %r after %d transitions",
+        agent_body.name,
+        max_transitions,
+    )
+    return current_step
+
+
 def _initial_step_state_for_spawn(
     agent_body: AgentDefinitionBody,
     *,
     task_owned_by_child: bool,
+    initial_variables: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Return the initial step workflow state for a spawned agent."""
     step_variables = dict(agent_body.step_variables)
+    if initial_variables and "additional_skills" in initial_variables:
+        step_variables["additional_skills"] = initial_variables["additional_skills"]
+
+    additional_skills = _normalize_string_list(step_variables.get("additional_skills"))
+    step_variables["additional_skills"] = additional_skills
+    step_variables["additional_skills_loaded"] = not additional_skills or all(
+        skill in _normalize_string_list(step_variables.get("loaded_skills"))
+        for skill in additional_skills
+    )
+
     steps = agent_body.steps or []
     if not steps:
         raise ValueError("Cannot initialize step state for an agent with no steps")
@@ -49,10 +127,8 @@ def _initial_step_state_for_spawn(
 
     if task_owned_by_child and first_step.name == "claim":
         step_variables["task_claimed"] = True
-        for transition in first_step.transitions:
-            if transition.when and transition.when.replace(" ", "") == "vars.task_claimed":
-                current_step = transition.to
-                break
+
+    current_step = _advance_initial_step(agent_body, current_step, step_variables)
 
     return current_step, step_variables
 
@@ -275,6 +351,7 @@ async def spawn_agent_impl(
     resolved_task_id: str | None = None
     task_title: str | None = None
     task_seq_num: int | None = None
+    task_additional_skills: list[str] | None = None
     claimed_session_id: str | None = None
     task_owned_by_child = False
 
@@ -285,6 +362,8 @@ async def spawn_agent_impl(
             if task:
                 task_title = task.title
                 task_seq_num = task.seq_num
+                if task.additional_skills is not None:
+                    task_additional_skills = _normalize_string_list(task.additional_skills)
                 claimed_session_id = get_claimed_session_id(task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
@@ -413,6 +492,10 @@ async def spawn_agent_impl(
         )
     if enhanced_prompt:
         effective_initial_variables["prompt"] = enhanced_prompt
+    additional_skills = _normalize_string_list(effective_initial_variables.get("additional_skills"))
+    if task_additional_skills is not None:
+        additional_skills = task_additional_skills
+    effective_initial_variables["additional_skills"] = additional_skills
 
     # 10b. Inject isolation context so workflow variables can reference them
     if isolation_ctx.clone_id:
@@ -592,6 +675,7 @@ async def spawn_agent_impl(
                 current_step, step_variables = _initial_step_state_for_spawn(
                     agent_body,
                     task_owned_by_child=task_owned_by_child,
+                    initial_variables=effective_initial_variables,
                 )
                 step_instance = WorkflowInstance(
                     id=str(uuid.uuid4()),

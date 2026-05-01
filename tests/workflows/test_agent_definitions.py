@@ -115,6 +115,7 @@ def test_qa_reviewer_records_review_verdict_without_closing_task() -> None:
 @pytest.mark.parametrize(
     ("agent_name", "tool_words"),
     [
+        ("developer", {"pytest", "ruff", "uv", "npm", "playwright"}),
         ("frontend-developer", {"npm", "pnpm", "yarn", "playwright", "vite", "eslint"}),
         ("backend-developer", {"pytest", "mypy", "ruff", "sqlite3", "uv", "poetry"}),
     ],
@@ -126,14 +127,20 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     agent = _agent(agent_name)
     load_skills = _step(agent, "load_additional_skills")
     implement = _step(agent, "implement")
+    terminate = _step(agent, "terminate")
 
     tool_allowlist = set(agent["skills"]["tool_allowlist"])
     assert tool_words.issubset(tool_allowlist)
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
+    assert "loaded_additional_skills" not in agent["step_variables"]
+    assert "loaded_skills" in str(load_skills["transitions"])
+    assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
     assert "_skipped_stages" in implement["status_message"]
     assert "close_task" in implement["status_message"]
     assert "mark_task_needs_review" in implement["status_message"]
+    assert "gobby-agents:end_agent_run" in _allowed_mcp_tools(terminate)
+    assert "gobby-agents:kill_agent" not in _allowed_mcp_tools(terminate)
 
 
 def test_agent_definition_model_preserves_skills_blocks() -> None:
