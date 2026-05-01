@@ -205,7 +205,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  height: 40px;
+  min-height: 40px;
   padding: 0 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
