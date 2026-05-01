@@ -2,11 +2,30 @@
 
 `plan_kind: implementation` — deliverable manifest emitted by plan-adversary on approval.
 
+## Plan Changelog
+`kind: framing`
+
+- **Round 1 → 2 (2026-04-30, mechanical):** `parse_plan(parse_mode='draft')` rejected the round-1 draft for two encoding errors found by `gobby-tasks-ops:validate_plan_file`. (1) Acceptance items used the literal shorthand `A<section>.<n>` (e.g., `A1.1.1`) under purely-numeric sections (e.g., `1.1`); the parser requires `item_id.startswith(f"{section_id}.")`, so items must be `1.1.1` for section `1.1`. Renamed all ~106 acceptance item IDs across all 21 deliverables and 6 inline body cross-references. (2) `## Verification` carried `kind: verification` with no canonical section ID; the parser rejects non-canonical headings tagged anything other than `kind: framing`. Renamed to `## V1 Verification`. (3) Phase headings used `## Phase N: Name` (numeric section IDs) per the plan-draft skill template, but the contract-aware expansion compiler at `src/gobby/tasks/expansion/_common.py:219` requires phase IDs to match `^P\d+$`. Renamed to `## P<N> Name` for all 7 phases so `phase_count` populates correctly and TDD wrapping works at expansion time. Three follow-ups filed during this round: #13665 (clarify `A<section>.<n>` shorthand in contract docs — closed), #13666 (wire `validate_plan_file` into planning-agent spawn path as a pre-flight gate — open), #13667 (fix plan-draft skill phase-heading syntax to teach `## P<N>` form — open). No design changes; all edits were mechanical encoding fixes.
+- **Round 2 planner revisions (2026-04-30, coordinator review notes):** Coordinator surfaced 10 design/wiring gaps before adversary spawn; applied as follows. (1) `is_escalated` lives on `tasks` from migration 233 (not `task_artifacts`); backfill from `escalated_at IS NOT NULL` folded into migration 234; deliverable 5.2 reduced to `Task` dataclass + reader updates (no separate migration). (2) `record_merge_result` (Phase 4.2) reads the merge cap via Python-side fallback (`cap = artifacts.max_merge_attempts if artifacts.max_merge_attempts is not None else build_config.max_merge_attempts`, mirroring the existing `_cap()` pattern at `src/gobby/dispatch/rules.py`) against the existing nullable `task_artifacts.max_merge_attempts` column (added pre-epic by `_add_task_artifact_retry_cap_columns`); no new column add needed. (3) `attempt_count` semantics in 2.1 clarified: `start_stage` is the sole increment site; `fail_stage` transitions `in_progress → ready` with no count change. (4) Mutex invariant added to 2.1 (item 6, acceptance 2.1.6): every `StageStatesManager` mutator wraps in `with RuntimeDispatchMutex(storage=..., task_id=..., holder=..., action_kind=..., ttl_seconds=...):` to serialize concurrent transitions across all surfaces. (5) `auto_advance_ready_rule` added to 3.1 rule table (acceptance 3.1.6): promotes leftmost `ready` row to `in_progress` when prior stage is `done` or position is 1, no `requires_human`, and agent is registered/enabled. Closes the fresh-task-stalls-at-ready gap. (6) `record_pr_opened` moved from 4.1 into 2.3's tool list (now 10 tools, acceptance 2.3.5); 4.1 keeps only `pr_rule` wiring and PR-stage transitions. (7) Acceptance 5.3.7 added for pre-rewire call-site audit of `mark_task_review_approved` / `mark_task_review_rejected` / `mark_task_needs_review`. (8) Acceptance 6.1.9 added for CSS lint test on `web/src/styles/lifecycle-board.css`. (9) 5.4 test pattern clarified: integration-marked, skip on missing seed. No new design choices — all fixes close concrete gaps in the existing design.
+- **Round 15 planner revisions (2026-05-01, post-round-14 adversary):** Round 14 adversary review surfaced 2 NEW blocking findings (closed anchor #13714). **F1 (traceability, acceptance 2.1.10 helper-signature spelling diverged from invariant 8 / docstring / §4.2)** — Acceptance 2.1.10 said `_close_task_in_txn` accepts `closed_commit_sha`, but the round-7/-8 invariant block, the round-14 docstring, acceptance 2.1.9, and §4.2's narrative all use `commit_sha`. The divergence makes `tests/storage/tasks/test_close_task_in_txn.py::test_helper_signature_accepts_all_params` ambiguous. **F2 (unhandled-edge, no escalation for disabled-agent ready stages)** — `auto_advance_ready_rule` (acceptance 3.1.6 condition (c)) silently skips ready stages when the registered `default_agent` is missing or `enabled: false`. For research_spike / prd_doc / architecture_doc manifests starting at discovery stages (ideation / research / architecture / prd) where the placeholder agents are `enabled: false` (Phase 1.3), tasks would stall at `<discovery>.ready` forever — no auto-start, no spawn, no escalation — contradicting the §1.3.5 "surface the gap loudly" placeholder contract and making the §5.1.4 discovery-stage walks unreachable under dispatcher control. **Both fixes applied as a coordinated edit.** (1) Acceptance 2.1.10 updated: helper signature now reads `force`, `cascade_descendants`, `closed_in_session_id`, `commit_sha` (canonical, matches invariant block / 2.1.9 / docstring / §4.2), `closed_at`, `validation_override_reason`. Public `close_task(...)` API note added: its existing `closed_commit_sha` parameter (if any) maps to `_close_task_in_txn(..., commit_sha=closed_commit_sha, ...)` at the wrapper boundary; one canonical helper-side keyword. (2) New rule `disabled_agent_escalation_rule` added to §3.1's rule table, ordered AFTER `auto_advance_ready_rule` and BEFORE the per-stage in-progress rules. Body: fires when `current_stage(task).state == 'ready'` AND `current_stage.name NOT IN {'development', 'holistic_qa'}` (those owned by other rules) AND the registry's `default_agent` is missing OR resolves to a bundled agent with `enabled: false`. Action: `EscalateAction(task_id=task.id, reason=f'{stage_name}_no_agent')`. This catches the four discovery placeholder cases (`ideation_no_agent`, `research_no_agent`, `architecture_no_agent`, `prd_no_agent`) and any other stage whose default_agent slot is later set to a disabled bundled agent. Acceptance 3.1.6 reworded to clarify auto_advance no longer claims to handle disabled-agent stages — the escalation rule does. New acceptance 3.1.23 covers the disabled-agent escalation rule with parameterized sub-tests across the four discovery stages. Acceptance 1.3.5 reworded so its assertion ("disabled placeholder treated as missing") is cross-referenced to the new rule, not a generic dispatcher behavior. Acceptance 5.1.4 (`research_spike` walks ideation→research→prd→closed) extended with a sub-test `test_research_spike_at_ideation_with_disabled_placeholder_escalates_with_ideation_no_agent` to prove the dispatcher behavior is loud, not silent. No deliverable count change (still 23); +1 acceptance item (3.1.23); +1 sub-test on 5.1.4.
+- **Round 14 planner revisions (2026-05-01, post-round-13 adversary):** Round 13 adversary review surfaced 1 blocking finding (closed anchor #13713). **F1 (traceability, §2.1 stale `complete_stage` docstring contradicts invariant 8)** — The `complete_stage` method docstring inside the `StageStatesManager` code block in §2.1 still said the terminal-close branch "ALSO closes the task atomically in the same DB transaction by calling `close_task(task_id, reason='manifest_exhausted', commit_sha=commit_sha)`". That contradicts the round-7/-8 invariant-8 contract which requires `complete_stage` to call `_close_task_in_txn(...)` directly on the already-open transaction with `cascade_descendants=(stage_name == 'merge')`. The §4.2 rewrite (round 13 F3) was correct, but the docstring upstream was missed. A worker expanding §2.1 sees the docstring first and could implement the forbidden nested-public-close path. **Fix.** Updated the `complete_stage` docstring in the §2.1 method API block to call `_close_task_in_txn(conn, task_id, reason='manifest_exhausted', commit_sha=commit_sha, closed_at=now, closed_in_session_id=by_session_id, cascade_descendants=(stage_name == 'merge'))` inside the same transaction. The docstring now also states explicitly that public `close_task(...)` is only a thin wrapper around the same helper with `cascade_descendants=False`, and that `complete_stage` does NOT invoke `close_task`. The signature spelling matches §2.1 invariant 8, acceptance 2.1.10, and §4.2's narrative — one canonical helper signature across the three surfaces. No deliverable count change (still 23); no new acceptance items; just docstring alignment.
+- **Round 13 planner revisions (2026-05-01, post-round-12 adversary):** Round 12 adversary review surfaced 3 NEW blocking findings (closed anchor #13712), all real code-level gaps the prior audit-scope expansions missed. **F1 (weak-testability, §5.3.9 misses dynamic sync writes)** — Round-12 §5.3.9 caught static SQL inserts and JSONL exports but missed `src/gobby/sync/tasks.py::TaskSyncManager.import_from_jsonl`'s dynamic write path: it reads `lifecycle_stage` from `tasks` (lines 245-249), reads top-level JSONL `status` / `lifecycle_stage` (lines 352-361), stores them in `synced_values` (lines 380-392), then dynamically builds `INSERT INTO tasks ({columns})` and `UPDATE tasks SET {set_clause}` (lines 469-484). An implementation could satisfy the static grep + export-shape test while leaving this importer writing dropped columns at runtime. **F2 (unhandled-edge, §7.1.5 misses expansion facade)** — Round-12 §7.1.5 covered the `src/gobby/tasks/expansion/` package but missed sibling facade `src/gobby/tasks/expansion_service.py` which imports and re-exports `_skipped_stages` from `_common` (lines 17-21, `__all__` at 24-30). Deleting `_common._skipped_stages` per §7.1.5 either breaks the facade at import time or leaves a stale public-compatibility surface advertising the deleted helper. **F3 (traceability, §4.2 stale prose contradicts round-7 helper contract)** — §2.1.9 / §2.1.10 (round 7-8) define the terminal-close path as `complete_stage(...) → _close_task_in_txn(..., cascade_descendants=(stage_name == 'merge'))` with public `close_task(...)` ALWAYS passing `cascade_descendants=False`. §4.2's narrative still said "Cascade-close behavior is preserved by routing close_task's existing cascade logic through this single generic path" and "complete_stage calls close_task" — both contradict the helper contract. The merge worker following §4.2 literally would either preserve cascade in the public `close_task` (forbidden per round-7) or fail to assert the merge-only cascade=True branch. **All three fixes applied as a coordinated edit.** (1) §5.3.9 audit extended with dynamic-write detection. New patterns: dict-key sources for legacy columns (`'status': legacy_status`, `'lifecycle_stage': lifecycle_stage`, `'lifecycle': legacy_lifecycle` literal-key dict construction in task-sync code), dynamically-built SQL where `synced_values` or equivalent dicts include legacy column keys. `src/gobby/sync/tasks.py::TaskSyncManager.import_from_jsonl` added to the named ports list: removes `status` / `lifecycle_stage` from `synced_values`, stops reading them from `tasks` rows, drops them from JSONL key recognition. New positive regression `tests/sync/test_task_jsonl_import_shape.py::test_import_does_not_write_legacy_columns` covers the import path explicitly. The audit pattern for dict-key writes is scoped to task-sync code (`src/gobby/sync/`) and task-CRUD (`src/gobby/storage/tasks/`) to avoid false-positives against unrelated `status` keys (validation status, run status, etc.). (2) §7.1.1 and §7.1.5 scope extended to include `src/gobby/tasks/expansion_service.py`. The facade is required to drop the `_skipped_stages` import and remove it from `__all__`; any test asserting the facade exposes `_skipped_stages` is updated to assert it does NOT (post-cleanup negative regression). The audit grep target list adds the facade explicitly so the deletion is checked. (3) §4.2 narrative and acceptance 4.2.2 rewritten. The success path now states: `record_merge_result(merge_sha=...)` writes `merge_commit_sha` + `merge_campaign_report`, then calls `complete_stage('merge', commit_sha=merge_sha)`. The §2.1 invariant-8 path inside `complete_stage` calls `_close_task_in_txn(..., cascade_descendants=True)` because `stage_name == 'merge'` (per round-7's caller-cascade rule); this is the cascade-aware close that replaces the legacy `mark_task_merged` cascade. Public `close_task` is NOT invoked anywhere on this path — the merge close is `complete_stage` → `_close_task_in_txn` directly. Acceptance 4.2.2 reworded to test the `complete_stage` call and the cascade=True passthrough; the `close_task` reference is removed. The "Cascade-close behavior from `mark_task_merged` MUST be preserved" paragraph is updated to point at `_close_task_in_txn(cascade_descendants=True)` as the single inheritor. No deliverable count change (still 23); +0 acceptance items (5.3.9 / 7.1.1 / 7.1.5 / 4.2.2 are all wording / scope expansions of existing items, no new IDs).
+- **Round 12 planner revisions (2026-05-01, post-round-11 adversary):** Round 11 adversary review surfaced 2 NEW blocking findings (closed anchor #13710) by digging deeper into actual code paths. **F1 (weak-testability, §5.3 audit scope misses storage CRUD + expansion writers)** — Round-11 §5.3 named `_transitions.py`, MCP, HTTP, CLI as targets, and 5.3.9's grep matched `.status` comparisons / `tasks.status =` writes / `Task.status` accesses. It missed: `src/gobby/storage/tasks/_crud.py` (`INSERT INTO tasks (...)` includes `status` column; `update_task` appends `status = ?` and `lifecycle_stage = ?`; `LocalTaskManager` list/update surfaces accept lifecycle/status parameters), `src/gobby/tasks/expansion/_apply.py` (writes `UPDATE tasks SET lifecycle = 'in_development'` for dev-only expansion paths), and task sync / JSONL export paths that round-trip `status`. An implementing agent could satisfy the literal grep + MCP/HTTP/CLI response-shape tests while leaving `create_task`, `update_task`, sync export, and dev-only expansion writing the dropped columns — the migration would crash on first call after the drop. **F2 (unhandled-edge, §7.1.1 scope misses expansion + storage label readers)** — Round-11 §7.1.1 scoped to `src/gobby/dispatch/`, `src/gobby/build/`, `src/gobby/cli/`, `src/gobby/mcp_proxy/`, `src/gobby/servers/`. Adversary identified runtime label-readers OUTSIDE that scope: `src/gobby/tasks/expansion/_common.py::_skipped_stages`, `src/gobby/tasks/expansion/_compile.py::_build_prompt_context` (reads `_skipped_stages`), `src/gobby/tasks/expansion/_apply.py::_complete_dev_only_run` (dev-only expansion bypass via labels), `src/gobby/storage/tasks/_crud.py::_skipped_stages` and `cascade_build_state_to_subtree`. Bundled developer-agent instructions also reference `_skipped_stages` so the manifest-resolution chain can keep depending on legacy labels via indirection. **Both fixes applied as a coordinated edit.** (1) §5.3 target list expanded to include `src/gobby/storage/tasks/_crud.py`, `src/gobby/storage/tasks/_manager.py`, `src/gobby/storage/tasks/_queries.py`, `src/gobby/tasks/expansion/_apply.py`, `src/gobby/sync/` task-sync paths, plus the existing CRUD/MCP/HTTP/CLI surfaces. The narrative names each port destination concretely: `_crud.py::create_task` and `update_task` lose `status` / `lifecycle` / `lifecycle_stage` parameters and column references; `_apply.py::_complete_dev_only_run` ports its `UPDATE tasks SET lifecycle = 'in_development'` write to a `complete_stage(task_id, 'expansion')` call against the parent task's manifest (matching the dev-only expansion bypass semantics in the new model); `LocalTaskManager` list/update/filter parameter signatures drop `status` / `lifecycle` kwargs. Acceptance 5.3.9 expanded to a multi-pattern audit covering: legacy enum string-literal comparisons against `.status` / `.lifecycle` / `.lifecycle_stage`; `INSERT INTO tasks (... status ...)`, `INSERT INTO tasks (... lifecycle ...)`, `INSERT INTO tasks (... lifecycle_stage ...)` patterns; `status = ?`, `lifecycle = ?`, `lifecycle_stage = ?` SQL parameter forms; function-parameter usages of `status: str`, `lifecycle: str`, `lifecycle_stage: str` on task CRUD/list/update APIs; JSONL/sync exports that emit `status` / `lifecycle` / `lifecycle_stage` keys. Audit scoped to task-state code (`src/gobby/storage/tasks/`, `src/gobby/tasks/`, `src/gobby/sync/`, plus the existing MCP/HTTP/CLI/dispatcher/build directories) so unrelated tables with their own `status` columns (workflows, sessions, etc.) do not false-positive. Audit returns zero matches outside the historical-migration boundary post-port. (2) §7.1.1 scope expanded to include `src/gobby/tasks/expansion/` (`_common.py`, `_compile.py`, `_apply.py`), `src/gobby/storage/tasks/` (`_crud.py`'s `_skipped_stages` helper and `cascade_build_state_to_subtree`), and bundled agent instruction surfaces under `src/gobby/install/shared/workflows/agents/` and `src/gobby/install/shared/skills/` that mention `_skipped_stages` or `stage-:`. Migrations and migration-specific tests remain explicitly exempt. New acceptance 7.1.5 covers positive regression that expansion's prompt-context construction, dev-only expansion handling, and build-cascade behavior all read skipped/included stages from the resolved manifest (`task_stage_states`) rather than labels — `_compile.py::_build_prompt_context` reads `task.stages`, `_apply.py::_complete_dev_only_run` calls `complete_stage(task_id, 'expansion')`, and `cascade_build_state_to_subtree` writes manifests via `initialize_manifest` instead of `stage-:` labels. test: `tests/tasks/expansion/test_compile_uses_manifest.py::test_prompt_context_reads_stages_not_labels`, `tests/tasks/expansion/test_apply_dev_only.py::test_complete_dev_only_run_via_complete_stage`, `tests/storage/tasks/test_cascade_build_state.py::test_cascade_uses_initialize_manifest`. Bundled-agent instruction sweep: `grep -rln '_skipped_stages\|stage-:' src/gobby/install/shared/` returns zero matches post-Phase-7.1; any agent YAML/skill referencing the legacy helper is rewritten to point at the manifest read path. No deliverable count change (still 23); +1 acceptance item (7.1.5).
+- **Round 11 planner revisions (2026-05-01, post-round-10 adversary):** Round 10 adversary review surfaced 2 NEW blocking findings (closed anchor #13708). **F1 (missing-requirement, §5.3 `status` column drop optional)** — Strategy required dropping `status` entirely, but §5.3 said the column "stays OR the column is dropped entirely" with the choice gated on whether the audit surfaces a hard reader. Acceptance 5.3.1 only required dropping `lifecycle` / `lifecycle_stage`, so an implementing agent could legally produce a final schema retaining `status` as a shadow model — violating the strategy's clean-cutover constraint. **F2 (weak-testability, §7.1 acceptance 7.1.1 blanket `stage-:` grep)** — Acceptance 7.1.1 demanded `test_grep_returns_empty` for all `stage-:` reads, but §7.1's own narrative explicitly preserves the migration-234 backfill helper as a frozen historical record. The blanket grep is unsatisfiable, OR pressures the implementing agent to delete migration-234's legacy-label honoring (breaking pre-cutover-DB upgrade replay). **Both fixes applied as a coordinated edit.** (1) §5.3 `status` drop made deterministic. The migration-step list rewrites step 3 to drop the `status` column unconditionally. The narrative replaces the optional-drop language with: "Pre-flight audit identifies remaining readers/writers of `tasks.status`; each is ported in this same deliverable to use `closed_at IS NOT NULL` (closure), `is_escalated` projection (Phase 5.2), or stage-state reads (everything else). The migration is blocked until the audit returns zero hard readers." `Task.status` Literal field is REMOVED unconditionally; `serialize_task_state` strips `status` from the response shape. Acceptance 5.3.1 expanded to drop all three columns; new acceptance 5.3.9 covers the `status` audit-and-port — a source-code grep for legacy status enum string-literal comparisons (`open`, `in_progress`, `needs_review`, `review_approved`, `escalated`, `closed`) and direct `tasks.status =` writes returns zero matches outside historical migrations and migration-specific tests post-implementation. (2) §7.1 acceptance 7.1.1 rescoped to runtime code only. The check is a grep for `stage-:` token across `src/gobby/dispatch/`, `src/gobby/build/`, `src/gobby/cli/`, `src/gobby/mcp_proxy/`, `src/gobby/servers/` returns zero matches (runtime/dispatcher/build/CLI/MCP/HTTP scope); migrations and migration-specific tests are explicitly exempt. New acceptance 7.1.4 adds positive regression: migration 234's `_backfill_task_stage_states_from_legacy` helper still honors `stage-:<name>` skip labels when replayed against a pre-cutover fixture DB — the backfill mapping table's outputs match the documented per-task-type defaults minus skip-label-removed stages. test: `tests/storage/test_migration_234_backfill.py::test_replay_against_pre_cutover_db_honors_legacy_skip_labels`. No deliverable count change (still 23); +2 acceptance items (5.3.9, 7.1.4).
+- **Round 10 planner revisions (2026-05-01, post-round-9 adversary):** Round 9 adversary review surfaced 1 blocking finding (closed anchor #13707). **F1 (weak-testability, acceptance 3.1.10 self-matching regression regex)** — Round-9 acceptance 3.1.10 said the regression check forbids any occurrence of `EscalateAction\(.*detail=` in the plan file or `src/gobby/dispatch/rules.py`, but the plan's own changelog prose (rounds 7-9 entries discussing the bug being fixed) and the 3.1.10 assertion line itself match that pattern. A worker running the literal grep would fail before touching code, making the acceptance unsatisfiable. **Fix.** Scope the regression check to runnable source code only: `grep -nE 'EscalateAction\(.*detail=' src/gobby/dispatch/rules.py src/gobby/dispatch/actions.py` returns no matches post-implementation. The plan file is exempt because its changelog and acceptance text are historical artifacts documenting the bug; the two concrete tests `test_isolation_failure_escalates_with_reason_carrying_error_type` and `test_isolation_failure_escalation_uses_supported_signature_only` remain the canonical correctness gates. No deliverable count change (still 23); no new acceptance items; just narrowed scope on 3.1.10's plan-level regression assertion.
+- **Round 9 planner revisions (2026-05-01, post-round-8 adversary):** Round 8 adversary review surfaced 2 NEW blocking findings (closed anchor #13706). **F1 (unhandled-edge, §3.1 case-(d) `EscalateAction(detail=...)` unsupported kwarg)** — Pre-existing language from round 3 still wrote `EscalateAction(task_id, reason='development_isolation_failed', detail=<error message>)`, but `EscalateAction` at `src/gobby/dispatch/actions.py:63` only accepts `task_id` and `reason`. Round 8's escalation-helper fix had explicitly removed `detail` from the close-failure path but didn't sweep this older case. **F2 (gobby-format, §1.3 / §5.4 per-row acceptance decomposition)** — Both deliverables have four-row `Stage | Agent slug` tables (`ideation→analyst`, `research→researcher`, `architecture→architect`, `prd→product-manager`) but their acceptance items aggregated across all four rows; the plan-coverage contract's table-row decomposition rule requires one acceptance item per data row with stable IDs. **Both fixes applied as a coordinated edit.** (1) §3.1 case (d) language rewritten to `EscalateAction(task_id=task.id, reason=f'development_isolation_failed:{type(error).__name__}')` — error type encoded INSIDE the supported `reason` string, no unsupported kwarg. Acceptance 3.1.10 updated to verify the reason format `development_isolation_failed:<error_type>` and add a regression sub-test that no `EscalateAction(..., detail=...)` construction appears in the plan or implementation. (2) §1.3 acceptance items 1.3.6-1.3.9 added (one per row of the Stage|Agent-slug table), each verifying the per-slug YAML's existence, banner content, escalation-reason string, FK resolution, and sync state with stable IDs. (3) §5.4 acceptance items 5.4.5-5.4.8 added (one per row), each verifying the per-stage child task's title, label set, parent linkage, and placeholder YAML reference. The aggregate items (1.3.1-1.3.5, 5.4.1-5.4.4) remain as cross-cutting checks; the per-row items are the stable-ID coverage. No deliverable count change (still 23); +9 acceptance items total (3.1.10 wording update + 4×§1.3 + 4×§5.4).
+- **Round 8 planner revisions (2026-05-01, post-round-7 adversary):** Round 7 adversary review surfaced 3 NEW blocking findings (closed anchor #13705) on the round-7 fix. **F1 (bad-sequencing, missing closure-source column)** — Round 7's close-pass SQL wrote `is_closed = 1` and filtered `is_closed = 0`, but no `tasks.is_closed` column exists in the schema (`src/gobby/storage/baseline_schema.sql:265-275` only has `closed_at`, `closed_in_session_id`, `closed_commit_sha`, `status`); `is_closed` is a Python projection at `src/gobby/tasks/state_semantics.py:88-95` reading `closed_at IS NOT NULL OR status == 'closed'`. The migration would have failed with `no such column: is_closed`. **F2 (unhandled-edge, helper signature too narrow)** — `_close_task_in_txn(conn, task_id, *, reason, commit_sha, closed_at)` cannot unify the two behaviors it claims to: the public `close_task` API carries `force`, `closed_in_session_id`, `closed_commit_sha`, `validation_override_reason`, open-child checks, and bootstrap-ledger validation; the legacy cascade-close behavior lives in `mark_task_merged` via `advance_lifecycle(..., cascade_close=True)` / `_cascade_merged_close`, NOT in `close_task`. The plan never specifies when cascade is enabled vs forbidden, leaving two bad implementations possible: public `close_task` cascading unexpectedly, or merge-terminal `complete_stage` failing to cascade descendants. **F3 (unhandled-edge, escalation idempotency + signature)** — The separate-transaction escalation calls `escalate_task(reason=..., detail=str(error))`, but the existing escalation surface does not accept a `detail` kwarg, and the plan does not specify what happens when `escalate_task` itself raises or is gated. If escalation fails after a stage rollback, the task is back at `in_progress`, NOT closed, NOT escalated, so §3.2's heartbeat filter can re-attempt the same terminal close indefinitely. **All three fixes interlock as a single coordinated edit.** (1) **Closure source canonicalized to `closed_at`.** `tasks.closed_at IS NOT NULL` is the canonical SQL closure predicate; `Task.is_closed` is a read-only Python projection sourced from `is_task_closed(task)` at `src/gobby/tasks/state_semantics.py:88-95` (reads `closed_at IS NOT NULL OR status == 'closed'`). All SQL writes target `closed_at`; all SQL filters use `closed_at IS NULL` / `closed_at IS NOT NULL`. The §2.2 close-pass UPDATE rewrites to `WHERE closed_at IS NULL` and `SET closed_at = datetime('now'), closed_in_session_id = 'migration:234'`. The §2.1 invariant-8 "atomicity guarantee" paragraph rewrites `is_closed = 0/1` literals to `closed_at IS NULL / IS NOT NULL`. The `is_child_parked` predicate keeps `child.is_closed` (projection) since `Task.is_closed` is a real attribute; no read-site change. (2) **Helper signature expanded.** `_close_task_in_txn(conn, task_id, *, reason, commit_sha, closed_at, closed_in_session_id, force=False, cascade_descendants=False, validation_override_reason=None) -> None` carries all close+cascade inputs. The public `close_task(...)` wrapper passes the kwargs the existing API takes (`force`, `closed_in_session_id`, `closed_commit_sha`, `validation_override_reason`) and `cascade_descendants=False` by default, preserving open-child checks and bootstrap-ledger validation. `complete_stage`'s terminal branch passes `cascade_descendants=True` ONLY when the just-completed stage is `merge` (replaces the legacy `mark_task_merged` cascade); for non-merge terminal stages (`prd`, `architecture`, etc.) cascade is False because there are no descendants under non-merge terminal task types in this epic's scope. Open-child / bootstrap-ledger validation runs inside the helper (moved from `close_task`'s wrapper if currently there) so both callers go through the same checks; the wrapper's only added behavior is opening the transaction. (3) **Idempotent escalation helper.** New private helper `_emit_terminal_close_failed_escalation(task_id, *, stage_name, error)` is called by `complete_stage` after rollback in a SEPARATE committed transaction. The helper: (a) reads current `is_escalated` projection; if already True, returns success without writing (idempotent — if a prior failure already escalated, this attempt is a no-op); (b) otherwise writes `escalated_at = datetime('now')`, `escalation_reason = f'terminal_close_failed:{stage_name}:{type(error).__name__}'` via the existing `escalate_task` write path (no unsupported kwargs); (c) if the escalation write itself raises, the helper logs the error at ERROR level and re-raises — this is the documented last-resort failure mode where retry cannot be capped (database-write failure is a separate operational concern, surfaced via logging + the original exception still propagates to the caller). The plan documents this as the only uncapped failure mode and notes that DB-write failure is operationally distinct from logic bugs. Acceptance 2.1.9 sub-tests extended from seven to ten: added `test_close_failure_escalates_idempotently_on_already_escalated`, `test_escalation_helper_uses_supported_signature_only`, `test_escalation_helper_db_write_failure_logs_and_reraises`. New acceptance 2.1.10 covers the helper signature + cascade rules: cascade_descendants=True only for merge-terminal complete_stage path, False for all other callers; force/validation_override pass-through; open-child/bootstrap-ledger validation runs inside helper. Acceptance 2.2.31 SQL rewritten with `closed_at` predicate. No deliverable count change (still 23); +1 acceptance item (2.1.10); no schema/column adds.
+- **Round 7 planner revisions (2026-05-01, post-round-6 adversary):** Round 6 adversary review surfaced 3 blocking findings (closed anchor #13704; adversary blocked from formal `mark_task_review_rejected` by upstream Gobby step enforcement, findings conveyed by user). **F1 (traceability, §2.1 invariant 8 transaction composition)** — Invariant 8 said "the close runs in the SAME DB transaction as the stage transition" without specifying HOW the existing `close_task` (its own transaction boundaries plus `mark_task_merged`-style cascade-close logic) composes inside `complete_stage`'s transaction. **F2 (unhandled-edge, §2.1 invariant 8 close-failure retry)** — On close failure, rollback leaves the highest-position row at `in_progress` with no escalation cap; subsequent heartbeats / agent retries re-attempt `complete_stage` indefinitely. **F3 (traceability, §3.1 `is_child_parked` predicate `current_stage is None` branch)** — The predicate accepts `current_stage IS NULL AND NOT is_closed`, but invariant 8 says that state is unobservable; the "defense-in-depth" comment didn't document WHEN the branch is reachable, leaving readers unsure whether it covers a real bug or stale documentation. **All three fixes interlock as a single coordinated edit.** (1) Invariant 8 expanded to specify transaction composition: extract close+cascade into a NEW transaction-aware private helper `_close_task_in_txn(conn, task_id, *, reason, commit_sha, closed_at)` that performs all close+cascade SQL on the supplied connection without opening or committing; the public `close_task(...)` becomes a thin wrapper that opens `db.transaction()` and delegates to the same helper, so both code paths share one cascade implementation. `complete_stage` calls the helper inside its own `db.transaction()`. No nested-transaction or savepoint semantics required. (2) Close-failure handling specified: on any helper exception the outer `with db.transaction()` rolls back (stage reverts to `in_progress`); AFTER rollback, in a SEPARATE committed transaction, the task is escalated via `escalate_task(task_id, reason=f'terminal_close_failed:{stage_name}:{type(error).__name__}', detail=str(error))`; the original exception re-raises to the caller. Because §3.2's `list_automation_candidates` filters `NOT is_escalated`, the escalation IS the retry cap — no separate counter, no built-in retry; an operator must `de_escalate_task` before another `complete_stage` attempt is possible. This breaks the "rollback → next heartbeat → spawn agent → retry" loop F2 identified. (3) §2.2 backfill (acceptance 2.2.31, new) adds a final close-pass: any task whose backfilled manifest is all-`done` AND `is_closed = 0` is closed in the same migration-234 transaction with `closed_at = datetime('now')`, `closed_in_session_id = 'migration:234'`. After migration 234 commits, no task satisfies `current_stage IS NULL AND is_closed = 0`. (4) `is_child_parked` predicate docstring rewritten: explicitly enumerates the two reachability windows for the `current_stage is None AND NOT is_closed` branch — (i) the migration-234 transaction before acceptance 2.2.31's close-pass commits (single bounded window per database lifetime), (ii) synthetic test fixtures that bypass `complete_stage` (test-only construct). The branch is therefore safe defense-in-depth: bounded, documented, and aligned with §2.1 invariant 8 + §2.2 acceptance 2.2.31. Acceptance 2.1.9 sub-tests extended from five to seven (added close-failure-escalates and not-re-attempted sub-tests); acceptance 3.1.18 wording updated; new test name `test_is_child_parked_synthetic_branch_is_test_only_or_migration_window` replaces the prior `test_is_child_parked_true_for_synthetic_exhausted_unclosed_leaf`. No deliverable count change (still 23); +1 acceptance item (2.2.31); no schema/column adds; no new migration row.
+- **Round 6 planner revisions (2026-05-01, post-round-5 adversary):** Round 5 adversary review surfaced 2 blocking findings (closed anchor #13703). **F1 (bad-sequencing, §2.2/§3.1/§3.2 predicate vs. real manifests)** — `is_child_parked` predicate required `current_stage is None` AND highest-`done` row = `code_review_qa`, but §2.2 defaults don't produce that state for any task type: `task`/`chore` end at `merge` (no `code_review_qa`); `bug`/`refactor`/`feature` have `pr` and `merge` after `code_review_qa`. **F2 (unhandled-edge, §4.2/§5.1/§3.2 terminal-close gap)** — §5.1.4 claimed `research_spike`/`prd_doc` close at manifest exhaustion via "Phase 4.2 terminal-close logic," but Phase 4.2 only specified merge-success close via `record_merge_result`; no generic close path existed, leaving exhausted-but-open tasks stranded by §3.2's `current_stage IS NULL` filter. **Both fixes interlock.** Added a single generic terminal-close contract to §2.1 invariant 8 / acceptance 2.1.9: `complete_stage(task_id, stage_name)` calls `close_task(task_id, reason='manifest_exhausted', commit_sha=commit_sha)` atomically in the SAME DB transaction iff the just-completed row is the highest-position row in the task's manifest. With this contract: (a) all manifest-exhausted leaves auto-close regardless of terminal stage name, so `is_child_parked` simplifies to `_is_leaf AND NOT is_escalated AND (is_closed OR current_stage is None)` — body-aligned with every §2.2 default manifest's terminal stage; (b) `research_spike`/`prd_doc`/`architecture_doc` close via the same generic path as merge-terminal types; (c) §4.2's `record_merge_result` success branch delegates to the generic path (`commit_sha=merge_sha`), no merge-specific close call needed; (d) atomicity guarantees no observable `current_stage IS NULL AND is_closed=0` state, eliminating the §3.2 candidate-scan stranding risk. Updated `complete_stage` docstring in §2.1, added invariant 8, added acceptance 2.1.9 with five sub-tests (terminal closes, non-terminal doesn't, close-failure rolls back, research_spike walks to prd.done close, merge close uses same path). Updated `is_child_parked` predicate body, narrative, and acceptance 3.1.18 with parameterized "true for each default manifest terminal stage" sub-test. Rewrote §4.2's `record_merge_result` docstring + 4.2.2 acceptance to delegate to the generic close path. Updated §5.1.4 prose and acceptance to reference §2.1 invariant 8 (not Phase 4.2). No deliverable count change (still 23); no schema/column adds.
+- **Round 5 planner revisions (2026-05-01, post-round-4 adversary):** Round 4 adversary review surfaced 1 blocking finding (closed anchor #13702) — a follow-on to the round-3 F6 fix. The `LeafParkedSignalAction` was transient (no durable cross-heartbeat state) and `leaf_park_rule` could never fire because §3.2's `list_automation_candidates` filter excludes manifest-exhausted leaves (`current_stage IS NULL`). Fix per the adversary's recommendation (option (a)): replace the rule + transient action with a durable `is_child_parked(child) -> bool` predicate computed from `child.stages`. **Edits applied.** (1) Deleted `leaf_park_rule` from the §3.1 rule table; the rule row is preserved as a tombstone marker pointing at the predicate. (2) Rewrote `all_leaves_holistic_rule` to gate on `_is_epic(task) AND current_stage(task) == ('holistic_qa', 'ready') AND every direct child satisfies is_child_parked(child) OR child.is_closed`, emitting `StartStageAction(task_id, 'holistic_qa')`. The parent task is the automation-candidate (its `holistic_qa.ready` keeps it in scan); the rule reads each child's denormalized `child.stages` already populated by `reload_candidate` per 3.1.3 — no extra SQL, no leaf-side rule, no transient signal. (3) Added the `is_child_parked` predicate definition between the rule table and the development-state-machine section; pure function of `child.stages` with no side effects. (4) Added `holistic_qa` to `auto_advance_ready_rule`'s exclusion list alongside `development` (the rule body now reads `current_stage.name NOT IN {'development', 'holistic_qa'}`). Without this, auto-advance would race `all_leaves_holistic_rule` and start the parent's `holistic_qa` before children parked. New "Stages excluded from auto-advance" subsection co-locates both special-cases. (5) Updated acceptance 3.1.6 to mention the holistic_qa exclusion + add `test_auto_advance_skips_holistic_qa`. (6) Replaced acceptance 3.1.18 (was: leaf_park_rule rule) with `is_child_parked` predicate tests (4 sub-tests covering true/false branches). (7) Updated acceptance 3.1.19 (`all_leaves_holistic_rule`) with 4 sub-tests including cross-heartbeat durability and mixed parked/terminal-closed children. (8) Updated §3.2 `list_automation_candidates` description with an explicit note that manifest-exhausted leaves are intentionally excluded and the parent rule reaches into children via the predicate. No deliverable count change (still 23 deliverables); no new schema or column adds; no migration changes. The fix is purely a Python-layer rewire of dispatcher rules and a predicate addition.
+- **Round 4 planner revisions (2026-05-01, post-round-3 adversary):** Round 3 adversary review surfaced 6 NEW blocking findings (closed anchor #13701) cascading from round 2 fixes. Applied as follows. **F1 (bad-sequencing, §1.1/§1.2 stages.yaml authoring)** — Moved authoring of `src/gobby/install/shared/registry/stages.yaml` from §1.2 into §1.1's targets. §1.1 now owns BOTH the migration code and the bundled YAML the migration's inline seed reads — same expansion target, no forward dependency from §1.1 to §1.2. §1.2 reframed to own only the `StageRegistryLoader` and daemon startup wiring (the YAML body is still documented in §1.2 as reference for the parser). New acceptance 1.1.6a covers the YAML file's existence and 14-stage completeness. §1.2 acceptance 1.2.1 reframed to verify the parser, not the file contents. **F2 (weak-testability, §2.6 review-tool rewire acceptance)** — Two-part fix. (a) Reframed 2.6.5 to unit/contract scope (mutation-spy + SQL probe verifying `complete_stage`/`fail_stage` are called and no legacy `status` writes happen); the dispatcher heartbeat-advance smoke moves to `## V1 Verification` where `auto_advance_ready_rule` is in place. (b) Added new acceptance 2.6.6 — pre-Phase-3 bundled call-site audit using the same grep enumeration (`grep -rln 'mark_task_review_\(approved\|rejected\)\|mark_task_needs_review' src/gobby/install/shared/`) with an explicit allowlist that includes `test-architect.yaml`, `expansion-qa.yaml`, `requirements-analyst.yaml`, `qa-dev.yaml`, `nightly-linter.yaml`, `nightly-test-fixer.yaml`, `merge-orchestrator.yaml`, `backend-developer.yaml`, `frontend-developer.yaml`, `default.yaml`, `developer.yaml`, plus the bundled SKILL.md surfaces and rule YAMLs. §5.3.7 audit allowlist expanded to match (closing the F2 omission of `test-architect.yaml`). **F3 (traceability, RuntimeDispatchMutex `updated_at`)** — Added `updated_at: str` field to the `StageState` dataclass in §2.1; added invariant 7 stating every mutator (`initialize_manifest`, `add_stage`, `remove_stage`, `start_stage`, `complete_stage`, `fail_stage`) bumps `updated_at = datetime.now(UTC).isoformat()` on every affected row, including same-state cycles like `start → fail` returning `in_progress → ready`. New acceptance 2.1.8 covers the bump invariant including the same-state-cycle case (load-bearing for §3.3's mutex snapshot). §3.2 `reload_candidate` description explicitly notes it projects `task_stage_states.updated_at` into `StageState.updated_at`. **F4 (traceability, §4.1 PR cap source)** — Investigation via `grep -rn 'max_review_rounds\|max_pr_attempts\|max_pr_review' src/gobby/` confirmed `task_artifacts.max_review_rounds` already exists nullable in baseline schema (`src/gobby/storage/migrations.py:93`, `src/gobby/storage/baseline_schema.sql:389`, surfaced as `TaskArtifacts.max_review_rounds` at `src/gobby/storage/tasks/_artifacts.py:72`); `build_config.max_review_rounds = 3` exists at `src/gobby/config/build.py:73`; `src/gobby/dispatch/rules.py:43,53` already binds `max_review_rounds` for `plan_review_attempts` and `test_arch_attempts` via `_maxed_out`. Bound the PR rejection cap to this existing `max_review_rounds` column with the same Python-side `_cap()` fallback to `build_config.max_review_rounds`. NO new column add and NO new migration row to migration 233. §4.1 prose updated to name the exact cap source explicitly with file/line references; new acceptance 4.1.5 verifies the binding (under-cap returns to ready, over-cap escalates with reason `pr_review_failed:max`, NULL artifact falls back to build_config). **F5 (weak-testability, §5.3 pre-drop web audit)** — Replaced the broad `lifecycle` token grep with a multi-pattern, legacy-only grep (`\blifecycle_stage\b`, `\bLifecycle\.`, `\bTaskBucket\b`, `\bTASK_BUCKET_(LABELS|ORDER)\b`, `\bmoveTaskToBucket\b`, `\bgetTaskBucket\b`, `\bKanbanBoard\b`, `\.lifecycle_stage\b`, `\bstate\.lifecycle\b`). The new patterns explicitly do NOT match `LifecycleBoard`, `lifecycle-board`, or `lifecycle-board:hide-blocked` introduced by Phase 6 (verified by `\bLifecycle\.` requiring a literal `.` and word-boundary anchors). Wrote the exact `git grep -nE` command into §5.3 narrative for CI. §5.3.8 acceptance updated; added a positive verification that the new identifiers are NOT matched. **F6 (unhandled-edge, §3.1 `leaf_park_rule`)** — The previous `current_stage == ('code_review_qa', 'done')` predicate was unreachable by definition (`current_stage` returns leftmost non-done row, so a `done` row is excluded). Rewrote the rule's "Gates on" condition (option (a) per the recommended fix) to: `_is_leaf(task)` AND `current_stage(task) is None` (manifest exhausted) AND the highest-position completed row is `code_review_qa`. The action is now `LeafParkedSignalAction(task_id)` — a no-op for the leaf's own rows, surfacing a signal for the parent's `all_leaves_holistic_rule`. Acceptance 3.1.18 rewritten with three sub-tests (parks completed leaf, does not auto-start downstream, inert when terminal row is not `code_review_qa`). No deliverable count change (still 23 deliverables) and no manifest section changes (adversary writes the manifest on approval).
+- **Round 3 planner revisions (2026-05-01, post-round-2 adversary):** First substantive design review by plan-adversary surfaced 8 blocking findings (closed anchor #13687); fixes applied as follows. **F1 (bad-sequencing, migration ordering)** — Migration 233 now seeds all 14 `task_stages_registry` rows + the six `task_type_default_stages` bundles INLINE within the same transaction as the schema creation, by reading the bundled `src/gobby/install/shared/registry/stages.yaml` directly. The startup `StageRegistryLoader.sync()` becomes a hash-drift detector for subsequent bundled-YAML edits. Acceptance 1.1.6/1.1.7/1.1.8 added; 1.2.2 reframed; 2.2.5 rewritten to acknowledge defaults are seeded by 233 (not 234). **F2 (bad-sequencing, review-tool rewire)** — New deliverable §2.6 lands the `mark_task_review_approved`/`mark_task_review_rejected`/`mark_task_needs_review` rewire to stage-native `complete_stage`/`fail_stage` BEFORE Phase 3 enables the manifest dispatcher, preserving the agent-facing API. §5.3 retains the call-site audit (now post-rewire) and the legacy-column drop. End-to-end smoke acceptance 2.6.5 verifies adversarial + holistic approvals advance manifest stages. **F3 (unhandled-edge, development_isolation_rule)** — Expanded `development_isolation_rule` description to specify the full state machine for cases (a) `isolation=none`, (b) isolation pair already present, (c) isolation pair missing, (d) isolation creation fails. Acceptance 3.1.7/3.1.8/3.1.9/3.1.10 added (one per case) at `tests/dispatch/test_development_isolation_rule.py`. **F4 (traceability, RuntimeDispatchMutex)** — New deliverable §3.3 cuts over `RuntimeDispatchMutex` from `(expected_lifecycle, expected_status)` tuple match to `(expected_stage_name, expected_stage_state, expected_stage_updated_at)` snapshot; `run_heartbeat` passes the candidate's current-stage snapshot; `StageStatesManager` mutator call sites also pass the snapshot. Acceptance 3.3.1-3.3.4 covers the API change, heartbeat call site, stale-candidate test, and mutator integration. §5.3 `depends_on` updated to include 3.3. **F5 (traceability, attempt_count contract)** — Replaced "Increment attempt or escalate" in §2.3 fail_stage purpose with the §2.1 contract; rewrote §4.1 PR-rejection path and §4.2 merge-failure path to use `fail_stage` (no count change) plus cap-escalation predicate `attempt_count >= cap`. New acceptance 2.1.7 explicitly states the contract. **F6 (bad-sequencing, web-before-column-drop)** — §5.3 `depends_on` extended with `6.3` (and the new 2.6, 3.3 from F2/F4); added pre-drop web audit acceptance 5.3.8 with grep + `pnpm tsc --noEmit` gate before migration 236. **F7 (missing-requirement, record_merge_result)** — Added `record_merge_result` to §2.3 tool table as the 11th tool; tool-count references updated from "Ten" to "Eleven"; acceptance 2.3.6 covers stub registration in 2.3 with `NotImplementedError`, with full body landing in 4.2. **F8 (gobby-format, table-row decomposition)** — Added per-row acceptance items using plain dotted-numeric IDs: §2.2 gains 17 mapping items (2.2.8–2.2.24, one per `(lifecycle, status)` tuple) + 6 task-type items (2.2.25–2.2.30, one per default-manifest row); §2.3 gains 11 per-tool registration items (2.3.7–2.3.17, one per tool table row); §3.1 gains 12 per-rule items (3.1.11–3.1.22, one per remaining rule table row not already covered by 3.1.6/3.1.7-3.1.10). Plain dotted-numeric IDs chosen over compact `M01`/`T01`/`R01` shorthand for unambiguous `item_id.startswith(f"{section_id}.")` validation. Total deliverable count rises from 21 → 23 (added 2.6, 3.3); total acceptance items roughly doubles via per-row decomposition.
+- **Round 2 pre-flight fact-check (2026-04-30, mechanical drift):** Pre-adversary fact-check by mid-tier sub-agent caught drift between plan claims and current codebase state. Fixes applied silently per delegated-mode contract. (1) Schema baseline corrected: `BASELINE_VERSION = 220` is current, but migrations 221–232 are all already populated with unrelated work; new epic migrations renumbered 221→233 (Phase 1.1 schema), 222→234 (Phase 2.2 backfill), 223→235 (Phase 5.1 new task types), 224→236 (Phase 5.3 drop legacy), 225→237 (Phase 7.1 label cleanup). (2) `max_merge_attempts INTEGER` already exists nullable in `_task_artifacts_create_sql:91` from `_add_task_artifact_retry_cap_columns`; dropped the F4 column add from migration 233 — Phase 4.2 `record_merge_result` reads the cap via Python-side fallback to `build_config.max_merge_attempts` (mirroring `_cap()` at `src/gobby/dispatch/rules.py`). Acceptance 1.1.3 updated to three new TEXT columns only. (3) Mutex invariant 6 in 2.1 rewritten to use the actual `RuntimeDispatchMutex(storage=..., task_id=..., holder=..., action_kind=..., ttl_seconds=...)` context manager API (defined at `src/gobby/dispatch/mutex.py:27`, backed by `TaskDispatchMutexManager.acquire_mutex` at `src/gobby/storage/tasks/_dispatch_mutex.py:78`); the `task_dispatch_mutex.acquire(task_id)` shorthand was wrong (no such method exists). (4) `_filter_completion_blocks` helper reference in 3.2 corrected — no such Python function exists; the completion-block exclusion is SQL-inline at `_queries.py:211,237,314` and `_aggregates.py:81,103,164`. (5) `WorkflowLoader().sync(` placement-search reference in 1.2 corrected to `sync_bundled_content_to_db(runner.database)` at `runner_init.py:257-259`. (6) Count inconsistency in 2.2 reconciled — body lists 5 manifest entries; acceptance 2.2.5 names 6 task type values; rephrased to "6 task type values seeded across 5 distinct manifests; `chore` and `task` share the leaves-only manifest". (7) Line-number drift fixed across `_transitions.py` (systematic +6 shift on 6 function refs), `_models.py` (148→163), `TasksPage.tsx` (kanban branch at ~601, `moveTaskToBucket` at ~372), `dispatcher.py` (`reload_candidate` at 145-156, not "54-138 area"). All `tests/storage/test_migration_<NNN>*.py` paths renumbered to match new migration versions.
 
 ## Overview
 `kind: framing`
 
-Replace gobby's dual-enum task state model (`status` + `lifecycle` + `lifecycle_stage`) with a registry-backed, **5-state-per-stage** manifest model. Every task carries an ordered, task-type-specific manifest of `(stage_name, state)` rows where `state ∈ {ready, in_progress, needs_review, review_approved, done}` (global enum on `task_stage_states.state`); per-row legality is determined by `review_policy ∈ {none, required, optional}` mirrored from the registry at manifest-init. The 11-stage registry is bundled YAML synced to a new `task_stages_registry` table. The dispatcher, MCP/HTTP/CLI surfaces, and the web kanban all migrate to the manifest model. Legacy lifecycle/status columns and active status values are dropped in the same epic — no compatibility shims, no shadow model.
+Replace gobby's dual-enum task state model (`status` + `lifecycle` + `lifecycle_stage`) with a registry-backed, tri-state-per-stage manifest model. Every task carries an ordered, task-type-specific manifest of `(stage_name, state)` rows where `state ∈ {ready, in_progress, done}`. The 14-stage registry is bundled YAML synced to a new `task_stages_registry` table. The dispatcher, MCP/HTTP/CLI surfaces, and the web kanban all migrate to the manifest model. Legacy lifecycle/status columns and active status values are dropped in the same epic — no compatibility shims, no shadow model.
 
 This is the implementation companion to the strategy plan at `.gobby/plans/task-13482-lifecycle-status-kanban.md`. The strategy plan defines the target model; this plan defines the executable steps. Read the strategy plan first if you need the *why* — every section here assumes that context.
 
@@ -14,15 +33,13 @@ This is the implementation companion to the strategy plan at `.gobby/plans/task-
 `kind: framing`
 
 - **Pre-launch clean cutover.** Do not build compatibility facades or long-lived legacy write paths. Callers move to the stage manifest APIs directly within this epic; old `lifecycle`, `lifecycle_stage`, and active `status` semantics are removed by Phase 5 close.
-- **5-state vocabulary, policy-driven legality.** Per-stage state is the global 5-value enum `ready | in_progress | needs_review | review_approved | done` enforced by a CHECK constraint on every `task_stage_states` row regardless of policy. Whether a given transition is *legal* on a given row is determined by the row's `review_policy ∈ {none, required, optional}`. `needs_review` and `review_approved` are rejected on `policy=none` rows; the typed `IllegalStageTransitionError` carries `(stage_name, current_state, attempted_transition, review_policy)` so callers can recover or surface the constraint clearly. `closed` is **never** a stage state — task closure is task-level via `closed_at IS NOT NULL`, fired when the terminal manifest row reaches `done`. Blocking and escalation are orthogonal: a blocked task still has a `current_stage` and that row stays in any of the five states; a blocked-or-escalated task is filtered out of `is_ready` projections by the readiness check, not by injecting a sixth stage-state value. There is **no** `blocked` value in the stage-state enum.
-- **`review_approved` is durable, not transient.** A row's `state = 'review_approved'` is a real queue position the dispatcher reads (PR approved-before-merge, expansion-QA approved-before-dev-fanout, planning-approved-before-test-arch). The `review_approved → done` advance is a separate transition (dispatcher-driven for automated stages, operator-driven for human-gated stages); it is NOT collapsed into the review-approval call.
-- **Escalation preserves stage state.** `escalate_task` flips `is_escalated=1` and writes `escalated_at`/`escalation_reason`; it does NOT mutate `task_stage_states`. `de_escalate_task` flips `is_escalated=0` and clears the escalation fields; it also does NOT mutate `task_stage_states`. A task that escalates from `development.in_progress`, then de-escalates, resumes at `development.in_progress` with the same `work_attempt_count` / `review_round_count` / `entered_at`. Load-bearing invariant — covered by acceptance 5.2.4.
-- **Counter split.** Replace single `attempt_count` with `work_attempt_count` (incremented on `start_stage` / fail-loop reentry) and `review_round_count` (incremented on `mark_task_review_rejected`). Per-stage caps are nullable columns on `task_stage_states` (`max_work_attempts`, `max_review_rounds`); null inherits the registry defaults (`default_max_work_attempts`, `default_max_review_rounds`) at evaluation time.
-- **No new agents — but placeholder shims are in scope.** Agents for `expansion-qa`, `qa-reviewer`, `holistic-reviewer`, `merge-orchestrator` already exist as bundled YAMLs and only need rewiring against new stage names. Four discovery-stage agents have no surviving YAML or follow-up task after the #12725 cascade-delete (stage → agent slug mapping: `ideation → analyst`, `research → researcher`, `architecture → architect`, `prd → product-manager`), and `pr` is owned by #13552 (already open). This epic ships **disabled placeholder YAMLs** for the four missing discovery agents (clearly marked as such) and creates a parent epic plus four tracking tasks for the real implementation work. Real agent behavior remains out of scope. **No `test_arch` reviewer agent exists or is planned in this epic** — `test_arch.review_policy=none` is the deliberate contract; adding review later is the documented two-step extension path (registry edit + migration decision).
+- **Tri-state vocabulary.** Per-stage state is `ready | in_progress | done` (`ready` replaces the strategy plan's draft term `needs_doing` — same semantics, cleaner reading, aligns with the existing `list_ready_tasks` projection vocabulary). Blocking and escalation are orthogonal: a blocked task still has a `current_stage` and that row stays in `ready` or `in_progress`; a blocked-or-escalated task is filtered out of `is_ready` projections by the readiness check, not by injecting a fourth stage-state value. There is **no** `blocked` value in the stage-state enum.
+- **Escalation preserves stage state.** `escalate_task` flips `is_escalated=1` and writes `escalated_at`/`escalation_reason`; it does NOT mutate `task_stage_states`. `de_escalate_task` flips `is_escalated=0` and clears the escalation fields; it also does NOT mutate `task_stage_states`. A task that escalates from `development.in_progress`, then de-escalates, resumes at `development.in_progress` with the same `attempt_count` and `entered_at`. This is a load-bearing invariant — covered by acceptance 5.2.4.
+- **No new agents — but placeholder shims are in scope.** Agents for `expansion_qa`, `code_review_qa`, `holistic_qa`, `merge` already exist as bundled YAMLs and only need rewiring against new stage names. Four discovery-stage agents have no surviving YAML or follow-up task after the #12725 cascade-delete (stage → agent slug mapping: `ideation → analyst`, `research → researcher`, `architecture → architect`, `prd → product-manager`), and `pr` is owned by #13552 (already open). This epic ships **disabled placeholder YAMLs** for the four missing discovery agents (clearly marked as such) and creates a parent epic plus four tracking tasks for the real implementation work. Real agent behavior remains out of scope.
 - **Single project.** No cross-project / multi-tenant kanban work.
-- **`escalated` is preserved** as the human-in-the-loop flag — promoted from a `status` value to first-class `is_escalated` column. Every other active `status` value is subsumed by per-stage 5-state.
-- **Readiness/blocking semantics stay equivalent.** `list_ready_tasks`, `list_blocked_tasks`, `suggest_next_task`, `list_automation_candidates`, and task `state.is_blocked` must return the same results as the old model for equivalent fixtures after cutover. `review_approved` rows do NOT satisfy upstream-completion checks (only `done` does); the dispatcher's tail rule advances them to `done` once review is satisfied.
-- **Schema baseline before this epic = 232** (`BASELINE_VERSION = 220` at `src/gobby/storage/migrations.py:65`, plus the 12 in-tree migrations 221–232 already populated with unrelated work). New migrations for this epic begin at **233**. The existing in-worktree migration 233 (commit `52bf01b65` on `agent/13482-lifecycle-status-enum-alignment`) was authored against the discarded tri-state contract; it is amended in place by Phase 1.1 — the migration version stays 233 because it has not merged.
+- **`escalated` is preserved** as the human-in-the-loop flag — promoted from a `status` value to first-class `is_escalated` column. Every other active `status` value is subsumed by per-stage tri-state.
+- **Readiness/blocking semantics stay equivalent.** `list_ready_tasks`, `list_blocked_tasks`, `suggest_next_task`, `list_automation_candidates`, and task `state.is_blocked` must return the same results as the old model for equivalent fixtures after cutover.
+- **Schema baseline before this epic = 232** (`BASELINE_VERSION = 220` at `src/gobby/storage/migrations.py:65`, plus the 12 in-tree migrations 221–232 already populated with unrelated work). New migrations for this epic begin at **233**.
 - **No explicit test tasks anywhere in this plan.** TDD sandwiches are auto-inserted by `/gobby expand` for every `category: code` and `category: config` task.
 
 ## P1 Registry + Manifest Schema
@@ -35,11 +52,11 @@ This is the implementation companion to the strategy plan at `.gobby/plans/task-
 
 Target: `src/gobby/storage/migrations.py`, `src/gobby/install/shared/registry/stages.yaml` (new — authored here so the migration's inline seed has its source on disk)
 
-**Migration 233 is amended in place.** The existing in-worktree migration 233 (commit `52bf01b65` on `agent/13482-lifecycle-status-enum-alignment`) was authored against the discarded tri-state contract. Because that commit has not merged, this deliverable amends migration 233 in place — same version number, new schema. The amendment adds three new tables and three new TEXT columns to `task_artifacts`, plus one new column on `tasks`, AND seeds the 11 canonical `task_stages_registry` rows plus the six `task_type_default_stages` bundles inline within the same transaction. Use `db.transaction()` around all schema changes and the inline seed; follow the existing `_add_task_artifact_evidence_columns` pattern (`src/gobby/storage/migrations.py:111-159`) for the artifact-column additions.
+Add migration version `233` to the `MIGRATIONS` list. Migration adds three new tables and three new TEXT columns to `task_artifacts`, plus one new column on `tasks`, AND seeds the 14 canonical `task_stages_registry` rows plus the six `task_type_default_stages` bundles inline within the same transaction. Use `db.transaction()` around all schema changes and the inline seed; follow the existing `_add_task_artifact_evidence_columns` pattern (`src/gobby/storage/migrations.py:111-159`) for the artifact-column additions.
 
-**Bundled `stages.yaml` lands in this deliverable (load-bearing for sequencing).** This deliverable owns BOTH the migration code AND the bundled YAML file the migration reads. An expanded worker receiving this leaf authors `src/gobby/install/shared/registry/stages.yaml` and `src/gobby/storage/migrations.py` together; the migration cannot land without the YAML, and the YAML has no other consumer until the loader in §1.2. §1.2 retains ownership of `StageRegistryLoader` (the loader/hash-drift detector) and the daemon startup wiring; §1.2 does NOT (re-)author the YAML — it points at the file landed here. The full YAML schema and the 11 stage entries (verbatim, with `review_policy` + `reviewer_agent` per the strategy plan's per-stage policy table) are documented in §1.2 below; the implementing agent for §1.1 copies the YAML body from §1.2's documentation block into the file at the path above as part of this deliverable.
+**Bundled `stages.yaml` lands in this deliverable (load-bearing for F1 sequencing).** This deliverable owns BOTH the migration code AND the bundled YAML file the migration reads. An expanded worker receiving this leaf authors `src/gobby/install/shared/registry/stages.yaml` and `src/gobby/storage/migrations.py` together; the migration cannot land without the YAML, and the YAML has no other consumer until the loader in §1.2. §1.2 retains ownership of `StageRegistryLoader` (the loader/hash-drift detector) and the daemon startup wiring; §1.2 does NOT (re-)author the YAML — it points at the file landed here. The full YAML schema and the 14 stage entries (verbatim) are documented in §1.2 below; the implementing agent for §1.1 copies the YAML body from §1.2's documentation block into the file at the path above as part of this deliverable.
 
-**Inline registry + default-stages seed (load-bearing for migration ordering):** Migration 233 reads the bundled `src/gobby/install/shared/registry/stages.yaml` (authored in this same deliverable per the paragraph above) directly via `pathlib.Path(__file__).parent.parent / 'install/shared/registry/stages.yaml'` and inserts all 11 registry rows + the six `task_type_default_stages` bundles in the SAME transaction as the schema creation. This ensures the FK targets exist before migration 234 (Phase 2.2 backfill) writes any `task_type_default_stages` lookups or `task_stage_states.stage_name` references. The startup `StageRegistryLoader.sync()` (Phase 1.2) becomes a hash-drift detector for subsequent edits to the bundled YAML — it is NOT the only seed path. The six `task_type_default_stages` bundles seeded here are the same six bundles documented in §2.2 (`epic`, `feature`, `bug`, `refactor`, `chore`, `task` — five distinct manifests; `chore` and `task` share the leaves-only manifest). On a fresh DB, migration 233 writes registry + defaults in one transaction; migration 234 then reads them when backfilling `task_stage_states` from `(lifecycle, status, labels)` for existing tasks.
+**Inline registry + default-stages seed (load-bearing for migration ordering):** Migration 233 reads the bundled `src/gobby/install/shared/registry/stages.yaml` (authored in this same deliverable per the paragraph above) directly via `pathlib.Path(__file__).parent.parent / 'install/shared/registry/stages.yaml'` and inserts all 14 registry rows + the six `task_type_default_stages` bundles in the SAME transaction as the schema creation. This ensures the FK targets exist before migration 234 (Phase 2.2 backfill) writes any `task_type_default_stages` lookups or `task_stage_states.stage_name` references. The startup `StageRegistryLoader.sync()` (Phase 1.2) becomes a hash-drift detector for subsequent edits to the bundled YAML — it is NOT the only seed path. The six `task_type_default_stages` bundles seeded here are the same six bundles documented in §2.2 (`epic`, `feature`, `bug`, `refactor`, `chore`, `task` — five distinct manifests; `chore` and `task` share the leaves-only manifest). On a fresh DB, migration 233 writes registry + defaults in one transaction; migration 234 then reads them when backfilling `task_stage_states` from `(lifecycle, status, labels)` for existing tasks.
 
 **On `category`** (called out because the field can read like decoration): the five values `discovery | design | verification | implementation | delivery` come from the strategy plan and have one functional consumer in this epic — the kanban category filter wired in Phase 6.1 (6.1.7). The dispatcher does NOT read `category`; rule routing is purely by `stage_name` and registry `position_hint`. If Phase 6.1's filter is later removed, this column should be dropped in the same change. Do not add other consumers without revisiting that decision.
 
@@ -53,14 +70,9 @@ CREATE TABLE IF NOT EXISTS task_stages_registry (
     category TEXT NOT NULL CHECK (category IN ('discovery','design','verification','implementation','delivery')),  -- drives kanban category filter (Phase 6.1 6.1.7); not used by the dispatcher
 
     default_agent TEXT,
-    reviewer_agent TEXT,                          -- nullable; populated only when review_policy != 'none'
-    review_policy TEXT NOT NULL DEFAULT 'none'
-        CHECK (review_policy IN ('none','required','optional')),
     position_hint INTEGER NOT NULL,
     requires_human INTEGER NOT NULL DEFAULT 0,
     is_terminal INTEGER NOT NULL DEFAULT 0,
-    default_max_work_attempts INTEGER NOT NULL DEFAULT 3,
-    default_max_review_rounds INTEGER NOT NULL DEFAULT 5,
     bundled_hash TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -79,19 +91,13 @@ CREATE TABLE IF NOT EXISTS task_stage_states (
     stage_name TEXT NOT NULL REFERENCES task_stages_registry(name) ON DELETE RESTRICT,
     position INTEGER NOT NULL,
     state TEXT NOT NULL DEFAULT 'ready'
-        CHECK (state IN ('ready','in_progress','needs_review','review_approved','done')),  -- global 5-value enum on every row regardless of policy; legality enforced per-row by review_policy
-    review_policy TEXT NOT NULL DEFAULT 'none'
-        CHECK (review_policy IN ('none','required','optional')),  -- mirrored from registry at manifest-init; later registry edits do NOT retroactively change in-flight rows
-    reviewer_agent TEXT,                          -- mirrored from registry at manifest-init; nullable
+        CHECK (state IN ('ready','in_progress','done')),  -- see Constraints: blocking/escalation are orthogonal projections, not stage-state values
     entered_at TEXT,
     entered_by_session_id TEXT,
     completed_at TEXT,
     completed_by_session_id TEXT,
     completed_commit_sha TEXT,
-    work_attempt_count INTEGER NOT NULL DEFAULT 0,    -- incremented on start_stage and fail-loop reentry
-    review_round_count INTEGER NOT NULL DEFAULT 0,    -- incremented on mark_task_review_rejected
-    max_work_attempts INTEGER,                        -- nullable; null inherits registry default at evaluation time
-    max_review_rounds INTEGER,                        -- nullable; null inherits registry default at evaluation time
+    attempt_count INTEGER NOT NULL DEFAULT 0,
     artifact_refs TEXT,
     notes TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -104,8 +110,6 @@ CREATE INDEX IF NOT EXISTS idx_task_stage_states_state
 CREATE INDEX IF NOT EXISTS idx_task_stage_states_open
     ON task_stage_states (task_id, position) WHERE state != 'done';
 ```
-
-`review_policy` and `reviewer_agent` are **mirrored** from the registry onto each `task_stage_states` row at manifest-init time. Mirroring is load-bearing: a later registry edit (e.g., flipping `research.review_policy: none → required`) does NOT retroactively change the legality of transitions on already-created rows. The new policy applies only to manifests created after the registry edit, unless an explicit migration backfills existing rows. The CHECK constraint on `state` is the global 5-value enum applied uniformly to every row; per-row legality is enforced in `StageStatesManager` by branching on `review_policy` (Phase 2.1).
 
 `artifact_refs` is a JSON-encoded object (`json.dumps`) of pointers into `task_artifacts` (e.g. `{"plan_file": "plan_file_path", "expansion_run": "expansion_run_id"}`). The unique `(task_id, position)` index enforces the position-uniqueness invariant per task. The partial index `idx_task_stage_states_open` accelerates the "leftmost non-done" current-stage projection.
 
@@ -125,14 +129,14 @@ Column to add to `tasks` (separate `ALTER TABLE tasks ADD COLUMN`; SQLite tolera
 
 **Acceptance:**
 
-- 1.1.1 — Migration version 233 exists in `MIGRATIONS` (amended in place from the discarded tri-state version on `agent/13482-lifecycle-status-enum-alignment` commit `52bf01b65`). file: `src/gobby/storage/migrations.py`. symbol: `gobby.storage.migrations.MIGRATIONS`.
-- 1.1.2 — Three new tables created with declared schema. `task_stages_registry` carries `review_policy`, `reviewer_agent`, `default_max_work_attempts`, `default_max_review_rounds`. `task_stage_states.state` CHECK accepts the 5-value enum `('ready','in_progress','needs_review','review_approved','done')`. `task_stage_states` carries `review_policy`, `reviewer_agent`, `work_attempt_count`, `review_round_count`, `max_work_attempts`, `max_review_rounds`; the dropped tri-state `attempt_count` column is **not** present. Indexes and partial index on open rows verified. test: `tests/storage/test_migration_233.py::test_creates_registry_tables`, `tests/storage/test_migration_233.py::test_state_check_accepts_five_values`, `tests/storage/test_migration_233.py::test_review_policy_columns_present`.
+- 1.1.1 — Migration version 233 exists in `MIGRATIONS`. file: `src/gobby/storage/migrations.py`. symbol: `gobby.storage.migrations.MIGRATIONS`.
+- 1.1.2 — Three new tables created with declared schema, CHECK constraints, indexes, and partial index on open rows. test: `tests/storage/test_migration_233.py::test_creates_registry_tables`.
 - 1.1.3 — `task_artifacts` gains three new TEXT columns (`pr_review_report`, `structured_pr_verdict`, `merge_campaign_report`) with `NULL` defaults; rebuild path preserves existing rows. test: `tests/storage/test_migration_233.py::test_artifact_columns_added`.
 - 1.1.4 — Fresh-install `_task_artifacts_create_sql` includes the new TEXT columns so a blank DB skips the rebuild path. behavior: "fresh install schema matches migration end state" verified in `tests/storage/test_migration_233.py::test_fresh_install_matches`.
 - 1.1.5 — `tasks` table gains `is_escalated INTEGER NOT NULL DEFAULT 0`; existing rows default to 0 with backfill deferred to migration 234 (Phase 2.2). test: `tests/storage/test_migration_233.py::test_tasks_is_escalated_added`.
-- 1.1.6 — Migration 233 seeds all 11 `task_stages_registry` rows from the bundled `src/gobby/install/shared/registry/stages.yaml` inline in the same transaction as the schema creation; on a fresh DB the table contains exactly 11 rows after migration 233 runs and before migration 234 starts. Each row's `review_policy` matches the strategy plan's per-stage policy table (`planning|expansion|development|holistic_qa|pr` are `required`; the other 6 are `none`). test: `tests/storage/test_migration_233.py::test_registry_seeded_inline`, `tests/storage/test_migration_233.py::test_seeded_review_policy_matches_strategy_table`.
-- 1.1.6a — `src/gobby/install/shared/registry/stages.yaml` exists on disk as part of this deliverable, declaring all 11 stages (`ideation, research, architecture, prd, planning, test_arch, expansion, development, holistic_qa, pr, merge`) with every required field set per the §1.2 YAML schema (`name`, `display_label`, `description`, `category`, `position_hint`, `review_policy`; `default_agent`, `reviewer_agent`, `requires_human`, `is_terminal`, `default_max_work_attempts`, `default_max_review_rounds` where applicable). The dropped stages `adversarial_review`, `expansion_qa`, `code_review_qa` are **not** declared. The migration's inline seed reads this exact file. file: `src/gobby/install/shared/registry/stages.yaml`. test: `tests/storage/test_migration_233.py::test_bundled_stages_yaml_present_with_11_stages`, `tests/storage/test_migration_233.py::test_yaml_omits_dropped_review_stages`.
-- 1.1.7 — Migration 233 seeds `task_type_default_stages` with six rows (`epic`, `feature`, `bug`, `refactor`, `chore`, `task`) across five distinct manifests inline in the same transaction. None of the seeded manifests reference the dropped review stages; `epic` is the only manifest that includes `holistic_qa`. Migration 234 (Phase 2.2 backfill) finds the rows already present when resolving per-task manifests. test: `tests/storage/test_migration_233.py::test_default_stages_seeded_inline`, `tests/storage/test_migration_233.py::test_holistic_qa_only_in_epic_manifest`.
+- 1.1.6 — Migration 233 seeds all 14 `task_stages_registry` rows from the bundled `src/gobby/install/shared/registry/stages.yaml` inline in the same transaction as the schema creation; on a fresh DB the table contains exactly 14 rows after migration 233 runs and before migration 234 starts. test: `tests/storage/test_migration_233.py::test_registry_seeded_inline`.
+- 1.1.6a — `src/gobby/install/shared/registry/stages.yaml` exists on disk as part of this deliverable, declaring all 14 stages (`ideation, research, architecture, prd, planning, adversarial_review, test_arch, expansion, expansion_qa, development, code_review_qa, holistic_qa, pr, merge`) with every required field set per the §1.2 YAML schema (`name`, `display_label`, `description`, `category`, `position_hint`; `default_agent`, `requires_human`, `is_terminal` where applicable). The migration's inline seed reads this exact file. file: `src/gobby/install/shared/registry/stages.yaml`. test: `tests/storage/test_migration_233.py::test_bundled_stages_yaml_present_with_14_stages`.
+- 1.1.7 — Migration 233 seeds `task_type_default_stages` with six rows (`epic`, `feature`, `bug`, `refactor`, `chore`, `task`) across five distinct manifests inline in the same transaction; migration 234 (Phase 2.2 backfill) finds the rows already present when resolving per-task manifests. test: `tests/storage/test_migration_233.py::test_default_stages_seeded_inline`.
 - 1.1.8 — On a fresh DB, the migration runner reaches version 234 with the registry table populated; FK references from `task_type_default_stages.stage_name` and `task_stage_states.stage_name` resolve cleanly because migration 233 seeded the parent rows in the same transaction. test: `tests/storage/test_migration_233.py::test_fresh_db_fk_resolution_into_234`.
 
 ### 1.2 Sync loader for the bundled stages.yaml [category: config] (depends: 1.1)
@@ -144,9 +148,9 @@ Implement the `StageRegistryLoader` that reads the bundled YAML landed by §1.1 
 
 **This deliverable does NOT author or modify `stages.yaml`** — that file is owned by §1.1 (per the F1 sequencing fix). §1.2 only adds the loader code and the daemon startup wiring, and assumes the file already exists at the path documented below. The YAML schema is reproduced here for reference (matching the file contents §1.1 lands) so the implementing agent for §1.2 sees the shape it must parse.
 
-**Sync loader role:** Migration 233 (§1.1) seeds all 11 registry rows + six `task_type_default_stages` bundles INLINE within the schema transaction by reading the bundled YAML file directly. The startup `StageRegistryLoader.sync()` is therefore a hash-drift detector only — it upserts when the bundled YAML hash changes between releases. It is NOT the only seed path; on a fresh DB the registry is populated by migration 233 before the daemon ever calls the loader. This split keeps migration ordering atomic (FK targets exist before any backfill that references them) while still letting bundled-YAML edits propagate without a new migration.
+**Sync loader role:** Migration 233 (§1.1) seeds all 14 registry rows + six `task_type_default_stages` bundles INLINE within the schema transaction by reading the bundled YAML file directly. The startup `StageRegistryLoader.sync()` is therefore a hash-drift detector only — it upserts when the bundled YAML hash changes between releases. It is NOT the only seed path; on a fresh DB the registry is populated by migration 233 before the daemon ever calls the loader. This split keeps migration ordering atomic (FK targets exist before any backfill that references them) while still letting bundled-YAML edits propagate without a new migration.
 
-YAML shape (11 stages with per-stage `review_policy` and `reviewer_agent` per the strategy plan's policy table):
+YAML shape:
 
 ```yaml
 # src/gobby/install/shared/registry/stages.yaml
@@ -157,7 +161,6 @@ stages:
     description: Early problem framing; capture motivating questions and constraints.
     category: discovery
     default_agent: analyst                    # placeholder shim — Phase 1.3
-    review_policy: none
     position_hint: 10
     requires_human: false
     is_terminal: false
@@ -166,80 +169,82 @@ stages:
     description: Targeted investigation; produce findings consumable by architecture/PRD.
     category: discovery
     default_agent: researcher                 # placeholder shim — Phase 1.3
-    review_policy: none
     position_hint: 20
   - name: architecture
     display_label: Architecture
     description: Cross-cutting design decisions and component shape.
     category: design
     default_agent: architect                  # placeholder shim — Phase 1.3
-    review_policy: none
     position_hint: 30
   - name: prd
     display_label: PRD
     description: Productized requirements; bridges discovery and planning.
     category: design
     default_agent: product-manager            # placeholder shim — Phase 1.3
-    review_policy: none
     position_hint: 40
   - name: planning
     display_label: Planning
     description: Implementation plan authoring (interactive or autonomous).
     category: design
     default_agent: planner
-    reviewer_agent: plan-adversary
-    review_policy: required
     position_hint: 50
+  - name: adversarial_review
+    display_label: Adversarial Review
+    description: Plan-adversary critiques the plan and emits the typed manifest.
+    category: verification
+    default_agent: plan-adversary
+    position_hint: 60
   - name: test_arch
     display_label: Test Architecture
-    description: Test scaffolding and contract test design before expansion. No reviewer agent exists; one-shot work stage.
+    description: Test scaffolding and contract test design before expansion.
     category: verification
     default_agent: test-architect
-    review_policy: none                       # deliberate: no test-architecture reviewer agent in this epic
-    position_hint: 60
+    position_hint: 70
   - name: expansion
     display_label: Expansion
     description: Decompose plan into TDD-wrapped leaf tasks.
     category: implementation
-    # default_agent left blank — expansion runs as a pipeline action, not an agent spawn
-    reviewer_agent: expansion-qa
-    review_policy: required
-    position_hint: 70
+    position_hint: 80
+  - name: expansion_qa
+    display_label: Expansion QA
+    description: Verify the expanded tree against the plan's coverage contract.
+    category: verification
+    default_agent: expansion-qa
+    position_hint: 90
   - name: development
     display_label: Development
     description: Leaf implementation work; drives TDD sandwiches.
     category: implementation
     default_agent: backend-developer          # primary fallback; build-time may override per-task
-    reviewer_agent: qa-reviewer
-    review_policy: required
-    position_hint: 80
+    position_hint: 100
+  - name: code_review_qa
+    display_label: Code Review QA
+    description: Automated and human code review of leaf changes.
+    category: verification
+    default_agent: qa-reviewer
+    position_hint: 110
   - name: holistic_qa
     display_label: Holistic QA
-    description: Whole-epic review after every leaf is parked. Epic-level only — leaf manifests omit this stage. Aggregate review; agent produces review_approved internally.
+    description: Whole-epic review after every leaf is parked.
     category: verification
     default_agent: holistic-reviewer
-    reviewer_agent: holistic-reviewer         # same agent does work and review (aggregate)
-    review_policy: required
-    position_hint: 90
+    position_hint: 120
   - name: pr
     display_label: Pull Request
     description: Open/update PR, capture verdict, gate on external review.
     category: delivery
     # default_agent left blank — owned by #13552 (PR/merge skill epic)
-    # reviewer_agent left blank — external (PR-Agent or human) review; pr_no_agent escalation until #13552 lands
-    review_policy: required
-    position_hint: 100
+    position_hint: 130
   - name: merge
     display_label: Merge
     description: Land approved PR; resolve conflicts; close terminal task.
     category: delivery
     default_agent: merge-orchestrator
-    review_policy: none
-    position_hint: 110
+    position_hint: 140
     is_terminal: true
 ```
 
-`default_agent` is populated for every stage with a real or placeholder bundled agent except `expansion` (pipeline action, not an agent spawn) and `pr` (owned by #13552). The four discovery stages point at placeholder shims landed in 1.3. `reviewer_agent` is populated only when `review_policy != none`; `pr.reviewer_agent` is left blank pending #13552 — Phase 4.1 wires the `pr_no_agent` escalation reason. `holistic_qa` carries the same agent in both `default_agent` and `reviewer_agent` slots because aggregate review is internal to the agent run (the agent itself produces the `in_progress → review_approved` transition). The dropped stages `adversarial_review`, `expansion_qa`, `code_review_qa` are absent — review is now a state on `planning`, `expansion`, and `development` respectively, with `reviewer_agent` pointing at the same reviewer agents that previously owned the dedicated review stages.
+`default_agent` is populated for every stage with a real or placeholder bundled agent. The four discovery stages point at placeholder shims landed in 1.3; `pr` is left blank because #13552 owns it; `expansion` is left blank because expansion runs as a pipeline action, not an agent spawn.
 
 Sync loader (`src/gobby/storage/tasks/_stage_registry_loader.py`):
 
@@ -263,7 +268,7 @@ Wire `StageRegistryLoader().sync(db)` into the daemon startup sequence next to t
 
 **Acceptance:**
 
-- 1.2.1 — `StageRegistryLoader` parses the bundled `stages.yaml` landed by §1.1 (acceptance 1.1.6a) into a list of `StageRegistryEntry`-shaped records carrying `review_policy` and `reviewer_agent` fields; the loader rejects malformed YAML with a typed error, surfaces missing required fields, and rejects rows with `review_policy != 'none'` that lack a `reviewer_agent` unless the stage is in the documented blank-reviewer allowlist (`pr` pending #13552). The file-existence and 11-stage-completeness invariants are owned by §1.1 acceptance 1.1.6a; this acceptance only verifies the parser. symbol: `gobby.storage.tasks._stage_registry_loader.StageRegistryLoader`. test: `tests/storage/test_stage_registry_loader.py::test_parses_bundled_yaml`, `tests/storage/test_stage_registry_loader.py::test_malformed_yaml_raises`, `tests/storage/test_stage_registry_loader.py::test_required_policy_without_reviewer_outside_allowlist_raises`.
+- 1.2.1 — `StageRegistryLoader` parses the bundled `stages.yaml` landed by §1.1 (acceptance 1.1.6a) into a list of `StageRegistryEntry`-shaped records; the loader rejects malformed YAML with a typed error and surfaces missing required fields. The file-existence and 14-stage-completeness invariants are owned by §1.1 acceptance 1.1.6a; this acceptance only verifies the parser. symbol: `gobby.storage.tasks._stage_registry_loader.StageRegistryLoader`. test: `tests/storage/test_stage_registry_loader.py::test_parses_bundled_yaml`, `tests/storage/test_stage_registry_loader.py::test_malformed_yaml_raises`.
 - 1.2.2 — `StageRegistryLoader.sync()` is a hash-drift detector that upserts bundled rows when the bundled YAML hash differs from the stored `bundled_hash`. On a fresh DB the registry is already populated by migration 233; the loader's first run observes the seeded rows and is a no-op (no hash drift). symbol: `gobby.storage.tasks._stage_registry_loader.StageRegistryLoader`. test: `tests/storage/test_stage_registry_loader.py::test_sync_no_op_when_hash_matches_seed`, `tests/storage/test_stage_registry_loader.py::test_sync_upserts_on_hash_drift`.
 - 1.2.3 — Daemon startup wiring invokes the loader after migrations, adjacent to `sync_bundled_content_to_db(runner.database)` at `src/gobby/runner_init.py:257-259`. file: `src/gobby/runner_init.py`. test: `tests/test_startup_seeds_stage_registry.py::test_registry_populated_after_startup`.
 - 1.2.4 — Operator-added stages survive bundled-YAML re-sync; bundled stages get re-upserted. behavior: "user-added stage rows persist across sync" verified in `tests/storage/test_stage_registry_loader.py::test_user_added_stage_preserved`.
@@ -363,9 +368,6 @@ Two new manager modules under the same package as `_artifacts.py`, `_lifecycle_e
 `_stage_registry.py`:
 
 ```python
-ReviewPolicy = Literal["none", "required", "optional"]
-
-
 @dataclass(frozen=True, slots=True)
 class StageRegistryEntry:
     name: str
@@ -373,13 +375,9 @@ class StageRegistryEntry:
     description: str
     category: Literal["discovery","design","verification","implementation","delivery"]
     default_agent: str | None
-    reviewer_agent: str | None             # nullable; populated only when review_policy != 'none'
-    review_policy: ReviewPolicy
     position_hint: int
     requires_human: bool
     is_terminal: bool
-    default_max_work_attempts: int         # default 3
-    default_max_review_rounds: int         # default 5
 
 
 class StageRegistryManager:
@@ -396,43 +394,18 @@ class StageRegistryManager:
 `_stage_states.py`:
 
 ```python
-StageState5 = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
-
-
-class IllegalStageTransitionError(ValueError):
-    """Raised when a transition is rejected by the row's review_policy.
-
-    Carries (stage_name, current_state, attempted_transition, review_policy)
-    so callers can recover or surface the constraint clearly. Distinct from
-    generic ValueError so MCP/HTTP/CLI surfaces can map it to a typed error
-    response rather than a 500.
-    """
-    def __init__(
-        self,
-        stage_name: str,
-        current_state: StageState5,
-        attempted_transition: str,
-        review_policy: ReviewPolicy,
-    ) -> None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class StageState:
     task_id: str
     stage_name: str
     position: int
-    state: StageState5                     # 5-value enum; per-row legality enforced by review_policy
-    review_policy: ReviewPolicy            # mirrored from registry at manifest-init; stable across registry edits
-    reviewer_agent: str | None             # mirrored from registry at manifest-init
+    state: Literal["ready","in_progress","done"]
     entered_at: str | None
     entered_by_session_id: str | None
     completed_at: str | None
     completed_by_session_id: str | None
     completed_commit_sha: str | None
-    work_attempt_count: int                # incremented on start_stage / fail-loop reentry
-    review_round_count: int                # incremented on reject_review
-    max_work_attempts: int | None          # null inherits registry default at evaluation time
-    max_review_rounds: int | None          # null inherits registry default at evaluation time
+    attempt_count: int
     artifact_refs: dict[str, str] | None
     notes: str | None
     updated_at: str  # ISO-8601 UTC; surfaces the DB column added in migration 233 — load-bearing for the §3.3 RuntimeDispatchMutex stale-candidate snapshot check.
@@ -451,23 +424,21 @@ class StageStatesManager:
         self, *, stage_name: str, state: str | None = None,
         project_id: str | None = None,
     ) -> list[str]:
-        """Drives kanban column queries. `state` accepts any of the 5 values."""
+        """Drives kanban column queries."""
 
     # Writes — every mutator records a task_lifecycle_events row
     def initialize_manifest(
         self, task_id: str, stages: Sequence[tuple[str, int]], *, by_session_id: str | None,
     ) -> list[StageState]:
-        """Insert manifest rows; all start at ready. Each row's review_policy
-        and reviewer_agent are MIRRORED from the registry at insertion time
-        (snapshot semantics). Idempotent only if the target manifest matches
-        existing rows exactly; otherwise raises ManifestAlreadyInitializedError."""
+        """Insert manifest rows; all start at ready. Idempotent only if the
+        target manifest matches existing rows exactly; otherwise raises
+        ManifestAlreadyInitializedError."""
 
     def add_stage(
         self, task_id: str, stage_name: str, position: int, *, by_session_id: str | None,
     ) -> StageState:
-        """Insert a row at position; reorder affected positions. Mirrors
-        review_policy + reviewer_agent from the current registry row.
-        Errors if stage_name not in registry or task already has the stage."""
+        """Insert a row. Reorders affected positions. Errors if stage_name not in registry
+        or task already has the stage."""
 
     def remove_stage(
         self, task_id: str, stage_name: str, *, by_session_id: str | None,
@@ -478,121 +449,59 @@ class StageStatesManager:
         self, task_id: str, stage_name: str, *,
         by_session_id: str | None, notes: str | None = None,
     ) -> StageState:
-        """Transition ready → in_progress. Increments work_attempt_count.
-        Legal on ALL review_policy values. Only allowed when this row's
-        position equals current_stage().position (no skipping).
-
-        Raises IllegalStageTransitionError if current state is not 'ready'."""
-
-    def submit_for_review(
-        self, task_id: str, stage_name: str, *,
-        by_session_id: str | None, notes: str | None = None,
-    ) -> StageState:
-        """Transition in_progress → needs_review. Legal only on
-        review_policy ∈ {required, optional}; raises IllegalStageTransitionError
-        on review_policy='none'. Used by `mark_task_needs_review` MCP tool
-        (Phase 2.6) and operator-driven review submissions."""
-
-    def approve_review(
-        self, task_id: str, stage_name: str, *,
-        by_session_id: str | None, notes: str | None = None,
-    ) -> StageState:
-        """Transition needs_review → review_approved. Legal only on
-        review_policy ∈ {required, optional}; raises IllegalStageTransitionError
-        on review_policy='none'. Used by `mark_task_review_approved` MCP tool
-        (Phase 2.6). review_approved is a DURABLE holding state — the
-        dispatcher's tail rule (Phase 3.1 `<stage>_advance_rule`) advances
-        review_approved → done in a separate transition; this method does
-        NOT close the task or auto-advance."""
-
-    def reject_review(
-        self, task_id: str, stage_name: str, *,
-        reason: str, by_session_id: str | None, notes: str | None = None,
-    ) -> StageState:
-        """Transition needs_review → ready. Increments review_round_count
-        (NOT work_attempt_count). Legal only on review_policy ∈ {required,
-        optional}; raises IllegalStageTransitionError on review_policy='none'.
-        When review_round_count >= max_review_rounds (resolved via the row's
-        max_review_rounds, falling back to registry default_max_review_rounds),
-        escalates the task with reason=f'<stage>_review_failed:max' instead
-        of returning to ready. Used by `mark_task_review_rejected` MCP tool
-        (Phase 2.6)."""
+        """Transition ready → in_progress. Only allowed when this row's position
+        equals current_stage().position (no skipping)."""
 
     def complete_stage(
         self, task_id: str, stage_name: str, *,
         by_session_id: str | None, commit_sha: str | None = None,
         artifact_updates: Mapping[str, str] | None = None,
-        validation_override_reason: str | None = None,
     ) -> StageState:
-        """Transition to done. Legality depends on review_policy:
-
-          - review_policy='none': in_progress → done (direct).
-          - review_policy='optional': either in_progress → done (direct)
-            or review_approved → done.
-          - review_policy='required': review_approved → done by default.
-            Direct in_progress → done is REJECTED unless
-            validation_override_reason is supplied (admin escape hatch
-            for emergency cutover; the override reason is logged on the
-            task_lifecycle_events row and surfaces in audit reads).
-
-        Persists commit_sha + artifact_refs.
+        """Transition in_progress → done. Persists commit_sha + artifact_refs.
 
         Terminal-close contract (invariant 8 / acceptance 2.1.9 / 2.1.10):
         when this row is the highest-position row in the task's manifest
         (i.e. completing it leaves `current_stage(task) is None`),
         `complete_stage` ALSO closes the task atomically in the same DB
-        transaction by calling `_close_task_in_txn(conn, task_id,
-        reason='manifest_exhausted', commit_sha=commit_sha, closed_at=now,
+        transaction by calling the transaction-aware private helper
+        `_close_task_in_txn(conn, task_id, reason='manifest_exhausted',
+        commit_sha=commit_sha, closed_at=now,
         closed_in_session_id=by_session_id,
         cascade_descendants=(stage_name == 'merge'))` directly on the
         already-open connection. Cascade=True is passed ONLY when the
         terminal stage is `merge` (replacing the legacy `mark_task_merged`
-        cascade); non-merge terminal types (research_spike, prd_doc,
-        architecture_doc) pass cascade=False.
+        cascade); for non-merge terminal task types (research_spike,
+        prd_doc, architecture_doc) cascade=False because they have no
+        descendants in this epic's scope.
 
         `complete_stage` does NOT invoke the public `close_task(...)` API.
         Public `close_task` is a thin wrapper around the SAME
         `_close_task_in_txn` helper that always passes
-        `cascade_descendants=False`."""
+        `cascade_descendants=False`; the two callers share one cascade
+        implementation by construction (acceptance 2.1.10). Phase 4.2's
+        `record_merge_result` success path reaches `_close_task_in_txn`
+        through `complete_stage`'s merge branch (cascade=True), not
+        through public `close_task`."""
 
     def fail_stage(
         self, task_id: str, stage_name: str, *,
         reason: str, needs_human: bool = False, by_session_id: str | None,
     ) -> StageState:
-        """Transition current state → ready. Legal on all policies. Does NOT
-        change work_attempt_count or review_round_count — the subsequent
-        start_stage is the sole work-attempt increment site, and rejected
-        reviews use reject_review for review-round increments. Cap escalation
-        uses the `work_attempt_count >= max_work_attempts` predicate
-        evaluated inside fail_stage; when hit, escalates via escalate_task
-        rather than returning to ready. Escalation wiring goes through the
+        """Transition in_progress → ready (no attempt_count change — the
+        subsequent start_stage is the sole increment site), OR triggers
+        escalate_task(needs_human=True). Escalation wiring goes through the
         existing escalate_task helper; do not write is_escalated directly here."""
 ```
 
-**Transition legality matrix** (enforced by raising `IllegalStageTransitionError` on violation):
-
-| From state | To state | `policy=none` | `policy=required` | `policy=optional` | Method |
-|---|---|---|---|---|---|
-| `ready` | `in_progress` | ✅ | ✅ | ✅ | `start_stage` |
-| `in_progress` | `needs_review` | ❌ rejected | ✅ | ✅ | `submit_for_review` |
-| `in_progress` | `done` | ✅ direct | ❌ unless `validation_override_reason` | ✅ direct | `complete_stage` |
-| `in_progress` | `ready` | ✅ (fail) | ✅ (fail) | ✅ (fail) | `fail_stage` |
-| `needs_review` | `review_approved` | ❌ rejected | ✅ | ✅ | `approve_review` |
-| `needs_review` | `ready` | ❌ rejected | ✅ (review fail) | ✅ (review fail) | `reject_review` |
-| `review_approved` | `done` | n/a (unreachable) | ✅ | ✅ | `complete_stage` |
-| `done` | * | ❌ terminal | ❌ terminal | ❌ terminal | — |
-
-`IllegalStageTransitionError` is raised whenever a row's `review_policy` does not permit the attempted transition, OR when the source state does not match the method's expected source. The error carries `(stage_name, current_state, attempted_transition, review_policy)` so MCP/HTTP/CLI surfaces can map it to a typed error response.
-
-Invariants enforced in `StageStatesManager` (raise `IllegalStageTransitionError` for policy/state violations or `ValueError` for structural violations; cover with tests):
+Invariants enforced in `StageStatesManager` (raise `ValueError` or a typed error class on violation; cover with tests):
 
 1. `position` is unique per `task_id` (DB unique index plus pre-flight check for clearer errors).
 2. `stage_name` must exist in `task_stages_registry`.
-3. Transitions follow the policy-aware legality matrix above. No skipping (e.g., `ready → done` is never legal). No reverse from `done`. `IllegalStageTransitionError` carries `(stage_name, current_state, attempted_transition, review_policy)` on every rejection.
-4. `start_stage` requires the target row to be the current `current_stage()` (leftmost non-done row). `submit_for_review` / `approve_review` / `reject_review` require their respective source states.
-5. **Counter contract.** `work_attempt_count` increments ONLY on `start_stage` (replaces single `attempt_count`; subsumes `planning-round:N` / `qa-attempts:N` labels). `review_round_count` increments ONLY on `reject_review`. `fail_stage` does NOT change either counter — the subsequent `start_stage` (work-fail loop) or `submit_for_review` (no count change; reject is the count site) is the next event. A `start → fail → start → fail → start` cycle yields `work_attempt_count = 3` after the third `start_stage`, regardless of how many `fail_stage` calls intervened. Cap predicates: `work_attempt_count >= effective_max_work_attempts` (escalates from `fail_stage` work-fail path); `review_round_count >= effective_max_review_rounds` (escalates from `reject_review`). Effective caps are resolved per evaluation: `state_row.max_work_attempts ?? registry_row.default_max_work_attempts`; same for review.
-6. Every mutator (`initialize_manifest`, `add_stage`, `remove_stage`, `start_stage`, `submit_for_review`, `approve_review`, `reject_review`, `complete_stage`, `fail_stage`) executes inside `with RuntimeDispatchMutex(storage=<TaskDispatchMutexManager>, task_id=task_id, holder=<session_id_or_"system">, action_kind="stage_state:<stage_name>:<verb>", ttl_seconds=30):` to serialize concurrent transitions across the dispatcher, MCP tools, HTTP routes, and CLI. Import `RuntimeDispatchMutex` from `gobby.dispatch.mutex` (defined at `src/gobby/dispatch/mutex.py:27`); it wraps `TaskDispatchMutexManager.acquire_mutex(task_id, holder, kind, ttl_seconds, ...)` (at `src/gobby/storage/tasks/_dispatch_mutex.py:78`) and releases on exit. Surfaces calling these methods do not need to acquire the mutex themselves — the manager owns that contract.
-7. `updated_at` is bumped to `datetime.now(UTC).isoformat()` on every affected `task_stage_states` row by every mutator: `initialize_manifest` (every inserted row), `add_stage` (the inserted row + every row whose position shifts), `remove_stage` (every row whose position shifts), `start_stage`, `submit_for_review`, `approve_review`, `reject_review`, `complete_stage`, `fail_stage` (the affected row). The DB column carries `DEFAULT (datetime('now'))` per §1.1 schema, but the manager is the canonical writer — fresh DB-default values from new rows must be overwritten with the Python-computed timestamp on the same write so callers (`StageState.updated_at` consumers, the §3.3 mutex snapshot) see a consistent ISO-8601 string. Load-bearing for the §3.3 mutex stale-candidate check: a same-state-result cycle (e.g., `start_stage` then `fail_stage` returning `in_progress → ready`) must still produce a fresh `updated_at` so the snapshot mismatches and rejects the stale candidate.
+3. Transitions are: `ready → in_progress`, `in_progress → done`, `in_progress → ready` (fail). No skipping. No reverse from `done`.
+4. `start_stage` requires the target row to be the current `current_stage()` (leftmost non-done row).
+5. `attempt_count` increments only on `start_stage` (replaces `planning-round:N` / `qa-attempts:N` labels). `fail_stage` does NOT increment — a fail-then-restart cycle yields exactly one increment via the subsequent `start_stage`.
+6. Every mutator (`initialize_manifest`, `add_stage`, `remove_stage`, `start_stage`, `complete_stage`, `fail_stage`) executes inside `with RuntimeDispatchMutex(storage=<TaskDispatchMutexManager>, task_id=task_id, holder=<session_id_or_"system">, action_kind="stage_state:<stage_name>:<verb>", ttl_seconds=30):` to serialize concurrent transitions across the dispatcher, MCP tools, HTTP routes, and CLI. Import `RuntimeDispatchMutex` from `gobby.dispatch.mutex` (defined at `src/gobby/dispatch/mutex.py:27`); it wraps `TaskDispatchMutexManager.acquire_mutex(task_id, holder, kind, ttl_seconds, ...)` (at `src/gobby/storage/tasks/_dispatch_mutex.py:78`) and releases on exit. Surfaces calling these methods do not need to acquire the mutex themselves — the manager owns that contract.
+7. `updated_at` is bumped to `datetime.now(UTC).isoformat()` on every affected `task_stage_states` row by every mutator: `initialize_manifest` (every inserted row), `add_stage` (the inserted row + every row whose position shifts), `remove_stage` (every row whose position shifts), `start_stage`, `complete_stage`, `fail_stage` (the affected row). The DB column carries `DEFAULT (datetime('now'))` per §1.1 schema, but the manager is the canonical writer — fresh DB-default values from new rows must be overwritten with the Python-computed timestamp on the same write so callers (`StageState.updated_at` consumers, the §3.3 mutex snapshot) see a consistent ISO-8601 string. This invariant is load-bearing for the §3.3 mutex stale-candidate check: a same-state-result transition (e.g., `start_stage` then `fail_stage` returning `in_progress → ready`) must still produce a fresh `updated_at` so the mutex snapshot sees a different value and rejects a stale candidate scanned just before the cycle.
 8. **Terminal-close on manifest exhaustion.** `complete_stage(task_id, stage_name)` MUST also close the task when the just-completed row is the highest-position row in the task's manifest (i.e., after the transition `current_stage(task) is None`). The close runs in the SAME DB transaction as the stage UPDATE.
 
     **Closure source.** `tasks.closed_at IS NOT NULL` is the canonical SQL closure predicate (`src/gobby/storage/baseline_schema.sql:265-275`); there is no `tasks.is_closed` column. `Task.is_closed` is a read-only Python projection sourced from `is_task_closed(task)` at `src/gobby/tasks/state_semantics.py:88-95` (returns `closed_at IS NOT NULL OR status == 'closed'`). Every SQL write below targets `closed_at`; every SQL filter uses `closed_at IS NULL` / `closed_at IS NOT NULL`. Python read-sites (predicates, dispatcher, projections) read `Task.is_closed`.
@@ -699,12 +608,10 @@ Every mutator emits a `task_lifecycle_events` row via the injected `TaskLifecycl
 - 2.1.2 — `_stage_states.py` provides `StageStatesManager` with the listed reads, writes, and invariants. symbol: `gobby.storage.tasks._stage_states.StageStatesManager`. test: `tests/storage/tasks/test_stage_states.py::test_position_uniqueness_enforced`.
 - 2.1.3 — Every mutator emits a `task_lifecycle_events` row with the documented `from_state`/`to_state` shape. test: `tests/storage/tasks/test_stage_states.py::test_transitions_emit_events`.
 - 2.1.4 — `LocalTaskManager` exposes both managers as `.stages_registry` and `.stage_states`. file: `src/gobby/storage/tasks/_manager.py`. test: `tests/storage/tasks/test_manager_exposes_stage_managers.py::test_managers_accessible`.
-- 2.1.5 — Forbidden transitions raise `IllegalStageTransitionError` with the four-tuple payload `(stage_name, current_state, attempted_transition, review_policy)`. Coverage spans every illegal `(state, transition, policy)` triple in the legality matrix: `submit_for_review` on `policy=none`, `approve_review`/`reject_review` on `policy=none`, `complete_stage(in_progress → done)` on `policy=required` without `validation_override_reason`, skipping (`ready → done` direct), reverse from `done`. test: `tests/storage/tasks/test_stage_states.py::test_invalid_transitions_raise`, `tests/storage/tasks/test_stage_states.py::test_illegal_transition_error_carries_full_payload`, parameterized over the matrix in `tests/storage/tasks/test_stage_state_machine.py`.
-- 2.1.6 — Concurrent `start_stage` calls on the same task serialize via `RuntimeDispatchMutex` (backed by `TaskDispatchMutexManager.acquire_mutex` against the `task_dispatch_mutex` table); only one wins and increments `work_attempt_count`, the second observes post-mutex state and either errors (row already `in_progress`) or no-ops. Same contract for `submit_for_review`, `approve_review`, `reject_review`, `complete_stage`, `fail_stage`, and structural mutators (`initialize_manifest`, `add_stage`, `remove_stage`). test: `tests/storage/tasks/test_stage_states_concurrency.py::test_mutex_serializes_writes`.
-- 2.1.7 — Counter-split contract is explicit and uniform: `start_stage` is the SOLE increment site for `work_attempt_count`; `reject_review` is the SOLE increment site for `review_round_count`; `fail_stage` does NOT change either. Cap escalation: `work_attempt_count >= effective_max_work_attempts` triggers escalation from `fail_stage` (work-fail path); `review_round_count >= effective_max_review_rounds` triggers escalation from `reject_review`. Effective cap = `state_row.max_<X> ?? registry.default_max_<X>` resolved at evaluation time. A `start → fail → start → fail → start` cycle yields `work_attempt_count = 3` after the third start; a `submit → reject → start → submit → reject` cycle yields `work_attempt_count = 2` (one per start) AND `review_round_count = 2` (one per reject), independent counters. PR-rejection (Phase 4.1) and code-review/holistic-review rejection paths all use `reject_review` (review-round counter); merge-failure (Phase 4.2) uses `fail_stage` (work-attempt counter). No path adds `+1` outside `start_stage` or `reject_review`. behavior: "counter split is uniform; cap predicate is `>= effective_cap`" verified in `tests/storage/tasks/test_stage_states.py::test_fail_does_not_change_either_counter`, `tests/storage/tasks/test_stage_states.py::test_reject_review_increments_review_rounds_only`, `tests/storage/tasks/test_stage_states.py::test_start_stage_increments_work_attempts_only`, `tests/storage/tasks/test_stage_states.py::test_cap_predicate_is_gte_with_inheritance`.
-- 2.1.8 — `StageState.updated_at` field is populated on every read (sourced from the DB column added in §1.1) and bumped by every mutator: `start_stage`, `submit_for_review`, `approve_review`, `reject_review`, `complete_stage`, `fail_stage`, `initialize_manifest`, `add_stage`, `remove_stage`. A `start_stage` followed by a `fail_stage` (same-state-result cycle returning `in_progress → ready`) produces two strictly-increasing `updated_at` values on the affected row. Load-bearing for the §3.3 `RuntimeDispatchMutex` snapshot: a candidate scanned at `(name, ready, T0)` whose row cycles `ready → in_progress → ready` must produce `(name, ready, T1)` with `T1 != T0` so the snapshot mismatches and the dispatch is correctly aborted. test: `tests/storage/tasks/test_stage_states.py::test_updated_at_bumped_on_every_mutator`, `tests/storage/tasks/test_stage_states.py::test_same_state_cycle_bumps_updated_at`.
-- 2.1.11 — Per-row `review_policy` and `reviewer_agent` are mirrored from the registry at `initialize_manifest` / `add_stage` time and persist on `task_stage_states`. A subsequent registry edit (e.g., `research.review_policy: none → required`) does NOT retroactively change the legality of transitions on already-created rows; only manifests created after the edit see the new policy. Verified by: (a) seed registry with `research.review_policy=none`; (b) initialize a task's manifest; (c) flip registry to `research.review_policy=required` via `StageRegistryManager.upsert`; (d) confirm the existing row's `review_policy` is still `none` and `submit_for_review` on it still raises `IllegalStageTransitionError`. test: `tests/storage/tasks/test_stage_states.py::test_review_policy_mirrored_at_init_not_retroactive`, `tests/storage/tasks/test_stage_states.py::test_reviewer_agent_mirrored_at_init`.
-- 2.1.12 — `validation_override_reason` admin escape: `complete_stage(in_progress → done)` on a `policy=required` row is REJECTED with `IllegalStageTransitionError` unless `validation_override_reason` is supplied. When supplied, the override reason is logged on the emitted `task_lifecycle_events` row (in `reason` field as `validation_override:<reason>`) so the audit trail shows why review was bypassed. The override does NOT cascade to other rows. test: `tests/storage/tasks/test_stage_states.py::test_complete_stage_required_policy_rejects_without_override`, `tests/storage/tasks/test_stage_states.py::test_validation_override_reason_logged_on_event_row`.
+- 2.1.5 — Forbidden transitions (skipping, going backwards from done) raise typed errors. test: `tests/storage/tasks/test_stage_states.py::test_invalid_transitions_raise`.
+- 2.1.6 — Concurrent `start_stage` calls on the same task serialize via `RuntimeDispatchMutex` (backed by `TaskDispatchMutexManager.acquire_mutex` against the `task_dispatch_mutex` table); only one wins and increments `attempt_count`, the second observes post-mutex state and either errors (row already `in_progress`) or no-ops. Same contract for `complete_stage`, `fail_stage`, and structural mutators (`initialize_manifest`, `add_stage`, `remove_stage`). test: `tests/storage/tasks/test_stage_states_concurrency.py::test_mutex_serializes_writes`.
+- 2.1.7 — Attempt-count contract is explicit and uniform across all fail paths: `start_stage` is the SOLE increment site for `attempt_count`; `fail_stage` transitions `in_progress → ready` with NO attempt-count change. Cap escalation uses the `attempt_count >= cap` predicate evaluated inside `fail_stage` (the just-failed attempt's started count is compared against the cap). A `start → fail → start → fail` cycle yields `attempt_count = 2` after the second start, not 4. PR-rejection path (Phase 4.1), merge-failure path (Phase 4.2), and code-review/holistic-review rejection paths all use this single contract — no path adds `+1` outside `start_stage`. behavior: "fail_stage does not change attempt_count; cap predicate is `attempt_count >= cap`" verified in `tests/storage/tasks/test_stage_states.py::test_fail_does_not_increment`, `tests/storage/tasks/test_stage_states.py::test_cap_predicate_is_gte`.
+- 2.1.8 — `StageState.updated_at` field is populated on every read (sourced from the DB column added in §1.1) and bumped by every mutator: `start_stage`, `complete_stage`, `fail_stage`, `initialize_manifest`, `add_stage`, `remove_stage`. A `start_stage` followed by a `fail_stage` (a same-state-result cycle that returns `in_progress → ready`) produces two strictly-increasing `updated_at` values on the affected row — the second value is strictly greater than the first by at least the timestamp resolution of `datetime.now(UTC).isoformat()`. This is the load-bearing invariant for the §3.3 `RuntimeDispatchMutex` snapshot: a candidate scanned at `(name, ready, T0)` whose row cycles `ready → in_progress → ready` (different transient state, same final state) must produce `(name, ready, T1)` with `T1 != T0` so the snapshot mismatches and the dispatch is correctly aborted. test: `tests/storage/tasks/test_stage_states.py::test_updated_at_bumped_on_every_mutator`, `tests/storage/tasks/test_stage_states.py::test_same_state_cycle_bumps_updated_at`.
 - 2.1.9 — Terminal-close on manifest exhaustion (invariant 8): `complete_stage(task_id, stage_name)` calls the transaction-aware private helper `_close_task_in_txn(conn, task_id, reason='manifest_exhausted', commit_sha=commit_sha, closed_at=now, closed_in_session_id=by_session_id, cascade_descendants=(stage_name == 'merge'))` inside the same `db.transaction()` as the stage UPDATE iff the just-completed row is the highest-position row in the task's manifest (post-transition `current_stage(task) is None`). The public `close_task(...)` API delegates to the same helper with `cascade_descendants=False`. The close path is the SOLE terminal close for non-merge-terminal task types (`research_spike`, `prd_doc`, `architecture_doc`) AND the cascade-aware close for merge-terminal types (Phase 4.2 `record_merge_result` success branch delegates here with `commit_sha = merge_sha`, cascade=True). Close failure rolls the ENTIRE transaction back (stage reverts to `in_progress`, `closed_at` stays NULL) and then calls `_emit_terminal_close_failed_escalation(task_id, stage_name=stage_name, error=error)` in a SEPARATE committed transaction; the helper is idempotent (no-op when already escalated) and uses ONLY the existing `escalate_task` signature with `reason=f'terminal_close_failed:{stage_name}:{type(error).__name__}'`. The original close-error re-raises. Because §3.2's `list_automation_candidates` filters `NOT is_escalated`, the dispatcher does not re-spawn agents to retry — the escalation IS the cap. behavior: "completing the highest-position manifest row closes the task atomically with reason='manifest_exhausted'" verified in `tests/storage/tasks/test_stage_states.py::test_complete_terminal_row_closes_task`, `tests/storage/tasks/test_stage_states.py::test_complete_non_terminal_row_does_not_close`, `tests/storage/tasks/test_stage_states.py::test_close_failure_rolls_back_stage_transition`, `tests/storage/tasks/test_stage_states.py::test_close_failure_escalates_with_terminal_close_failed_reason`, `tests/storage/tasks/test_stage_states.py::test_close_failure_escalates_idempotently_on_already_escalated`, `tests/storage/tasks/test_stage_states.py::test_escalation_helper_uses_supported_signature_only`, `tests/storage/tasks/test_stage_states.py::test_escalation_helper_db_write_failure_logs_and_reraises`, `tests/storage/tasks/test_stage_states.py::test_escalated_task_not_re_attempted_by_heartbeat`, `tests/storage/tasks/test_stage_states.py::test_close_task_public_api_and_complete_stage_share_helper`, `tests/storage/tasks/test_stage_states.py::test_research_spike_closes_at_prd_done`, `tests/storage/tasks/test_stage_states.py::test_merge_terminal_close_via_record_merge_result_uses_same_path`.
 - 2.1.10 — `_close_task_in_txn` helper signature and caller-cascade rules: helper accepts `reason`, `commit_sha`, `closed_at`, `closed_in_session_id`, `force`, `cascade_descendants`, `validation_override_reason` parameters (canonical spelling — matches §2.1 invariant 8 code block, the `complete_stage` docstring, acceptance 2.1.9, and §4.2's narrative; one canonical helper-side keyword `commit_sha`, NOT `closed_commit_sha`). The helper runs open-child checks and bootstrap-ledger validation INSIDE the helper (migrated from current `close_task` wrapper); does NOT open or commit its own transaction. Public `close_task(...)` is a thin wrapper that opens `db.transaction()` and delegates to `_close_task_in_txn(..., commit_sha=<from public arg>, cascade_descendants=False, ...)`; if the existing public API uses a `closed_commit_sha` parameter name, the wrapper maps it to the helper's `commit_sha` at the boundary so the helper-side spelling stays canonical. `complete_stage` passes `cascade_descendants=True` ONLY when `stage_name == 'merge'` (replacing legacy `mark_task_merged` cascade); non-merge terminal stages (`prd`, `architecture`) pass cascade=False because there are no descendants under those task types. symbol: `gobby.storage.tasks._stage_states._close_task_in_txn`. test: `tests/storage/tasks/test_close_task_in_txn.py::test_helper_signature_accepts_all_canonical_params`, `tests/storage/tasks/test_close_task_in_txn.py::test_helper_uses_commit_sha_keyword_not_closed_commit_sha`, `tests/storage/tasks/test_close_task_in_txn.py::test_open_child_check_runs_inside_helper`, `tests/storage/tasks/test_close_task_in_txn.py::test_bootstrap_ledger_validation_runs_inside_helper`, `tests/storage/tasks/test_close_task_in_txn.py::test_close_task_public_api_passes_cascade_false`, `tests/storage/tasks/test_close_task_in_txn.py::test_close_task_public_wrapper_maps_closed_commit_sha_to_commit_sha`, `tests/storage/tasks/test_close_task_in_txn.py::test_complete_stage_merge_terminal_passes_cascade_true`, `tests/storage/tasks/test_close_task_in_txn.py::test_complete_stage_non_merge_terminal_passes_cascade_false`, `tests/storage/tasks/test_close_task_in_txn.py::test_force_and_validation_override_pass_through`.
 
@@ -716,36 +623,31 @@ Target: `src/gobby/storage/migrations.py` (new helper `_backfill_task_stage_stat
 The backfill runs once during the migration to 234. For every task in `tasks`:
 
 1. Resolve task's manifest from `task_type_default_stages` for that `task_type` minus any `stage-:<name>` skip labels (so existing skip labels are honored exactly once).
-2. Walk the resolved manifest in position order and assign `state` per the mapping table below, derived from the task's current `(lifecycle, status, labels)`. Each inserted row has its `review_policy` and `reviewer_agent` mirrored from the registry at insertion time (per §2.1 invariant 11).
+2. Walk the resolved manifest in position order and assign `(state, attempt_count)` per the mapping table below, derived from the task's current `(lifecycle, status, labels)`.
 3. Populate `entered_at` / `completed_at` from the task's `updated_at` and `created_at` as a coarse approximation; `entered_by_session_id` and `completed_by_session_id` use `claimed_by_session_id` if available, else `closed_in_session_id`, else `NULL`.
-4. Populate `work_attempt_count` from `planning-round:N` and `qa-attempts:N` labels (numeric suffix); fall back to `0`. Populate `review_round_count` from `0` (no legacy column tracks review rounds directly; the historical signal lives in lifecycle_events but is not worth back-deriving). Migrate per-stage caps from `task_artifacts.max_planning_rounds`, `task_artifacts.max_qa_rounds`, `task_artifacts.max_merge_attempts` into the per-stage `max_review_rounds` / `max_work_attempts` columns on the corresponding rows: `max_planning_rounds → planning.max_review_rounds`; `max_qa_rounds → development.max_review_rounds` (development is the work stage that subsumes the old code_review_qa rounds); `max_merge_attempts → merge.max_work_attempts`.
+4. Populate `attempt_count` from `planning-round:N` and `qa-attempts:N` labels (numeric suffix); fall back to `0`.
 5. Drop the `stage-:<name>` skip labels (already encoded as "stage absent from manifest").
 6. `UPDATE tasks SET is_escalated = 1 WHERE escalated_at IS NOT NULL` — column was added at default 0 in migration 233; this is the one-shot backfill so projections that read `tasks.is_escalated` (Phase 3.2 readiness rewrite) see correct values from migration 234 onward.
 
-Mapping table (`(lifecycle, status)` → manifest result; gaps from the discarded tri-state contract are filled in per the amended strategy plan's step 6):
+Mapping table (`(lifecycle, status)` → manifest result):
 
 | lifecycle | status | Resulting per-row state |
 |-----------|--------|-------------------------|
 | `open` | `open` | All manifest rows `ready` |
 | `open` | any other | All `ready` (`status` overrides handled below) |
 | `plan_review` | `open` or `in_progress` | `planning` row `in_progress`, predecessors `done`, successors `ready` |
-| `plan_review` | `needs_review` | `planning` row `needs_review`, predecessors `done`, successors `ready` |
-| `plan_review` | `review_approved` | `planning` row `review_approved`, predecessors `done`, successors `ready` |
-| `test_arch` | `open` or `in_progress` | `test_arch` row `in_progress`, predecessors `done`, successors `ready` |
-| `test_arch` | `needs_review` | `test_arch` row `in_progress`, predecessors `done`, successors `ready` (test_arch.review_policy=none — `needs_review` collapses to `in_progress` since the legacy state has no policy-aware home) |
-| `test_arch` | `review_approved` | `test_arch` row `done`, predecessors `done`, successors `ready` (test_arch.review_policy=none — `review_approved` collapses to `done`) |
+| `plan_review` | `needs_review` | `planning` row `done`, `adversarial_review` `in_progress`, predecessors `done`, successors `ready` |
+| `plan_review` | `review_approved` | `planning` and `adversarial_review` `done`, successors `ready` |
+| `test_arch` | any | `test_arch` row `in_progress`, predecessors `done`, successors `ready` |
 | `expanding` | `open` or `in_progress` | `expansion` row `in_progress`, predecessors `done`, successors `ready` |
-| `expanding` | `needs_review` | `expansion` row `needs_review`, predecessors `done`, successors `ready` |
-| `expanding` | `review_approved` | `expansion` row `review_approved`, predecessors `done`, successors `ready` |
+| `expanding` | `needs_review` | `expansion` row `done`, `expansion_qa` `in_progress`, predecessors `done`, successors `ready` |
 | `in_development` | `open` or `in_progress` | `development` row `in_progress`, predecessors `done`, successors `ready` |
-| `in_development` | `needs_review` | `development` row `needs_review`, predecessors `done`, successors `ready` |
-| `in_development` | `review_approved` | `development` row `review_approved`, predecessors `done`, successors `ready` (leaf-park; epics scan children) |
-| `holistic_review` | `open` or `in_progress` | `holistic_qa` row `in_progress`, predecessors `done`, successors `ready` |
-| `holistic_review` | `needs_review` | `holistic_qa` row `needs_review`, predecessors `done`, successors `ready` |
-| `holistic_review` | `review_approved` | `holistic_qa` row `review_approved`, predecessors `done`, successors `ready` |
-| `pr` | `open` or `in_progress` | `pr` row `in_progress`, predecessors `done`, `merge.ready` |
-| `pr` | `needs_review` | `pr` row `needs_review` with `pr_url` populated, predecessors `done`, `merge.ready` |
-| `pr` | `review_approved` | `pr` row `review_approved`, predecessors `done`, `merge.ready` |
+| `in_development` | `needs_review` | `development` row `done`, `code_review_qa` `in_progress`, predecessors `done`, successors `ready` |
+| `in_development` | `review_approved` | `development` and `code_review_qa` `done`, successors `ready` (leaf-park; epics scan children) |
+| `holistic_review` | any non-terminal | `holistic_qa` row `in_progress`, predecessors `done`, successors `ready` |
+| `holistic_review` | `review_approved` | `holistic_qa` row `done`, successors `ready` |
+| `pr` | `open` | `pr` row `in_progress`, predecessors `done`, `merge` `ready` |
+| `pr` | `needs_review` | `pr` row `in_progress` with `pr_url` populated, predecessors `done`, `merge` `ready` |
 | `merging` | any non-terminal | `merge` row `in_progress`, predecessors `done` |
 | `merged` | `closed` | All rows `done` |
 
@@ -755,18 +657,16 @@ Mapping table (`(lifecycle, status)` → manifest result; gaps from the discarde
 
 Pre-migration audit: emit a `(lifecycle, status, count)` census to `src/gobby/storage/migrations.py` log output. If the census includes a `(lifecycle, status)` tuple not in the mapping table, fail the migration with a clear message — this forces the operator (or the implementing agent) to extend the table rather than silently produce wrong rows.
 
-`task_type` defaults at migration time. Six task type values are seeded across five distinct manifests; `chore` and `task` share the leaves-only manifest. None of the seeded manifests reference the dropped review stages (`adversarial_review`, `expansion_qa`, `code_review_qa`); review is now state on the work stage.
+`task_type` defaults at migration time. Six task type values are seeded across five distinct manifests; `chore` and `task` share the leaves-only manifest.
 
 | task_type | manifest |
 |-----------|----------|
-| `epic` | `[ideation, research, architecture, prd, planning, test_arch, expansion, development, holistic_qa, pr, merge]` (full 11-stage pipeline) |
-| `feature` | `[planning, test_arch, expansion, development, pr, merge]` |
-| `bug` | `[development, pr, merge]` |
-| `refactor` | `[planning, development, pr, merge]` |
+| `epic` | full 14-stage pipeline |
+| `feature` | `[planning, adversarial_review, test_arch, expansion, expansion_qa, development, code_review_qa, holistic_qa, pr, merge]` |
+| `bug` | `[development, code_review_qa, pr, merge]` |
+| `refactor` | `[planning, development, code_review_qa, pr, merge]` |
 | `chore` | `[development, pr, merge]` |
 | `task` | `[development, pr, merge]` |
-
-`holistic_qa` is **epic-level only** — it appears only in `epic`'s manifest. Leaf manifests omit it; the dispatcher's `all_leaves_holistic_rule` (Phase 3.1) advances the epic's `holistic_qa.ready → in_progress` once every direct child is parked.
 
 These six defaults are seeded inline by migration 233 (Phase 1.1, in the same transaction as the schema creation — see F1 fix). Migration 234 reads them when resolving per-task manifests during the backfill; it does NOT re-write them. Phase 5.1 (migration 235) adds the four new task types (`simple_fix`, `research_spike`, `architecture_doc`, `prd_doc`) to the same `task_type_default_stages` table.
 
@@ -793,7 +693,7 @@ The inner `EXISTS` clause guards against tasks with no manifest rows (defensive 
 - 2.2.1 — Migration version 234 in `MIGRATIONS` performs the backfill in a single transaction. file: `src/gobby/storage/migrations.py`. symbol: `gobby.storage.migrations.MIGRATIONS` (entry 234).
 - 2.2.2 — Every observed `(lifecycle, status)` tuple in a fixture DB produces rows matching the mapping table. test: `tests/storage/test_migration_234_backfill.py::test_mapping_exhaustive`.
 - 2.2.3 — Unmapped `(lifecycle, status)` tuples cause migration failure with a message naming the offending tuple. test: `tests/storage/test_migration_234_backfill.py::test_unmapped_tuple_fails_loudly`.
-- 2.2.4 — `work_attempt_count` populated from `planning-round:N` and `qa-attempts:N` labels (numeric suffix); `review_round_count` populated as 0 (no legacy column tracks it). Per-stage caps migrated from `task_artifacts.max_planning_rounds → planning.max_review_rounds`, `task_artifacts.max_qa_rounds → development.max_review_rounds`, `task_artifacts.max_merge_attempts → merge.max_work_attempts`. test: `tests/storage/test_migration_234_backfill.py::test_work_attempt_count_from_labels`, `tests/storage/test_migration_234_backfill.py::test_review_round_count_starts_zero`, `tests/storage/test_migration_234_backfill.py::test_per_stage_caps_migrated_from_artifacts`.
+- 2.2.4 — `attempt_count` populated from `planning-round:N` and `qa-attempts:N` labels. test: `tests/storage/test_migration_234_backfill.py::test_attempt_count_from_labels`.
 - 2.2.5 — Migration 234 reads the six `task_type_default_stages` bundles seeded inline by migration 233 (Phase 1.1 acceptance 1.1.7) when resolving per-task manifests; it does not re-seed the defaults. Both fresh-DB and upgrading-DB paths produce identical resolved manifests for the same `(task_type, labels)` input. test: `tests/storage/test_migration_234_backfill.py::test_uses_233_seeded_defaults`.
 - 2.2.6 — `stage-:<name>` labels removed from every task post-backfill. test: `tests/storage/test_migration_234_backfill.py::test_skip_labels_dropped`.
 - 2.2.7 — `tasks.is_escalated` backfilled from `escalated_at IS NOT NULL` in migration 234; rows with `status='escalated'` map to `is_escalated=1`, all other rows to 0. test: `tests/storage/test_migration_234_backfill.py::test_is_escalated_backfilled`.
@@ -803,32 +703,27 @@ Per-row mapping coverage (one acceptance per `(lifecycle, status)` mapping table
 - 2.2.8 — Mapping `(open, open)`: every manifest row `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_open_open`.
 - 2.2.9 — Mapping `(open, any-other)`: every manifest row `ready`; `status`-driven overrides handled by subsequent rows. test: `tests/storage/test_migration_234_backfill.py::test_map_open_other`.
 - 2.2.10 — Mapping `(plan_review, open|in_progress)`: `planning` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_plan_review_open`.
-- 2.2.11 — Mapping `(plan_review, needs_review)`: `planning` `needs_review`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_plan_review_needs_review`.
-- 2.2.12 — Mapping `(plan_review, review_approved)`: `planning` `review_approved`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_plan_review_approved`.
-- 2.2.13 — Mapping `(test_arch, open|in_progress)`: `test_arch` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_test_arch_open`.
-- 2.2.13a — Mapping `(test_arch, needs_review)`: `test_arch` `in_progress` (test_arch.review_policy=none collapses `needs_review` to `in_progress`). test: `tests/storage/test_migration_234_backfill.py::test_map_test_arch_needs_review_collapses_to_in_progress`.
-- 2.2.13b — Mapping `(test_arch, review_approved)`: `test_arch` `done` (test_arch.review_policy=none collapses `review_approved` to `done`). test: `tests/storage/test_migration_234_backfill.py::test_map_test_arch_review_approved_collapses_to_done`.
+- 2.2.11 — Mapping `(plan_review, needs_review)`: `planning` `done`, `adversarial_review` `in_progress`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_plan_review_needs_review`.
+- 2.2.12 — Mapping `(plan_review, review_approved)`: `planning` and `adversarial_review` `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_plan_review_approved`.
+- 2.2.13 — Mapping `(test_arch, any)`: `test_arch` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_test_arch_any`.
 - 2.2.14 — Mapping `(expanding, open|in_progress)`: `expansion` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_expanding_open`.
-- 2.2.15 — Mapping `(expanding, needs_review)`: `expansion` `needs_review`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_expanding_needs_review`.
-- 2.2.15a — Mapping `(expanding, review_approved)`: `expansion` `review_approved`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_expanding_review_approved`.
+- 2.2.15 — Mapping `(expanding, needs_review)`: `expansion` `done`, `expansion_qa` `in_progress`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_expanding_needs_review`.
 - 2.2.16 — Mapping `(in_development, open|in_progress)`: `development` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_in_development_open`.
-- 2.2.17 — Mapping `(in_development, needs_review)`: `development` `needs_review`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_in_development_needs_review`.
-- 2.2.18 — Mapping `(in_development, review_approved)`: `development` `review_approved`, predecessors `done`, successors `ready` (leaf-park; epics scan children). test: `tests/storage/test_migration_234_backfill.py::test_map_in_development_approved`.
-- 2.2.19 — Mapping `(holistic_review, open|in_progress)`: `holistic_qa` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_holistic_review_open`.
-- 2.2.19a — Mapping `(holistic_review, needs_review)`: `holistic_qa` `needs_review`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_holistic_review_needs_review`.
-- 2.2.20 — Mapping `(holistic_review, review_approved)`: `holistic_qa` `review_approved`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_holistic_review_approved`.
-- 2.2.21 — Mapping `(pr, open|in_progress)`: `pr` `in_progress`, predecessors `done`, `merge.ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_pr_open`.
-- 2.2.22 — Mapping `(pr, needs_review)`: `pr` `needs_review` with `pr_url` populated, predecessors `done`, `merge.ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_pr_needs_review`.
-- 2.2.22a — Mapping `(pr, review_approved)`: `pr` `review_approved`, predecessors `done`, `merge.ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_pr_review_approved`.
+- 2.2.17 — Mapping `(in_development, needs_review)`: `development` `done`, `code_review_qa` `in_progress`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_in_development_needs_review`.
+- 2.2.18 — Mapping `(in_development, review_approved)`: `development` and `code_review_qa` `done`, successors `ready` (leaf-park; epics scan children). test: `tests/storage/test_migration_234_backfill.py::test_map_in_development_approved`.
+- 2.2.19 — Mapping `(holistic_review, any-non-terminal)`: `holistic_qa` `in_progress`, predecessors `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_holistic_review_open`.
+- 2.2.20 — Mapping `(holistic_review, review_approved)`: `holistic_qa` `done`, successors `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_holistic_review_approved`.
+- 2.2.21 — Mapping `(pr, open)`: `pr` `in_progress`, predecessors `done`, `merge` `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_pr_open`.
+- 2.2.22 — Mapping `(pr, needs_review)`: `pr` `in_progress` with `pr_url` populated, predecessors `done`, `merge` `ready`. test: `tests/storage/test_migration_234_backfill.py::test_map_pr_needs_review`.
 - 2.2.23 — Mapping `(merging, any-non-terminal)`: `merge` `in_progress`, predecessors `done`. test: `tests/storage/test_migration_234_backfill.py::test_map_merging`.
 - 2.2.24 — Mapping `(merged, closed)`: every manifest row `done`. test: `tests/storage/test_migration_234_backfill.py::test_map_merged_closed`.
 
 Per-task-type default-manifest coverage (one acceptance per data row of the task-type defaults table, per the plan-coverage contract's table-row decomposition rule; these are the manifest bundles seeded by migration 233 inline per F1, validated by 234's resolution path):
 
-- 2.2.25 — Default manifest for `epic`: 11-stage pipeline `[ideation, research, architecture, prd, planning, test_arch, expansion, development, holistic_qa, pr, merge]`. `holistic_qa` is present in `epic` only; no leaf manifest contains it. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_epic`.
-- 2.2.26 — Default manifest for `feature`: `[planning, test_arch, expansion, development, pr, merge]`. None of the dropped review stages (`adversarial_review`, `expansion_qa`, `code_review_qa`) appear; review is encoded as state on the work stages. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_feature`.
-- 2.2.27 — Default manifest for `bug`: `[development, pr, merge]`. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_bug`.
-- 2.2.28 — Default manifest for `refactor`: `[planning, development, pr, merge]`. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_refactor`.
+- 2.2.25 — Default manifest for `epic`: full 14-stage pipeline (every registry stage in `position_hint` order). test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_epic`.
+- 2.2.26 — Default manifest for `feature`: `[planning, adversarial_review, test_arch, expansion, expansion_qa, development, code_review_qa, holistic_qa, pr, merge]`. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_feature`.
+- 2.2.27 — Default manifest for `bug`: `[development, code_review_qa, pr, merge]`. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_bug`.
+- 2.2.28 — Default manifest for `refactor`: `[planning, development, code_review_qa, pr, merge]`. test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_refactor`.
 - 2.2.29 — Default manifest for `chore`: `[development, pr, merge]` (leaves-only manifest shared with `task`). test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_chore`.
 - 2.2.30 — Default manifest for `task`: `[development, pr, merge]` (leaves-only manifest shared with `chore`). test: `tests/storage/test_migration_234_backfill.py::test_default_manifest_task`.
 - 2.2.31 — Backfill close-pass: any task whose post-backfill manifest is all-`done` AND `closed_at IS NULL` is closed in the same migration-234 transaction with `SET closed_at = datetime('now')`, `closed_in_session_id = 'migration:234'`. The SQL filter is `WHERE closed_at IS NULL` (canonical closure predicate; no `is_closed` column exists). After migration 234 commits, no task in the database satisfies `current_stage IS NULL AND closed_at IS NULL`. This retroactively enforces §2.1 invariant 8 for pre-epic tasks; the §3.1 `is_child_parked` predicate's `current_stage is None AND NOT child.is_closed` branch becomes unreachable in normal operation post-migration. test: `tests/storage/test_migration_234_backfill.py::test_close_pass_sets_closed_at_for_all_done_open_tasks`, `tests/storage/test_migration_234_backfill.py::test_close_pass_skips_tasks_with_no_manifest_rows`, `tests/storage/test_migration_234_backfill.py::test_close_pass_does_not_overwrite_existing_closed_at`, `tests/storage/test_migration_234_backfill.py::test_no_stranded_open_exhausted_tasks_post_migration`.
@@ -840,19 +735,17 @@ Target: `src/gobby/mcp_proxy/tools/tasks/_stages.py` (new), registered via `_fac
 
 Add eleven new tools. Each tool has its own subsection — implementing agents see only one subsection at a time, so signatures must be repeated where they appear in dependent tools.
 
-The three review-state-axis tools (`mark_task_needs_review`, `mark_task_review_approved`, `mark_task_review_rejected`) are NOT new in this deliverable — they already exist on `gobby-tasks-ops` against the legacy lifecycle/status model. Phase 2.6 rewires them to first-class stage transitions (`submit_for_review`, `approve_review`, `reject_review` storage methods from §2.1) so their behavior under the new model is well-defined before Phase 3 enables manifest-driven dispatch. There are no separate stage-axis MCP tools for these transitions — the existing review tools are the operator/agent-facing surface and Phase 2.6 makes them first-class on the stage manifest.
-
 | Tool | Server | Purpose |
 |------|--------|---------|
 | `get_task_stages(task_id)` | `gobby-tasks` | Return manifest in position order. |
 | `list_stages_registry()` | `gobby-tasks` | Return all registry entries. |
 | `get_task_type_defaults(task_type)` | `gobby-tasks` | Return the default manifest for a task type. |
-| `start_stage(task_id, stage_name, notes?)` | `gobby-tasks-ops` | Transition `ready → in_progress`. Increments `work_attempt_count`. |
-| `complete_stage(task_id, stage_name, commit_sha?, artifact_updates?, validation_override_reason?)` | `gobby-tasks-ops` | Transition to `done` per the row's `review_policy`: direct from `in_progress` for `policy ∈ {none, optional}`; from `review_approved` for `policy ∈ {required, optional}`; direct from `in_progress` on `policy=required` is REJECTED unless `validation_override_reason` is supplied. |
-| `fail_stage(task_id, stage_name, reason, needs_human?)` | `gobby-tasks-ops` | Transition current state → `ready` (no counter change), OR escalate when `work_attempt_count >= effective_max_work_attempts`. |
-| `add_stage(task_id, stage_name, position)` | `gobby-tasks-ops` | Insert a row mid-manifest; mirrors `review_policy` + `reviewer_agent` from registry at insert. |
+| `start_stage(task_id, stage_name, notes?)` | `gobby-tasks-ops` | Transition `ready → in_progress`. |
+| `complete_stage(task_id, stage_name, commit_sha?, artifact_updates?)` | `gobby-tasks-ops` | Transition `in_progress → done`. |
+| `fail_stage(task_id, stage_name, reason, needs_human?)` | `gobby-tasks-ops` | Transition `in_progress → ready` (no attempt-count change), OR escalate when `attempt_count >= cap`. |
+| `add_stage(task_id, stage_name, position)` | `gobby-tasks-ops` | Insert a row mid-manifest. |
 | `remove_stage(task_id, stage_name)` | `gobby-tasks-ops` | Delete a row from manifest. |
-| `record_pr_verdict(task_id, verdict, findings, report_ref?)` | `gobby-tasks-ops` | Store `structured_pr_verdict` + `pr_review_report` on task_artifacts; maps `approved → approve_review` (`needs_review → review_approved`), `rejected/needs_changes → reject_review` (`needs_review → ready`, increments `review_round_count`). |
+| `record_pr_verdict(task_id, verdict, findings, report_ref?)` | `gobby-tasks-ops` | Store `structured_pr_verdict` + `pr_review_report` on task_artifacts; advances `pr` stage state per verdict. |
 | `record_pr_opened(task_id, pr_url, github_pr_number?)` | `gobby-tasks-ops` | Persist `pr_url` and `github_pr_number` artifacts; does not change `pr` stage state. Idempotent: re-recording the same `pr_url` is a no-op. |
 | `record_merge_result(task_id, merge_sha?, report_ref?, failure_reason?)` | `gobby-tasks-ops` | Persist merge outcome and advance/fail merge stage. Phase 2.3 registers the tool with stub semantics (delegates to a NotImplementedError until 4.2 wires the success/failure paths and cascade-close); 4.2 fills the body. |
 
@@ -901,11 +794,11 @@ Block legacy lifecycle merge tools (`mark_task_pr_opened`, `mark_task_merged`, `
 Per-tool registration coverage (one acceptance per data row of the §2.3 tool table, per the plan-coverage contract's table-row decomposition rule):
 
 - 2.3.7 — `get_task_stages(task_id)` on `gobby-tasks` returns the manifest in position order; output schema declares `stages: list[StageStateView]`. test: `tests/mcp_proxy/tools/tasks/test_get_task_stages.py::test_returns_position_order`.
-- 2.3.8 — `list_stages_registry()` on `gobby-tasks` returns all 11 registry entries (each carrying `review_policy` and `reviewer_agent`); output schema declares `entries: list[StageRegistryEntry]`. The dropped stages (`adversarial_review`, `expansion_qa`, `code_review_qa`) are not present. test: `tests/mcp_proxy/tools/tasks/test_list_stages_registry.py::test_returns_all_11`, `tests/mcp_proxy/tools/tasks/test_list_stages_registry.py::test_omits_dropped_review_stages`.
+- 2.3.8 — `list_stages_registry()` on `gobby-tasks` returns all 14 registry entries; output schema declares `entries: list[StageRegistryEntry]`. test: `tests/mcp_proxy/tools/tasks/test_list_stages_registry.py::test_returns_all_14`.
 - 2.3.9 — `get_task_type_defaults(task_type)` on `gobby-tasks` returns the default manifest for a known type; errors for an unknown type. test: `tests/mcp_proxy/tools/tasks/test_get_task_type_defaults.py::test_known_and_unknown_types`.
-- 2.3.10 — `start_stage(task_id, stage_name, notes?)` on `gobby-tasks-ops` transitions `ready → in_progress`; increments `work_attempt_count`; emits a `task_lifecycle_events` row. test: `tests/mcp_proxy/tools/tasks/test_start_stage.py::test_transitions_ready_to_in_progress`, `tests/mcp_proxy/tools/tasks/test_start_stage.py::test_increments_work_attempt_count`.
-- 2.3.11 — `complete_stage(task_id, stage_name, commit_sha?, artifact_updates?, validation_override_reason?)` on `gobby-tasks-ops` transitions to `done` per the row's `review_policy`: direct from `in_progress` for `policy ∈ {none, optional}`; from `review_approved` for `policy ∈ {required, optional}`; direct from `in_progress` on `policy=required` raises `IllegalStageTransitionError` unless `validation_override_reason` is supplied. Persists `commit_sha` and merges `artifact_updates`. test: `tests/mcp_proxy/tools/tasks/test_complete_stage.py::test_policy_none_direct_complete`, `tests/mcp_proxy/tools/tasks/test_complete_stage.py::test_policy_required_complete_from_review_approved`, `tests/mcp_proxy/tools/tasks/test_complete_stage.py::test_policy_required_direct_complete_rejected`, `tests/mcp_proxy/tools/tasks/test_complete_stage.py::test_validation_override_allows_direct_complete_on_required`.
-- 2.3.12 — `fail_stage(task_id, stage_name, reason, needs_human?)` on `gobby-tasks-ops` transitions current state → `ready` with no counter change when `work_attempt_count < effective_max_work_attempts`; escalates with `reason=f'<stage>:max'` when `work_attempt_count >= effective_max_work_attempts` per acceptance 2.1.7. test: `tests/mcp_proxy/tools/tasks/test_fail_stage.py::test_under_cap_returns_to_ready`, `tests/mcp_proxy/tools/tasks/test_fail_stage.py::test_over_cap_escalates`.
+- 2.3.10 — `start_stage(task_id, stage_name, notes?)` on `gobby-tasks-ops` transitions `ready → in_progress`; increments `attempt_count`; emits a `task_lifecycle_events` row. test: `tests/mcp_proxy/tools/tasks/test_start_stage.py::test_transitions_ready_to_in_progress`.
+- 2.3.11 — `complete_stage(task_id, stage_name, commit_sha?, artifact_updates?)` on `gobby-tasks-ops` transitions `in_progress → done`; persists `commit_sha` and merges `artifact_updates`. test: `tests/mcp_proxy/tools/tasks/test_complete_stage.py::test_transitions_to_done_with_artifacts`.
+- 2.3.12 — `fail_stage(task_id, stage_name, reason, needs_human?)` on `gobby-tasks-ops` transitions `in_progress → ready` (no `attempt_count` change) when `attempt_count < cap`; escalates when `attempt_count >= cap` per acceptance 2.1.7. test: `tests/mcp_proxy/tools/tasks/test_fail_stage.py::test_under_cap_returns_to_ready`, `tests/mcp_proxy/tools/tasks/test_fail_stage.py::test_over_cap_escalates`.
 - 2.3.13 — `add_stage(task_id, stage_name, position)` on `gobby-tasks-ops` inserts a row mid-manifest; reorders affected positions to remain dense. test: `tests/mcp_proxy/tools/tasks/test_add_stage.py::test_insert_mid_manifest_reorders`.
 - 2.3.14 — `remove_stage(task_id, stage_name)` on `gobby-tasks-ops` deletes a row; reorders positions to remain dense (1..N). test: `tests/mcp_proxy/tools/tasks/test_remove_stage.py::test_remove_reorders_dense`.
 - 2.3.15 — `record_pr_verdict(task_id, verdict, findings, report_ref?)` on `gobby-tasks-ops` writes `structured_pr_verdict` (JSON) and `pr_review_report`; advances `pr` stage state per verdict (approved→complete, rejected/needs_changes→fail per §2.1 contract). test: `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_verdict_paths`.
@@ -952,17 +845,16 @@ async def list_tasks(
 
 ```python
 class StagePatchRequest(BaseModel):
-    action: Literal["start", "submit_for_review", "approve_review", "reject_review", "complete", "fail", "add", "remove"]
+    action: Literal["start", "complete", "fail", "add", "remove"]
     notes: str | None = None
-    reason: str | None = None  # required for action='fail' or 'reject_review'
+    reason: str | None = None  # required for action='fail'
     needs_human: bool = False
     commit_sha: str | None = None
     artifact_updates: dict[str, str] | None = None
-    validation_override_reason: str | None = None  # required for direct in_progress→done on policy=required rows
     position: int | None = None  # required for action='add'
 ```
 
-The list endpoint's `stage` and `stage_state` filters JOIN `tasks` to `task_stage_states` and filter `WHERE task_stage_states.stage_name = :stage [AND task_stage_states.state = :stage_state]`; `stage_state` accepts any of the 5 values. The response gains an optional `stages` field per task containing the denormalized manifest with `review_policy`, `reviewer_agent`, `work_attempt_count`, `review_round_count` per row (a single SQL query that LEFT JOINs and groups; no N+1). PATCH actions map: `start → start_stage`, `submit_for_review → submit_for_review`, `approve_review → approve_review`, `reject_review → reject_review`, `complete → complete_stage`, `fail → fail_stage`. Each action raises `IllegalStageTransitionError` on policy/state violations; the route maps the typed error to a 422 response with the `(stage_name, current_state, attempted_transition, review_policy)` payload.
+The list endpoint's `stage` and `stage_state` filters JOIN `tasks` to `task_stage_states` and filter `WHERE task_stage_states.stage_name = :stage [AND task_stage_states.state = :stage_state]`. The response gains an optional `stages` field per task containing the denormalized manifest (a single SQL query that LEFT JOINs and groups; no N+1).
 
 `TaskListResponse.tasks[i].stages: list[StageStateView]` is added; existing fields stay backward compatible. Existing `?status=...` and `?lifecycle=...` params remain functional through Phase 5 (they're consumed by the legacy projection helpers); Phase 5 removes them.
 
@@ -970,8 +862,7 @@ The list endpoint's `stage` and `stage_state` filters JOIN `tasks` to `task_stag
 
 - 2.4.1 — Five new endpoints registered with declared paths, methods, and schemas. file: `src/gobby/servers/routes/stages.py`, `src/gobby/servers/routes/tasks.py`. test: `tests/servers/routes/test_stage_routes.py::test_routes_registered`.
 - 2.4.2 — `PATCH /api/tasks/{id}/stages/{name}` action='start' moves the row to `in_progress`. test: `tests/servers/routes/test_stage_routes.py::test_patch_start_stage`.
-- 2.4.3 — `GET /api/tasks?stage=development&stage_state=in_progress` returns only tasks with that exact `(stage_name, state)` row; `stage_state` accepts any of the 5 enum values (`ready`, `in_progress`, `needs_review`, `review_approved`, `done`). test: `tests/servers/routes/test_stage_routes.py::test_list_filter_by_stage_state`, parameterized over the 5 state values in `tests/servers/routes/test_stage_routes.py::test_list_filter_5_state_values`.
-- 2.4.6 — PATCH `/api/tasks/{id}/stages/{name}` returns 422 with the typed `IllegalStageTransitionError` payload when an action violates the row's `review_policy` (e.g., `submit_for_review` on `policy=none`, `approve_review` from a non-`needs_review` state, `complete` direct on `policy=required` without `validation_override_reason`). The 422 body carries `{"error": "illegal_stage_transition", "stage_name": ..., "current_state": ..., "attempted_transition": ..., "review_policy": ...}`. test: `tests/servers/routes/test_stage_routes.py::test_patch_illegal_transition_returns_422_with_payload`, parameterized over the legality matrix.
+- 2.4.3 — `GET /api/tasks?stage=development&stage_state=in_progress` returns only tasks with that exact `(stage_name, state)` row. test: `tests/servers/routes/test_stage_routes.py::test_list_filter_by_stage_state`.
 - 2.4.4 — Denormalized `stages` field returned on each task in the list response when stage filters are active or when an explicit `?include_stages=1` flag is set. test: `tests/servers/routes/test_stage_routes.py::test_list_includes_denormalized_manifest`.
 - 2.4.5 — `task_event` WebSocket events fire on every stage state transition. behavior: "broadcaster emits stage_changed event" verified in `tests/servers/websocket/test_stage_broadcast.py::test_stage_transition_broadcasts`.
 
@@ -984,76 +875,66 @@ Add new `gobby tasks` subcommands and extend `gobby build` and `gobby tasks list
 
 ```text
 gobby tasks stages <task_ref>                    # render manifest table
-gobby tasks advance <task_ref> [--stage <name>]  # complete current stage per policy; auto-start next
-gobby tasks review <task_ref> --submit | --approve | --reject [--reason <text>]
-                                                  # stage-axis review transitions (calls submit_for_review/approve_review/reject_review)
+gobby tasks advance <task_ref> [--stage <name>]  # complete current stage; auto-start next
 gobby tasks list --stage <name> [--state <state>]
 gobby build <ref> --stages <a,b,c>               # explicit manifest
 gobby build <ref> --add-stage <name>[@<position>]
 gobby build <ref> --skip-stage <name>            # opt-out of a default-manifest stage
-gobby build <ref> --stage <name>:max_review_rounds=N
-                                                  # per-stage cap override (also: max_work_attempts=N)
 ```
 
-`gobby tasks list` currently has `--status` and `--lifecycle` options (`src/gobby/cli/tasks/crud.py`). Add `--stage` and `--state` flags (`--state` accepts any of the 5 values); they call the new HTTP endpoint with the new filter params. Keep `--status` and `--lifecycle` working through Phase 5; Phase 6 removes them.
+`gobby tasks list` currently has `--status` and `--lifecycle` options (`src/gobby/cli/tasks/crud.py`). Add `--stage` and `--state` flags; they call the new HTTP endpoint with the new filter params. Keep `--status` and `--lifecycle` working through Phase 5; Phase 6 removes them.
 
-`gobby tasks advance`: if `--stage` is omitted, advance the current stage; if specified, validate it equals the current stage's name (else error). The advance respects the row's `review_policy`: `policy=none|optional` advances `in_progress → done` directly; `policy=required` advances `review_approved → done` (and errors with the `IllegalStageTransitionError` payload if the row is at `in_progress`, suggesting `gobby tasks review --submit` first). On success, automatically advance the next manifest row to `in_progress` if it's eligible (no human gate, no agent missing). This is the CLI counterpart of Phase 3's dispatcher behavior.
+`gobby tasks advance`: if `--stage` is omitted, advance the current stage; if specified, validate it equals the current stage's name (else error). On success, automatically advance the next manifest row to `in_progress` if it's eligible (no human gate, no agent missing). This is the CLI counterpart of Phase 3's dispatcher behavior.
 
-`gobby tasks review`: stage-axis review transitions for operators. `--submit` calls `submit_for_review` (`in_progress → needs_review`); `--approve` calls `approve_review` (`needs_review → review_approved`); `--reject --reason "..."` calls `reject_review` (`needs_review → ready`, increments `review_round_count`). All three error with the `IllegalStageTransitionError` payload on policy/state violations. The CLI translates the typed error to a non-zero exit code with a clear stderr message naming the constraint.
-
-`gobby build` flag resolution order: `--stages` (explicit list, replaces default); else type defaults + `--add-stage` insertions + `--skip-stage` removals + per-stage cap overrides via `--stage <name>:max_review_rounds=N` / `--stage <name>:max_work_attempts=N` (mirrored onto the manifest row at init time, overriding the registry default). Profiles (`quick`, `full`, `full-yolo`) become named bundles of `--skip-stage` arguments resolved at build time.
+`gobby build` flag resolution order: `--stages` (explicit list, replaces default); else type defaults + `--add-stage` insertions + `--skip-stage` removals. Profiles (`quick`, `full`, `full-yolo`) become named bundles of `--skip-stage` arguments resolved at build time.
 
 CLI output for `gobby tasks stages`:
 
 ```text
 $ gobby tasks stages #13482
 #13482  Lifecycle + status enum alignment for kanban visibility
-Stage         State            Policy    Work  Review  Updated
-────────────  ───────────────  ────────  ────  ──────  ──────────
-planning      done             required  3     2       2026-04-30
-test_arch     done             none      1     —       2026-04-30
-expansion     review_approved  required  1     0       2026-04-30
-development   in_progress      required  2     0       2026-04-30
+Stage              State        Attempts  Updated
+─────────────────  ───────────  ────────  ──────────
+planning           done         3         2026-04-30
+adversarial_review done         2         2026-04-30
+expansion          in_progress  1         2026-04-30
 …
 ```
 
 **Acceptance:**
 
-- 2.5.1 — `gobby tasks stages` Click command renders the manifest table sorted by position; columns include stage name, state, review_policy, work_attempts, review_rounds, updated_at. file: `src/gobby/cli/tasks/crud.py`. test: `tests/cli/test_tasks_stages_command.py::test_renders_manifest_with_policy_columns`.
-- 2.5.2 — `gobby tasks advance` advances the current stage per its `review_policy` and auto-starts the next when eligible. On `policy=required` rows at `in_progress`, the command errors with a clear stderr message suggesting `gobby tasks review --submit` first. test: `tests/cli/test_tasks_advance_command.py::test_auto_advance_next_stage_policy_none`, `tests/cli/test_tasks_advance_command.py::test_advance_required_policy_from_review_approved`, `tests/cli/test_tasks_advance_command.py::test_advance_required_from_in_progress_errors`.
-- 2.5.2a — `gobby tasks review --submit | --approve | --reject` calls the corresponding stage-axis transitions; `--reject` requires `--reason`. Errors from `IllegalStageTransitionError` are translated to non-zero exit with stderr naming the constraint. test: `tests/cli/test_tasks_review_command.py::test_submit_advances_to_needs_review`, `tests/cli/test_tasks_review_command.py::test_approve_advances_to_review_approved`, `tests/cli/test_tasks_review_command.py::test_reject_returns_to_ready_increments_review_rounds`, `tests/cli/test_tasks_review_command.py::test_reject_requires_reason`, `tests/cli/test_tasks_review_command.py::test_review_on_policy_none_errors_with_payload`.
-- 2.5.3 — `gobby tasks list --stage development --state in_progress` filters to that exact `(stage_name, state)` row; `--state` accepts any of the 5 values. test: `tests/cli/test_tasks_list_stage_filter.py::test_stage_state_filter`, parameterized over the 5 state values.
-- 2.5.4 — `gobby build <ref> --stages a,b,c` writes exactly that manifest; `--add-stage` inserts at requested position; `--skip-stage` omits a default stage; `--stage <name>:max_review_rounds=N` / `--stage <name>:max_work_attempts=N` mirror the per-stage caps onto the manifest row at init time. test: `tests/cli/test_build_stage_flags.py::test_build_flag_resolution`, `tests/cli/test_build_stage_flags.py::test_per_stage_cap_overrides_persisted_on_state_row`.
+- 2.5.1 — `gobby tasks stages` Click command renders the manifest table sorted by position. file: `src/gobby/cli/tasks/crud.py`. test: `tests/cli/test_tasks_stages_command.py::test_renders_manifest`.
+- 2.5.2 — `gobby tasks advance` advances the current stage and auto-starts the next when eligible. test: `tests/cli/test_tasks_advance_command.py::test_auto_advance_next_stage`.
+- 2.5.3 — `gobby tasks list --stage development --state in_progress` filters to that exact `(stage_name, state)` row. test: `tests/cli/test_tasks_list_stage_filter.py::test_stage_state_filter`.
+- 2.5.4 — `gobby build <ref> --stages a,b,c` writes exactly that manifest; `--add-stage` inserts at requested position; `--skip-stage` omits a default stage. test: `tests/cli/test_build_stage_flags.py::test_build_flag_resolution`.
 
-### 2.6 Rewire `mark_task_review_*` tools to first-class stage-axis transitions [category: code] (depends: 2.1, 2.3)
+### 2.6 Rewire `mark_task_review_*` tools to stage-native semantics [category: code] (depends: 2.1, 2.3)
 `kind: deliverable`
 
 Target: `src/gobby/storage/tasks/_transitions.py`, `src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py`
 
-The agent-facing review tools (`mark_task_review_approved`, `mark_task_review_rejected`, `mark_task_needs_review`) must be cut over to stage-native semantics BEFORE Phase 3 enables the manifest dispatcher. Existing planner, plan-adversary, expansion-qa, qa-reviewer, and holistic-reviewer agents call these tools today; if Phase 3 swaps the dispatcher to read `task_stage_states` while these tools still write `status='review_approved'` / `'needs_review'` / `'rejected'`, the dispatcher and those agents drift apart for one or more heartbeats and the planning / expansion / development / holistic_qa stage chain stalls.
+The agent-facing review tools (`mark_task_review_approved`, `mark_task_review_rejected`, `mark_task_needs_review`) must be cut over to stage-native semantics BEFORE Phase 3 enables the manifest dispatcher. Existing planner, plan-adversary, expansion-qa, qa-reviewer, and holistic-reviewer agents call these tools today; if Phase 3 swaps the dispatcher to read `task_stage_states` while these tools still write `status='review_approved'` / `'needs_review'` / `'rejected'`, the dispatcher and those agents drift apart for one or more heartbeats and the test_arch / expansion / development / code_review_qa / holistic_qa stage chain stalls.
 
-**The rewired tools are first-class stage-axis transitions, NOT compositions of `complete_stage` / `fail_stage`.** This is the load-bearing architectural distinction in the contract pivot: under the discarded tri-state contract, "approved" collapsed to "complete the review stage and advance," losing the semantic distinction between "submitted for review" and "review passed before merge." The new 5-state-per-stage model preserves that distinction by representing review-state on the SAME row as the work, with `submit_for_review` / `approve_review` / `reject_review` as separate transition methods that respect the row's `review_policy`.
+Cutover preserves the agent-facing API (tool names, signatures, return shapes unchanged) but routes implementation through `complete_stage` / `fail_stage` on the current stage:
 
-Cutover preserves the agent-facing API (tool names, signatures, return shapes unchanged) but routes implementation through the per-row stage-axis transitions:
-
-- `mark_task_needs_review(task_id, ...)` → resolves `current_stage(task_id)`, calls `StageStatesManager.submit_for_review(task_id, current_stage.name, by_session_id=..., notes=...)`. Transition: `in_progress → needs_review` on the SAME row (no advance to next stage). Raises `IllegalStageTransitionError` when `current_stage.review_policy == 'none'` (e.g., `test_arch.policy=none` — the test-architect agent must call `complete_stage` directly under the new contract; see Phase 5.5 audit). Raises a typed `NoCurrentStageError` if the manifest is exhausted.
-- `mark_task_review_approved(task_id, ...)` → resolves `current_stage`, calls `StageStatesManager.approve_review(task_id, current_stage.name, by_session_id=..., notes=...)`. Transition: `needs_review → review_approved` on the SAME row. `review_approved` is a DURABLE holding state — the tool does NOT advance to the next stage; the dispatcher's `<stage>_advance_rule` (Phase 3.1) handles the `review_approved → done` advance in a separate transition. Raises `IllegalStageTransitionError` when `policy='none'` or current state is not `needs_review`.
-- `mark_task_review_rejected(task_id, reason, ...)` → resolves `current_stage`, calls `StageStatesManager.reject_review(task_id, current_stage.name, reason=reason, by_session_id=...)`. Transition: `needs_review → ready` on the SAME row. Increments `review_round_count` (NOT `work_attempt_count` — the work product is being asked to be re-done, not the work loop reset). When `review_round_count >= effective_max_review_rounds`, the storage method escalates the task instead of returning to `ready` (cap path documented on §2.1's `reject_review`). Raises `IllegalStageTransitionError` when `policy='none'` or current state is not `needs_review`.
+- `mark_task_review_approved(task_id, ...)` → resolves `current_stage(task_id)`, calls `StageStatesManager.complete_stage(task_id, current_stage.name, by_session_id=..., commit_sha=..., artifact_updates=...)`. Errors cleanly if `current_stage` is `None` (manifest exhausted) or its state is not `in_progress`.
+- `mark_task_review_rejected(task_id, reason, ...)` → resolves `current_stage`, calls `StageStatesManager.fail_stage(task_id, current_stage.name, reason=reason, needs_human=False, by_session_id=...)`.
+- `mark_task_needs_review(task_id, ...)` → semantics drift here is real and load-bearing: the legacy tool wrote `status='needs_review'` to indicate "this stage is now waiting for review by the next stage's agent." In the manifest model, that is exactly `complete_stage(current_stage)` followed by the next stage's `auto_advance_ready_rule` promotion. So the rewired implementation also calls `complete_stage(current_stage.name)`. Phase 5.3 acceptance 5.3.7's call-site audit confirms no caller relies on the old "stage stays open, status becomes needs_review" shape.
 
 This deliverable is the rewire only; legacy `status` values (`'review_approved'`, `'needs_review'`, `'rejected'`) STOP being written by these tools after this lands. Other writers of those values (if any surface in the call-site audit) are caught and rewired in Phase 5.3 before the column drop.
 
-The `_agent_blocked_mcp_tools` rule that currently gates these tools for spawned agents stays in place — agent visibility is unchanged. The only change is the implementation behind the existing tool surface, and the new error type (`IllegalStageTransitionError`) surfaces clearly when an agent calls a tool against a row whose policy doesn't permit it.
+The `_agent_blocked_mcp_tools` rule that currently gates these tools for spawned agents stays in place — agent visibility is unchanged. The only change is the implementation behind the existing tool surface.
 
-**Scope of §2.6 testing (sequencing):** §2.6 lands BEFORE Phase 3 enables the manifest dispatcher and `auto_advance_ready_rule`. §2.6's tests are unit/contract tests that prove the rewired tools call `submit_for_review`/`approve_review`/`reject_review` correctly (no legacy status writes) — they do NOT exercise the dispatcher heartbeat or auto-advance, because those rules do not exist yet. The end-to-end heartbeat-advance smoke that validates the per-stage rule fan-out (`<stage>_review_rule` spawning the reviewer agent on `needs_review`, `<stage>_advance_rule` advancing `review_approved → done`) lives downstream in `## V1 Verification` where the rules are in place.
+**Scope of §2.6 testing (sequencing per F2 fix):** §2.6 lands BEFORE Phase 3 enables the manifest dispatcher and `auto_advance_ready_rule`. Therefore §2.6's tests are unit/contract tests that prove the rewired tools call `complete_stage`/`fail_stage` correctly (no legacy status writes) — they do NOT exercise the dispatcher heartbeat or auto-advance, because those rules do not exist yet. The end-to-end heartbeat-advance smoke that validates `auto_advance_ready_rule` consuming the rewired tool's effect lives downstream in `## V1 Verification` (and is added to §3.1 acceptance — see 3.1.6 paragraph) where `auto_advance_ready_rule` is in place.
 
 **Acceptance:**
 
-- 2.6.1 — `mark_task_needs_review` rewired to `StageStatesManager.submit_for_review(current_stage.name)`; agent-facing signature and return shape unchanged. The transition is `in_progress → needs_review` on the SAME row (NOT a `complete_stage` advance). Raises `IllegalStageTransitionError` when `current_stage.review_policy == 'none'`. file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_needs_review_submits_for_review_on_same_row`, `tests/storage/tasks/test_review_tools_stage_native.py::test_needs_review_rejected_on_policy_none`.
-- 2.6.2 — `mark_task_review_approved` rewired to `StageStatesManager.approve_review(current_stage.name)`; transition `needs_review → review_approved` on the SAME row. Tool does NOT advance to the next stage; `review_approved` is durable and the dispatcher's `<stage>_advance_rule` handles `review_approved → done` later. Raises `IllegalStageTransitionError` when `policy='none'` or current state is not `needs_review`. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_approved_advances_to_review_approved_on_same_row`, `tests/storage/tasks/test_review_tools_stage_native.py::test_approved_does_not_advance_to_next_stage`, `tests/storage/tasks/test_review_tools_stage_native.py::test_approved_rejected_on_policy_none`.
-- 2.6.3 — `mark_task_review_rejected` rewired to `StageStatesManager.reject_review(current_stage.name, reason=...)`; transition `needs_review → ready` on the SAME row. Increments `review_round_count` (NOT `work_attempt_count`). When `review_round_count >= effective_max_review_rounds`, escalates instead of returning to ready. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_rejected_returns_to_ready_increments_review_rounds`, `tests/storage/tasks/test_review_tools_stage_native.py::test_rejected_does_not_increment_work_attempts`, `tests/storage/tasks/test_review_tools_stage_native.py::test_rejected_over_cap_escalates`.
-- 2.6.4 — Calling any of the three tools when `current_stage` is `None` (manifest exhausted) raises `NoCurrentStageError`; calling against a row whose state doesn't match the method's required source state raises `IllegalStageTransitionError`. No `task_stage_states` mutation occurs on either error path. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_no_current_stage_errors`, `tests/storage/tasks/test_review_tools_stage_native.py::test_wrong_source_state_errors_no_mutation`.
-- 2.6.5 — Unit/contract verification of the rewire (no dispatcher dependency): given a fixture task at `planning.in_progress` (review_policy=required), calling `mark_task_needs_review` invokes `StageStatesManager.submit_for_review('planning', ...)` exactly once and writes no legacy `status` value (`'review_approved'` / `'needs_review'` / `'rejected'` are not written by the rewired tools). At `planning.needs_review`, `mark_task_review_approved` invokes `approve_review('planning', ...)` and produces `planning.review_approved`. At `planning.needs_review`, `mark_task_review_rejected` invokes `reject_review('planning', reason=...)` and produces `planning.ready` with `review_round_count = 1`. Asserted via mutation spy on the storage manager and a SQL probe on the post-call `tasks.status` column. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_needs_review_calls_submit_for_review_no_legacy_writes`, `tests/storage/tasks/test_review_tools_stage_native.py::test_approved_calls_approve_review_no_legacy_writes`, `tests/storage/tasks/test_review_tools_stage_native.py::test_rejected_calls_reject_review_no_legacy_writes`.
-- 2.6.6 — Pre-Phase-3 bundled call-site audit of `mark_task_review_approved`, `mark_task_review_rejected`, and `mark_task_needs_review`. Audit enumerates callers via `grep -rln 'mark_task_review_\(approved\|rejected\)\|mark_task_needs_review' src/gobby/install/shared/` and confirms every caller's stage context satisfies the precondition under the new contract (caller's stage row has `policy ∈ {required, optional}` and current state matches the legal source state). Allowlist of expected callers: `planner.yaml` (writes `planning`), `plan-adversary.yaml` (reviews `planning`), `expansion-qa.yaml` (reviews `expansion`), `qa-reviewer.yaml` (reviews `development`), `holistic-reviewer.yaml` (reviews `holistic_qa`), `requirements-analyst.yaml`, `qa-dev.yaml`, `nightly-linter.yaml`, `nightly-test-fixer.yaml`, `backend-developer.yaml` (writes `development`), `frontend-developer.yaml` (writes `development`), `default.yaml`, `developer.yaml`, plus the bundled SKILL.md instruction surfaces (`automate`, `holistic-review`, `merge-expert`, `plan-draft`, `plan-review`, `plan`, `qa`, `review`, `source-control`, `task-transitions`) and the rule YAMLs. **`test-architect.yaml` is NOT in the allowlist** — under the new contract `test_arch.review_policy=none` so calls to the review tools from this agent are rewritten to `complete_stage` directly (Phase 5.5 audit owns the rewrite; this acceptance only enumerates current callers). The §5.3.7 post-rewire audit re-confirms after the legacy-column drop. test: `tests/storage/tasks/test_review_tools_pre_phase3_audit.py::test_call_sites_match_policy_table`.
+- 2.6.1 — `mark_task_review_approved` rewired to `StageStatesManager.complete_stage(current_stage.name)`; agent-facing signature and return shape unchanged. file: `src/gobby/storage/tasks/_transitions.py`. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_approved_completes_current_stage`.
+- 2.6.2 — `mark_task_review_rejected` rewired to `StageStatesManager.fail_stage(current_stage.name, reason=...)`; rejection writes a `task_lifecycle_events` row and transitions `in_progress → ready` per §2.1's contract. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_rejected_fails_current_stage`.
+- 2.6.3 — `mark_task_needs_review` rewired to `StageStatesManager.complete_stage(current_stage.name)` (legacy "needs_review" semantics map onto "complete current stage and let auto-advance promote the next"). test: `tests/storage/tasks/test_review_tools_stage_native.py::test_needs_review_completes_current_stage`.
+- 2.6.4 — Calling any of the three tools when `current_stage` is `None` or its `state != 'in_progress'` raises a typed error and writes no `task_stage_states` mutation. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_invalid_current_stage_errors`.
+- 2.6.5 — Unit/contract verification of the rewire (no dispatcher dependency): given a fixture task at `adversarial_review.in_progress`, calling `mark_task_review_approved` invokes `StageStatesManager.complete_stage('adversarial_review', ...)` exactly once and writes no legacy `status` value (`'review_approved'` / `'needs_review'` / `'rejected'` are not written by the rewired tools). Same shape verified for `mark_task_review_rejected` calling `fail_stage` and for `mark_task_needs_review` calling `complete_stage`. Asserted via mutation spy on the storage manager and a SQL probe on the post-call `tasks.status` column. test: `tests/storage/tasks/test_review_tools_stage_native.py::test_approved_calls_complete_stage_no_legacy_writes`, `tests/storage/tasks/test_review_tools_stage_native.py::test_rejected_calls_fail_stage_no_legacy_writes`, `tests/storage/tasks/test_review_tools_stage_native.py::test_needs_review_calls_complete_stage_no_legacy_writes`. The corresponding heartbeat-advance smoke that validates Phase 3.1's `auto_advance_ready_rule` consumption of these rewired calls lives at `## V1 Verification` (covered by the dispatcher chain assertion) once `auto_advance_ready_rule` is in place; placing it there avoids a forward dependency from §2.6 to §3.1.
+- 2.6.6 — Pre-Phase-3 bundled call-site audit of `mark_task_review_approved`, `mark_task_review_rejected`, and `mark_task_needs_review`. Audit enumerates callers via `grep -rln 'mark_task_review_\(approved\|rejected\)\|mark_task_needs_review' src/gobby/install/shared/` and confirms every caller continues to use the rewired tools (agent-facing API unchanged) — no caller relies on the legacy "stage stays open, status becomes needs_review" shape. Allowlist of expected callers: `planner.yaml`, `plan-adversary.yaml`, `expansion-qa.yaml`, `qa-reviewer.yaml`, `holistic-reviewer.yaml`, `test-architect.yaml`, `requirements-analyst.yaml`, `merge-orchestrator.yaml`, `qa-dev.yaml`, `nightly-linter.yaml`, `nightly-test-fixer.yaml`, `backend-developer.yaml`, `frontend-developer.yaml`, `default.yaml`, `developer.yaml`, plus the bundled SKILL.md instruction surfaces (`automate`, `holistic-review`, `merge-expert`, `plan-draft`, `plan-review`, `plan`, `qa`, `review`, `source-control`, `task-transitions`) and the rule YAMLs (`memory-lifecycle/require-memory-review-before-status.yaml`, `task-enforcement/{block-needs-review-interactive,inject-transition-skill,require-commit-before-status,require-error-triage,require-task-transitions-skill-loaded}.yaml`). The audit is a positive-coverage check: the grep snapshot at deliverable-execution time MUST equal this allowlist (any addition fails the audit and is investigated; any removal also fails so the executing agent confirms the call site was intentionally retired). The §5.3.7 post-rewire audit covers the same surface after the column drop; both audits are needed because new callers can be added between §2.6 landing and §5.3 landing. test: `tests/storage/tasks/test_review_tools_pre_phase3_audit.py::test_call_sites_match_allowlist`.
 
 ## P3 Dispatcher Refactor
 `kind: framing`
@@ -1089,59 +970,25 @@ def _advance_to_next_stage(task: Task, reason: str) -> AdvanceStageAction: ...
 
 `Task` gains a denormalized `.stages: tuple[StageState, ...]` field populated by `reload_candidate` via a single LEFT JOIN; rules never re-query.
 
-Rule rewrite. The new contract requires per-stage rule fan-out: each `review_policy=required` stage emits THREE rules (`<stage>_work_rule` for `in_progress`, `<stage>_review_rule` for `needs_review`, `<stage>_advance_rule` for `review_approved`); each `review_policy=none` stage emits ONE rule (`<stage>_rule` for `in_progress`). Plus the cross-cutting rules below. Total rules: 4 cross-cutting + 5 single-policy stages + (5 × 3) for required-policy stages + 1 special-cased epic rule (`all_leaves_holistic_rule`) + Phase 4 placeholders.
+Rule rewrite (1:1 mapping from existing rules to new stage-native form, plus one new generic auto-advance rule that runs first):
 
-Rule ordering (top-down evaluation; first-match-wins per scan):
-
-| # | Rule | Gates on | Action |
-|---|------|----------|--------|
-| 1 | `auto_advance_ready_rule` | `current_stage.state == 'ready'` AND (`current_stage.position == 1` OR prior stage row is `done`) AND registry `requires_human == False` AND (`registry.default_agent IS NULL` OR the registered agent is `enabled: true`) AND `current_stage.name NOT IN {'development', 'holistic_qa'}` (those are owned by their dedicated rules) | `_start_current_stage(task)` — transitions `ready → in_progress` via `StageStatesManager.start_stage`. Closes the fresh-task-stalls-at-ready gap. |
-| 2 | `disabled_agent_escalation_rule` | `current_stage.state == 'ready'` AND `current_stage.name NOT IN {'development', 'holistic_qa'}` AND (`registry.default_agent IS NULL` OR the registered agent is `enabled: false`) | `EscalateAction(task_id=task.id, reason=f'{current_stage.name}_no_agent')`. Catches the four discovery placeholder cases. |
-| 3 | `development_isolation_rule` | `current_stage.name == 'development'` AND `state == 'ready'` | Four-case state machine — see "Development-ready state machine" below |
-| 4 | `all_leaves_holistic_rule` | `_is_epic(task)` AND `current_stage(task) == ('holistic_qa', 'ready')` AND every direct child satisfies `is_child_parked(child)` OR `child.is_closed` | emit `StartStageAction(task_id, stage_name='holistic_qa')` |
-| 5 | `ideation_rule` | `current_stage == ('ideation', 'in_progress')` | spawn `analyst` (placeholder shim — `disabled_agent_escalation_rule` short-circuits at `ready` until real agent lands) |
-| 6 | `research_rule` | `current_stage == ('research', 'in_progress')` | spawn `researcher` (placeholder shim) |
-| 7 | `architecture_rule` | `current_stage == ('architecture', 'in_progress')` | spawn `architect` (placeholder shim) |
-| 8 | `prd_rule` | `current_stage == ('prd', 'in_progress')` | spawn `product-manager` (placeholder shim) |
-| 9 | `planning_work_rule` | `current_stage == ('planning', 'in_progress')` | spawn `planner` |
-| 10 | `planning_review_rule` | `current_stage == ('planning', 'needs_review')` | spawn `plan-adversary` |
-| 11 | `planning_advance_rule` | `current_stage == ('planning', 'review_approved')` | call `StageStatesManager.complete_stage('planning')` to advance `review_approved → done`; then `auto_advance_ready_rule` promotes the next stage on the next heartbeat |
-| 12 | `test_arch_rule` | `current_stage == ('test_arch', 'in_progress')` | spawn `test-architect` (test_arch.review_policy=none — single rule, no review fan-out) |
-| 13 | `expansion_work_rule` | `current_stage == ('expansion', 'in_progress')` | `StartExpansionAction` (pipeline action; no agent spawn) |
-| 14 | `expansion_review_rule` | `current_stage == ('expansion', 'needs_review')` | spawn `expansion-qa` |
-| 15 | `expansion_advance_rule` | `current_stage == ('expansion', 'review_approved')` | call `complete_stage('expansion')` |
-| 16 | `development_rule` | `current_stage == ('development', 'in_progress')` AND `_is_leaf(task)` | spawn `dev-agent` (registry default `backend-developer`) |
-| 17 | `development_review_rule` | `current_stage == ('development', 'needs_review')` AND `_is_leaf(task)` | spawn `qa-reviewer` |
-| 18 | `development_advance_rule` | `current_stage == ('development', 'review_approved')` AND `_is_leaf(task)` | call `complete_stage('development')` |
-| 19 | `holistic_qa_rule` | `current_stage == ('holistic_qa', 'in_progress')` | spawn `holistic-reviewer` (the agent does work AND review internally; produces `in_progress → review_approved` via `submit_for_review` then `approve_review` from inside the agent run) |
-| 20 | `holistic_qa_advance_rule` | `current_stage == ('holistic_qa', 'review_approved')` | call `complete_stage('holistic_qa')` to advance `review_approved → done` |
-| 21 | `pr_work_rule` | `current_stage == ('pr', 'in_progress')` | escalate with `EscalateAction(reason='pr_no_agent')` until #13552 lands the PR-Agent (Phase 4.1 supplies the body once the agent is registered) |
-| 22 | `pr_review_rule` | `current_stage == ('pr', 'needs_review')` | NO spawn (external review by PR-Agent or human); operator / PR-Agent calls `record_pr_verdict` which maps to `approve_review` / `reject_review` |
-| 23 | `pr_advance_rule` | `current_stage == ('pr', 'review_approved')` | call `complete_stage('pr')` to advance to `done`; the next stage row (`merge`) becomes the current stage at `ready` |
-| 24 | `merge_rule` | `current_stage == ('merge', 'in_progress')` | spawn `merge-orchestrator` (merge.review_policy=none — single rule; the merge agent's success path calls `record_merge_result` → `complete_stage('merge')` which closes the task per §2.1 invariant 8) |
-
-`holistic_qa` deliberately omits a `_review_rule` because its review is aggregate and produced internally by the same agent — there is no separate reviewer agent to spawn at `needs_review`. The agent is responsible for transitioning `in_progress → needs_review → review_approved` from inside its own run before exiting; the dispatcher's `holistic_qa_advance_rule` then advances `review_approved → done`.
-
-`expansion` and `development` are the work stages whose `_review_rule` spawns a different agent than `_work_rule`; this is the pattern that survives the contract pivot — work and review live on the SAME stage row, but the dispatcher fans out into different agents based on the row's state. `pr` is special because external review (human or PR-Agent) replaces the dispatcher-spawned reviewer; `pr_review_rule` is a no-spawn placeholder that surfaces the row in queries but doesn't act.
-
-**Mapping from old (tri-state, 14-stage) rules:**
-
-| Old rule | New rule(s) | Notes |
-|----------|-------------|-------|
-| `plan_review_rule` | `planning_work_rule`, `planning_review_rule`, `planning_advance_rule` | Review is now state on the same row, not a separate stage |
-| `adversarial_review_rule` | `planning_review_rule` | The `adversarial_review` stage is gone; `plan-adversary` now reviews `planning` directly |
-| `test_arch_rule` | `test_arch_rule` (unchanged structure) | test_arch.review_policy=none — single rule |
-| `expansion_rule` | `expansion_work_rule`, `expansion_review_rule`, `expansion_advance_rule` | The `expansion_qa` stage is gone; `expansion-qa` now reviews `expansion` directly |
-| `expansion_qa_rule` | `expansion_review_rule` | Stage merged into `expansion.needs_review` |
-| `isolation_rule` | `development_isolation_rule` (unchanged) | Owns `development.ready → in_progress` transition |
-| `dev_rule` | `development_rule` (work), `development_review_rule`, `development_advance_rule` | The `code_review_qa` stage is gone; `qa-reviewer` now reviews `development` directly |
-| `qa_rule` | `development_review_rule` | Stage merged into `development.needs_review` |
-| `code_review_qa_rule` | (deleted) | Stage gone |
-| `leaf_park_rule` | (deleted — folded into `is_child_parked` predicate) | Same predicate as before |
-| `all_leaves_holistic_rule` | `all_leaves_holistic_rule` (unchanged) | Reads `is_child_parked` |
-| `holistic_rule` | `holistic_qa_rule`, `holistic_qa_advance_rule` | No `_review_rule` — aggregate review internal to agent |
-| `pr_rule` (Phase 4) | `pr_work_rule`, `pr_review_rule`, `pr_advance_rule` | PR review is policy=required with external reviewer |
-| `merge_rule` (Phase 4) | `merge_rule` (unchanged structure) | merge.review_policy=none |
+| Old rule | New rule | Gates on | Action |
+|----------|----------|----------|--------|
+| (new) | `auto_advance_ready_rule` | `current_stage.state == 'ready'` AND (`current_stage.position == 1` OR prior stage row is `done`) AND registry `requires_human == False` AND (`registry.default_agent IS NULL` OR the registered agent is `enabled: true`) AND `current_stage.name NOT IN {'development', 'holistic_qa'}` (those two stages are owned by their dedicated rules — see "Stages excluded from auto-advance" below) AND no other rule has produced an action this scan | `_start_current_stage(task)` — transitions `ready → in_progress` via `StageStatesManager.start_stage`. Runs FIRST in the rule list so the next heartbeat sees `in_progress` and the stage-specific rule fires. Closes the fresh-task-stalls-at-ready gap (build initializes manifest at all-`ready`; this rule promotes position 1). The auto-advance does NOT fire for stages with `requires_human == True` — those wait for an explicit `start_stage` call from a human or operator. |
+| (new) | `disabled_agent_escalation_rule` | `current_stage.state == 'ready'` AND `current_stage.name NOT IN {'development', 'holistic_qa'}` AND (`registry.default_agent IS NULL` OR the registered agent is `enabled: false`) AND no other rule has produced an action this scan | emit `EscalateAction(task_id=task.id, reason=f'{current_stage.name}_no_agent')` — sets `is_escalated=1` and writes the escalation reason. Ordered AFTER `auto_advance_ready_rule` (which short-circuits the rule chain on enabled agents) and BEFORE the per-stage in-progress rules. Catches the four discovery placeholder cases (`ideation_no_agent`, `research_no_agent`, `architecture_no_agent`, `prd_no_agent`) under §1.3 placeholder shims, plus any future stage whose default_agent slot is set to a disabled bundled agent. Without this rule, ready stages with disabled placeholder agents would stall forever (no auto-start, no spawn, no escalation) — making §5.1.4's `research_spike` / `prd_doc` / `architecture_doc` discovery walks unreachable under dispatcher control. The escalation surfaces the gap to operators, who clear it once the real agent ships. |
+| `plan_review_rule` | `planning_rule` | `current_stage.name == 'planning'` AND `state == 'in_progress'` | spawn `planner` (already speced) |
+| (new) | `adversarial_review_rule` | `current_stage.name == 'adversarial_review'` AND `state == 'in_progress'` | spawn `plan-adversary` |
+| `test_arch_rule` | `test_arch_rule` | `current_stage.name == 'test_arch'` AND `state == 'in_progress'` | spawn `test-architect` |
+| `expansion_rule` | `expansion_rule` | `current_stage.name == 'expansion'` AND `state == 'in_progress'` | `StartExpansionAction` |
+| (new) | `expansion_qa_rule` | `current_stage.name == 'expansion_qa'` AND `state == 'in_progress'` | escalate (no agent yet — flag with `EscalateAction(reason='expansion_qa_no_agent')`) |
+| `isolation_rule` | `development_isolation_rule` | `current_stage.name == 'development'` AND `state == 'ready'` | Four-case state machine — see "Development-ready state machine" below |
+| `dev_rule` | `development_rule` | `current_stage.name == 'development'` AND `state == 'in_progress'` AND `_is_leaf(task)` | spawn `dev-agent` |
+| `qa_rule` | `code_review_qa_rule` | `current_stage.name == 'code_review_qa'` AND `state == 'in_progress'` AND `_is_leaf(task)` | spawn `qa-reviewer` |
+| `leaf_park_rule` | **(deleted — folded into `is_child_parked` predicate; see below)** | — | — |
+| `all_leaves_holistic_rule` | `all_leaves_holistic_rule` | `_is_epic(task)` AND `current_stage(task) == ('holistic_qa', 'ready')` AND every direct child satisfies `is_child_parked(child)` OR `child.is_closed` (terminal-closed) | emit `StartStageAction(task_id, stage_name='holistic_qa')` — calls `StageStatesManager.start_stage` to transition `holistic_qa.ready → in_progress`. The parent task is the automation-candidate (its `holistic_qa.ready` keeps it in the §3.2 scan); the rule reaches into each child's denormalized `child.stages` via `is_child_parked`. No leaf-side rule or signal action is required. |
+| `holistic_rule` | `holistic_qa_rule` | `current_stage.name == 'holistic_qa'` AND `state == 'in_progress'` | spawn `holistic-qa` (Phase 4 wires `pr` advance) |
+| `pr_rule` | (Phase 4) | — | (Phase 4) |
+| `merge_rule` | (Phase 4) | — | (Phase 4) |
 
 **Stages excluded from auto-advance** (`auto_advance_ready_rule` skips them; the dedicated rule below owns the transition):
 
@@ -1209,7 +1056,7 @@ The predicate is a pure function of `child.stages` and the two task flags — `r
 
 The rule never spawns the development agent — that is `development_rule`'s job (`current_stage.state == 'in_progress'`). This separation keeps the start transition deterministic and lets retries of agent-spawn failures not re-create isolation.
 
-For each retained rule, port the existing attempt-count helpers to read `StageState.work_attempt_count` and `StageState.review_round_count` instead of artifact counters (`qa_attempts`, etc.). The artifact counter columns (`max_planning_rounds`, `max_qa_rounds`, `max_merge_attempts`) are migrated into per-stage caps on `task_stage_states` during §2.2 backfill; rules read effective caps via `state_row.max_<X> ?? registry.default_max_<X>`. The cap predicate is `>=` (a task that has started a stage `cap` times and just failed the cap-th attempt escalates without another retry, per §2.1 invariant 5).
+For each retained rule, port the existing attempt-count helpers to read `StageState.attempt_count` instead of artifact counters (`qa_attempts`, etc.). The artifact counter columns (`max_qa_rounds`, etc.) stay as caps; only the per-attempt counter is moved into the manifest row.
 
 `_is_unattended(task)` continues to read `task.assigned_agent`; that field is retained and still drives the unattended-fallback branch in `_fallback`.
 
@@ -1218,9 +1065,9 @@ For each retained rule, port the existing attempt-count helpers to read `StageSt
 - 3.1.1 — `task_has_stage` and `current_stage` helpers added; `_stage_skipped` and `_state` deleted. file: `src/gobby/dispatch/rules.py`. symbol: `gobby.dispatch.rules.task_has_stage`, `gobby.dispatch.rules.current_stage`.
 - 3.1.2 — Each rule in the table above is renamed and rewritten to query the manifest; old `_advance(...)` calls replaced with `StageStatesManager` writes. test: `tests/dispatch/test_rules_stage_native.py::test_rule_table_complete`.
 - 3.1.3 — `Task.stages` denormalized field populated by `reload_candidate`. file: `src/gobby/dispatch/dispatcher.py`. test: `tests/dispatch/test_reload_candidate_includes_stages.py::test_stages_loaded`.
-- 3.1.4 — Attempt-count helpers read from `StageState.work_attempt_count` and `StageState.review_round_count`; effective caps resolved via `state_row.max_<X> ?? registry.default_max_<X>`. test: `tests/dispatch/test_rules_stage_native.py::test_work_attempt_caps_honored`, `tests/dispatch/test_rules_stage_native.py::test_review_round_caps_honored`, `tests/dispatch/test_rules_stage_native.py::test_caps_inherit_registry_defaults_when_state_row_null`.
-- 3.1.5 — Pass-through escalate-no-reviewer rules for `policy=required` stages whose `reviewer_agent` is missing or disabled (`expansion_review_rule` / `development_review_rule` / `holistic_qa_rule` use the `<stage>_no_reviewer` reason; `pr_work_rule` uses `pr_no_agent`). The escalation rule is per-stage, not generic — each rule checks its own `reviewer_agent` slot in the registry. test: `tests/dispatch/test_rules_stage_native.py::test_no_reviewer_stage_escalates`.
-- 3.1.6 — `auto_advance_ready_rule` promotes the leftmost `ready` row to `in_progress` when (a) it is position 1 OR the prior row is `done`, (b) the stage registry entry has `requires_human == False`, (c) any registered `default_agent` is `enabled: true`, and (d) `current_stage.name NOT IN {'development', 'holistic_qa'}` (those two stages are owned by `development_isolation_rule` and `all_leaves_holistic_rule` respectively). A freshly built task with manifest `[planning, test_arch, expansion, development, pr, merge]` advances `planning.ready → planning.in_progress` on the first heartbeat; an epic with `holistic_qa.ready` as its leftmost-non-done row does NOT auto-start `holistic_qa` even if the prior `development` row is `done`. When condition (c) is FALSE (the `default_agent` is missing or `enabled: false`), this rule does NOT fire — the disabled-agent case is handled by `disabled_agent_escalation_rule` (acceptance 3.1.23) which escalates instead of stalling. test: `tests/dispatch/test_rules_stage_native.py::test_auto_advance_first_stage`, `tests/dispatch/test_rules_stage_native.py::test_auto_advance_skips_human_gated`, `tests/dispatch/test_rules_stage_native.py::test_auto_advance_skips_disabled_agent_yields_to_escalation_rule`, `tests/dispatch/test_rules_stage_native.py::test_auto_advance_skips_holistic_qa`.
+- 3.1.4 — Attempt-count helpers read from `StageState.attempt_count`, with `max_qa_rounds`-style caps still honored. test: `tests/dispatch/test_rules_stage_native.py::test_attempt_caps_honored`.
+- 3.1.5 — Pass-through escalate-no-agent rule for `expansion_qa` until an agent is registered (no silent wait). test: `tests/dispatch/test_rules_stage_native.py::test_no_agent_stage_escalates`.
+- 3.1.6 — `auto_advance_ready_rule` promotes the leftmost `ready` row to `in_progress` when (a) it is position 1 OR the prior row is `done`, (b) the stage registry entry has `requires_human == False`, (c) any registered `default_agent` is `enabled: true`, and (d) `current_stage.name NOT IN {'development', 'holistic_qa'}` (those two stages are owned by `development_isolation_rule` and `all_leaves_holistic_rule` respectively). A freshly built task with manifest `[planning, adversarial_review, ...]` advances `planning.ready → planning.in_progress` on the first heartbeat; an epic with `holistic_qa.ready` as its leftmost-non-done row does NOT auto-start `holistic_qa` even if the prior `expansion_qa` row is `done`. When condition (c) is FALSE (the `default_agent` is missing or `enabled: false`), this rule does NOT fire — the disabled-agent case is handled by `disabled_agent_escalation_rule` (acceptance 3.1.23) which escalates instead of stalling. test: `tests/dispatch/test_rules_stage_native.py::test_auto_advance_first_stage`, `tests/dispatch/test_rules_stage_native.py::test_auto_advance_skips_human_gated`, `tests/dispatch/test_rules_stage_native.py::test_auto_advance_skips_disabled_agent_yields_to_escalation_rule`, `tests/dispatch/test_rules_stage_native.py::test_auto_advance_skips_holistic_qa`.
 - 3.1.7 — `development_isolation_rule` case (a): `task.isolation == 'none'` and `current_stage == ('development', 'ready')` → rule starts the stage immediately (`ready → in_progress`) without creating any isolation. test: `tests/dispatch/test_development_isolation_rule.py::test_isolation_none_starts_immediately`.
 - 3.1.8 — `development_isolation_rule` case (b): isolation required AND the worktree/clone pair already exists in `task_artifacts` → rule starts the stage immediately without re-creating isolation; same `(ready → in_progress)` transition path as case (a). Verifies recovery from a prior heartbeat that created isolation but did not start the stage. test: `tests/dispatch/test_development_isolation_rule.py::test_isolation_pair_present_starts_stage`.
 - 3.1.9 — `development_isolation_rule` case (c): isolation required AND pair missing → rule emits `CreateIsolationAction`; on success the artifact pair is written atomically and the next heartbeat starts the stage. Stage stays at `ready` for exactly one heartbeat after isolation creation. test: `tests/dispatch/test_development_isolation_rule.py::test_isolation_missing_creates_then_starts`.
@@ -1228,26 +1075,18 @@ For each retained rule, port the existing attempt-count helpers to read `StageSt
 
 Per-rule coverage (one acceptance per data row of the §3.1 rule rewrite table, per the plan-coverage contract's table-row decomposition rule). Some rules already have dedicated acceptances above (`auto_advance_ready_rule` → 3.1.6; `development_isolation_rule` → 3.1.7-3.1.10); the items below cover the remaining rule rows so every data row has its own acceptance:
 
-- 3.1.11 — `planning_work_rule` fires on `current_stage == ('planning', 'in_progress')` and emits a spawn action for the `planner` agent. test: `tests/dispatch/test_rules_stage_native.py::test_planning_work_rule_spawns_planner`.
-- 3.1.11a — `planning_review_rule` fires on `current_stage == ('planning', 'needs_review')` and emits a spawn action for the `plan-adversary` agent. test: `tests/dispatch/test_rules_stage_native.py::test_planning_review_rule_spawns_plan_adversary`.
-- 3.1.11b — `planning_advance_rule` fires on `current_stage == ('planning', 'review_approved')` and calls `StageStatesManager.complete_stage('planning')` to transition `review_approved → done`. After the rule fires, `auto_advance_ready_rule` promotes the next stage (`test_arch.ready → in_progress`) on the next heartbeat. test: `tests/dispatch/test_rules_stage_native.py::test_planning_advance_rule_completes_stage`, `tests/dispatch/test_rules_stage_native.py::test_planning_advance_followed_by_auto_advance_test_arch`.
-- 3.1.12 — `ideation_rule` fires on `current_stage == ('ideation', 'in_progress')` and emits a spawn action for the `analyst` placeholder agent (`disabled_agent_escalation_rule` short-circuits at `ready` until a real agent ships). test: `tests/dispatch/test_rules_stage_native.py::test_ideation_rule_spawns_analyst`.
-- 3.1.12a — `research_rule` fires on `current_stage == ('research', 'in_progress')` and emits a spawn action for the `researcher` placeholder agent. test: `tests/dispatch/test_rules_stage_native.py::test_research_rule_spawns_researcher`.
-- 3.1.12b — `architecture_rule` fires on `current_stage == ('architecture', 'in_progress')` and emits a spawn action for the `architect` placeholder agent. test: `tests/dispatch/test_rules_stage_native.py::test_architecture_rule_spawns_architect`.
-- 3.1.12c — `prd_rule` fires on `current_stage == ('prd', 'in_progress')` and emits a spawn action for the `product-manager` placeholder agent. test: `tests/dispatch/test_rules_stage_native.py::test_prd_rule_spawns_product_manager`.
-- 3.1.13 — `test_arch_rule` fires on `current_stage == ('test_arch', 'in_progress')` and emits a spawn action for the `test-architect` agent. Single rule — `test_arch.review_policy=none` so no `_review_rule` or `_advance_rule` exist for this stage. test: `tests/dispatch/test_rules_stage_native.py::test_test_arch_rule_spawns_test_architect`, `tests/dispatch/test_rules_stage_native.py::test_test_arch_no_review_rule_registered`.
-- 3.1.14 — `expansion_work_rule` fires on `current_stage == ('expansion', 'in_progress')` and emits a `StartExpansionAction` (pipeline action; no agent spawn). test: `tests/dispatch/test_rules_stage_native.py::test_expansion_work_rule_emits_start_expansion`.
-- 3.1.15 — `expansion_review_rule` fires on `current_stage == ('expansion', 'needs_review')` and emits a spawn action for the `expansion-qa` agent. test: `tests/dispatch/test_rules_stage_native.py::test_expansion_review_rule_spawns_expansion_qa`.
-- 3.1.15a — `expansion_advance_rule` fires on `current_stage == ('expansion', 'review_approved')` and calls `complete_stage('expansion')`. test: `tests/dispatch/test_rules_stage_native.py::test_expansion_advance_rule_completes_stage`.
+- 3.1.11 — `planning_rule` fires on `current_stage == ('planning', 'in_progress')` and emits a spawn action for the `planner` agent. test: `tests/dispatch/test_rules_stage_native.py::test_planning_rule_spawns_planner`.
+- 3.1.12 — `adversarial_review_rule` fires on `current_stage == ('adversarial_review', 'in_progress')` and emits a spawn action for the `plan-adversary` agent. test: `tests/dispatch/test_rules_stage_native.py::test_adversarial_review_rule_spawns_plan_adversary`.
+- 3.1.13 — `test_arch_rule` fires on `current_stage == ('test_arch', 'in_progress')` and emits a spawn action for the `test-architect` agent. test: `tests/dispatch/test_rules_stage_native.py::test_test_arch_rule_spawns_test_architect`.
+- 3.1.14 — `expansion_rule` fires on `current_stage == ('expansion', 'in_progress')` and emits a `StartExpansionAction` (pipeline action; no agent spawn). test: `tests/dispatch/test_rules_stage_native.py::test_expansion_rule_emits_start_expansion`.
+- 3.1.15 — `expansion_qa_rule` fires on `current_stage == ('expansion_qa', 'in_progress')` and escalates with `EscalateAction(reason='expansion_qa_no_agent')` until the QA agent is registered (existing bundled YAML rewired in Phase 4.2 acceptance 4.2.4). test: `tests/dispatch/test_rules_stage_native.py::test_expansion_qa_rule_escalates_no_agent`.
 - 3.1.16 — `development_rule` fires on `current_stage == ('development', 'in_progress')` AND `_is_leaf(task)` and emits a spawn action for the `dev-agent` (registry default `backend-developer`). test: `tests/dispatch/test_rules_stage_native.py::test_development_rule_spawns_dev_agent`.
-- 3.1.17 — `development_review_rule` fires on `current_stage == ('development', 'needs_review')` AND `_is_leaf(task)` and emits a spawn action for the `qa-reviewer` agent. test: `tests/dispatch/test_rules_stage_native.py::test_development_review_rule_spawns_qa_reviewer`.
-- 3.1.17a — `development_advance_rule` fires on `current_stage == ('development', 'review_approved')` AND `_is_leaf(task)` and calls `complete_stage('development')`. test: `tests/dispatch/test_rules_stage_native.py::test_development_advance_rule_completes_stage`.
-- 3.1.18 — `is_child_parked(child)` predicate is a pure function of `child.stages` + `child.is_closed` (Python projection from `is_task_closed` reading `closed_at IS NOT NULL OR status == 'closed'`) + `child.is_escalated` flags: returns True iff `_is_leaf(child)` AND NOT `child.is_escalated` AND (`child.is_closed` OR `current_stage(child) is None`). Returns False for non-leaf, in-progress, escalated, or open-and-non-exhausted children. The predicate is body-aligned with §2.2 default manifests: `task`/`chore`/`bug` end at `merge`; `refactor`/`feature` end at `merge` after `pr`; all auto-close at manifest exhaustion via §2.1 invariant 8 (which writes `closed_at`), and the predicate fires on `child.is_closed`. The `current_stage is None AND NOT child.is_closed` branch is reachable ONLY (i) on the §2.2 migration-234 transaction boundary before the acceptance 2.2.31 close-pass commits, or (ii) inside synthetic test fixtures that bypass `complete_stage`. symbol: `gobby.dispatch.rules.is_child_parked`. test: `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_true_for_terminal_closed_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_true_for_each_default_manifest_terminal_stage` (parameterized over `[development, merge, pr]` as last stage — the surviving 11-stage default manifests), `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_false_for_in_progress_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_false_for_escalated_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_false_for_non_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_synthetic_branch_is_test_only_or_migration_window`.
-- 3.1.19 — `all_leaves_holistic_rule` fires on an epic whose `current_stage == ('holistic_qa', 'ready')` AND every direct child satisfies `is_child_parked(child) OR child.is_closed`. The rule emits `StartStageAction(task_id, stage_name='holistic_qa')`, transitioning the epic's `holistic_qa` row `ready → in_progress` via `StageStatesManager.start_stage`. The rule reaches into each child's denormalized `child.stages` (already loaded by `reload_candidate` per 3.1.3) — no leaf-side rule, no transient signal, no extra SQL round-trip per heartbeat. Cross-heartbeat correctness: a child that closed at its terminal manifest stage (typically `merge.done` for merge-bearing leaves, or `prd.done` / `architecture.done` for research-terminal types) in heartbeat N still satisfies `is_child_parked` at heartbeat N+M for any M≥0, so the parent advances `holistic_qa` whenever the heartbeat happens to scan it next, without any race window. The rule does NOT fire when any child is still working (some `is_child_parked` returns False AND that child is not closed). test: `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_advances_epic_when_all_children_parked`, `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_does_not_fire_when_any_child_in_progress`, `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_advances_with_mix_of_parked_and_terminal_closed_children`, `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_durable_across_heartbeats`.
-- 3.1.20 — `holistic_qa_rule` fires on `current_stage == ('holistic_qa', 'in_progress')` and emits a spawn action for the `holistic-reviewer` agent (the agent does work AND review internally, producing `in_progress → review_approved` from inside its run via `submit_for_review` then `approve_review`). NO `holistic_qa_review_rule` is registered — aggregate review is internal to the agent. test: `tests/dispatch/test_rules_stage_native.py::test_holistic_qa_rule_spawns_holistic_reviewer`, `tests/dispatch/test_rules_stage_native.py::test_no_holistic_qa_review_rule_registered`.
-- 3.1.20a — `holistic_qa_advance_rule` fires on `current_stage == ('holistic_qa', 'review_approved')` and calls `complete_stage('holistic_qa')`. test: `tests/dispatch/test_rules_stage_native.py::test_holistic_qa_advance_rule_completes_stage`.
-- 3.1.21 — `pr_work_rule`, `pr_review_rule`, `pr_advance_rule` are registered placeholders in this deliverable; full bodies (including `record_pr_verdict` mapping to `approve_review`/`reject_review`) land in Phase 4.1. The placeholder bodies escalate with `pr_no_agent` for `pr_work_rule`, no-op for `pr_review_rule` (external review), and call `complete_stage('pr')` for `pr_advance_rule`. test: `tests/dispatch/test_rules_stage_native.py::test_pr_rules_registered_placeholders`.
-- 3.1.22 — `merge_rule` (registered placeholder in this deliverable; full body in Phase 4.2) is present in the rules list at the post-`pr_advance_rule` position; Phase 4.2 supplies its body. Single rule because `merge.review_policy=none`. test: `tests/dispatch/test_rules_stage_native.py::test_merge_rule_registered_placeholder`.
+- 3.1.17 — `code_review_qa_rule` fires on `current_stage == ('code_review_qa', 'in_progress')` AND `_is_leaf(task)` and emits a spawn action for the `qa-reviewer` agent. test: `tests/dispatch/test_rules_stage_native.py::test_code_review_qa_rule_spawns_qa_reviewer`.
+- 3.1.18 — `is_child_parked(child)` predicate is a pure function of `child.stages` + `child.is_closed` (Python projection from `is_task_closed` reading `closed_at IS NOT NULL OR status == 'closed'`) + `child.is_escalated` flags: returns True iff `_is_leaf(child)` AND NOT `child.is_escalated` AND (`child.is_closed` OR `current_stage(child) is None`). Returns False for non-leaf, in-progress, escalated, or open-and-non-exhausted children. The predicate is body-aligned with §2.2 default manifests: `task`/`chore` (end at `merge`), `bug` (end at `merge` after `code_review_qa`), `refactor`/`feature` (end at `merge` after `code_review_qa`/`holistic_qa`/`pr`) all auto-close at manifest exhaustion via §2.1 invariant 8 (which writes `closed_at`), and the predicate fires on `child.is_closed`. The `current_stage is None AND NOT child.is_closed` branch is reachable ONLY (i) on the §2.2 migration-234 transaction boundary before the acceptance 2.2.31 close-pass commits, or (ii) inside synthetic test fixtures that bypass `complete_stage`; both windows are documented in the predicate's docstring. symbol: `gobby.dispatch.rules.is_child_parked`. test: `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_true_for_terminal_closed_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_true_for_each_default_manifest_terminal_stage` (parameterized over `[development, code_review_qa, merge, pr, holistic_qa]` as last stage), `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_false_for_in_progress_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_false_for_escalated_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_false_for_non_leaf`, `tests/dispatch/test_rules_stage_native.py::test_is_child_parked_synthetic_branch_is_test_only_or_migration_window`.
+- 3.1.19 — `all_leaves_holistic_rule` fires on an epic whose `current_stage == ('holistic_qa', 'ready')` AND every direct child satisfies `is_child_parked(child) OR child.is_closed`. The rule emits `StartStageAction(task_id, stage_name='holistic_qa')`, transitioning the epic's `holistic_qa` row `ready → in_progress` via `StageStatesManager.start_stage`. The rule reaches into each child's denormalized `child.stages` (already loaded by `reload_candidate` per 3.1.3) — no leaf-side rule, no transient signal, no extra SQL round-trip per heartbeat. Cross-heartbeat correctness: a child that completed `code_review_qa` in heartbeat N still satisfies `is_child_parked` at heartbeat N+M for any M≥0, so the parent advances `holistic_qa` whenever the heartbeat happens to scan it next, without any race window. The rule does NOT fire when any child is still working (some `is_child_parked` returns False AND that child is not closed). test: `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_advances_epic_when_all_children_parked`, `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_does_not_fire_when_any_child_in_progress`, `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_advances_with_mix_of_parked_and_terminal_closed_children`, `tests/dispatch/test_rules_stage_native.py::test_all_leaves_holistic_durable_across_heartbeats`.
+- 3.1.20 — `holistic_qa_rule` fires on `current_stage == ('holistic_qa', 'in_progress')` and emits a spawn action for the `holistic-qa` agent (existing bundled `holistic-reviewer` YAML rewired). test: `tests/dispatch/test_rules_stage_native.py::test_holistic_qa_rule_spawns_holistic_qa_agent`.
+- 3.1.21 — `pr_rule` (registered placeholder in this deliverable; full body in Phase 4.1) is present in the rules list at the post-`holistic_qa_rule` position; Phase 4.1 supplies its body. test: `tests/dispatch/test_rules_stage_native.py::test_pr_rule_registered_placeholder`.
+- 3.1.22 — `merge_rule` (registered placeholder in this deliverable; full body in Phase 4.2) is present in the rules list at the post-`pr_rule` position; Phase 4.2 supplies its body. test: `tests/dispatch/test_rules_stage_native.py::test_merge_rule_registered_placeholder`.
 - 3.1.23 — `disabled_agent_escalation_rule` (round-14 F2): fires when `current_stage.state == 'ready'` AND `current_stage.name NOT IN {'development', 'holistic_qa'}` AND (the registry's `default_agent` is `NULL` OR resolves to a bundled agent with `enabled: false`) AND no other rule has produced an action this scan. Action: `EscalateAction(task_id=task.id, reason=f'{current_stage.name}_no_agent')` — sets `is_escalated=1`, writes the escalation reason. Ordered AFTER `auto_advance_ready_rule` (which short-circuits the chain on enabled agents) and BEFORE the per-stage in-progress rules. The four discovery-stage placeholder cases under §1.3 produce reasons `ideation_no_agent`, `research_no_agent`, `architecture_no_agent`, `prd_no_agent`. Without this rule, ready stages with disabled placeholder agents would stall forever — making §5.1.4's `research_spike` / `prd_doc` / `architecture_doc` walks unreachable under dispatcher control. symbol: `gobby.dispatch.rules.disabled_agent_escalation_rule`. test: `tests/dispatch/test_rules_stage_native.py::test_disabled_agent_escalation_rule_fires_on_ideation_with_disabled_analyst` (parameterized over the four (stage, slug) pairs from §1.3: ideation/analyst, research/researcher, architecture/architect, prd/product-manager), `tests/dispatch/test_rules_stage_native.py::test_disabled_agent_escalation_rule_skips_when_agent_enabled`, `tests/dispatch/test_rules_stage_native.py::test_disabled_agent_escalation_rule_skips_development_and_holistic_qa`, `tests/dispatch/test_rules_stage_native.py::test_disabled_agent_escalation_rule_does_not_fire_when_state_in_progress`, `tests/dispatch/test_rules_stage_native.py::test_disabled_agent_escalation_rule_emits_correct_reason_per_stage`.
 
 ### 3.2 Manifest resolution at build time + readiness projections rewrite [category: code] (depends: 2.1, 2.2, 3.1)
@@ -1267,7 +1106,7 @@ Profile → flag bundle resolution:
 
 ```python
 PROFILE_BUNDLES: dict[str, ProfileBundle] = {
-    "quick":     ProfileBundle(skip=["holistic_qa"]),  # under the new contract, planning/expansion/development reviews are state on the same row, not separate stages — only holistic_qa is a skippable stage
+    "quick":     ProfileBundle(skip=["adversarial_review", "expansion_qa", "holistic_qa"]),
     "review":    ProfileBundle(skip=[]),  # default
     "full":      ProfileBundle(skip=[]),
     "full-yolo": ProfileBundle(skip=[], yolo=True),
@@ -1367,62 +1206,38 @@ This deliverable depends on Phase 3.1 (manifest-native rules supply `Task.stages
 
 Target: `src/gobby/dispatch/rules.py`, `src/gobby/storage/tasks/_artifacts.py`, `src/gobby/mcp_proxy/tools/tasks/_stages.py`
 
-Wire `pr_work_rule`, `pr_review_rule`, `pr_advance_rule` (placeholders registered in Phase 3.1) with their full bodies. PR is `review_policy=required` with a blank `reviewer_agent` slot — external review is owned by PR-Agent (#13552) or a human reviewer; this epic does NOT register a PR-Agent.
+Add `pr_rule`. Until #13552 lands the PR-Agent, this rule escalates `pr.state == 'in_progress'` with reason `pr_no_agent` so the work surfaces to a human; once the agent is wired (out of scope here), the rule spawns it.
 
 Stage transitions during PR work:
 
-1. `holistic_qa` reaches `done` (epic) or `development.review_approved → done` is followed by `auto_advance_ready_rule` (leaf) → `pr.state` transitions `ready → in_progress` via `auto_advance_ready_rule` (or operator-driven for human-gated PR work).
-2. PR opened: agent or operator calls `record_pr_opened(task_id, pr_url, github_pr_number?)` (registered in Phase 2.3) to write `pr_url` and `github_pr_number` artifacts without changing stage state. Then calls `mark_task_needs_review(task_id)` (rewired in Phase 2.6 to `submit_for_review`) to transition `pr.in_progress → pr.needs_review`, signaling that the PR is open and awaiting external review.
-3. PR review verdict: `record_pr_verdict(task_id, verdict='approved'|'rejected'|'needs_changes', findings, report_ref?)`. Writes `structured_pr_verdict` (JSON) and `pr_review_report`. Then maps to a stage-axis transition:
-    - `verdict='approved'` → `StageStatesManager.approve_review(task_id, 'pr')`. Transition: `pr.needs_review → pr.review_approved`. The PR is approved but NOT yet merged; `pr.review_approved` is the durable holding state queue position.
-    - `verdict='rejected'` or `verdict='needs_changes'` → `StageStatesManager.reject_review(task_id, 'pr', reason=findings)`. Transition: `pr.needs_review → pr.ready`. Increments `review_round_count`. Per §2.1 contract, when `review_round_count >= effective_max_review_rounds`, `reject_review` escalates with reason `pr_review_failed:max` instead of returning to ready. The effective cap is resolved as `pr_state_row.max_review_rounds ?? registry.default_max_review_rounds` (registry default 5 per §1.1); the legacy `task_artifacts.max_review_rounds` column was migrated into the per-stage column during the §2.2 backfill (PR-stage cap inherits from the registry default unless explicitly overridden via `gobby build --stage pr:max_review_rounds=N`).
-4. `pr_advance_rule` fires when `current_stage == ('pr', 'review_approved')` and calls `complete_stage('pr')`. Transition: `pr.review_approved → pr.done`. The next stage (`merge.ready`) becomes the new current_stage; `auto_advance_ready_rule` promotes it on the next heartbeat (merge.review_policy=none, no reviewer to wait on).
+1. `holistic_qa.state` becomes `done` → `pr.state` transitions `ready → in_progress` (via `_advance_to_next_stage`).
+2. PR opened: agent or operator calls `record_pr_opened(task_id, pr_url, github_pr_number?)` (registered in Phase 2.3) to write `pr_url` and `github_pr_number` artifacts without changing stage state.
+3. PR review verdict: `record_pr_verdict(task_id, verdict='approved'|'rejected'|'needs_changes', findings, report_ref?)`. Writes `structured_pr_verdict` (JSON) and `pr_review_report`. On `approved`, completes `pr` stage; on `rejected` or `needs_changes`, fails the stage via §2.1's contract — `fail_stage` transitions `in_progress → ready` with no attempt-count change. The next `start_stage` (auto-advance promoting the row back to `in_progress` for a retry) is the sole `attempt_count` increment site. Cap source for the PR stage is the existing `task_artifacts.max_review_rounds` column (nullable INTEGER, present in baseline schema at `src/gobby/storage/migrations.py:93` and `src/gobby/storage/baseline_schema.sql:389`, surfaced as `TaskArtifacts.max_review_rounds: int | None` in `src/gobby/storage/tasks/_artifacts.py:72`); when NULL, `record_pr_verdict` falls back to `build_config.max_review_rounds` (default `3`, defined at `src/gobby/config/build.py:73`) via the existing Python-side `_cap()` fallback pattern (`src/gobby/dispatch/rules.py`'s `_maxed_out` helper which already binds `max_review_rounds` for `plan_review_attempts` and `test_arch_attempts` at `src/gobby/dispatch/rules.py:43,53`). Cap escalation uses the `attempt_count >= max_review_rounds` predicate (after fallback) evaluated AT `fail_stage` time (i.e., on the just-failed attempt's started count); when over the cap, `fail_stage` escalates instead of transitioning back to `ready`. No new column add or build_config field is required — `max_review_rounds` is the single canonical PR-review cap shared across plan_review, test_arch, and PR stages, matching the existing dispatcher pattern.
+4. `pr.state` becomes `done` → `merge.state` transitions `ready → in_progress`.
 
-`pr_work_rule`, `pr_review_rule`, `pr_advance_rule` bodies:
+`pr_rule` body:
 
 ```python
-def pr_work_rule(task: Task, context: RuleContext) -> Action | None:
+def pr_rule(task: Task, context: RuleContext) -> Action | None:
     stage = current_stage(task)
-    if stage is None or stage.name != "pr" or stage.state != "in_progress":
+    if stage is None or stage.name != "pr":
+        return None
+    if stage.state != "in_progress":
         return None
     if not _has_pr_agent(context):
-        # Until #13552 lands, escalate so a human picks up PR-opening work
         return EscalateAction(task_id=task.id, reason="pr_no_agent")
     return _spawn_stage_agent(task, stage, context, "pr-agent")
-
-
-def pr_review_rule(task: Task, context: RuleContext) -> Action | None:
-    """No-op: external review by PR-Agent or human; verdict arrives via
-    record_pr_verdict which calls approve_review or reject_review directly.
-    The rule exists only to keep the row visible in queries and surface
-    the queue position to operators."""
-    stage = current_stage(task)
-    if stage is None or stage.name != "pr" or stage.state != "needs_review":
-        return None
-    return None  # external reviewer drives the next transition
-
-
-def pr_advance_rule(task: Task, context: RuleContext) -> Action | None:
-    stage = current_stage(task)
-    if stage is None or stage.name != "pr" or stage.state != "review_approved":
-        return None
-    return AdvanceStageAction(
-        task_id=task.id, stage_name="pr", method="complete_stage",
-        by_session_id="dispatcher",
-    )
 ```
 
-`_has_pr_agent` checks the agent registry for a stage-aware `pr-agent`; if missing, `pr_work_rule` escalates so #13552's owner can pick up the work.
+`_has_pr_agent` checks the agent registry for a stage-aware `pr-agent`; if missing, escalates so #13552's owner can pick up the work.
 
 **Acceptance:**
 
-- 4.1.1 — `pr_work_rule`, `pr_review_rule`, `pr_advance_rule` registered in the rules list at the right positions (work → review → advance, after `holistic_qa_advance_rule`, before `merge_rule`). file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_pr_rules.py::test_three_pr_rules_in_correct_order`.
-- 4.1.2 — `record_pr_verdict` with `verdict='approved'` calls `StageStatesManager.approve_review(task_id, 'pr')` (transition `pr.needs_review → pr.review_approved`); writes `structured_pr_verdict` and `pr_review_report` artifacts in the same write path. The tool does NOT call `complete_stage` or advance to merge — that's `pr_advance_rule`'s job on the next heartbeat. test: `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_approved_calls_approve_review_no_advance`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_approved_writes_artifacts`.
-- 4.1.2a — `record_pr_verdict` with `verdict='rejected'` or `verdict='needs_changes'` calls `StageStatesManager.reject_review(task_id, 'pr', reason=findings)` (transition `pr.needs_review → pr.ready`, increments `review_round_count`). When `review_round_count >= effective_max_review_rounds`, `reject_review` escalates instead. test: `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_calls_reject_review`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_needs_changes_calls_reject_review`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_over_cap_escalates`.
-- 4.1.3 — `pr_advance_rule` firing at `pr.review_approved` calls `complete_stage('pr')`, which advances to `pr.done` and lets `auto_advance_ready_rule` promote `merge.ready → merge.in_progress` on the next heartbeat. test: `tests/dispatch/test_pr_to_merge_advance.py::test_pr_advance_then_merge_auto_start`.
-- 4.1.4 — Without a registered `pr-agent`, `pr_work_rule` escalates with reason `pr_no_agent`. `pr_review_rule` is a no-op (no spawn) — external review drives the next transition via `record_pr_verdict`. test: `tests/dispatch/test_pr_rules.py::test_pr_work_escalates_when_no_agent`, `tests/dispatch/test_pr_rules.py::test_pr_review_rule_is_no_op`.
-- 4.1.5 — PR rejection cap source under the new contract is the per-stage `task_stage_states.max_review_rounds` column (nullable; null inherits `task_stages_registry.default_max_review_rounds`, default 5). The legacy `task_artifacts.max_review_rounds` column was migrated into the per-stage column during §2.2 backfill. `record_pr_verdict(verdict='rejected')` calls `reject_review('pr', reason=findings)`; under the cap (`review_round_count < effective_max_review_rounds`) the stage transitions `needs_review → ready`; at-or-over the cap, `reject_review` escalates with reason `pr_review_failed:max`. Build-time override available via `gobby build <ref> --stage pr:max_review_rounds=N`. behavior: "PR review cap inherits from registry default; per-stage override works" verified in `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_under_cap_returns_to_ready`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_over_cap_escalates`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_per_stage_max_review_rounds_override_works`.
-- 4.1.6 — End-to-end PR flow walks `pr.ready → pr.in_progress → pr.needs_review → pr.review_approved → pr.done → merge.ready → merge.in_progress` driven by the dispatcher + tool calls, including a rejected-then-approved cycle: `record_pr_verdict('rejected')` returns to `pr.ready` with `review_round_count=1`; `auto_advance_ready_rule` promotes back to `pr.in_progress` (incrementing `work_attempt_count`); a second `record_pr_verdict('approved')` advances to `pr.review_approved` and on through. test: `tests/dispatch/test_pr_full_walk.py::test_pr_lifecycle_with_rejection_then_approval`.
+- 4.1.1 — `pr_rule` registered in the rules list at the right position. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_pr_rule.py::test_pr_rule_in_list`.
+- 4.1.2 — `record_pr_verdict` with `verdict='approved'` completes `pr` stage and writes both artifacts. test: `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_approved_writes_artifacts`.
+- 4.1.3 — `pr.state == done` triggers `merge.state == ready → in_progress` advance via the rule chain on next heartbeat. test: `tests/dispatch/test_pr_to_merge_advance.py::test_pr_done_advances_merge`.
+- 4.1.4 — Without a registered `pr-agent`, `pr_rule` escalates with reason `pr_no_agent`. test: `tests/dispatch/test_pr_rule.py::test_escalates_when_no_agent`.
+- 4.1.5 — PR rejection cap source is the existing `task_artifacts.max_review_rounds` column with Python-side fallback to `build_config.max_review_rounds` (default `3`); no new column add or build_config field is introduced for PR rejection caps. `record_pr_verdict` with `verdict='rejected'` (or `'needs_changes'`) calls `fail_stage('pr', reason=findings)`; under the cap (`attempt_count < max_review_rounds`) the stage transitions `in_progress → ready` and `is_escalated` stays `0`; at-or-over the cap (`attempt_count >= max_review_rounds`) `fail_stage` escalates with reason `pr_review_failed:max` and `is_escalated` flips to `1`. behavior: "PR cap binds to existing max_review_rounds with build_config fallback" verified in `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_under_cap_returns_to_ready`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_rejected_over_cap_escalates`, `tests/mcp_proxy/tools/tasks/test_record_pr_verdict.py::test_null_artifact_falls_back_to_build_config`.
 
 ### 4.2 Merge stage rule + delivery artifacts [category: code] (depends: 4.1)
 `kind: deliverable`
@@ -1488,15 +1303,15 @@ def record_merge_result(
 
 The cascade-close behavior from `mark_task_merged` (`src/gobby/storage/tasks/_transitions.py:661-680`) MUST be preserved and is reused via the §2.1 generic terminal-close path: `complete_stage(stage_name='merge', ...)` calls `_close_task_in_txn(..., cascade_descendants=True, ...)` per the round-7/-8 caller-cascade rule (acceptance 2.1.10). The cascade implementation lives ONCE in `_close_task_in_txn`; both the legacy `mark_task_merged` cascade behavior and any future cascade-needing terminal stage inherit from there. The public `close_task` API always passes `cascade_descendants=False` and is NOT invoked on the merge-close path — Phase 4.2 reaches `_close_task_in_txn` exclusively through `complete_stage`'s merge branch. No new close path is added by Phase 4.2; the merge close is one application of the §2.1 invariant with cascade=True.
 
-`expansion_review_rule`, `development_review_rule`, `holistic_qa_rule` — each checks for its reviewer agent in the context and either spawns or escalates with `<stage>_no_reviewer`. These rules already exist in skeleton form from Phase 3.1; this section extends them to use the same `_has_<agent>(context)` pattern as `pr_work_rule`/`merge_rule` so missing reviewer agents surface uniformly. (`expansion-qa`, `qa-reviewer`, and `holistic-reviewer` are bundled and enabled by default — these escalation paths cover the operator-disabled or registry-missing failure modes.)
+`expansion_qa_rule`, `code_review_qa_rule`, `holistic_qa_rule` — each checks for its agent in the context and either spawns or escalates with `<stage>_no_agent`. These rules already exist in skeleton form from Phase 3.1; this section extends them to use the same `_has_<stage>_agent(context)` pattern as `pr_rule`/`merge_rule` so missing agents surface uniformly.
 
 **Acceptance:**
 
 - 4.2.1 — `merge_rule` registered in the rules list. file: `src/gobby/dispatch/rules.py`. test: `tests/dispatch/test_merge_rule.py::test_merge_rule_in_list`.
 - 4.2.2 — `record_merge_result(merge_sha=...)` writes `merge_commit_sha` + `merge_campaign_report`, then calls `complete_stage('merge', commit_sha=merge_sha)`. The §2.1 invariant 8 generic terminal-close path (acceptance 2.1.9 / 2.1.10) closes the task atomically in the same transaction by calling `_close_task_in_txn(..., reason='manifest_exhausted', commit_sha=merge_sha, cascade_descendants=True)`; cascade=True comes from the round-7/-8 caller-cascade rule that selects `stage_name == 'merge'`. Public `close_task(...)` is NOT invoked on this path. test: `tests/mcp_proxy/tools/tasks/test_record_merge_result.py::test_success_closes_task_via_terminal_close`, `tests/mcp_proxy/tools/tasks/test_record_merge_result.py::test_success_close_uses_manifest_exhausted_reason_and_merge_sha`, `tests/mcp_proxy/tools/tasks/test_record_merge_result.py::test_success_close_uses_cascade_descendants_true`, `tests/mcp_proxy/tools/tasks/test_record_merge_result.py::test_success_does_not_invoke_public_close_task`.
 - 4.2.3 — `record_merge_result(failure_reason=...)` fails the stage; over the cap, escalates. test: `tests/mcp_proxy/tools/tasks/test_record_merge_result.py::test_failure_path`.
-- 4.2.4 — `expansion_review_rule`, `development_review_rule`, `holistic_qa_rule` all surface missing-reviewer-agent escalations with stage-specific reason codes (`expansion_no_reviewer`, `development_no_reviewer`, `holistic_qa_no_reviewer`). test: `tests/dispatch/test_review_rules_no_agent.py::test_each_review_rule_escalates_specifically_when_reviewer_missing`.
-- 4.2.5 — End-to-end stage chain `holistic_qa.review_approved → holistic_qa.done → pr.ready → pr.in_progress → pr.needs_review → pr.review_approved → pr.done → merge.ready → merge.in_progress → merge.done → task closed` walks correctly across heartbeats. test: `tests/dispatch/test_delivery_chain.py::test_full_delivery_chain_5_state`.
+- 4.2.4 — `expansion_qa_rule`, `code_review_qa_rule`, `holistic_qa_rule` all surface missing-agent escalations with stage-specific reason codes. test: `tests/dispatch/test_qa_rules_no_agent.py::test_each_qa_rule_escalates_specifically`.
+- 4.2.5 — End-to-end stage chain `holistic_qa.done → pr.in_progress → pr.done → merge.in_progress → merge.done → task closed` walks correctly across heartbeats. test: `tests/dispatch/test_delivery_chain.py::test_full_delivery_chain`.
 
 ## P5 Task Type Expansion + Legacy Removal
 `kind: framing`
@@ -1617,7 +1432,7 @@ CLI flag removals: `gobby tasks list --status` and `--lifecycle` are deleted (Ph
 - 5.3.4 — Post-rewire verification: `mark_task_review_approved` / `mark_task_review_rejected` / `mark_task_needs_review` (rewired in Phase 2.6) write no legacy `status` values; their stage-native paths are the only path. test: `tests/storage/tasks/test_review_tools_no_legacy_writes.py::test_no_status_writes_after_rewire`.
 - 5.3.5 — CLI `--status`/`--lifecycle` flags and HTTP `?status=`/`?lifecycle=` filters are removed. test: `tests/cli/test_legacy_flags_removed.py::test_status_flag_unknown`, `tests/servers/routes/test_legacy_filters_removed.py::test_status_filter_400`.
 - 5.3.6 — `serialize_task_state` returns the new shape without `lifecycle_stage`. file: `src/gobby/tasks/state_semantics.py`. test: `tests/tasks/test_serialize_task_state.py::test_new_shape`.
-- 5.3.7 — Post-rewire call-site audit and policy-driven rewrite: every existing caller of `mark_task_review_approved`, `mark_task_review_rejected`, and `mark_task_needs_review` (rewired in Phase 2.6) is invoked from a context where the caller's stage row satisfies the precondition under the new contract — `current_stage.review_policy ∈ {required, optional}` AND the row's current state matches the legal source state for the called transition. The audit grep is `grep -rln 'mark_task_review_\(approved\|rejected\)\|mark_task_needs_review' src/gobby/install/shared/`. Each caller is validated against the per-stage policy table (§1.2 stages.yaml). Allowlisted callers and their stage contexts: `planner.yaml` (writes `planning`, calls `mark_task_needs_review`), `plan-adversary.yaml` (reviews `planning`, calls `mark_task_review_approved` / `_rejected`), `expansion-qa.yaml` (reviews `expansion`, calls approve/reject), `qa-reviewer.yaml` (reviews `development`, calls approve/reject), `holistic-reviewer.yaml` (works AND reviews `holistic_qa` internally), `backend-developer.yaml` and `frontend-developer.yaml` (write `development`, call `mark_task_needs_review`). **Disallowed under the new contract: any caller invoking these tools while the current stage is `test_arch` (review_policy=none).** The §2.6.6 audit identified `test-architect.yaml` as the most likely offender; this deliverable enforces the rewrite — `test-architect.yaml`'s call sites are rewritten to call `complete_stage` directly (since `test_arch.review_policy=none`, the agent's work product advances `in_progress → done` without a review loop). Other callers in the §2.6.6 enumeration whose stage context is unclear (`requirements-analyst.yaml`, `qa-dev.yaml`, `nightly-linter.yaml`, `nightly-test-fixer.yaml`, `merge-orchestrator.yaml`, `default.yaml`, `developer.yaml`) are validated case-by-case; any caller whose stage context violates the policy table is rewritten to a policy-respecting alternative (`complete_stage`, `fail_stage`, or removal of the call). The bundled SKILL.md instruction surfaces and rule YAMLs are reviewed for any prose that references the legacy "stage stays open, status becomes needs_review" semantics; offending prose is rewritten to describe the per-stage `submit_for_review` / `approve_review` / `reject_review` model. test: `tests/storage/tasks/test_review_tools_call_site_audit.py::test_all_callers_satisfy_policy`, `tests/storage/tasks/test_review_tools_call_site_audit.py::test_test_architect_yaml_does_not_call_review_tools`, `tests/storage/tasks/test_review_tools_call_site_audit.py::test_test_architect_yaml_calls_complete_stage_for_test_arch`, `tests/storage/tasks/test_review_tools_call_site_audit.py::test_skill_md_prose_describes_5_state_model`.
+- 5.3.7 — Post-rewire call-site audit: every existing caller of `mark_task_review_approved`, `mark_task_review_rejected`, and `mark_task_needs_review` (rewired in Phase 2.6) is invoked from a context where `current_stage.name IN {planning, adversarial_review, test_arch, expansion_qa, code_review_qa, holistic_qa}`. The audit grep is `grep -rln 'mark_task_review_\(approved\|rejected\)\|mark_task_needs_review' src/gobby/install/shared/`; the resulting caller list MUST be a subset of the allowlist named in §2.6.6 plus any caller added during the §2.6 → §5.3 window. The allowlist explicitly includes `test-architect.yaml` (test_arch stage), `expansion-qa.yaml` (expansion_qa stage), `requirements-analyst.yaml`, `qa-dev.yaml`, `nightly-linter.yaml`, `nightly-test-fixer.yaml`, `backend-developer.yaml`, `frontend-developer.yaml`, `default.yaml`, `developer.yaml`, `merge-orchestrator.yaml`, the bundled SKILL.md instruction surfaces, and the rule YAMLs (same list as §2.6.6) — closing the F2 gap where `test-architect.yaml` and several others were previously omitted. Off-stage callers (if any surface) are updated to call `complete_stage` / `fail_stage` directly with an explicit stage name rather than relying on the rewired tool's "advance current stage" behavior. This prevents silent behavior drift now that the tool surface no longer writes legacy `status` values. test: `tests/storage/tasks/test_review_tools_call_site_audit.py::test_no_off_stage_callers`, `tests/storage/tasks/test_review_tools_call_site_audit.py::test_allowlist_includes_test_architect_and_expansion_qa`.
 - 5.3.8 — Pre-drop web audit: the multi-pattern, legacy-only grep documented in the §5.3 narrative ("Audit grep patterns") returns zero source matches across `web/src/` (excluding the legacy-removal regression tests `test_legacy_symbols_removed.test.ts` and the CSS lint test `lifecycle-board-css-lint.test.ts`); `pnpm tsc --noEmit` compiles clean against the post-Phase-6.3 web bundle; running this audit before the migration runs is enforced by a CI step gating migration 236. The grep MUST NOT use the bare token `lifecycle` (would false-positive on `LifecycleBoard`, `lifecycle-board`, and `lifecycle-board:hide-blocked` introduced by Phase 6); the patterns are anchored on `\blifecycle_stage\b`, `\bLifecycle\.`, `\bTaskBucket\b`, `\bTASK_BUCKET_(LABELS|ORDER)\b`, `\bmoveTaskToBucket\b`, `\bgetTaskBucket\b`, `\bKanbanBoard\b`, `\.lifecycle_stage\b`, and `\bstate\.lifecycle\b` (full single-shell-line invocation in the §5.3 narrative). behavior: "web bundle has no legacy reads before column drop" verified in `tests/migrations/test_pre_drop_web_audit.py::test_no_legacy_web_reads` (the test executes the documented `git grep -nE` command and asserts zero output); the new `LifecycleBoard` family of identifiers is asserted to be ignored by the patterns in `tests/migrations/test_pre_drop_web_audit.py::test_grep_does_not_match_new_lifecycle_board_identifiers`. Both tests carry `pytest.mark.integration` for local runs and execute unconditionally in CI.
 - 5.3.9 — Pre-`status`-drop audit-and-port: every remaining runtime reader/writer of `tasks.status`, `tasks.lifecycle`, and `tasks.lifecycle_stage` is identified and ported in this deliverable to one of the post-cutover sources (`closed_at IS NOT NULL` for closure, `tasks.is_escalated` for escalation, `current_stage(task)` / `task.stages` for everything else) BEFORE migration 236 executes. The audit is multi-pattern, scoped to task-state code (`src/gobby/storage/tasks/`, `src/gobby/tasks/`, `src/gobby/sync/`, `src/gobby/dispatch/`, `src/gobby/build/`, `src/gobby/cli/`, `src/gobby/mcp_proxy/`, `src/gobby/servers/`; explicitly excludes `src/gobby/storage/migrations.py` and `tests/storage/test_migration_*.py`). Patterns matched: (a) comparisons of `.status` / `.lifecycle` / `.lifecycle_stage` against legacy enum string literals (`open`, `in_progress`, `needs_review`, `review_approved`, `escalated`, `closed`, `plan_review`, `expanding`, `in_development`, `holistic_review`, `pr`, `merging`, `merged`, `test_arch`); (b) unqualified SQL inserts/updates referencing legacy columns: `INSERT INTO tasks (... status ...)`, `INSERT INTO tasks (... lifecycle ...)`, `INSERT INTO tasks (... lifecycle_stage ...)`, `status = ?`, `lifecycle = ?`, `lifecycle_stage = ?`; (c) function-parameter usages on task CRUD/list/update APIs declaring `status:` / `lifecycle:` / `lifecycle_stage:` typed parameters; (d) JSONL/sync export key emissions for `status` / `lifecycle` / `lifecycle_stage`; (e) **(round-12 F1)** dynamic-write sources where dict construction places legacy columns into a write-bound dict: literal dict keys `'status':`, `'lifecycle':`, `'lifecycle_stage':` inside `synced_values`-style dicts that flow into dynamically-built `INSERT INTO tasks ({columns})` or `UPDATE tasks SET {set_clause}` SQL. Pattern (e) is scoped to task-sync code (`src/gobby/sync/`) and task-CRUD (`src/gobby/storage/tasks/`) to avoid false-positives against unrelated `status` keys (validation status, run status, workflow status, etc.). The scoping by directory ensures unrelated tables (workflows, sessions) with their own `status` columns do not false-positive — those directories are excluded from the audit. The named runtime ports include: `_crud.py::create_task` and `update_task` lose legacy column references; `_apply.py::_complete_dev_only_run` ports to `complete_stage(task_id, 'expansion')`; `LocalTaskManager` list/update/filter signatures lose `status` / `lifecycle` kwargs; task sync EXPORT drops legacy keys; **(round-12 F1)** `src/gobby/sync/tasks.py::TaskSyncManager.import_from_jsonl` ports its dynamic write path: stops reading `lifecycle_stage` from `tasks` rows, stops recognizing top-level JSONL `status` / `lifecycle_stage` keys, removes `status` / `lifecycle_stage` from `synced_values` dict construction, so the dynamically-built `INSERT INTO tasks ({columns})` and `UPDATE tasks SET {set_clause}` no longer reference dropped columns. Audit returns zero matches outside the historical-migration boundary post-port. The MCP `get_task` / `list_tasks` response shape no longer includes `status` / `lifecycle` / `lifecycle_stage`; the HTTP `/api/tasks` GET endpoints no longer include those keys; the CLI `gobby tasks list` output no longer includes those columns; task JSONL exports AND imports no longer carry/process those keys. test: `tests/storage/test_migration_236_drop_legacy.py::test_legacy_column_audit_grep_returns_zero_runtime_matches`, `tests/storage/test_migration_236_drop_legacy.py::test_dynamic_dict_write_audit_returns_zero_matches`, `tests/storage/tasks/test_crud_no_legacy_columns.py::test_create_task_no_status_param`, `tests/storage/tasks/test_crud_no_legacy_columns.py::test_update_task_no_lifecycle_param`, `tests/tasks/expansion/test_apply_dev_only.py::test_complete_dev_only_run_via_complete_stage`, `tests/sync/test_task_jsonl_export_shape.py::test_no_legacy_keys`, `tests/sync/test_task_jsonl_import_shape.py::test_import_does_not_write_legacy_columns`, `tests/sync/test_task_jsonl_import_shape.py::test_import_ignores_top_level_legacy_keys`, `tests/mcp_proxy/tools/tasks/test_get_task_response_shape.py::test_no_legacy_fields`, `tests/servers/routes/test_tasks_list_response_shape.py::test_no_legacy_fields`, `tests/cli/test_tasks_list_columns.py::test_no_legacy_columns`.
 
@@ -1811,7 +1626,7 @@ The `done` group within each column collapses by default to one summary row show
 
 - 6.1.1 — Three new components exist with the declared prop shapes. file: `web/src/components/tasks/LifecycleBoard.tsx`, `web/src/components/tasks/StageColumn.tsx`, `web/src/components/tasks/StageCard.tsx`. symbol: `LifecycleBoard`, `StageColumn`, `StageCard`.
 - 6.1.2 — Columns render only the stages present in any visible task's manifest. test: `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_visible_stage_filtering`.
-- 6.1.3 — Per-column state grouping renders top-to-bottom in this order: `ready`, `in_progress`, `needs_review`, `review_approved`, `done`. Stages with `review_policy=none` render only three groups (`ready`, `in_progress`, `done`) — no `needs_review` or `review_approved` group is rendered for `none`-policy columns regardless of whether the task set contains rows in those states (the data model never permits them on a `none`-policy row, but the render layer ALSO defends against malformed data by hiding the groups). The `done` group collapses by default to a one-line summary showing the count; click to expand. Drag-to-advance respects per-row `review_policy`: dragging right on a `policy=required` card walks the full chain `ready → in_progress → needs_review → review_approved → done` (one drag advances one step); on `policy=none`/`optional` cards, drag advances `ready → in_progress → done`. Drag attempts that violate legality surface a tooltip with the constraint reason (`IllegalStageTransitionError` payload). test: `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_5_state_grouping_for_required_policy`, `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_3_state_grouping_for_none_policy`, `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_done_group_collapsed_by_default`, `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_drag_advance_required_policy_walks_full_chain`, `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_drag_advance_none_policy_walks_3_state_chain`, `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_illegal_drag_surfaces_tooltip`.
+- 6.1.3 — Tri-state grouping renders within each column with `done` collapsed by default. test: `web/src/components/tasks/__tests__/StageColumn.test.tsx::test_tri_state_grouping`.
 - 6.1.4 — Blocked tasks render in their current column with a blocked badge by default; the badge tooltip names the blocker (open upstream dep or escalation reason). test: `web/src/components/tasks/__tests__/StageCard.test.tsx::test_blocked_badge_default_visible`.
 - 6.1.4a — A "Hide blocked" toolbar toggle removes blocked tasks from the rendered set; toggle state persists in `localStorage['lifecycle-board:hide-blocked']`. test: `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_hide_blocked_toggle_persists`.
 - 6.1.4b — Drag-to-advance is disabled on blocked cards; attempting to drag surfaces the badge tooltip. test: `web/src/components/tasks/__tests__/StageCard.test.tsx::test_blocked_drag_disabled`.
@@ -1829,19 +1644,11 @@ Target: `web/src/hooks/useTasks.ts`, `web/src/hooks/useStagesRegistry.ts` (new)
 Extend `GobbyTask` (`web/src/hooks/useTasks.ts:10-45` area) with:
 
 ```typescript
-export type StageState5 = 'ready' | 'in_progress' | 'needs_review' | 'review_approved' | 'done'
-export type ReviewPolicy = 'none' | 'required' | 'optional'
-
 export interface StageStateView {
   stage_name: string
   position: number
-  state: StageState5
-  review_policy: ReviewPolicy
-  reviewer_agent: string | null
-  work_attempt_count: number
-  review_round_count: number
-  max_work_attempts: number | null
-  max_review_rounds: number | null
+  state: 'ready' | 'in_progress' | 'done'
+  attempt_count: number
   artifact_refs: Record<string, string> | null
 }
 
@@ -1975,19 +1782,17 @@ Update tests to read documentation references (no tests for prose, but the verif
 
 End-to-end acceptance covers:
 
-- **Schema integrity**: every migration runs forward on a fresh DB and on a fixture DB with representative `(lifecycle, status, labels)` tuples; resulting `task_stage_states` rows match the mapping table 2.2.2; CHECK constraint on `state` accepts the 5-value enum on every row regardless of policy.
-- **Storage invariants**: position uniqueness, registry FK, transition state machine, counter-split semantics (`work_attempt_count` / `review_round_count`), policy-aware legality matrix — all enforced by `StageStatesManager` tests. `IllegalStageTransitionError` raised on every illegal `(state, transition, policy)` triple.
-- **Type→default-stages resolution**: every existing and new task type resolves to declared defaults via `get_task_type_defaults`; the surviving 11-stage registry has `holistic_qa` only in the `epic` manifest.
-- **Build-time override merge**: `--stages`, `--add-stage`, `--skip-stage`, `--stage <name>:max_review_rounds=N`, profile bundles all compose as documented in 3.2 and 2.5.
-- **Readiness equivalence**: contract tests run old vs. new `list_ready_tasks`, `list_blocked_tasks`, `suggest_next_task`, `list_automation_candidates`, and `state.is_blocked` against the same fixture DB and assert identical task ID sets. `review_approved` rows do NOT satisfy upstream-completion checks.
-- **Per-stage rule fan-out**: each `policy=required` stage (`planning`, `expansion`, `development`, `holistic_qa`, `pr`) has three rules in the rules list (`<stage>_work_rule`, `<stage>_review_rule`, `<stage>_advance_rule` — except `holistic_qa` which has only `_rule` + `_advance_rule` because review is internal); `policy=none` stages (`ideation`, `research`, `architecture`, `prd`, `test_arch`, `merge`) have a single rule. The full set of rules covers every cell of the (stage × state) reachable matrix.
-- **Dispatcher chain**: full 5-state delivery walk for an `epic` `holistic_qa.review_approved → holistic_qa.done → pr.ready → pr.in_progress → pr.needs_review → pr.review_approved → pr.done → merge.ready → merge.in_progress → merge.done → task closed` covered end-to-end on a fresh DB; PR rejected-then-approved cycle exercised. Leaf `feature` task walks `planning.in_progress → planning.needs_review → planning.review_approved → planning.done → test_arch → expansion → expansion.needs_review → expansion.review_approved → expansion.done → development → development.needs_review → development.review_approved → development.done → pr → merge → closed`.
-- **Heartbeat-advance smoke** (covers the §2.6 sequencing bridge): given a fixture task at `planning.in_progress` (review_policy=required), calling the rewired `mark_task_needs_review` produces `planning.needs_review`; the next dispatcher heartbeat fires `planning_review_rule` and spawns `plan-adversary`. After `mark_task_review_approved`, the row is at `review_approved`; the next heartbeat fires `planning_advance_rule` calling `complete_stage('planning')`, advancing to `planning.done` and promoting `test_arch.ready → in_progress` via `auto_advance_ready_rule`.
-- **API surface**: `GET /api/tasks?stage=development&stage_state=in_progress` returns expected set; `PATCH /api/tasks/{id}/stages/{name}` enforces 5-state transitions per `review_policy`, returning 422 with the `IllegalStageTransitionError` payload on policy/state violations; `record_pr_verdict` maps `approved → approve_review`, `rejected/needs_changes → reject_review`; `record_merge_result` writes artifacts and routes through `complete_stage('merge')` to `_close_task_in_txn(cascade=True)`.
-- **Terminal non-merge types**: `research_spike` and `prd_doc` walk to their terminal stage and close cleanly via the §2.1 invariant 8 generic close path without ever reaching `merge`. `disabled_agent_escalation_rule` surfaces the §1.3 placeholder gap with reason `<stage>_no_agent`.
-- **UI**: LifecycleBoard renders with seeded registry, drag-to-advance updates state via PATCH respecting per-row `review_policy` (5-state chain on `required`, 3-state on `none`/`optional`), swimlane filter by task_type hides empty rows, and pre-existing migrated tasks render from their stage rows; blocked tasks render with badges in their current column.
+- **Schema integrity**: every migration runs forward on a fresh DB and on a fixture DB with representative `(lifecycle, status, labels)` tuples; resulting `task_stage_states` rows match the mapping table 2.2.2.
+- **Storage invariants**: position uniqueness, registry FK, transition state machine, attempt-count semantics — all enforced by `StageStatesManager` tests.
+- **Type→default-stages resolution**: every existing and new task type resolves to declared defaults via `get_task_type_defaults`.
+- **Build-time override merge**: `--stages`, `--add-stage`, `--skip-stage`, profile bundles all compose as documented in 3.2 and 2.5.
+- **Readiness equivalence**: contract tests run old vs. new `list_ready_tasks`, `list_blocked_tasks`, `suggest_next_task`, `list_automation_candidates`, and `state.is_blocked` against the same fixture DB and assert identical task ID sets.
+- **Dispatcher chain**: full delivery walk `holistic_qa.done → pr.in_progress → pr.done → merge.in_progress → merge.done → task closed` covered end-to-end on a fresh DB.
+- **API surface**: `GET /api/tasks?stage=development&stage_state=in_progress` returns expected set; `PATCH /api/tasks/{id}/stages/{name}` enforces tri-state transitions; PR verdict and merge result tools store artifacts and transition stages correctly.
+- **Terminal non-merge types**: `research_spike` and `prd_doc` walk to their terminal stage and close cleanly without ever reaching `merge`.
+- **UI**: LifecycleBoard renders with seeded registry, drag-to-advance updates state via PATCH, swimlane filter by task_type hides empty rows, and pre-existing migrated tasks render from their stage rows; blocked tasks render with badges in their current column.
 - **Performance**: kanban board fetch SQL keeps p99 under existing `KanbanBoard` baseline (denormalized stage manifest in single query, indexed on `(task_id, position)` and `(stage_name, state)`).
-- **Dead-code regression**: grep/static tests fail if code writes old `status` / `lifecycle` values or calls removed lifecycle PR/merge tools after the cutover. The dropped registry stages `adversarial_review`, `expansion_qa`, `code_review_qa` do not appear in any post-cutover code path.
+- **Dead-code regression**: grep/static tests fail if code writes old `status` / `lifecycle` values or calls removed lifecycle PR/merge tools after the cutover.
 - **No regressions**: targeted runs of `tests/dispatch/`, `tests/tasks/`, `tests/storage/`, `tests/servers/routes/`, `tests/mcp_proxy/tools/tasks/`, plus `pnpm test` and `pnpm build` for the web bundle.
 
 ## Out of scope
@@ -2000,3 +1805,443 @@ End-to-end acceptance covers:
 - Per-stage time tracking, SLAs, due dates.
 - Drag-and-drop reordering of stages within a task's manifest. Drag-to-advance state is in scope; drag-to-reorder positions is not.
 
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: "1.1 Schema migration + bundled stages.yaml: registry, defaults, manifest, and PR/merge artifact columns"
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "All acceptance items for section 1.1 pass."
+  labels:
+    - "covers:unknown:1.1:1.1.1"
+    - "covers:unknown:1.1:1.1.2"
+    - "covers:unknown:1.1:1.1.3"
+    - "covers:unknown:1.1:1.1.4"
+    - "covers:unknown:1.1:1.1.5"
+    - "covers:unknown:1.1:1.1.6"
+    - "covers:unknown:1.1:1.1.6a"
+    - "covers:unknown:1.1:1.1.7"
+    - "covers:unknown:1.1:1.1.8"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.1"
+- title: "1.2 Sync loader for the bundled stages.yaml"
+  category: config
+  task_type: chore
+  depends_on:
+    - "1.1"
+  validation_criteria: "All acceptance items for section 1.2 pass."
+  labels:
+    - "covers:unknown:1.2:1.2.1"
+    - "covers:unknown:1.2:1.2.2"
+    - "covers:unknown:1.2:1.2.3"
+    - "covers:unknown:1.2:1.2.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.2"
+- title: "1.3 Placeholder agent YAMLs for discovery stages"
+  category: config
+  task_type: chore
+  depends_on: []
+  validation_criteria: "All acceptance items for section 1.3 pass."
+  labels:
+    - "covers:unknown:1.3:1.3.1"
+    - "covers:unknown:1.3:1.3.2"
+    - "covers:unknown:1.3:1.3.3"
+    - "covers:unknown:1.3:1.3.4"
+    - "covers:unknown:1.3:1.3.5"
+    - "covers:unknown:1.3:1.3.6"
+    - "covers:unknown:1.3:1.3.7"
+    - "covers:unknown:1.3:1.3.8"
+    - "covers:unknown:1.3:1.3.9"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.3"
+- title: "2.1 Stage registry + stage states storage managers"
+  category: code
+  task_type: feature
+  depends_on:
+    - "1.1"
+  validation_criteria: "All acceptance items for section 2.1 pass."
+  labels:
+    - "covers:unknown:2.1:2.1.1"
+    - "covers:unknown:2.1:2.1.2"
+    - "covers:unknown:2.1:2.1.3"
+    - "covers:unknown:2.1:2.1.4"
+    - "covers:unknown:2.1:2.1.5"
+    - "covers:unknown:2.1:2.1.6"
+    - "covers:unknown:2.1:2.1.7"
+    - "covers:unknown:2.1:2.1.8"
+    - "covers:unknown:2.1:2.1.9"
+    - "covers:unknown:2.1:2.1.10"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.1"
+- title: "2.2 One-shot backfill: derive `task_stage_states` from existing `(lifecycle, status, labels)`"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+  validation_criteria: "All acceptance items for section 2.2 pass."
+  labels:
+    - "covers:unknown:2.2:2.2.1"
+    - "covers:unknown:2.2:2.2.2"
+    - "covers:unknown:2.2:2.2.3"
+    - "covers:unknown:2.2:2.2.4"
+    - "covers:unknown:2.2:2.2.5"
+    - "covers:unknown:2.2:2.2.6"
+    - "covers:unknown:2.2:2.2.7"
+    - "covers:unknown:2.2:2.2.8"
+    - "covers:unknown:2.2:2.2.9"
+    - "covers:unknown:2.2:2.2.10"
+    - "covers:unknown:2.2:2.2.11"
+    - "covers:unknown:2.2:2.2.12"
+    - "covers:unknown:2.2:2.2.13"
+    - "covers:unknown:2.2:2.2.14"
+    - "covers:unknown:2.2:2.2.15"
+    - "covers:unknown:2.2:2.2.16"
+    - "covers:unknown:2.2:2.2.17"
+    - "covers:unknown:2.2:2.2.18"
+    - "covers:unknown:2.2:2.2.19"
+    - "covers:unknown:2.2:2.2.20"
+    - "covers:unknown:2.2:2.2.21"
+    - "covers:unknown:2.2:2.2.22"
+    - "covers:unknown:2.2:2.2.23"
+    - "covers:unknown:2.2:2.2.24"
+    - "covers:unknown:2.2:2.2.25"
+    - "covers:unknown:2.2:2.2.26"
+    - "covers:unknown:2.2:2.2.27"
+    - "covers:unknown:2.2:2.2.28"
+    - "covers:unknown:2.2:2.2.29"
+    - "covers:unknown:2.2:2.2.30"
+    - "covers:unknown:2.2:2.2.31"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.2"
+- title: "2.3 New gobby-tasks MCP tools for stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+  validation_criteria: "All acceptance items for section 2.3 pass."
+  labels:
+    - "covers:unknown:2.3:2.3.1"
+    - "covers:unknown:2.3:2.3.2"
+    - "covers:unknown:2.3:2.3.3"
+    - "covers:unknown:2.3:2.3.4"
+    - "covers:unknown:2.3:2.3.5"
+    - "covers:unknown:2.3:2.3.6"
+    - "covers:unknown:2.3:2.3.7"
+    - "covers:unknown:2.3:2.3.8"
+    - "covers:unknown:2.3:2.3.9"
+    - "covers:unknown:2.3:2.3.10"
+    - "covers:unknown:2.3:2.3.11"
+    - "covers:unknown:2.3:2.3.12"
+    - "covers:unknown:2.3:2.3.13"
+    - "covers:unknown:2.3:2.3.14"
+    - "covers:unknown:2.3:2.3.15"
+    - "covers:unknown:2.3:2.3.16"
+    - "covers:unknown:2.3:2.3.17"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.3"
+- title: "2.4 New HTTP routes for stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+  validation_criteria: "All acceptance items for section 2.4 pass."
+  labels:
+    - "covers:unknown:2.4:2.4.1"
+    - "covers:unknown:2.4:2.4.2"
+    - "covers:unknown:2.4:2.4.3"
+    - "covers:unknown:2.4:2.4.4"
+    - "covers:unknown:2.4:2.4.5"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.4"
+- title: "2.5 New CLI commands and build flags"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.3"
+  validation_criteria: "All acceptance items for section 2.5 pass."
+  labels:
+    - "covers:unknown:2.5:2.5.1"
+    - "covers:unknown:2.5:2.5.2"
+    - "covers:unknown:2.5:2.5.3"
+    - "covers:unknown:2.5:2.5.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.5"
+- title: "2.6 Rewire `mark_task_review_*` tools to stage-native semantics"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.3"
+  validation_criteria: "All acceptance items for section 2.6 pass."
+  labels:
+    - "covers:unknown:2.6:2.6.1"
+    - "covers:unknown:2.6:2.6.2"
+    - "covers:unknown:2.6:2.6.3"
+    - "covers:unknown:2.6:2.6.4"
+    - "covers:unknown:2.6:2.6.5"
+    - "covers:unknown:2.6:2.6.6"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.6"
+- title: "3.1 Rewrite `dispatch/rules.py` to query stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.2"
+  validation_criteria: "All acceptance items for section 3.1 pass."
+  labels:
+    - "covers:unknown:3.1:3.1.1"
+    - "covers:unknown:3.1:3.1.2"
+    - "covers:unknown:3.1:3.1.3"
+    - "covers:unknown:3.1:3.1.4"
+    - "covers:unknown:3.1:3.1.5"
+    - "covers:unknown:3.1:3.1.6"
+    - "covers:unknown:3.1:3.1.7"
+    - "covers:unknown:3.1:3.1.8"
+    - "covers:unknown:3.1:3.1.9"
+    - "covers:unknown:3.1:3.1.10"
+    - "covers:unknown:3.1:3.1.11"
+    - "covers:unknown:3.1:3.1.12"
+    - "covers:unknown:3.1:3.1.13"
+    - "covers:unknown:3.1:3.1.14"
+    - "covers:unknown:3.1:3.1.15"
+    - "covers:unknown:3.1:3.1.16"
+    - "covers:unknown:3.1:3.1.17"
+    - "covers:unknown:3.1:3.1.18"
+    - "covers:unknown:3.1:3.1.19"
+    - "covers:unknown:3.1:3.1.20"
+    - "covers:unknown:3.1:3.1.21"
+    - "covers:unknown:3.1:3.1.22"
+    - "covers:unknown:3.1:3.1.23"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.1"
+- title: "3.2 Manifest resolution at build time + readiness projections rewrite"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.2"
+    - "3.1"
+  validation_criteria: "All acceptance items for section 3.2 pass."
+  labels:
+    - "covers:unknown:3.2:3.2.1"
+    - "covers:unknown:3.2:3.2.2"
+    - "covers:unknown:3.2:3.2.3"
+    - "covers:unknown:3.2:3.2.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.2"
+- title: "3.3 Cut over `RuntimeDispatchMutex` candidate-snapshot check from `(lifecycle, status)` to `(stage_name, stage_state, updated_at)`"
+  category: code
+  task_type: feature
+  depends_on:
+    - "3.1"
+    - "3.2"
+  validation_criteria: "All acceptance items for section 3.3 pass."
+  labels:
+    - "covers:unknown:3.3:3.3.1"
+    - "covers:unknown:3.3:3.3.2"
+    - "covers:unknown:3.3:3.3.3"
+    - "covers:unknown:3.3:3.3.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.3"
+- title: "4.1 PR stage rule + delivery artifacts"
+  category: code
+  task_type: feature
+  depends_on:
+    - "3.1"
+  validation_criteria: "All acceptance items for section 4.1 pass."
+  labels:
+    - "covers:unknown:4.1:4.1.1"
+    - "covers:unknown:4.1:4.1.2"
+    - "covers:unknown:4.1:4.1.3"
+    - "covers:unknown:4.1:4.1.4"
+    - "covers:unknown:4.1:4.1.5"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "4.1"
+- title: "4.2 Merge stage rule + delivery artifacts"
+  category: code
+  task_type: feature
+  depends_on:
+    - "4.1"
+  validation_criteria: "All acceptance items for section 4.2 pass."
+  labels:
+    - "covers:unknown:4.2:4.2.1"
+    - "covers:unknown:4.2:4.2.2"
+    - "covers:unknown:4.2:4.2.3"
+    - "covers:unknown:4.2:4.2.4"
+    - "covers:unknown:4.2:4.2.5"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "4.2"
+- title: "5.1 New task types + default-stages seed"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.2"
+  validation_criteria: "All acceptance items for section 5.1 pass."
+  labels:
+    - "covers:unknown:5.1:5.1.1"
+    - "covers:unknown:5.1:5.1.2"
+    - "covers:unknown:5.1:5.1.3"
+    - "covers:unknown:5.1:5.1.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "5.1"
+- title: "5.2 Wire `is_escalated` first-class column through dataclass + readers"
+  category: code
+  task_type: feature
+  depends_on:
+    - "1.1"
+    - "2.2"
+  validation_criteria: "All acceptance items for section 5.2 pass."
+  labels:
+    - "covers:unknown:5.2:5.2.1"
+    - "covers:unknown:5.2:5.2.2"
+    - "covers:unknown:5.2:5.2.3"
+    - "covers:unknown:5.2:5.2.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "5.2"
+- title: "5.3 Drop `lifecycle`, `lifecycle_stage`, active `status` semantics"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.6"
+    - "3.1"
+    - "3.2"
+    - "3.3"
+    - "4.1"
+    - "4.2"
+    - "5.2"
+    - "6.3"
+  validation_criteria: "All acceptance items for section 5.3 pass."
+  labels:
+    - "covers:unknown:5.3:5.3.1"
+    - "covers:unknown:5.3:5.3.2"
+    - "covers:unknown:5.3:5.3.3"
+    - "covers:unknown:5.3:5.3.4"
+    - "covers:unknown:5.3:5.3.5"
+    - "covers:unknown:5.3:5.3.6"
+    - "covers:unknown:5.3:5.3.7"
+    - "covers:unknown:5.3:5.3.8"
+    - "covers:unknown:5.3:5.3.9"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "5.3"
+- title: "5.4 Discovery-stage agent follow-up tracking"
+  category: manual
+  task_type: chore
+  depends_on:
+    - "1.3"
+  validation_criteria: "All acceptance items for section 5.4 pass."
+  labels:
+    - "covers:unknown:5.4:5.4.1"
+    - "covers:unknown:5.4:5.4.2"
+    - "covers:unknown:5.4:5.4.3"
+    - "covers:unknown:5.4:5.4.4"
+    - "covers:unknown:5.4:5.4.5"
+    - "covers:unknown:5.4:5.4.6"
+    - "covers:unknown:5.4:5.4.7"
+    - "covers:unknown:5.4:5.4.8"
+  assigned_agent: planner
+  tdd: false
+  source_section: "5.4"
+- title: "6.1 New `LifecycleBoard.tsx` + `StageColumn.tsx` + `StageCard.tsx`"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.4"
+  validation_criteria: "All acceptance items for section 6.1 pass."
+  labels:
+    - "covers:unknown:6.1:6.1.1"
+    - "covers:unknown:6.1:6.1.2"
+    - "covers:unknown:6.1:6.1.3"
+    - "covers:unknown:6.1:6.1.4"
+    - "covers:unknown:6.1:6.1.4a"
+    - "covers:unknown:6.1:6.1.4b"
+    - "covers:unknown:6.1:6.1.5"
+    - "covers:unknown:6.1:6.1.6"
+    - "covers:unknown:6.1:6.1.7"
+    - "covers:unknown:6.1:6.1.8"
+    - "covers:unknown:6.1:6.1.9"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "6.1"
+- title: "6.2 useTasks denormalized stage manifest + new filters"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.4"
+    - "6.1"
+  validation_criteria: "All acceptance items for section 6.2 pass."
+  labels:
+    - "covers:unknown:6.2:6.2.1"
+    - "covers:unknown:6.2:6.2.2"
+    - "covers:unknown:6.2:6.2.3"
+    - "covers:unknown:6.2:6.2.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "6.2"
+- title: "6.3 Mount LifecycleBoard, retire `taskState.ts` legacy types"
+  category: code
+  task_type: feature
+  depends_on:
+    - "6.1"
+    - "6.2"
+  validation_criteria: "All acceptance items for section 6.3 pass."
+  labels:
+    - "covers:unknown:6.3:6.3.1"
+    - "covers:unknown:6.3:6.3.2"
+    - "covers:unknown:6.3:6.3.3"
+    - "covers:unknown:6.3:6.3.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "6.3"
+- title: "7.1 Remove `stage-:<name>` label handling and migration helpers"
+  category: refactor
+  task_type: refactor
+  depends_on:
+    - "5.3"
+    - "6.3"
+  validation_criteria: "All acceptance items for section 7.1 pass."
+  labels:
+    - "covers:unknown:7.1:7.1.1"
+    - "covers:unknown:7.1:7.1.2"
+    - "covers:unknown:7.1:7.1.3"
+    - "covers:unknown:7.1:7.1.4"
+    - "covers:unknown:7.1:7.1.5"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "7.1"
+- title: "7.2 Documentation pass"
+  category: docs
+  task_type: chore
+  depends_on:
+    - "7.1"
+  validation_criteria: "All acceptance items for section 7.2 pass."
+  labels:
+    - "covers:unknown:7.2:7.2.1"
+    - "covers:unknown:7.2:7.2.2"
+    - "covers:unknown:7.2:7.2.3"
+    - "covers:unknown:7.2:7.2.4"
+  assigned_agent: default
+  tdd: false
+  source_section: "7.2"
+```
