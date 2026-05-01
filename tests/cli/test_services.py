@@ -13,6 +13,7 @@ from gobby.cli.services import (
     get_neo4j_status,
     is_neo4j_healthy,
     is_neo4j_installed,
+    try_autoload_embedding_model,
 )
 
 pytestmark = pytest.mark.unit
@@ -139,7 +140,6 @@ class TestEnsureLocalEmbeddingServiceReady:
                 side_effect=[
                     _completed_process(["lms", "server", "status"], returncode=1, stderr="stopped"),
                     _completed_process(["lms", "server", "start"], stdout="started"),
-                    _completed_process(["lms", "load", "model"], stdout="loaded"),
                 ],
             ) as mock_run,
             patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client),
@@ -154,8 +154,63 @@ class TestEnsureLocalEmbeddingServiceReady:
         assert [call.args[0] for call in mock_run.call_args_list] == [
             ["lms", "server", "status"],
             ["lms", "server", "start"],
-            ["lms", "load", "nomic-embed-text-v1.5", "-y"],
         ]
+
+    @pytest.mark.asyncio
+    async def test_loads_lmstudio_model_only_after_failed_health_check(
+        self,
+        mock_async_client: AsyncMock,
+    ) -> None:
+        mock_async_client.get = AsyncMock(return_value=httpx.Response(200))
+        mock_health = AsyncMock(side_effect=[False, True])
+
+        with (
+            patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
+            patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
+            patch(
+                "gobby.cli.services.subprocess.run",
+                side_effect=[
+                    _completed_process(["lms", "server", "status"], stdout="running"),
+                    _completed_process(["lms", "ps"], stdout=""),
+                    _completed_process(["lms", "load", "model"], stdout="loaded"),
+                ],
+            ) as mock_run,
+            patch("gobby.cli.services.httpx.AsyncClient", return_value=mock_async_client),
+            patch("gobby.cli.services.is_embedding_healthy", new=mock_health),
+        ):
+            ready = await ensure_local_embedding_service_ready(
+                model="text-embedding-nomic-embed-text-v1.5@f16",
+                api_base="http://localhost:1234/v1",
+            )
+
+        assert ready is True
+        assert [call.args[0] for call in mock_run.call_args_list] == [
+            ["lms", "server", "status"],
+            ["lms", "ps"],
+            ["lms", "load", "text-embedding-nomic-embed-text-v1.5@f16", "-y"],
+        ]
+        assert mock_health.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_autoload_skips_lmstudio_load_when_model_is_already_loaded(self) -> None:
+        with (
+            patch("gobby.cli.services.shutil.which", return_value="/usr/bin/lms"),
+            patch("gobby.cli.services.asyncio.to_thread", side_effect=_run_inline),
+            patch(
+                "gobby.cli.services.subprocess.run",
+                return_value=_completed_process(
+                    ["lms", "ps"],
+                    stdout="text-embedding-nomic-embed-text-v1.5@f16",
+                ),
+            ) as mock_run,
+        ):
+            loaded = await try_autoload_embedding_model(
+                model="text-embedding-nomic-embed-text-v1.5@f16",
+                api_base="http://localhost:1234/v1",
+            )
+
+        assert loaded is True
+        assert [call.args[0] for call in mock_run.call_args_list] == [["lms", "ps"]]
 
     @pytest.mark.asyncio
     async def test_returns_failure_on_server_start_error(self) -> None:
