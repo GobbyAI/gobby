@@ -38,6 +38,8 @@
 }
 
 .config-tabs {
+  --config-tabs-left-shadow: transparent;
+  --config-tabs-right-shadow: transparent;
   display: flex;
   gap: 2px;
   background: var(--bg-tertiary);
@@ -46,10 +48,21 @@
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  box-shadow:
+    inset 12px 0 10px -12px var(--config-tabs-left-shadow),
+    inset -12px 0 10px -12px var(--config-tabs-right-shadow);
 }
 
 .config-tabs::-webkit-scrollbar {
   display: none;
+}
+
+.config-tabs.can-scroll-left {
+  --config-tabs-left-shadow: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+.config-tabs.can-scroll-right {
+  --config-tabs-right-shadow: color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 
 .config-tab {

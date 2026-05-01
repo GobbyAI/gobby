@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatDateTime } from '../workflows/executionFormatters'
@@ -23,12 +23,39 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
   const { jobs, selectedJob, selectJob, runs, isRunsLoading, isLoading } = useCronJobs(projectId)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [topHeight, setTopHeight] = useState(50)
-  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE)
+  const [displayLimitState, setDisplayLimitState] = useState<{
+    filter: StatusFilter
+    limit: number
+  }>({ filter: 'all', limit: PAGE_SIZE })
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    const i = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(i)
+    let interval: number | null = null
+    const stopTimer = () => {
+      if (interval !== null) {
+        window.clearInterval(interval)
+        interval = null
+      }
+    }
+    const startTimer = () => {
+      stopTimer()
+      setNow(Date.now())
+      interval = window.setInterval(() => setNow(Date.now()), 15_000)
+    }
+    const syncTimer = () => {
+      if (document.visibilityState === 'visible') {
+        startTimer()
+      } else {
+        stopTimer()
+      }
+    }
+
+    syncTimer()
+    document.addEventListener('visibilitychange', syncTimer)
+    return () => {
+      stopTimer()
+      document.removeEventListener('visibilitychange', syncTimer)
+    }
   }, [])
 
   const filteredJobs = useMemo(() => {
@@ -37,24 +64,14 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
     return jobs.filter((j) => !j.enabled)
   }, [jobs, statusFilter])
 
-  const [limitFilter, setLimitFilter] = useState<StatusFilter>(statusFilter)
-  if (limitFilter !== statusFilter) {
-    setLimitFilter(statusFilter)
-    setDisplayLimit(PAGE_SIZE)
-  }
+  const displayLimit =
+    displayLimitState.filter === statusFilter ? displayLimitState.limit : PAGE_SIZE
 
   const visibleJobs = useMemo(
     () => filteredJobs.slice(0, displayLimit),
     [filteredJobs, displayLimit],
   )
   const hasMore = filteredJobs.length > visibleJobs.length
-
-  const handleSelect = useCallback(
-    (job: CronJob) => {
-      selectJob(job)
-    },
-    [selectJob],
-  )
 
   // If the selected job is filtered out, clear the selection so the detail
   // pane doesn't refer to an invisible row.
@@ -103,7 +120,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                 key={job.id}
                 type="button"
                 className={`pipeline-exec-row${selectedJob?.id === job.id ? ' pipeline-exec-row--active' : ''}`}
-                onClick={() => handleSelect(job)}
+                onClick={() => selectJob(job)}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <CronStatusDot enabled={job.enabled} />
@@ -120,7 +137,12 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
               <button
                 type="button"
                 className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
-                onClick={() => setDisplayLimit((d) => d + PAGE_SIZE)}
+                onClick={() =>
+                  setDisplayLimitState({
+                    filter: statusFilter,
+                    limit: displayLimit + PAGE_SIZE,
+                  })
+                }
               >
                 Load more
               </button>
@@ -214,7 +236,7 @@ function formatNextFiring(job: CronJob, now: number): string {
   const ms = new Date(job.next_run_at).getTime() - now
   if (ms <= 0) return 'due'
   const sec = Math.floor(ms / 1000)
-  if (sec < 60) return `in ${sec}s`
+  if (sec < 60) return 'in <1m'
   const min = Math.floor(sec / 60)
   if (min < 60) return `in ${min}m`
   const hr = Math.floor(min / 60)

@@ -70,15 +70,22 @@ describe('CronTab', () => {
     expect(cronMock.selectJob).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }))
   })
 
-  it('filters by enabled / disabled', () => {
+  it('filters by enabled / disabled', async () => {
     cronMock.jobs = [
       makeJob({ id: 'on', name: 'live-job', enabled: true }),
       makeJob({ id: 'off', name: 'paused-job', enabled: false }),
     ]
-    const { rerender } = render(<CronTab projectId="p" />)
+    render(<CronTab projectId="p" />)
     expect(screen.getByText('live-job')).toBeInTheDocument()
     expect(screen.getByText('paused-job')).toBeInTheDocument()
-    rerender(<CronTab projectId="p" />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Enabled' }))
+    expect(screen.getByText('live-job')).toBeInTheDocument()
+    expect(screen.queryByText('paused-job')).toBeNull()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Disabled' }))
+    expect(screen.queryByText('live-job')).toBeNull()
+    expect(screen.getByText('paused-job')).toBeInTheDocument()
   })
 
   it('shows a Load more button when more jobs are available than the page size', async () => {

@@ -1,11 +1,14 @@
+<!-- markdownlint-disable MD013 MD060 -->
+
 # Post-12725 Lifecycle/Status Kanban Alignment — Strategy Plan for #13482
 
 `plan_kind: strategy` — narrative only, no manifest.
 
 ## Context
+
 `kind: framing`
 
-#12725 (gobby build) ships a working state-driven dispatcher, but it leaves three structural debts behind that block the kanban model the user actually wants:
+\#12725 (gobby build) ships a working state-driven dispatcher, but it leaves three structural debts behind that block the kanban model the user actually wants:
 
 1. **Stage names are hard-coded strings** in `src/gobby/dispatch/rules.py` (`_stage_enabled(task, "plan_review")`, `stage-:<name>` labels). There is no registry, so the UI can't reach in to enumerate or render stages.
 2. **Two parallel state axes that don't align.** `status` (open/in_progress/needs_review/review_approved/closed/escalated) is work-claim state on the active item; `lifecycle` (open → plan_review → … → merged) is dispatcher pipeline state; `lifecycle_stage` is a derived 3-value projection. None of them captures "stage X is in state Y" for an arbitrary stage X.
@@ -13,14 +16,16 @@
 
 The user's paradigm: every task carries an ordered, *task-type-specific* set of applicable stages, and each stage carries its own work + review state. Tasks open with a manifest of stages all at `ready`; they close (task-level, via `closed_at`) when the last manifest row reaches `done`. A "simple fix" task has only `development → pr → merge` in its manifest and skips ideation/research/etc. entirely. A research spike's manifest terminates at `prd` and never reaches development. The kanban renders one column per stage with state badges per task.
 
-Agents for the new stages (ideation, research, architecture, prd, holistic-qa) are already speced inside the #12725 plan family — some active in 0.4.0, some deferred to post-0.4.0 follow-ups. **This epic is not about agents.** It's about replacing the dual-enum state model with a registry-backed, **5-state-per-stage** manifest model with explicit per-stage `review_policy`, then re-pointing the dispatcher, MCP/HTTP/CLI surfaces, and web UI at it. `pr` and `merge` are part of that durable stage contract, so #13552 can later implement PR-Agent / conflict-resolution behavior directly on the new model. `escalated` is preserved as the human-in-the-loop flag (promoted to a first-class column); everything else in the `status` enum gets subsumed by per-stage state.
+Agents for the new stages (ideation, research, architecture, prd, holistic-qa) are already specified inside the #12725 plan family — some active in 0.4.0, some deferred to post-0.4.0 follow-ups. **This epic is not about agents.** It's about replacing the dual-enum state model with a registry-backed, **5-state-per-stage** manifest model with explicit per-stage `review_policy`, then re-pointing the dispatcher, MCP/HTTP/CLI surfaces, and web UI at it. `pr` and `merge` are part of that durable stage contract, so #13552 can later implement PR-Agent / conflict-resolution behavior directly on the new model. `escalated` is preserved as the human-in-the-loop flag (promoted to a first-class column); everything else in the `status` enum gets subsumed by per-stage state.
 
 This is a pre-launch clean cutover. Do not build compatibility facades or long-lived legacy write paths. During this epic, callers move to the stage manifest APIs directly; then old `lifecycle`, `lifecycle_stage`, and active `status` semantics are removed instead of preserved as a shadow model.
 
 ## Target Model
+
 `kind: framing`
 
 ### Per-stage state model: 5 values, policy-driven legality
+
 `kind: framing`
 
 The state enum on `task_stage_states.state` is **global** — every stage row's CHECK constraint accepts the same five values:
@@ -36,6 +41,7 @@ Whether a given transition is *legal* on a given row is determined by the row's 
 This separation — global state enum, per-row policy controls legality — means adding review to a previously-non-reviewed stage later is a registry change + a migration decision for in-flight manifests; the API contract and CHECK constraint stay stable because reviewability is modeled as data, not as schema.
 
 ### Canonical stage names (11)
+
 `kind: framing`
 
 `ideation`, `research`, `architecture`, `prd`, `planning`, `test_arch`, `expansion`, `development`, `holistic_qa`, `pr`, `merge`.
@@ -47,6 +53,7 @@ Stored in a new DB table `task_stages_registry` (source of truth), seeded from a
 Per-stage registry row: `name`, `display_label`, `description`, `category` (`discovery|design|verification|implementation|delivery`), `default_agent` (FK to agent registry, nullable for human-only or external review), `reviewer_agent` (FK, nullable; populated only when `review_policy != none`), `review_policy` (enum: `none | required | optional`, default `none`), `position_hint` (kanban ordering), `requires_human` (bool), `is_terminal` (bool — true only for `merge`), `default_max_work_attempts` (int, default 3), `default_max_review_rounds` (int, default 5).
 
 #### Per-stage `review_policy` assignment
+
 `kind: framing`
 
 | Stage | `review_policy` | `reviewer_agent` | Notes |
@@ -69,6 +76,7 @@ Delivery stage ownership:
 - `merge` — lands the approved PR/branch, runs AI-assisted conflict resolution through explicit Gobby merge tools, verifies the result, stores the merge report, and closes the task when it is terminal.
 
 ### Per-task stage manifest
+
 `kind: framing`
 
 New table `task_stage_states`, composite PK `(task_id, stage_name)`:
@@ -95,6 +103,7 @@ Delivery-stage artifacts are stored in `task_artifacts` and referenced from the 
 `merge_commit_sha`, and `merge_campaign_report`.
 
 ### Transitions
+
 `kind: framing`
 
 Each transition's legality depends on the row's `review_policy`. A typed `IllegalStageTransitionError` (carrying `(stage_name, current_state, attempted_transition, review_policy)`) fires on any violation; callers can inspect the fields to surface the constraint clearly.
@@ -109,6 +118,7 @@ Each transition's legality depends on the row's `review_policy`. A typed `Illega
 The `review_approved → done` advance on `policy=required` rows is dispatcher-driven for automated stages and operator-driven for human-gated stages. `review_approved` is intentionally a **durable** holding state — not a transient event — because the dispatcher needs that boundary as a real queue position (PR approved-before-merge, expansion-QA approved-before-dev-fanout, planning-approved-before-test-arch).
 
 ### Task type taxonomy + default manifests
+
 `kind: framing`
 
 Existing types: `bug`, `feature`, `task`, `epic`, `chore`, `refactor`. Adds:
@@ -133,6 +143,7 @@ Defaults are seeded as registry rows of a second table `task_type_default_stages
 Operator overrides at build time: `gobby build <ref> --stages a,b,c` (explicit), `--add-stage <name>[@<position>]`, `--skip-stage <name>`, `--stage <name>:max_review_rounds=N` (per-stage cap override). Profiles (`quick`, `full`, `full-yolo`) become named bundles of stage sets and policy overrides.
 
 ### Status retirement
+
 `kind: framing`
 
 Active values (`open`, `in_progress`, `needs_review`, `review_approved`) are subsumed entirely by per-stage state and are dropped from the `status` enum. The `status` column itself is dropped if the audit confirms no remaining readers; otherwise it stays storing only `'closed'` for closed tasks (with `closed_at IS NOT NULL` as the canonical read).
@@ -142,6 +153,7 @@ Active values (`open`, `in_progress`, `needs_review`, `review_approved`) are sub
 End state: the `status`, `lifecycle`, and `lifecycle_stage` columns are dropped entirely. The implementation must not keep old lifecycle mutation tools as compatibility shims; callers must be ported to stage-native APIs in the same epic.
 
 ### Tool surface
+
 `kind: framing`
 
 The three review tools — `mark_task_needs_review`, `mark_task_review_approved`, `mark_task_review_rejected` — are preserved as **first-class stage-axis tools**, not lossy shims composing `complete_stage` / `fail_stage`. Each maps directly to a transition above and enforces its precondition (current state must match the legal source state, and `review_policy` must permit the transition).
@@ -149,6 +161,7 @@ The three review tools — `mark_task_needs_review`, `mark_task_review_approved`
 Agent and operator workflows that already call these tools continue to work, gaining stage-native semantics. The audit (Phase 5) walks every bundled agent YAML's call sites and verifies their stage context satisfies the precondition. The most likely offender is `test-architect`: its YAML may call `mark_task_needs_review` after writing test architecture, but the new contract sets `test_arch.review_policy=none`, so that call site must be rewritten to `complete_stage` (or its dispatcher equivalent).
 
 ### Future extensibility
+
 `kind: framing`
 
 Adding a review loop to a previously-non-reviewed stage (e.g., attaching review to `research` later) is a two-step registry-driven change, not a schema change:
@@ -159,6 +172,7 @@ Adding a review loop to a previously-non-reviewed stage (e.g., attaching review 
 This is a documented extension path, not part of this epic's deliverable scope.
 
 ### Readiness / blocking projection
+
 `kind: framing`
 
 Blocking remains orthogonal to stage state. `task_stage_states.state` always carries one of the five values; do **not** add `blocked` as a sixth value. A blocked task still has a current stage in any state, but automation and ready queues must not advance it until the blocking condition clears.
@@ -178,6 +192,7 @@ Dependency blockers resolve by terminality, not by legacy `status`: an upstream 
 Dispatcher candidate scans filter by `is_ready` first, then rule evaluation operates on `current_stage` and the manifest rows. LifecycleBoard renders blocked tasks in their stage column with a blocked badge/overlay and a `blocked=true` filter; it does not move them into a synthetic blocked stage.
 
 ### Dispatcher coupling
+
 `kind: framing`
 
 `src/gobby/dispatch/rules.py` rules switch from string checks to registry-aware queries. Each rule reads `(current_stage.name, current_stage.state, current_stage.review_policy)`:
@@ -205,6 +220,7 @@ PR/merge dispatch is stage-native:
 Existing rules in `dispatch/rules.py` are renamed and refactored 1:1 onto the new stage names. New stages without active agents (e.g., post-0.4.0 deferred discovery agents) get pass-through rules that keep them at `ready` until an agent is registered or escalate if the stage is actionable but no agent exists. Rules and agents must use stage mutation APIs; they must not write `status`, `lifecycle`, or `task_stage_states` directly outside the storage manager.
 
 ### MCP / HTTP / CLI surfaces
+
 `kind: framing`
 
 New `gobby-tasks` MCP tools:
@@ -231,6 +247,7 @@ CLI:
 - `gobby build <ref> --stages …` — explicit manifest at opt-in time
 
 ### Web UI: LifecycleBoard
+
 `kind: framing`
 
 New view `LifecycleBoard` replaces existing `KanbanBoard` in `web/src/components/tasks/`:
@@ -246,6 +263,7 @@ New view `LifecycleBoard` replaces existing `KanbanBoard` in `web/src/components
 `useTasks` fetches stage manifests in the same call (denormalized response) to avoid N+1 on board renders.
 
 ### Migration
+
 `kind: framing`
 
 Schema migration in `src/gobby/storage/migrations.py` runs in one direction (no down-migration; this is a structural change):
@@ -291,6 +309,7 @@ Schema migration in `src/gobby/storage/migrations.py` runs in one direction (no 
 `task_lifecycle_events` is kept unchanged — it's still the audit trail and gains rows for stage-state transitions.
 
 ## Phasing (sub-epics for #13482 expansion)
+
 `kind: framing`
 
 **Phase 1 — Registry + manifest schema.** Create tables, seed from YAML, define `pr` / `merge` delivery artifacts, and write per-task stage rows for all existing tasks. The migration may read legacy columns to derive initial rows, but new writes go through stage APIs only.
@@ -310,6 +329,7 @@ Schema migration in `src/gobby/storage/migrations.py` runs in one direction (no 
 Phases 1–4 are blocking for #13552: PR-Agent / advanced merge behavior must target the stage contract, not the old lifecycle model. Phases 5 and 6 can run after the delivery-stage cutover. Phase 7 closes the epic.
 
 ## Critical files
+
 `kind: framing`
 
 - `src/gobby/storage/migrations.py` — schema migration (Phase 1, Phase 7)
@@ -333,6 +353,7 @@ Phases 1–4 are blocking for #13552: PR-Agent / advanced merge behavior must ta
 - `src/gobby/install/shared/skills/plan-draft/SKILL.md` — refresh stage list (Phase 4)
 
 ## Reuse
+
 `kind: framing`
 
 - Template-sync pattern from `src/gobby/install/shared/{rules,workflows,agents}` for stage registry seeding (`src/gobby/workflows/loader.py`).
@@ -342,6 +363,7 @@ Phases 1–4 are blocking for #13552: PR-Agent / advanced merge behavior must ta
 - `task_type_default_stages` follows the same seed-on-first-startup convention as bundled rules/workflows; drift detected by hash compare.
 
 ## Verification
+
 `kind: framing`
 
 - **Unit tests**: registry CRUD; manifest mutation invariants (position uniqueness per task, stage-name FK to registry, global state enum); type→default-stages resolution; build-time override merge; `IllegalStageTransitionError` raised on every illegal `(state, transition, policy)` triple.
@@ -357,9 +379,10 @@ Phases 1–4 are blocking for #13552: PR-Agent / advanced merge behavior must ta
 - **No regressions**: full pytest of `tests/dispatch/`, `tests/tasks/`, `tests/storage/`, `tests/servers/routes/`, `tests/mcp_proxy/tools/tasks/` plus targeted runs on web build (`pnpm test`, `pnpm build`).
 
 ## Out of scope (explicit)
+
 `kind: framing`
 
-- Adding or modifying agents for any stage. Agents are speced in the #12725 plan family; deferred ones land in their own follow-ups and plug into the registry's `default_agent` / `reviewer_agent` slots when ready.
+- Adding or modifying agents for any stage. Agents are specified in the #12725 plan family; deferred ones land in their own follow-ups and plug into the registry's `default_agent` / `reviewer_agent` slots when ready.
 - Implementing PR-Agent / rizzler-style behavior. This plan defines the `pr` / `merge` stage contract and artifacts; #13552 implements the PR and conflict-resolution behavior after the stage cutover.
 - Authoring a `test_arch` reviewer agent. The current design sets `test_arch.review_policy=none`; adding review later is a documented extension path (registry change + migration decision) but is not part of this epic.
 - Cross-project / multi-tenant kanban — single project only.

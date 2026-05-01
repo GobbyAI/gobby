@@ -133,7 +133,7 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     assert tool_words.issubset(tool_allowlist)
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skills)
     assert "additional_skills" in load_skills["status_message"]
-    assert "loaded_additional_skills" not in agent["step_variables"]
+    assert "additional_skills_loaded" in agent["step_variables"]
     assert "loaded_skills" in str(load_skills["transitions"])
     assert "gobby-agents:end_agent_run" in _blocked_mcp_tools(implement)
     assert "_skipped_stages" in implement["status_message"]

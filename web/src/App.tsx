@@ -753,8 +753,8 @@ export default function App() {
           >
             <HamburgerIcon />
           </Button>
-          <img src="/logo.png" alt="Gobby logo" className="h-[2.8125rem] w-auto" />
-          <span className="truncate text-[1.40625rem] font-semibold text-foreground">Gobby</span>
+          <img src="/logo.png" alt="Gobby logo" className="h-11 w-auto" />
+          <span className="truncate text-3xl font-semibold text-foreground">Gobby</span>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
           {projectOptions.length > 0 && (

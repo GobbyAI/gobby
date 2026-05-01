@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConfiguration } from '../hooks/useConfiguration'
 import type { SecretInfo, PromptInfo, PromptDetail } from '../hooks/useConfiguration'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
@@ -1134,7 +1134,27 @@ function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
 
 export function ConfigurationPage() {
   const [activeTab, setActiveTab] = useState<TabId>('config')
+  const tabsRef = useRef<HTMLDivElement | null>(null)
+  const [tabScrollState, setTabScrollState] = useState({
+    canScrollLeft: false,
+    canScrollRight: false,
+  })
   const config = useConfiguration()
+
+  const updateTabScrollState = useCallback(() => {
+    const tabs = tabsRef.current
+    if (!tabs) return
+
+    const maxScrollLeft = tabs.scrollWidth - tabs.clientWidth
+    const canScrollLeft = tabs.scrollLeft > 0
+    const canScrollRight = tabs.scrollLeft < maxScrollLeft - 1
+    setTabScrollState((previous) =>
+      previous.canScrollLeft === canScrollLeft &&
+      previous.canScrollRight === canScrollRight
+        ? previous
+        : { canScrollLeft, canScrollRight },
+    )
+  }, [])
 
   // Initial data load
   useEffect(() => {
@@ -1142,6 +1162,23 @@ export function ConfigurationPage() {
     config.fetchSecrets()
     config.fetchPrompts()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const tabs = tabsRef.current
+    if (!tabs) return
+
+    updateTabScrollState()
+    tabs.addEventListener('scroll', updateTabScrollState, { passive: true })
+    window.addEventListener('resize', updateTabScrollState)
+    return () => {
+      tabs.removeEventListener('scroll', updateTabScrollState)
+      window.removeEventListener('resize', updateTabScrollState)
+    }
+  }, [updateTabScrollState])
+
+  useEffect(() => {
+    updateTabScrollState()
+  }, [activeTab, updateTabScrollState])
 
   const handleExport = async () => {
     const bundle = await config.exportConfig()
@@ -1194,11 +1231,17 @@ export function ConfigurationPage() {
     { id: 'template', label: 'Template' },
   ]
 
+  const tabClasses = [
+    'config-tabs',
+    tabScrollState.canScrollLeft ? 'can-scroll-left' : '',
+    tabScrollState.canScrollRight ? 'can-scroll-right' : '',
+  ].filter(Boolean).join(' ')
+
   return (
     <div className="config-page">
       <div className="config-toolbar">
         <div className="config-toolbar-left">
-          <div className="config-tabs">
+          <div ref={tabsRef} className={tabClasses}>
             {tabs.map(t => (
               <button type="button"
                 key={t.id}

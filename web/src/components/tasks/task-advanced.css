@@ -1108,7 +1108,7 @@
   opacity: 1;
   background: var(--bg-tertiary);
 }
-.memory-pin-btn--active {
+.memory-pin-btn.active {
   opacity: 1;
   color: var(--color-warning-foreground);
 }

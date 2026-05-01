@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
+
+if TYPE_CHECKING:
+    from gobby.storage.tasks import LocalTaskManager, Task
+    from gobby.workflows.definitions import WorkflowInstance
 
 pytestmark = pytest.mark.unit
 
@@ -301,7 +306,7 @@ class TestSpawnAgentStepVariables:
         mock_runner,
         agent_name: str,
         additional_skills: list[str] | None = None,
-    ):
+    ) -> tuple[dict[str, Any], LocalTaskManager, Task, WorkflowInstance | None]:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
@@ -411,15 +416,17 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["additional_skills_loaded"] is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("agent_name", ["developer", "backend-developer", "frontend-developer"])
     async def test_auto_claimed_developer_agent_with_required_skill_waits_for_skill_load(
         self,
         db,
         mock_runner,
+        agent_name: str,
     ) -> None:
         result, _task_manager, _task, instance = await self._spawn_bundled_developer_agent(
             db=db,
             mock_runner=mock_runner,
-            agent_name="backend-developer",
+            agent_name=agent_name,
             additional_skills=["code-index"],
         )
 

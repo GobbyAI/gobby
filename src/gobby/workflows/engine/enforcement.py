@@ -228,8 +228,8 @@ class EnforcementMixin:
             tool_input = event.data.get("tool_input") or {}
             variable_name = ""
             if isinstance(tool_input, dict):
-                variable_name = str(tool_input.get("name") or tool_input.get("variable") or "")
-            if variable_name in RESERVED_STEP_WORKFLOW_VARIABLES:
+                variable_name = self._is_reserved_variable_write(tool_name, tool_input) or ""
+            if variable_name:
                 reason = (
                     f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                     f"Variable '{variable_name}' is managed by the step workflow runtime."
@@ -351,11 +351,12 @@ class EnforcementMixin:
                         )
 
                 if mcp_tool_name == "set_variable":
-                    handler_tool_input = self._step_handler_tool_input(tool_input)
-                    variable_name = str(
-                        handler_tool_input.get("name") or handler_tool_input.get("variable") or ""
+                    variable_name = self._is_reserved_variable_write(
+                        tool_name,
+                        tool_input,
+                        mcp_tool_name=mcp_tool_name,
                     )
-                    if variable_name in RESERVED_STEP_WORKFLOW_VARIABLES:
+                    if variable_name:
                         reason = (
                             f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
                             f"Variable '{variable_name}' is managed by the step workflow runtime."
@@ -388,6 +389,33 @@ class EnforcementMixin:
                     if before_response is not None:
                         return before_response
 
+        return None
+
+    @staticmethod
+    def _is_reserved_variable_write(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        mcp_tool_name: str | None = None,
+    ) -> str | None:
+        """Return the reserved variable name for blocked user writes."""
+        is_native_set_variable = tool_name in (
+            "set_variable",
+            "mcp__gobby__set_variable",
+            "mcp_gobby_set_variable",
+        )
+        is_mcp_set_variable = mcp_tool_name == "set_variable"
+        if not is_native_set_variable and not is_mcp_set_variable:
+            return None
+
+        resolved_input = (
+            EnforcementMixin._step_handler_tool_input(tool_input)
+            if is_mcp_set_variable
+            else tool_input
+        )
+        variable_name = str(resolved_input.get("name") or resolved_input.get("variable") or "")
+        if variable_name in RESERVED_STEP_WORKFLOW_VARIABLES:
+            return variable_name
         return None
 
     @staticmethod

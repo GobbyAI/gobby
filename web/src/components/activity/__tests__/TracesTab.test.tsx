@@ -83,9 +83,7 @@ describe('TracesTab', () => {
       makeTrace({ trace_id: 't-new', root_span_name: 'new-span', timestamp: '2026-05-01T00:00:00Z' }),
     ]
     render(<TracesTab projectId="p" />)
-    const buttons = screen
-      .getAllByRole('button')
-      .filter((b) => b.className.includes('pipeline-exec-row'))
+    const buttons = screen.getAllByTestId('trace-row-button')
     expect(buttons[0]).toHaveTextContent('new-span')
 
     await userEvent.click(buttons[1])

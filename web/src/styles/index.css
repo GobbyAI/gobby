@@ -40,6 +40,7 @@
   --shadow-panel-left: -4px 0 20px oklch(0% 0 0 / 0.2);
 
   --accent: oklch(82% 0.20 125);
+  --accent-color: var(--accent);
   --accent-hover: oklch(75% 0.22 125);
   --accent-foreground: oklch(15% 0 0);
   --accent-soft: oklch(82% 0.20 125 / 0.18);
@@ -188,6 +189,16 @@ body {
   font-size: calc(var(--font-size-base) * 0.85);
   cursor: pointer;
   animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 /* ============================================

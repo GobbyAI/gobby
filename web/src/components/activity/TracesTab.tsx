@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatTime } from '../workflows/executionFormatters'
@@ -26,7 +26,10 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
   const { spans, isLoading: isDetailLoading } = useTraceDetail(selectedTraceId)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [topHeight, setTopHeight] = useState(50)
-  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE)
+  const [displayLimitState, setDisplayLimitState] = useState<{
+    filter: StatusFilter
+    limit: number
+  }>({ filter: 'all', limit: PAGE_SIZE })
 
   const filteredTraces = useMemo(() => {
     const sorted = [...traces].sort(
@@ -36,11 +39,8 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
     return sorted.filter((t) => t.status === statusFilter)
   }, [traces, statusFilter])
 
-  const [limitFilter, setLimitFilter] = useState<StatusFilter>(statusFilter)
-  if (limitFilter !== statusFilter) {
-    setLimitFilter(statusFilter)
-    setDisplayLimit(PAGE_SIZE)
-  }
+  const displayLimit =
+    displayLimitState.filter === statusFilter ? displayLimitState.limit : PAGE_SIZE
 
   const visibleTraces = useMemo(
     () => filteredTraces.slice(0, displayLimit),
@@ -51,13 +51,6 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
   const selectedTrace = useMemo(
     () => filteredTraces.find((t) => t.trace_id === selectedTraceId) ?? null,
     [filteredTraces, selectedTraceId],
-  )
-
-  const handleSelect = useCallback(
-    (traceId: string) => {
-      setSelectedTraceId(traceId)
-    },
-    [setSelectedTraceId],
   )
 
   if (isLoading && traces.length === 0) {
@@ -98,8 +91,9 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
               <button
                 key={trace.trace_id}
                 type="button"
+                data-testid="trace-row-button"
                 className={`pipeline-exec-row${selectedTraceId === trace.trace_id ? ' pipeline-exec-row--active' : ''}`}
-                onClick={() => handleSelect(trace.trace_id)}
+                onClick={() => setSelectedTraceId(trace.trace_id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <TraceStatusDot status={trace.status} />
@@ -121,7 +115,12 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
               <button
                 type="button"
                 className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
-                onClick={() => setDisplayLimit((d) => d + PAGE_SIZE)}
+                onClick={() =>
+                  setDisplayLimitState({
+                    filter: statusFilter,
+                    limit: displayLimit + PAGE_SIZE,
+                  })
+                }
               >
                 Load more
               </button>
@@ -167,7 +166,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                       {span.name}
                     </span>
                     <span className="traces-tab-span__duration tabular-nums">
-                      {formatDurationNs(span.end_time_ns - span.start_time_ns)}
+                      {formatDurationNs(Math.max(0, span.end_time_ns - span.start_time_ns))}
                     </span>
                   </li>
                 ))}

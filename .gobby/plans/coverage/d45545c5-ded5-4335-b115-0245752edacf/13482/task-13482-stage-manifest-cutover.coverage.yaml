@@ -1,11 +1,11 @@
 header:
   plan_id: task-13482-stage-manifest-cutover
-  plan_hash: 6b17d3abc33b7d1bb74a3bad8bce7cf00b6a28d3fd5bfaa199cbc66152dfa481
+  plan_hash: 73c7c95aeda2cdd5f63ecef68867fcc4729967effca51722fc7de3e2dc03afa8
   root_task_ref: '#13482'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-05-01T22:56:58Z'
+  generated_at: '2026-05-01T23:41:43Z'
   task_tree_source: db
-  task_tree_source_hash: 69900424957e07fdf26519e746c74524ce3f427d19c1dcc655575c29f1391988
+  task_tree_source_hash: 0aed79bae32eb9ff85ffb3c23eba2d7a2c757d15a93773bec25dd4e997528890
   evidence_summary: []
 rows:
 - section_id: '1.1'
@@ -195,6 +195,18 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '2.1'
+  item_id: 2.1.9
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
+  item_id: 2.1.10
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
   item_id: 2.1.11
   status: missing
   leaves: []
@@ -207,19 +219,7 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '2.1'
-  item_id: 2.1.9
-  status: missing
-  leaves: []
-  deferral_target: null
-  evidence: []
-- section_id: '2.1'
   item_id: 2.1.13
-  status: missing
-  leaves: []
-  deferral_target: null
-  evidence: []
-- section_id: '2.1'
-  item_id: 2.1.10
   status: missing
   leaves: []
   deferral_target: null

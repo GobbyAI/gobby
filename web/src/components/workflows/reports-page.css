@@ -694,21 +694,6 @@
   }
 }
 
-@media (max-width: 480px) {
-  .reports-subtabs {
-    margin-left: 0;
-  }
-
-  .reports-toolbar-left {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .reports-detail-stats {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 640px) {
   .reports-table-container {
     overflow-x: visible;
@@ -762,6 +747,21 @@
   .reports-cell--id,
   .reports-cell--duration {
     display: block;
+  }
+}
+
+@media (max-width: 480px) {
+  .reports-subtabs {
+    margin-left: 0;
+  }
+
+  .reports-toolbar-left {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reports-detail-stats {
+    grid-template-columns: 1fr;
   }
 }
 
