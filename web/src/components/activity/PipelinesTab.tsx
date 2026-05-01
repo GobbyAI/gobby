@@ -216,7 +216,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
             ))}
             {hasMore && (
               <button
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
                 onClick={handleLoadMore}
                 disabled={loadingMore}
               >

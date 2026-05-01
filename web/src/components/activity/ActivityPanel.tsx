@@ -13,16 +13,18 @@ import { SessionsTab } from "./SessionsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
-import { OverviewTab } from "./OverviewTab";
+import { CronTab } from "./CronTab";
+import { TracesTab } from "./TracesTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 import type { SessionsFilters } from "./sessionsFilters";
 
 export type ActivityTab =
-  | "overview"
   | "sessions"
   | "pipelines"
+  | "cron"
+  | "traces"
   | "tasks"
   | "files"
   | "plans"
@@ -42,18 +44,6 @@ const iconProps = {
 };
 
 const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
-  {
-    id: "overview",
-    label: "Overview",
-    icon: (
-      <svg {...iconProps}>
-        <rect x="3" y="3" width="7" height="7" />
-        <rect x="14" y="3" width="7" height="7" />
-        <rect x="3" y="14" width="7" height="7" />
-        <rect x="14" y="14" width="7" height="7" />
-      </svg>
-    ),
-  },
   {
     id: "sessions",
     label: "Sessions",
@@ -142,6 +132,25 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
       </svg>
     ),
   },
+  {
+    id: "cron",
+    label: "Cron",
+    icon: (
+      <svg {...iconProps}>
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+  },
+  {
+    id: "traces",
+    label: "Traces",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M3 12h4l3-9 4 18 3-9h4" />
+      </svg>
+    ),
+  },
 ];
 
 const noopFetchDiff = async (): Promise<string> => "";
@@ -198,9 +207,6 @@ interface ActivityPanelProps {
   onFocusSessionHandled?: () => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
-  // Overview tab — page navigation callbacks
-  onNavigateToPage?: (tab: string) => void;
-  onNavigateToTrace?: (traceId: string) => void;
   isMobile?: boolean;
 }
 
@@ -308,8 +314,6 @@ export function ActivityPanel({
   onFocusSessionHandled,
   onSwapSession,
   onResumeSession,
-  onNavigateToPage,
-  onNavigateToTrace,
   isMobile = false,
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
@@ -366,14 +370,6 @@ export function ActivityPanel({
 
   const tabContent = () => {
     switch (activeTab) {
-      case "overview":
-        return (
-          <OverviewTab
-            projectId={projectId}
-            onNavigateToPage={onNavigateToPage}
-            onNavigateToTrace={onNavigateToTrace}
-          />
-        );
       case "sessions":
         return (
           <SessionsTab
@@ -392,6 +388,10 @@ export function ActivityPanel({
         );
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;
+      case "cron":
+        return <CronTab projectId={projectId} />;
+      case "traces":
+        return <TracesTab projectId={projectId} />;
       case "tasks":
         return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":

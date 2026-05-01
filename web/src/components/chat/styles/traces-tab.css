@@ -1,0 +1,36 @@
+/* ============================================
+   Traces Tab — spans list inside the detail pane
+   ============================================ */
+.traces-tab-spans {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.traces-tab-span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+
+.traces-tab-span:last-child {
+  border-bottom: none;
+}
+
+.traces-tab-span__name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traces-tab-span__duration {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

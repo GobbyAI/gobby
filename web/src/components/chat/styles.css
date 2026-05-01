@@ -5,6 +5,8 @@
 @import './styles/activity-panel.css';
 @import './styles/files-tab.css';
 @import './styles/pipelines-tab.css';
+@import './styles/cron-tab.css';
+@import './styles/traces-tab.css';
 @import './styles/sessions-tab.css';
 @import './styles/empty-state.css';
 

@@ -47,8 +47,12 @@ vi.mock('../FilesTab', () => ({
   FilesTab: () => <div>Files Tab</div>,
 }))
 
-vi.mock('../OverviewTab', () => ({
-  OverviewTab: () => <div>Overview Tab</div>,
+vi.mock('../CronTab', () => ({
+  CronTab: () => <div>Cron Tab</div>,
+}))
+
+vi.mock('../TracesTab', () => ({
+  TracesTab: () => <div>Traces Tab</div>,
 }))
 
 describe('ActivityPanel', () => {

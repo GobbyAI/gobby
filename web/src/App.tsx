@@ -909,8 +909,6 @@ export default function App() {
                 paletteActions={commandPaletteActions}
                 onSttEnabledChange={updateSttEnabled}
                 onTtsEnabledChange={updateTtsEnabled}
-                onNavigateToPage={setActiveTab}
-                onNavigateToTrace={handleNavigateToTrace}
                 voice={{
                   sttEnabled: settings.sttEnabled,
                   ttsEnabled: settings.ttsEnabled,
