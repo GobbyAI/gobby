@@ -158,6 +158,31 @@ def merge_rule(task: object, context: object) -> Action | None:
     return _spawn(task, context, "merge-orchestrator")
 
 
+def stage_agent_available(context: object, stage_name: str) -> bool:
+    registry_entry = _mapping_field(_field(context, "stage_registry", {}), stage_name)
+    if registry_entry is None:
+        return False
+    default_agent = _field(registry_entry, "default_agent")
+    if not default_agent:
+        return False
+    agent = _mapping_field(_field(context, "agent_definitions", {}), str(default_agent))
+    return bool(agent is not None and _field(agent, "enabled", False))
+
+
+def disabled_agent_escalation_rule(task: object, context: object) -> Action | None:
+    current_stage = _field(context, "current_stage")
+    stage_name = _field(current_stage, "name")
+    if not stage_name or _field(current_stage, "state") != "ready":
+        return None
+    if stage_name in {"development", "holistic_qa"}:
+        return None
+    if _mapping_field(_field(context, "stage_registry", {}), str(stage_name)) is None:
+        return None
+    if stage_agent_available(context, str(stage_name)):
+        return None
+    return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_no_agent")
+
+
 BASE_RULES: list[Rule] = [
     plan_review_rule,
     test_arch_rule,
@@ -178,6 +203,12 @@ def _field(obj: object, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
+
+
+def _mapping_field(obj: object, key: str) -> object | None:
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
 
 
 def _state(task: object) -> tuple[str, str]:
