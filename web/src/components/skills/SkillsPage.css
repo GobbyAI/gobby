@@ -1086,3 +1086,11 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .skills-detail {
+    width: 100vw;
+    max-width: none;
+  }
+}

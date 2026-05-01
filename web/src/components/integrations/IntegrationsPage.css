@@ -862,6 +862,11 @@
     width: 100%;
   }
 
+  .intg-detail-panel {
+    width: 100vw;
+    max-width: none;
+  }
+
   .intg-channel-grid {
     grid-template-columns: 1fr;
   }

@@ -25,12 +25,16 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1 1 0;
+  overflow: hidden;
 }
 
 .config-toolbar-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .config-tabs {
@@ -39,6 +43,13 @@
   background: var(--bg-tertiary);
   border-radius: 6px;
   padding: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.config-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .config-tab {

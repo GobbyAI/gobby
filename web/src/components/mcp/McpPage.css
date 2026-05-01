@@ -33,12 +33,15 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 16px 0 12px;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .mcp-toolbar-left {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .mcp-toolbar-title {
@@ -51,6 +54,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  min-width: 0;
 }
 
 .mcp-search {
@@ -648,5 +654,18 @@
 
   .mcp-detail-slide {
     width: 100vw;
+    max-width: none;
+  }
+
+  .mcp-server-header {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .mcp-server-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
   }
 }
