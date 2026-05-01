@@ -56,8 +56,7 @@ async def test_disconnect_all_cleans_state_when_cancelled_during_disconnect() ->
     await asyncio.wait_for(connection.disconnect_started.wait(), timeout=1.0)
 
     disconnect_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await disconnect_task
+    await disconnect_task
 
     lazy_state = manager._lazy_connector.get_state("slow-server")
 

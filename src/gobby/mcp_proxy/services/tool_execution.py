@@ -97,7 +97,14 @@ async def list_tools(
         }
 
     if service._mcp_manager.has_server(server_name):
-        tools_map = await service._mcp_manager.list_tools(server_name)
+        try:
+            tools_map = await service._mcp_manager.list_tools(server_name)
+        except MCPError as exc:
+            return {
+                "success": False,
+                "tools": [],
+                "error": str(exc),
+            }
         tools_list = tools_map.get(server_name, [])
         ext_brief_tools: list[dict[str, Any]] = []
         for tool in tools_list:
