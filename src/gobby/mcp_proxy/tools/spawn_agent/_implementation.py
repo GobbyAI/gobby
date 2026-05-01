@@ -34,6 +34,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _initial_step_state_for_spawn(
+    agent_body: AgentDefinitionBody,
+    *,
+    task_owned_by_child: bool,
+) -> tuple[str, dict[str, Any]]:
+    """Return the initial step workflow state for a spawned agent."""
+    step_variables = dict(agent_body.step_variables)
+    steps = agent_body.steps or []
+    if not steps:
+        raise ValueError("Cannot initialize step state for an agent with no steps")
+    first_step = steps[0]
+    current_step = first_step.name
+
+    if task_owned_by_child and first_step.name == "claim":
+        step_variables["task_claimed"] = True
+        for transition in first_step.transitions:
+            if transition.when and transition.when.replace(" ", "") == "vars.task_claimed":
+                current_step = transition.to
+                break
+
+    return current_step, step_variables
+
+
 async def spawn_agent_impl(
     prompt: str,
     runner: AgentRunner,
@@ -253,6 +276,7 @@ async def spawn_agent_impl(
     task_title: str | None = None
     task_seq_num: int | None = None
     claimed_session_id: str | None = None
+    task_owned_by_child = False
 
     if task_id and task_manager:
         try:
@@ -540,9 +564,12 @@ async def spawn_agent_impl(
                         current_owner,
                     )
                 else:
-                    task_manager.claim_task(
+                    claimed_task = task_manager.claim_task(
                         resolved_task_id,
                         session_id=spawn_result.child_session_id,
+                    )
+                    task_owned_by_child = (
+                        get_claimed_session_id(claimed_task) == spawn_result.child_session_id
                     )
                     logger.info(
                         f"Auto-claimed task {(f'#{task_seq_num}' if task_seq_num else resolved_task_id)} for agent {run_id} (session {spawn_result.child_session_id})",
@@ -562,14 +589,18 @@ async def spawn_agent_impl(
                 from gobby.workflows.definitions import WorkflowInstance
                 from gobby.workflows.state_manager import WorkflowInstanceManager
 
+                current_step, step_variables = _initial_step_state_for_spawn(
+                    agent_body,
+                    task_owned_by_child=task_owned_by_child,
+                )
                 step_instance = WorkflowInstance(
                     id=str(uuid.uuid4()),
                     session_id=spawn_result.child_session_id,
                     workflow_name=step_wf_name,
                     enabled=True,
                     priority=10,
-                    current_step=agent_body.steps[0].name,
-                    variables=dict(agent_body.step_variables),
+                    current_step=current_step,
+                    variables=step_variables,
                 )
                 WorkflowInstanceManager(db).save_instance(step_instance)
 

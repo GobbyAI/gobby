@@ -170,6 +170,120 @@ class TestSpawnAgentStepVariables:
             assert spawn_request.initial_variables["_agent_type"] == "qa-agent"
             assert spawn_request.initial_variables["_agent_rules"] == ["no-code-writing"]
 
+    @pytest.mark.asyncio
+    async def test_auto_claimed_task_starts_step_workflow_after_claim(
+        self,
+        db,
+        mock_runner,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+        from gobby.storage.projects import LocalProjectManager
+        from gobby.storage.sessions import SessionManager
+        from gobby.storage.tasks import LocalTaskManager
+        from gobby.workflows.state_manager import WorkflowInstanceManager
+
+        project = LocalProjectManager(db).create(name="spawn-step-project", repo_path="/tmp/gobby")
+        task_manager = LocalTaskManager(db)
+        task = task_manager.create_task(project.id, "Review plan")
+
+        session_manager = SessionManager(db)
+        parent = session_manager.register(
+            external_id="parent-ext",
+            machine_id="machine",
+            source="codex",
+            project_id=project.id,
+        )
+        child = session_manager.register(
+            external_id="child-ext",
+            machine_id="machine",
+            source="codex",
+            project_id=project.id,
+            parent_session_id=parent.id,
+        )
+
+        agent_body = AgentDefinitionBody(
+            name="plan-adversary",
+            provider="codex",
+            step_variables={
+                "task_claimed": False,
+                "skill_loaded": False,
+                "review_complete": False,
+            },
+            steps=[
+                {
+                    "name": "claim",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-tasks:claim_task", "gobby-tasks:get_task"],
+                    "transitions": [{"to": "load_skill", "when": "vars.task_claimed"}],
+                },
+                {
+                    "name": "load_skill",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": ["gobby-skills:get_skill"],
+                },
+            ],
+        )
+
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            task_manager=task_manager,
+            session_manager=session_manager,
+            db=db,
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context"
+            ) as mock_factory_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn"
+            ) as mock_execute,
+        ):
+            project_ctx = {
+                "id": project.id,
+                "project_path": "/tmp/gobby",
+            }
+            mock_factory_ctx.return_value = project_ctx
+            mock_ctx.return_value = project_ctx
+            mock_execute.return_value = MagicMock(
+                success=True,
+                run_id="run-123",
+                child_session_id=child.id,
+                status="pending",
+                pid=None,
+                terminal_type=None,
+                tmux_session_name=None,
+                process=None,
+                error=None,
+                message=None,
+            )
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Review the plan",
+                    "agent": "plan-adversary",
+                    "task_id": f"#{task.seq_num}",
+                    "parent_session_id": parent.id,
+                },
+            )
+
+        assert result["success"] is True
+        assert task_manager.get_task(task.id).assignee == child.id
+
+        instance = WorkflowInstanceManager(db).get_instance(child.id, "plan-adversary-steps")
+        assert instance is not None
+        assert instance.current_step == "load_skill"
+        assert instance.variables["task_claimed"] is True
+        assert instance.variables["skill_loaded"] is False
+
 
 class TestDispatchBatchIsolationParity:
     """Tests that dispatch_batch forwards clone/isolation params to spawn_agent."""
