@@ -1,0 +1,87 @@
+version: 1
+stages:
+  - name: ideation
+    display_label: Ideation
+    description: Early problem framing; capture motivating questions and constraints.
+    category: discovery
+    default_agent: analyst
+    position_hint: 10
+    requires_human: false
+    is_terminal: false
+  - name: research
+    display_label: Research
+    description: Targeted investigation; produce findings consumable by architecture/PRD.
+    category: discovery
+    default_agent: researcher
+    position_hint: 20
+  - name: architecture
+    display_label: Architecture
+    description: Cross-cutting design decisions and component shape.
+    category: design
+    default_agent: architect
+    position_hint: 30
+  - name: prd
+    display_label: PRD
+    description: Productized requirements; bridges discovery and planning.
+    category: design
+    default_agent: product-manager
+    position_hint: 40
+  - name: planning
+    display_label: Planning
+    description: Implementation plan authoring (interactive or autonomous).
+    category: design
+    default_agent: planner
+    position_hint: 50
+  - name: adversarial_review
+    display_label: Adversarial Review
+    description: Plan-adversary critiques the plan and emits the typed manifest.
+    category: verification
+    default_agent: plan-adversary
+    position_hint: 60
+  - name: test_arch
+    display_label: Test Architecture
+    description: Test scaffolding and contract test design before expansion.
+    category: verification
+    default_agent: test-architect
+    position_hint: 70
+  - name: expansion
+    display_label: Expansion
+    description: Decompose plan into TDD-wrapped leaf tasks.
+    category: implementation
+    position_hint: 80
+  - name: expansion_qa
+    display_label: Expansion QA
+    description: Verify the expanded tree against the plan's coverage contract.
+    category: verification
+    default_agent: expansion-qa
+    position_hint: 90
+  - name: development
+    display_label: Development
+    description: Leaf implementation work; drives TDD sandwiches.
+    category: implementation
+    default_agent: backend-developer
+    position_hint: 100
+  - name: code_review_qa
+    display_label: Code Review QA
+    description: Automated and human code review of leaf changes.
+    category: verification
+    default_agent: qa-reviewer
+    position_hint: 110
+  - name: holistic_qa
+    display_label: Holistic QA
+    description: Whole-epic review after every leaf is parked.
+    category: verification
+    default_agent: holistic-reviewer
+    position_hint: 120
+  - name: pr
+    display_label: Pull Request
+    description: Open/update PR, capture verdict, gate on external review.
+    category: delivery
+    position_hint: 130
+  - name: merge
+    display_label: Merge
+    description: Land approved PR; resolve conflicts; close terminal task.
+    category: delivery
+    default_agent: merge-orchestrator
+    position_hint: 140
+    is_terminal: true
