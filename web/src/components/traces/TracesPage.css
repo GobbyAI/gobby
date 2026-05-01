@@ -255,6 +255,40 @@
   font-family: monospace;
 }
 
+@media (max-width: 640px) {
+  .trace-detail-table,
+  .trace-detail-table tbody,
+  .trace-detail-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .trace-detail-table tr {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trace-detail-table tr:last-child {
+    border-bottom: none;
+  }
+
+  .trace-detail-table th,
+  .trace-detail-table td {
+    display: block;
+    width: 100%;
+    padding: 2px 0;
+    border-bottom: none;
+  }
+
+  .trace-detail-table th {
+    width: 100%;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    word-break: break-word;
+  }
+}
+
 .trace-detail-events {
   display: flex;
   flex-direction: column;

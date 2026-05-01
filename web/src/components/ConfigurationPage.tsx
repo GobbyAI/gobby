@@ -687,11 +687,11 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
           <tbody>
             {secrets.map(s => (
               <tr key={s.id}>
-                <td><code>{s.name}</code></td>
-                <td>{s.category}</td>
-                <td><span className="config-secret-masked">encrypted</span></td>
-                <td>{s.description || '-'}</td>
-                <td>
+                <td data-label="Name"><code>{s.name}</code></td>
+                <td data-label="Category">{s.category}</td>
+                <td data-label="Value"><span className="config-secret-masked">encrypted</span></td>
+                <td data-label="Description">{s.description || '-'}</td>
+                <td data-label="Actions">
                   <div className="config-secret-actions">
                     <button type="button" onClick={() => handleEdit(s)}>Update</button>
                     <button type="button" className="delete" onClick={() => handleDelete(s.name)}>Delete</button>
@@ -1030,18 +1030,18 @@ function VariablesTab() {
           <tbody>
             {variables.map(v => (
               <tr key={v.id}>
-                <td><code>{v.name}</code></td>
-                <td><code>{getDisplayValue(v.definition_json)}</code></td>
-                <td>{v.description || '-'}</td>
-                <td><span className={`config-prompt-badge ${v.source}`}>{v.source}</span></td>
-                <td>
+                <td data-label="Name"><code>{v.name}</code></td>
+                <td data-label="Default Value"><code>{getDisplayValue(v.definition_json)}</code></td>
+                <td data-label="Description">{v.description || '-'}</td>
+                <td data-label="Source"><span className={`config-prompt-badge ${v.source}`}>{v.source}</span></td>
+                <td data-label="Enabled">
                   <button type="button"
                     className={`config-toggle ${v.enabled ? 'on' : ''}`}
                     onClick={() => handleToggle(v)}
                     aria-label={`Toggle ${v.name}`}
                   />
                 </td>
-                <td>
+                <td data-label="Actions">
                   {v.source !== 'template' && (
                     <div className="config-secret-actions">
                       <button type="button" className="delete" onClick={() => handleDelete(v)}>Delete</button>

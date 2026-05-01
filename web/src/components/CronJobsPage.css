@@ -443,6 +443,51 @@
   color: var(--color-info);
 }
 
+@media (max-width: 640px) {
+  .cron-runs-table,
+  .cron-runs-table tbody,
+  .cron-runs-table tr,
+  .cron-runs-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .cron-runs-table thead {
+    display: none;
+  }
+
+  .cron-runs-table tr {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+  }
+
+  .cron-runs-table td {
+    border-bottom: none;
+    padding: 4px 0;
+  }
+
+  .cron-runs-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+  }
+
+  .cron-runs-table-output {
+    max-width: none;
+    white-space: normal;
+    word-break: break-word;
+    overflow: visible;
+    text-overflow: clip;
+  }
+}
+
 .cron-run-status.failed {
   background: color-mix(in srgb, var(--color-error) 15%, transparent);
   color: var(--color-error);

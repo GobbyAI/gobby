@@ -325,14 +325,14 @@ function RunHistoryTable({ runs, isLoading }: { runs: CronRun[]; isLoading: bool
         <tbody>
           {runs.map(run => (
             <tr key={run.id}>
-              <td title={run.triggered_at}>{formatRelativeTime(run.triggered_at)}</td>
-              <td>
+              <td data-label="Triggered" title={run.triggered_at}>{formatRelativeTime(run.triggered_at)}</td>
+              <td data-label="Status">
                 <span className={`cron-run-status ${run.status}`}>
                   {run.status}
                 </span>
               </td>
-              <td>{formatDuration(run.started_at, run.completed_at)}</td>
-              <td className="cron-runs-table-output">
+              <td data-label="Duration">{formatDuration(run.started_at, run.completed_at)}</td>
+              <td data-label="Output" className="cron-runs-table-output">
                 {run.error || run.output || '-'}
               </td>
             </tr>
