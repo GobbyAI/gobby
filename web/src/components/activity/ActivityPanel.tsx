@@ -13,6 +13,8 @@ import { SessionsTab } from "./SessionsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
+import { CronTab } from "./CronTab";
+import { TracesTab } from "./TracesTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
@@ -21,6 +23,8 @@ import type { SessionsFilters } from "./sessionsFilters";
 export type ActivityTab =
   | "sessions"
   | "pipelines"
+  | "cron"
+  | "traces"
   | "tasks"
   | "files"
   | "plans"
@@ -128,17 +132,36 @@ const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
       </svg>
     ),
   },
+  {
+    id: "cron",
+    label: "Cron",
+    icon: (
+      <svg {...iconProps}>
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+  },
+  {
+    id: "traces",
+    label: "Traces",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M3 12h4l3-9 4 18 3-9h4" />
+      </svg>
+    ),
+  },
 ];
 
 const noopFetchDiff = async (): Promise<string> => "";
 
 // Width constants shared between the inline style, ResizeHandle, and the
 // `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
-// `min-w-[400px]` on the chat column in ChatPage.tsx so the maxWidth calc
+// `min-w-[320px]` on the chat column in ChatPage.tsx so the maxWidth calc
 // always leaves enough room for the chat to keep its floor.
 const PANEL_MIN_WIDTH = 280;
 const PANEL_MAX_WIDTH = 1200;
-const CHAT_MIN_WIDTH = 400;
+const CHAT_MIN_WIDTH = 320;
 const LAYOUT_BUFFER = 24;
 
 type ActivityTabConfig = (typeof TABS)[number];
@@ -365,6 +388,10 @@ export function ActivityPanel({
         );
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;
+      case "cron":
+        return <CronTab projectId={projectId} />;
+      case "traces":
+        return <TracesTab projectId={projectId} />;
       case "tasks":
         return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
       case "files":

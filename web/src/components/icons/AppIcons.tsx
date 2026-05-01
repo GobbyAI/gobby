@@ -349,3 +349,44 @@ export function SwapIcon(): ReactElement {
     </svg>
   );
 }
+
+export function LinkIcon(): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+      <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+      <line x1="8" x2="16" y1="12" y2="12" />
+    </svg>
+  );
+}
+
+export function UnlinkIcon(): ReactElement {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 17H7A5 5 0 0 1 7 7" />
+      <path d="M15 7h2a5 5 0 0 1 4 8" />
+      <line x1="8" x2="12" y1="12" y2="12" />
+      <line x1="2" x2="22" y1="2" y2="22" />
+    </svg>
+  );
+}

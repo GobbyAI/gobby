@@ -140,12 +140,14 @@ class GeminiACPClient:
         prompt_timeout_env: str = ACP_PROMPT_TIMEOUT_ENV,
         extra_args: list[str] | None = None,
         env_overrides: dict[str, str] | None = None,
+        purpose: str = "runtime",
     ) -> None:
         self._cli_path = cli_path
         self._cwd = cwd
         self._request_timeout = request_timeout
         self._cli_name = cli_name
         self._display_name = display_name
+        self._purpose = purpose
         self._extra_args = list(extra_args or [])
         self._env_overrides = dict(env_overrides or {})
         self._prompt_timeout = _resolve_timeout(
@@ -698,7 +700,7 @@ class GeminiACPClient:
         return ""
 
     async def stop(self) -> None:
-        """Terminate the subprocess and clean up.
+        """Gracefully stop the subprocess and clean up.
 
         Safe to call multiple times. If the process has already exited,
         this is a no-op.
@@ -709,25 +711,37 @@ class GeminiACPClient:
             self._session_info = {}
             return
 
+        process = self._process
         try:
-            if self._process.returncode is None:
-                # Close stdin to signal EOF
-                if self._process.stdin:
+            if process.returncode is None:
+                if process.stdin:
                     try:
-                        self._process.stdin.close()
+                        process.stdin.close()
                     except Exception:
                         pass
 
-                self._process.terminate()
+                exited_after_eof = False
                 try:
-                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                    exited_after_eof = True
                 except TimeoutError:
-                    logger.warning(
-                        "%s ACP process did not exit after terminate, killing",
-                        self._display_name,
-                    )
-                    self._process.kill()
-                    await self._process.wait()
+                    pass
+
+                if not exited_after_eof and process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                    except TimeoutError:
+                        logger.warning(
+                            "%s ACP process did not exit after terminate; killing "
+                            "provider=%s pid=%s purpose=%s",
+                            self._display_name,
+                            self._cli_name,
+                            getattr(process, "pid", None),
+                            self._purpose,
+                        )
+                        process.kill()
+                        await process.wait()
         except ProcessLookupError:
             pass  # Already gone
         except Exception as e:

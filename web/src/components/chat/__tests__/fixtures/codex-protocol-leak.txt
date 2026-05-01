@@ -186,46 +186,14 @@ CRITICAL RULES:
 - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
 
 
-<active_skills>
-- name: brevity
-  ref: gobby-skills:get_skill name="brevity"
-- name: build-rule
-  ref: gobby-skills:get_skill name="build-rule"
-- name: clones
-  ref: gobby-skills:get_skill name="clones"
-- name: code-index
-  ref: gobby-skills:get_skill name="code-index"
-- name: code-reviewer
-  ref: gobby-skills:get_skill name="code-reviewer"
-- name: context7
-  ref: gobby-skills:get_skill name="context7"
-- name: expand
-  ref: gobby-skills:get_skill name="expand"
-- name: impeccable
-  ref: gobby-skills:get_skill name="impeccable"
-- name: loading-skills
-  ref: gobby-skills:get_skill name="loading-skills"
-- name: memory
-  ref: gobby-skills:get_skill name="memory"
-- name: orchestrate
-  ref: gobby-skills:get_skill name="orchestrate"
-- name: persona
-  ref: gobby-skills:get_skill name="persona"
-- name: plan
-  ref: gobby-skills:get_skill name="plan"
-- name: plan-draft
-  ref: gobby-skills:get_skill name="plan-draft"
-- name: plan-review
-  ref: gobby-skills:get_skill name="plan-review"
-- name: source-control
-  ref: gobby-skills:get_skill name="source-control"
-- name: task-creation
-  ref: gobby-skills:get_skill name="task-creation"
-- name: task-transitions
-  ref: gobby-skills:get_skill name="task-transitions"
-- name: test-battery
-  ref: gobby-skills:get_skill name="test-battery"
-</active_skills>
+<available-skill-hubs>
+- anthropic-skills (github-collection, auth: not required)
+- claude-plugins (claude-plugins, auth: not required)
+- clawdhub (clawdhub, auth: not required)
+- skillsmp (skillsmp, auth: missing SKILLSMP_API_KEY)
+
+Search hubs: search_hub(query="...", hub_name="optional") on gobby-skills
+</available-skill-hubs>
 
 <project-memory>
 - When using gobby-tasks MCP from Codex without implicit session context, pass the resolved Gobby session ID in the top-level call_tool session_id field. create_task rejects missing session context and does not accept session_id inside tool arguments. (score: 0.7285, via: semantic)

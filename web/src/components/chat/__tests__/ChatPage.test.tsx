@@ -56,6 +56,7 @@ vi.mock("../ChatInput", () => ({
     currentModel,
     currentReasoning,
     providerPickerDisabledReason,
+    onNewChat,
   }: {
     proxyDeliveryNotice?: string | null;
     disabled?: boolean;
@@ -69,6 +70,7 @@ vi.mock("../ChatInput", () => ({
     currentModel?: string;
     currentReasoning?: string;
     providerPickerDisabledReason?: string | null;
+    onNewChat?: () => void;
   }) => (
     <div data-testid="chat-input">
       <span data-testid="chat-input-disabled">{String(Boolean(disabled))}</span>
@@ -83,16 +85,27 @@ vi.mock("../ChatInput", () => ({
       <span data-testid="chat-input-model">{currentModel ?? ""}</span>
       <span data-testid="chat-input-reasoning">{currentReasoning ?? ""}</span>
       <span data-testid="chat-input-provider-disabled-reason">{providerPickerDisabledReason ?? ""}</span>
+      {onNewChat && (
+        <button type="button" data-testid="new-chat-button" onClick={onNewChat}>
+          New Chat
+        </button>
+      )}
     </div>
   ),
 }));
 
 vi.mock("../CommandBar", () => ({
-  CommandBar: ({ onNewChat }: { onNewChat: () => void }) => (
+  CommandBar: ({ onTogglePanel }: { onTogglePanel?: () => void }) => (
     <div data-testid="command-bar">
-      <button type="button" data-testid="new-chat-button" onClick={onNewChat}>
-        New Chat
-      </button>
+      {onTogglePanel && (
+        <button
+          type="button"
+          data-testid="command-bar-panel-toggle"
+          onClick={onTogglePanel}
+        >
+          Toggle Panel
+        </button>
+      )}
     </div>
   ),
 }));
@@ -192,13 +205,11 @@ vi.mock("../AgentStatusBar", () => ({
     onAttach,
     onResume,
     onDetach,
-    onTogglePanel,
   }: {
     isAttached?: boolean;
     onAttach?: () => void;
     onResume?: () => void;
     onDetach?: () => void;
-    onTogglePanel?: () => void;
   }) => (
     <div data-testid="agent-status-bar">
       <span data-testid="agent-status-attached">{String(Boolean(isAttached))}</span>
@@ -215,11 +226,6 @@ vi.mock("../AgentStatusBar", () => ({
       {isAttached && onDetach && (
         <button type="button" data-testid="agent-status-detach" onClick={onDetach}>
           Detach
-        </button>
-      )}
-      {onTogglePanel && (
-        <button type="button" data-testid="agent-status-panel-toggle" onClick={onTogglePanel}>
-          Toggle Panel
         </button>
       )}
     </div>
@@ -464,7 +470,7 @@ describe("ChatPage", () => {
       expect(screen.getByTestId("agent-status-attached")).toHaveTextContent(
         "true",
       );
-      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
     });
 
     const statusBar = screen.getByTestId("agent-status-bar");
@@ -492,7 +498,7 @@ describe("ChatPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("agent-status-bar")).toBeInTheDocument();
       expect(screen.getByTestId("chat-input")).toBeInTheDocument();
-      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
     });
   });
 
@@ -714,9 +720,9 @@ describe("ChatPage", () => {
     expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
     expect(screen.getByTestId("agent-status-attach")).toBeInTheDocument();
     expect(screen.getByTestId("agent-status-resume")).toBeInTheDocument();
-    expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -892,10 +898,10 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -915,11 +921,11 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
     });
 
     setIsPinnedSpy.mockClear();
-    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
@@ -935,7 +941,7 @@ describe("ChatPage", () => {
     });
     expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("agent-status-panel-toggle"));
+    fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
     expect(togglePanelSpy).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("activity-panel")).toBeInTheDocument();
 
@@ -969,7 +975,7 @@ describe("ChatPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("agent-status-panel-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("command-bar-panel-toggle")).toBeInTheDocument();
     });
     expect(setIsPinnedSpy).not.toHaveBeenCalledWith(false);
 

@@ -22,7 +22,6 @@ from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
-    from gobby.workflows.definitions import AgentDefinitionBody
 
 _derive_logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ SUMMARY_GENERATION_TIMEOUT_S = 120
 class AgentActivationResult:
     """Result of activating the default agent for a session."""
 
-    context: str | None  # AI-only: preamble + formatted skills
+    context: str | None  # AI-only: identity preamble
     agent_name: str
     description: str | None
     role: str | None
@@ -42,52 +41,6 @@ class AgentActivationResult:
     skills_count: int
     variables_count: int
     injected_skill_names: list[str]  # skills with format "full" or "content"
-
-
-def select_and_format_agent_skills(
-    agent_body: AgentDefinitionBody,
-    all_skills: list[Any],
-    active_skills: set[str] | None,
-    cli_source: str,
-) -> tuple[str | None, int, list[str]]:
-    """Audience-aware skill selection and formatting for agent activation.
-
-    Shared between session activation and web chat skill manifest building.
-
-    Args:
-        agent_body: Resolved agent definition body
-        all_skills: All skills from the database
-        active_skills: Set of active skill names (None = all eligible)
-        cli_source: CLI source name for audience filtering
-
-    Returns:
-        (formatted_text, skills_count, injected_skill_names)
-    """
-    from gobby.hooks.skill_manager import _db_skill_to_parsed
-    from gobby.skills.formatting import render_skills_for_context
-    from gobby.skills.injector import AgentContext, SkillInjector, SkillProfile
-
-    eligible = (
-        all_skills if active_skills is None else [s for s in all_skills if s.name in active_skills]
-    )
-    parsed = [_db_skill_to_parsed(s) for s in eligible if s.enabled]
-    if not parsed:
-        return None, 0, []
-
-    agent_ctx = AgentContext(
-        agent_depth=0, has_human=True, agent_type="interactive", source=cli_source
-    )
-    profile = None
-    if agent_body.workflows and agent_body.workflows.skill_format:
-        profile = SkillProfile(default_format=agent_body.workflows.skill_format)
-
-    selected = SkillInjector().select_skills(parsed, agent_ctx, profile=profile)
-    if not selected:
-        return None, 0, []
-
-    injected_names = [skill.name for skill, fmt in selected if fmt in ("full", "content")]
-    formatted = render_skills_for_context(selected)
-    return formatted, len(selected), injected_names
 
 
 class SessionStartMixin(EventHandlersBase):
@@ -885,7 +838,7 @@ class SessionStartMixin(EventHandlersBase):
 
         # Build and persist session variables
         _ta_build = time.monotonic()
-        changes, active_rules, active_skills = self._build_agent_changes(
+        changes, active_rules, _ = self._build_agent_changes(
             agent_body, session_id, enabled_rules, all_skills, enabled_variables
         )
 
@@ -931,7 +884,7 @@ class SessionStartMixin(EventHandlersBase):
         sv_mgr.merge_variables(session_id, changes)
 
         # Build injection context — identity only (role + personality).
-        # Instructions, skills, and code-index are deferred to first before_agent.
+        # Instructions are deferred to first before_agent.
         _ta_format = time.monotonic()
         identity_parts: list[str] = []
         if agent_body.role:
@@ -939,8 +892,7 @@ class SessionStartMixin(EventHandlersBase):
         if agent_body.personality:
             identity_parts.append(f"## Personality\n{agent_body.personality}")
 
-        # Skills count is no longer needed at SessionStart (agent tree removed).
-        # Selection + formatting deferred to _inject_agent_instructions_if_needed().
+        # Skills are discovered through turn_start rules, not SessionStart manifests.
         skills_count = 0
         injected_names: list[str] = []
 

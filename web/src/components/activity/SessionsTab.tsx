@@ -33,6 +33,7 @@ import {
   type SessionStatus,
   type SessionsFilters,
 } from "./sessionsFilters";
+import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 
 interface RunningAgent {
   run_id: string;
@@ -284,7 +285,7 @@ export const SessionsTab = memo(function SessionsTab({
       return null;
     }
   });
-  const [topHeight, setTopHeight] = useState(35);
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
   const [modalMode, setModalMode] = useState<InteractionMode | null>(null);

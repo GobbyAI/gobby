@@ -10,8 +10,10 @@ retries up to 3 times. After the cap is exhausted, behavior splits:
     If the stub also fails, append a second audit marker and force-approve
     with ``mark_task_review_approved``.
 
-The pre-verdict review pass uses ``parse_mode="draft"`` so the loop does not
-deadlock on a not-yet-written manifest (§2.21.3).
+Pre-verdict draft-mode parsing happens upstream in ``validate_plan_file``
+before each adversary spawn; the adversary itself does NOT re-parse
+pre-verdict and only runs the parser as the post-emission expansion-mode
+self-check (§2.21.3).
 """
 
 from __future__ import annotations
@@ -44,11 +46,13 @@ class TestSelfCheckGate:
         assert "parse_plan" in instructions
         assert 'parse_mode="expansion"' in instructions or "parse_mode='expansion'" in instructions
 
-    def test_pre_verdict_review_uses_draft_mode(self, agent: AgentDefinitionBody) -> None:
-        """Pre-verdict pass uses draft mode so the loop doesn't deadlock on
-        not-yet-written manifest (§2.21.3)."""
+    def test_pre_verdict_parsing_delegated_upstream(self, agent: AgentDefinitionBody) -> None:
+        """Adversary does NOT re-parse pre-verdict — that's the planner-side
+        ``validate_plan_file`` gate, run before every adversary spawn (§2.21.3).
+        """
         instructions = agent.instructions or ""
-        assert 'parse_mode="draft"' in instructions or "parse_mode='draft'" in instructions
+        assert "validate_plan_file" in instructions
+        assert "Do NOT re-run the parser pre-verdict" in instructions
 
 
 class TestRetryAndCap:

@@ -36,7 +36,7 @@ instructions: |
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
   - Dev and QA leaf work may run inside the parent epic's isolation context.
-  - Agent termination is separate and still requires `kill_agent`.
+  - Agent termination is separate and still requires `end_agent_run`.
 
   You are the backend-developer for an automated leaf task. Your task ID is in
   assigned_task_id. You are also the default-agent fallback for ambiguous code,
@@ -64,7 +64,7 @@ instructions: |
   CRITICAL RULES:
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT spawn other agents.
-  - Do NOT terminate without calling kill_agent.
+  - Do NOT terminate without calling end_agent_run.
   - Always use `uv run` for Python commands.
   - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
 
@@ -78,6 +78,7 @@ workflows:
 
 step_variables:
   task_claimed: false
+  additional_skills: []
   additional_skills_loaded: false
   implementation_complete: false
 
@@ -121,10 +122,14 @@ steps:
         tool: get_skill
         action: set_variable
         variable: additional_skills_loaded
-        value: true
+        value: >-
+          not vars.additional_skills
+          or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
     transitions:
       - to: implement
-        when: "vars.additional_skills_loaded or not vars.additional_skills"
+        when: >-
+          not vars.additional_skills
+          or all(skill in vars.get('loaded_skills', []) for skill in vars.additional_skills)
 
   - name: implement
     description: "Implement, validate, and hand off or close"
@@ -138,6 +143,7 @@ steps:
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
@@ -160,13 +166,13 @@ steps:
 
   - name: terminate
     description: "Self-terminate"
-    status_message: "Call kill_agent to terminate."
+    status_message: "Call end_agent_run to finish this agent run."
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
       - mcp__gobby__list_tools
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
-      - "gobby-agents:kill_agent"
+      - "gobby-agents:end_agent_run"
 
 exit_condition: "current_step == 'terminate'"

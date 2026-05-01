@@ -134,11 +134,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def _inject_agent_instructions_if_needed(
         self, event: HookEvent, session_id: str, response: HookResponse
     ) -> None:
-        """Format agent instructions and active-skill manifests on first before_agent.
+        """Format agent identity and instructions on first before_agent.
 
         Everything needed is already in DB from SessionStart activation:
         - Agent name: _agent_type session variable
-        - Active skills: _active_skill_names session variable
         - Agent definition: workflow_definitions table
         """
         if not self._session_manager:
@@ -154,9 +153,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
             return
 
         agent_name = variables.get("_agent_type", "default")
-        active_skills_raw = variables.get("_active_skill_names")
-        active_skills = set(active_skills_raw) if active_skills_raw is not None else None
-        cli_source = event.source.value
 
         # Get project_id for project-specific agent resolution
         project_id = None
@@ -190,17 +186,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
         if agent_body.instructions:
             parts.append(f"## Instructions\n{agent_body.instructions}")
-
-        # Format active skill manifest
-        from gobby.hooks.event_handlers._session_start import select_and_format_agent_skills
-        from gobby.skills.manager import SkillManager
-
-        all_skills = SkillManager(self._session_manager.db).list_skills()
-        formatted, _, _ = select_and_format_agent_skills(
-            agent_body, all_skills, active_skills, cli_source
-        )
-        if formatted:
-            parts.append(formatted)
 
         if parts:
             instructions_context = "\n\n".join(parts)

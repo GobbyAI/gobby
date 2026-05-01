@@ -14,6 +14,8 @@ const VALID_TABS: ActivityTab[] = [
   'files',
   'canvas',
   'pipelines',
+  'cron',
+  'traces',
 ]
 
 function normalizeStoredTab(value: string | null, legacy = false): ActivityTab | null {

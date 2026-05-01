@@ -68,6 +68,7 @@ class TestSkillsConfigHubs:
         assert "claude-plugins" in config.hubs
         assert "clawdhub" in config.hubs
         assert "skillsmp" in config.hubs
+        assert "nano-banana-skills" not in config.hubs
         assert len(config.hubs) == 4
         assert config.hubs["clawdhub"].type == "clawdhub"
         assert config.hubs["skillsmp"].type == "skillsmp"

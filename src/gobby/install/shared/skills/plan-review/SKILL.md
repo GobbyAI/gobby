@@ -29,14 +29,25 @@ A plan that passes this review is ready for `/gobby expand`.
 
 ## Plan-Coverage Contract Gate
 
-Before qualitative review, plan-adversary MUST load the A2 parser callable
-`gobby.plans.parser.parse_plan` and reject malformed typed plans mechanically.
-Use the parser result as the contract gate; only run the qualitative checklist
-after the typed grammar passes.
+Mechanical parser rejection happens upstream of the adversary. The interactive
+planner and autonomous front-half both run `validate_plan_file`
+(`src/gobby/tasks/expansion/_compile.py`) before every adversary spawn; that
+helper calls `parse_plan(..., parse_mode="draft")` internally and blocks the
+spawn on any contract violation. By the time the adversary is invoked, the
+typed grammar has already passed the draft-mode contract gate — re-running the
+parser pre-verdict is structural duplication that wastes a spawn round on
+syntax the planner already cleared.
 
-The pre-verdict gate calls `parse_plan(..., parse_mode="draft")` so the review
-loop does not deadlock on a not-yet-written manifest. The post-approval
-self-check uses `parse_mode="expansion"` (see Manifest Emission below).
+The adversary's only mechanical gate is the post-approval
+`parse_mode="expansion"` self-check on manifest write (see Manifest Emission
+below). It validates a different invariant: the appended `## M1 Task Manifest`
+is present, schema-correct, and covers every acceptance item exactly once.
+
+The rejection-message vocabulary, canonical heading regex, and post-parse
+semantic checks below remain authoritative for qualitative findings. When
+surfacing a contract violation the planner gate missed — or one the parser
+cannot detect mechanically (table-row decomposition, traceability gaps) —
+cite the exact rejection cause from the table.
 
 Canonical heading regex:
 
@@ -79,12 +90,10 @@ headings that do not match the canonical regex, so a plan authored to the
 pre-contract template (`## Phase 1: Setup`) parses without error but produces
 zero phase sections. After parsing, count sections whose ID matches the
 contract phase regex `^P\d+$` (`_CONTRACT_PHASE_ID_RE` in
-`src/gobby/tasks/expansion/_common.py`). Reject if the plan has one or more
-`kind: deliverable` sections but zero phase sections — the expansion compiler
-cannot anchor TDD wrappers without phases. The same check is enforced
-defensively in `validate_plan_file`
-(`src/gobby/tasks/expansion/_compile.py`); double-validation between the
-adversary gate and the validator is intentional defense-in-depth.
+`src/gobby/tasks/expansion/_common.py`). The expansion compiler cannot anchor
+TDD wrappers without phases, so `validate_plan_file`
+(`src/gobby/tasks/expansion/_compile.py`) blocks adversary spawn for any plan
+with one or more `kind: deliverable` sections but zero phase sections.
 
 The ninth rejection is qualitative because table intent cannot be parsed
 reliably. Any `deliverable` section whose body uses a markdown table to

@@ -177,14 +177,16 @@ validation strictness:
 
 | Mode | Manifest | Used by | Behavior |
 | --- | --- | --- | --- |
-| `parse_mode="draft"` | optional | plan-adversary pre-verdict gate; `/gobby plan` Phase 3a; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
+| `parse_mode="draft"` | optional | `validate_plan_file` (planner-side gate run before every adversary spawn); `/gobby plan` Phase 3a; `gobby plan coverage` against drafts | Manifest tolerated absent. If present, schema and 1:1 invariants still apply — a malformed draft manifest still fails. |
 | `parse_mode="expansion"` | required | `gobby expand` deterministic compile path; plan-adversary's post-approval self-check | Raises `PlanParseError("missing manifest")` if the section is absent or any deliverable has no entry. |
 | `parse_mode="strict"` (default) | required | callers that want full validation regardless of context | Same strict invariants as `expansion`; default so any caller that omits `parse_mode` keeps full validation. |
 
 The deadlock between "review the plan" and "manifest must exist" is resolved by
-construction: the adversary reviews in `draft` mode, writes the manifest on
-clean review, self-checks in `expansion` mode, and downstream `gobby expand`
-parses in `expansion` against the now-manifest-bearing plan.
+construction: the planner-side `validate_plan_file` gate parses in `draft` mode
+before each adversary spawn, the adversary then runs qualitative review without
+re-parsing, writes the manifest on clean review, self-checks in `expansion`
+mode, and downstream `gobby expand` parses in `expansion` against the
+now-manifest-bearing plan.
 
 ### Adversary-Writes-on-Approval Contract
 

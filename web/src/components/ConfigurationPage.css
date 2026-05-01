@@ -25,20 +25,44 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1 1 0;
+  overflow: hidden;
 }
 
 .config-toolbar-right {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .config-tabs {
+  --config-tabs-left-shadow: transparent;
+  --config-tabs-right-shadow: transparent;
   display: flex;
   gap: 2px;
   background: var(--bg-tertiary);
   border-radius: 6px;
   padding: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow:
+    inset 12px 0 10px -12px var(--config-tabs-left-shadow),
+    inset -12px 0 10px -12px var(--config-tabs-right-shadow);
+}
+
+.config-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.config-tabs.can-scroll-left {
+  --config-tabs-left-shadow: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+.config-tabs.can-scroll-right {
+  --config-tabs-right-shadow: color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 
 .config-tab {
@@ -724,6 +748,48 @@
   .config-secrets-table th,
   .config-secrets-table td {
     padding: 6px 6px;
+  }
+}
+
+@media (max-width: 640px) {
+  .config-secrets-table,
+  .config-secrets-table tbody,
+  .config-secrets-table tr,
+  .config-secrets-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .config-secrets-table thead {
+    display: none;
+  }
+
+  .config-secrets-table tr {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+  }
+
+  .config-secrets-table td {
+    border-bottom: none;
+    padding: 4px 0;
+  }
+
+  .config-secrets-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-tertiary);
+    margin-bottom: 2px;
+  }
+
+  .config-secret-actions {
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .config-secret-form-row {

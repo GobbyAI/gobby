@@ -69,6 +69,8 @@ def create_app(server: "HTTPServer") -> FastAPI:
             "task_sync_manager": server.services.task_sync_manager,
             "agent_runner": server.services.agent_runner,
             "completion_registry": server.services.completion_registry,
+            "database": server.services.database,
+            "session_manager": server.services.session_manager,
         }
 
         # Create code index trigger for post-edit incremental indexing

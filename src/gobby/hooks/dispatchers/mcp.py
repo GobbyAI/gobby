@@ -84,6 +84,20 @@ async def proxy_self_call(
         return {"success": False, "error": f"Unknown _proxy tool: {tool}"}
 
 
+def _format_hub_auth_status(hub: dict[str, Any]) -> str:
+    """Return compact auth status text for a skill hub."""
+    auth_required = hub.get("auth_required")
+    auth_configured = hub.get("auth_configured")
+    if auth_required is True:
+        if auth_configured is True:
+            return "configured"
+        key_name = hub.get("auth_key_name")
+        return f"missing {key_name}" if key_name else "required"
+    if auth_required is False:
+        return "not required"
+    return "unknown"
+
+
 def format_discovery_result(dr: dict[str, Any]) -> str:
     """Format a proxy discovery result for context injection.
 
@@ -161,6 +175,21 @@ def format_discovery_result(dr: dict[str, Any]) -> str:
             'then install_skill(source="hub:slug") to use'
         )
         lines.append("</available-skills>")
+        return "\n".join(lines)
+
+    elif tool == "list_hubs":
+        hubs = result.get("hubs", [])
+        lines = ["<available-skill-hubs>"]
+        for hub in hubs:
+            name = hub.get("name", "unknown")
+            hub_type = hub.get("type", "unknown")
+            auth = _format_hub_auth_status(hub)
+            lines.append(f"- {name} ({hub_type}, auth: {auth})")
+        if not hubs:
+            lines.append("- none configured")
+        lines.append("")
+        lines.append('Search hubs: search_hub(query="...", hub_name="optional") on gobby-skills')
+        lines.append("</available-skill-hubs>")
         return "\n".join(lines)
 
     elif tool == "get_skill":

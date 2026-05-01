@@ -11,5 +11,5 @@
   --bg-code: var(--bg-primary);
   --bg-muted: var(--bg-secondary);
   --border-color: var(--border);
-  --accent-color: var(--color-info);
+  --accent-color: var(--accent);
 }

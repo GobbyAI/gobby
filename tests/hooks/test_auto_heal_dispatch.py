@@ -480,6 +480,37 @@ class TestFormatDiscoveryResult:
         formatted = HookManager._format_discovery_result(dr)
         assert formatted == 'Call get_skill(name="empty") on gobby-skills, then continue.'
 
+    def test_format_list_hubs(self) -> None:
+        from gobby.hooks.hook_manager import HookManager
+
+        dr = {
+            "tool": "list_hubs",
+            "result": {
+                "hubs": [
+                    {
+                        "name": "clawdhub",
+                        "type": "clawdhub",
+                        "auth_required": False,
+                        "auth_configured": True,
+                    },
+                    {
+                        "name": "skillsmp",
+                        "type": "skillsmp",
+                        "auth_required": True,
+                        "auth_key_name": "SKILLSMP_API_KEY",
+                        "auth_configured": False,
+                    },
+                ],
+            },
+        }
+
+        formatted = HookManager._format_discovery_result(dr)
+
+        assert "<available-skill-hubs>" in formatted
+        assert "- clawdhub (clawdhub, auth: not required)" in formatted
+        assert "- skillsmp (skillsmp, auth: missing SKILLSMP_API_KEY)" in formatted
+        assert 'search_hub(query="...", hub_name="optional")' in formatted
+
     def test_format_unknown_tool(self) -> None:
         from gobby.hooks.hook_manager import HookManager
 

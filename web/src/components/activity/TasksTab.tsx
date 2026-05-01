@@ -24,6 +24,7 @@ import {
   type GobbyTaskDetail,
   type ParentTaskRef,
 } from "./TasksTabDetailPanel";
+import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 
 interface TasksTabProps {
   projectId?: string | null;
@@ -323,7 +324,7 @@ export const TasksTab = memo(function TasksTab({
       (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
     ).length;
   }, [statusFilters]);
-  const [topHeight, setTopHeight] = useState(50);
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);

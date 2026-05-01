@@ -131,7 +131,7 @@ class TestHandleBeforeAgent:
         result = handler.handle_before_agent(event)
         assert result.decision == "allow"
 
-    def test_default_agent_auto_injects_brevity_on_first_prompt(self) -> None:
+    def test_default_agent_injects_instructions_without_active_skill_manifest(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             data={"prompt": "hello"},
@@ -156,18 +156,14 @@ class TestHandleBeforeAgent:
                 "gobby.workflows.state_manager.SessionVariableManager.merge_variables",
             ) as mock_merge,
             patch("gobby.workflows.agent_resolver.resolve_agent", return_value=default_agent),
-            patch("gobby.skills.manager.SkillManager.list_skills", return_value=[]),
-            patch(
-                "gobby.hooks.event_handlers._session_start.select_and_format_agent_skills",
-                return_value=("### brevity\nTerse output mode.", 1, ["brevity"]),
-            ),
         ):
             result = handler.handle_before_agent(event)
 
         assert result.decision == "allow"
         assert result.context is not None
         assert "## Instructions" in result.context
-        assert "### brevity" in result.context
+        assert "<active_skills>" not in result.context
+        assert "### brevity" not in result.context
         mock_merge.assert_called_once_with(
             "sess-1",
             {

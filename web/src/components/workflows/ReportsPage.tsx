@@ -946,22 +946,22 @@ function PipelineRow({
       className={`reports-row ${selectedId === pe.id ? "reports-row--selected" : ""}`}
       onClick={() => onSelect(pe.id)}
     >
-      <td className="reports-cell">
+      <td className="reports-cell" data-label="">
         <StatusDot status={pe.status} />
       </td>
-      <td className="reports-cell reports-cell--name">{pe.pipeline_name}</td>
-      <td className="reports-cell reports-cell--id">{pe.id.slice(0, 12)}</td>
-      <td className="reports-cell reports-cell--time">
+      <td className="reports-cell reports-cell--name" data-label="Name">{pe.pipeline_name}</td>
+      <td className="reports-cell reports-cell--id" data-label="ID">{pe.id.slice(0, 12)}</td>
+      <td className="reports-cell reports-cell--time" data-label="Time">
         {formatDateTime(pe.created_at)}
       </td>
-      <td className="reports-cell reports-cell--duration">
+      <td className="reports-cell reports-cell--duration" data-label="Duration">
         {pe.completed_at
           ? formatDuration(pe.created_at, pe.completed_at)
           : pe.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className="reports-cell reports-cell--status-text">
+      <td className="reports-cell reports-cell--status-text" data-label="Status">
         {normalizeStatus(pe.status)}
       </td>
     </tr>
@@ -982,32 +982,32 @@ function AgentRow({
       className={`reports-row ${selectedId === ar.id ? "reports-row--selected" : ""}`}
       onClick={() => onSelect(ar.id)}
     >
-      <td className="reports-cell">
+      <td className="reports-cell" data-label="">
         <StatusDot status={ar.status} />
       </td>
-      <td className="reports-cell reports-cell--name">
+      <td className="reports-cell reports-cell--name" data-label="Name">
         {ar.workflow_name || ar.prompt?.slice(0, 60) || "Agent Run"}
       </td>
-      <td className="reports-cell">
+      <td className="reports-cell" data-label="Provider">
         <span className="reports-type-badge reports-type-badge--agent">
           {ar.provider}
         </span>
       </td>
-      <td className="reports-cell reports-cell--id">{ar.id.slice(0, 12)}</td>
-      <td className="reports-cell reports-cell--time">
+      <td className="reports-cell reports-cell--id" data-label="ID">{ar.id.slice(0, 12)}</td>
+      <td className="reports-cell reports-cell--time" data-label="Time">
         {formatDateTime(ar.created_at)}
       </td>
-      <td className="reports-cell reports-cell--duration">
+      <td className="reports-cell reports-cell--duration" data-label="Duration">
         {ar.started_at && ar.completed_at
           ? formatDuration(ar.started_at, ar.completed_at)
           : ar.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className="reports-cell" style={{ textAlign: "center" }}>
+      <td className="reports-cell" data-label="Turns" style={{ textAlign: "center" }}>
         {ar.turns_used}
       </td>
-      <td className="reports-cell reports-cell--status-text">
+      <td className="reports-cell reports-cell--status-text" data-label="Status">
         {normalizeStatus(ar.status)}
       </td>
     </tr>

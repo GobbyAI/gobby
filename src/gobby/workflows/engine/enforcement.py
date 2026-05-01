@@ -28,6 +28,8 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
 
+RESERVED_STEP_WORKFLOW_VARIABLES = frozenset({"step_workflow_complete", "_step_workflow_name"})
+
 
 class EnforcementMixin:
     """Mixin providing tool enforcement methods for RuleEngine."""
@@ -222,6 +224,26 @@ class EnforcementMixin:
         if tool_name == "ToolSearch":
             return None
 
+        if tool_name in ("set_variable", "mcp__gobby__set_variable", "mcp_gobby_set_variable"):
+            tool_input = event.data.get("tool_input") or {}
+            variable_name = ""
+            if isinstance(tool_input, dict):
+                variable_name = self._is_reserved_variable_write(tool_name, tool_input) or ""
+            if variable_name:
+                reason = (
+                    f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                    f"Variable '{variable_name}' is managed by the step workflow runtime."
+                )
+                self._audit_step_tool_call(
+                    session_id,
+                    wf_name,
+                    step.name,
+                    tool_name,
+                    "block",
+                    reason=reason,
+                )
+                return HookResponse(decision="block", reason=reason)
+
         # Discovery/infrastructure tools always pass
         if tool_name.startswith("mcp__gobby__"):
             mcp_suffix = tool_name[len("mcp__gobby__") :]
@@ -328,6 +350,28 @@ class EnforcementMixin:
                             reason=reason,
                         )
 
+                if mcp_tool_name == "set_variable":
+                    variable_name = self._is_reserved_variable_write(
+                        tool_name,
+                        tool_input,
+                        mcp_tool_name=mcp_tool_name,
+                    )
+                    if variable_name:
+                        reason = (
+                            f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                            f"Variable '{variable_name}' is managed by the step workflow runtime."
+                        )
+                        self._audit_step_tool_call(
+                            session_id,
+                            wf_name,
+                            step.name,
+                            tool_name,
+                            "block",
+                            reason=reason,
+                            mcp_key=mcp_key,
+                        )
+                        return HookResponse(decision="block", reason=reason)
+
                 if mcp_key:
                     handler_tool_input = self._step_handler_tool_input(tool_input)
                     before_response = self._process_step_before_mcp_tool(
@@ -345,6 +389,33 @@ class EnforcementMixin:
                     if before_response is not None:
                         return before_response
 
+        return None
+
+    @staticmethod
+    def _is_reserved_variable_write(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        mcp_tool_name: str | None = None,
+    ) -> str | None:
+        """Return the reserved variable name for blocked user writes."""
+        is_native_set_variable = tool_name in (
+            "set_variable",
+            "mcp__gobby__set_variable",
+            "mcp_gobby_set_variable",
+        )
+        is_mcp_set_variable = mcp_tool_name == "set_variable"
+        if not is_native_set_variable and not is_mcp_set_variable:
+            return None
+
+        resolved_input = (
+            EnforcementMixin._step_handler_tool_input(tool_input)
+            if is_mcp_set_variable
+            else tool_input
+        )
+        variable_name = str(resolved_input.get("name") or resolved_input.get("variable") or "")
+        if variable_name in RESERVED_STEP_WORKFLOW_VARIABLES:
+            return variable_name
         return None
 
     @staticmethod
@@ -410,6 +481,10 @@ class EnforcementMixin:
                     "str": str,
                     "int": int,
                     "bool": bool,
+                    "list": list,
+                    "dict": dict,
+                    "any": any,
+                    "all": all,
                 },
             )
             return True, evaluator.evaluate_value(value)
@@ -682,23 +757,32 @@ class EnforcementMixin:
         if is_app_failure and not vars_changed:
             return None
 
-        # Evaluate transitions
-        for transition in step.transitions:
-            # Instance variables last so workflow-local state wins over
-            # session-wide observer/handoff state with colliding names.
-            # Without this precedence, a session-level task_claimed=True
-            # written by _session_start task handoff would fire the
-            # claim -> load_skill transition before the workflow's own
-            # claim_task handler ever runs (see task #12267).
-            ctx = {"vars": {**variables, **instance.variables}}
-            transition_met = not transition.when or self._evaluate_condition(
-                transition.when, ctx, "transition"
-            )
-            if transition_met:
+        transition_steps: list[tuple[str, str]] = []
+        current_step_def = step
+        max_transitions = len(definition.steps) + 1
+
+        for _ in range(max_transitions):
+            transition_taken = False
+
+            for transition in current_step_def.transitions:
+                # Instance variables last so workflow-local state wins over
+                # session-wide observer/handoff state with colliding names.
+                # Without this precedence, a session-level task_claimed=True
+                # written by _session_start task handoff would fire the
+                # claim -> load_skill transition before the workflow's own
+                # claim_task handler ever runs (see task #12267).
+                ctx = {"vars": {**variables, **instance.variables}}
+                transition_met = not transition.when or self._evaluate_condition(
+                    transition.when, ctx, "transition"
+                )
+                if not transition_met:
+                    continue
+
                 old_step = instance.current_step
                 new_step = transition.to
+                new_step_def = definition.get_step(new_step)
 
-                if not definition.get_step(new_step):
+                if not new_step_def:
                     logger.warning(
                         f"Transition to unknown step '{new_step}' in workflow '{instance.workflow_name}'",
                     )
@@ -733,6 +817,10 @@ class EnforcementMixin:
                     f"Step transition: {old_step} -> {new_step} (workflow={instance.workflow_name}, session={session_id})",
                 )
 
+                transition_steps.append((old_step, new_step))
+                current_step_def = new_step_def
+                transition_taken = True
+
                 # Evaluate exit_condition after transition
                 if definition.exit_condition:
                     exit_ctx = {
@@ -766,13 +854,25 @@ class EnforcementMixin:
                             instance.workflow_name,
                         )
 
-                # Build transition notification for AfterTool additionalContext
-                new_step_def = definition.get_step(new_step)
-                status_msg = (new_step_def.status_message or "").strip() if new_step_def else ""
-                transition_notice = f"Step transition: {old_step} → {new_step}"
-                if status_msg:
-                    transition_notice += f"\n{status_msg}"
-                return transition_notice  # First matching transition wins
+                break
+
+            if not transition_taken:
+                break
+        else:
+            logger.warning(
+                "Stopped step transition chain for workflow %s (session=%s) after %d transitions",
+                instance.workflow_name,
+                session_id,
+                max_transitions,
+            )
+
+        if transition_steps:
+            path = [transition_steps[0][0], *(to_step for _, to_step in transition_steps)]
+            transition_notice = f"Step transition: {' -> '.join(path)}"
+            status_msg = (current_step_def.status_message or "").strip()
+            if status_msg:
+                transition_notice += f"\n{status_msg}"
+            return transition_notice
 
         # Save if variables changed without transition
         if vars_changed:

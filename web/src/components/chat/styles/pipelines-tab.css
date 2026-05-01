@@ -40,3 +40,9 @@
     transform: scale(0.85);
   }
 }
+
+@media (pointer: coarse) {
+  .pipeline-exec-row {
+    min-height: 44px;
+  }
+}

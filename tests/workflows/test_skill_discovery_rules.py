@@ -7,14 +7,18 @@ rules sync correctly, have valid structure, and evaluate conditions properly.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import sync_bundled_rules
 
@@ -50,6 +54,7 @@ def _sync_bundled(db):
 
 
 SKILL_DISCOVERY_RULES = {
+    "discover-skill-hubs-on-turn-start",
     "inject-python-skill",
     "inject-rust-skill",
     "reset-skill-injection",
@@ -93,6 +98,101 @@ class TestSkillDiscoverySync:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 assert body.event is not None
                 assert body.effects
+
+
+# --- discover-skill-hubs-on-turn-start ---
+
+
+class TestDiscoverSkillHubsOnTurnStart:
+    """Verify the once-per-session skill hub discovery rule."""
+
+    def test_structure(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("discover-skill-hubs-on-turn-start")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.event.value == "turn_start"
+        assert body.when == "not variables.get('skill_discovery_instructions_shown')"
+        assert [effect.type for effect in body.effects] == [
+            "load_skill",
+            "mcp_call",
+            "set_variable",
+        ]
+        assert body.effects[0].skill == "loading-skills"
+        assert body.effects[1].server == "gobby-skills"
+        assert body.effects[1].tool == "list_hubs"
+        assert body.effects[1].inject_result is True
+        assert body.effects[2].variable == "skill_discovery_instructions_shown"
+        assert body.effects[2].value is True
+
+    @pytest.mark.asyncio
+    async def test_injects_guidance_and_sets_guard_after_success(self, db) -> None:
+        _sync_bundled(db)
+
+        async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict[str, Any]:
+            assert server == "gobby-skills"
+            assert tool == "list_hubs"
+            assert args == {}
+            return {
+                "success": True,
+                "result": {
+                    "success": True,
+                    "hubs": [
+                        {
+                            "name": "clawdhub",
+                            "type": "clawdhub",
+                            "auth_required": False,
+                            "auth_configured": True,
+                        }
+                    ],
+                },
+            }
+
+        variables: dict[str, Any] = {"loaded_skills": ["brevity"], "servers_listed": True}
+        engine = RuleEngine(db, mcp_dispatcher=dispatcher)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "hi"},
+        )
+
+        response = await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert response.context is not None
+        assert 'Call get_skill(name="loading-skills") on gobby-skills, then continue.' in (
+            response.context
+        )
+        assert "<available-skill-hubs>" in response.context
+        assert "- clawdhub (clawdhub, auth: not required)" in response.context
+        assert variables["skill_discovery_instructions_shown"] is True
+        assert all(
+            call.get("tool") != "list_hubs" for call in response.metadata.get("mcp_calls", [])
+        )
+
+    @pytest.mark.asyncio
+    async def test_does_not_set_guard_when_hub_listing_fails(self, db) -> None:
+        _sync_bundled(db)
+
+        async def dispatcher(server: str, tool: str, args: dict, event: Any) -> dict[str, Any]:
+            return {"success": False, "result": {"error": "hub manager unavailable"}}
+
+        variables: dict[str, Any] = {"loaded_skills": ["brevity"], "servers_listed": True}
+        engine = RuleEngine(db, mcp_dispatcher=dispatcher)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="test-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "hi"},
+        )
+
+        await engine.evaluate(event, session_id="sess-1", variables=variables)
+
+        assert variables.get("skill_discovery_instructions_shown") is None
 
 
 # --- inject-python-skill structure ---

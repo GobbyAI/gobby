@@ -531,44 +531,6 @@ class TestSessionStartAndHelpers:
             assert skills == {"skill1"}
 
 
-class TestSelectAndFormatAgentSkills:
-    """Tests for select_and_format_agent_skills standalone unit."""
-
-    def test_select_and_format_agent_skills(self) -> None:
-        from gobby.hooks.event_handlers._session import select_and_format_agent_skills
-
-        mock_agent = MagicMock()
-        mock_agent.workflows.skill_format = "full"
-
-        mock_skill = MagicMock()
-        mock_skill.name = "test-skill"
-        mock_skill.enabled = True
-
-        with (
-            patch(
-                "gobby.hooks.skill_manager._db_skill_to_parsed",
-                return_value=MagicMock(name="test-skill"),
-            ),
-            patch("gobby.skills.injector.SkillInjector.select_skills") as mock_select,
-            patch(
-                "gobby.skills.formatting.render_skills_for_context",
-                return_value="formatted-content",
-            ),
-        ):
-            mock_select.return_value = [(mock_skill, "full")]
-
-            formatted, count, names = select_and_format_agent_skills(
-                agent_body=mock_agent,
-                all_skills=[mock_skill],
-                active_skills={"test-skill"},
-                cli_source="claude",
-            )
-
-            assert formatted == "formatted-content"
-            assert count == 1
-            assert names == ["test-skill"]
-
-
 class TestSessionMoreCoverage:
     """Extra tests for hitting the rest of the lines in _session.py."""
 
@@ -589,10 +551,6 @@ class TestSessionMoreCoverage:
                 return_value={},
             ),
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
-            patch(
-                "gobby.hooks.event_handlers._session_start.select_and_format_agent_skills",
-                return_value=("formatted", 1, ["skill1"]),
-            ),
         ):
             mock_agent = MagicMock()
             mock_agent.name = "test-agent"

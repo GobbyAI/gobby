@@ -59,6 +59,9 @@ class TestLifespan:
         with patch("gobby.servers.app_factory.HookManager") as MockHM:
             with TestClient(server.app):
                 MockHM.assert_called_once()
+                hook_manager_kwargs = MockHM.call_args.kwargs
+                assert hook_manager_kwargs["database"] is session_storage.db
+                assert hook_manager_kwargs["session_manager"] is session_storage
 
     def test_lifespan_cleans_up_voice_resources(self, session_storage: SessionManager) -> None:
         """Test that lifespan uses the explicit voice cleanup hook on shutdown."""

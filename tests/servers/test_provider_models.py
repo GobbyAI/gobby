@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -283,6 +283,43 @@ class TestProviderModelCatalog:
         assert status["claude"]["source"] == "failed"
         assert status["gemini"]["source"] == "failed"
         assert status["codex"]["source"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_marks_client_as_model_discovery(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(
+            config=None, cache_path=temp_dir / "provider-model-catalog.json"
+        )
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.session_info = {
+            "models": {
+                "availableModels": [
+                    {"modelId": "gemini-test", "name": "Gemini Test"},
+                ]
+            }
+        }
+
+        with (
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.adapters.gemini_acp_client.GeminiACPClient",
+                return_value=client,
+            ) as client_cls,
+        ):
+            models = await catalog._discover_acp_models(provider="gemini", display_name="Gemini")
+
+        client_cls.assert_called_once_with(
+            cli_name="gemini",
+            display_name="Gemini",
+            prompt_timeout_env="GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS",
+            purpose="model-discovery",
+        )
+        client.start.assert_awaited_once()
+        client.stop.assert_awaited_once()
+        assert models == [{"value": "gemini-test", "label": "Gemini Test"}]
 
     def test_load_cache_ignores_unsupported_version(self, temp_dir: Path) -> None:
         cache_path = temp_dir / "provider-model-catalog.json"

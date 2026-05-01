@@ -205,7 +205,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  height: 40px;
+  min-height: 40px;
   padding: 0 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
@@ -448,4 +448,11 @@
 
 .activity-panel-close:hover {
   color: var(--text-primary);
+}
+
+@media (pointer: coarse) {
+  .activity-panel-close {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }

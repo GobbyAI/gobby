@@ -201,7 +201,7 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
 }) {
   return (
     <tr className={`tasks-row ${isSelected ? 'tasks-row--selected' : ''}`} onClick={() => onSelect(task.id)} style={{ cursor: 'pointer' }}>
-      <td className="tasks-cell tasks-cell--status">
+      <td className="tasks-cell tasks-cell--status" data-label="">
         {onToggleSelect ? (
           <input
             type="checkbox"
@@ -214,17 +214,17 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
           <StatusDot task={task} />
         )}
       </td>
-      <td className="tasks-cell tasks-cell--ref">
+      <td className="tasks-cell tasks-cell--ref" data-label="Ref">
         <span className="tasks-ref">{task.ref}</span>
       </td>
-      <td className="tasks-cell tasks-cell--title">{task.title}</td>
-      <td className="tasks-cell tasks-cell--type">
+      <td className="tasks-cell tasks-cell--title" data-label="Title">{task.title}</td>
+      <td className="tasks-cell tasks-cell--type" data-label="Type">
         <TypeBadge type={task.task_type} />
       </td>
-      <td className="tasks-cell tasks-cell--priority">
+      <td className="tasks-cell tasks-cell--priority" data-label="Priority">
         <PriorityBadge priority={task.priority} />
       </td>
-      <td className="tasks-cell tasks-cell--status-text">
+      <td className="tasks-cell tasks-cell--status-text" data-label="State">
         <div className="flex items-center gap-1 flex-wrap">
           <TaskStateBadges task={task} />
         </div>

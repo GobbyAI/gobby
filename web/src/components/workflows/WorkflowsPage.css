@@ -938,6 +938,13 @@
 
   .workflows-toolbar {
     padding: 12px 0 8px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .workflows-toolbar-right {
+    flex-wrap: wrap;
+    row-gap: 8px;
   }
 
   .workflows-tab-row {

@@ -238,6 +238,24 @@ def _command_error(result: subprocess.CompletedProcess[str]) -> str:
     return result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
 
 
+def _lm_studio_model_loaded(ps_output: str, *, model: str, cli_model_key: str) -> bool:
+    """Return True when lms ps output already contains the embedding model."""
+    output = ps_output.lower()
+    candidates = {
+        model.lower(),
+        cli_model_key.lower(),
+        model.lower().removeprefix("text-embedding-"),
+    }
+    return any(candidate and candidate in output for candidate in candidates)
+
+
+def _lm_studio_load_identifier(model: str, *, fallback_model_key: str) -> str:
+    """Return the identifier LM Studio should load for a configured embedding model."""
+    if model.startswith("text-embedding-") and "@" in model:
+        return model
+    return fallback_model_key
+
+
 async def _wait_for_embedding_models_ready(api_base: str, api_key: str | None) -> bool:
     """Poll the OpenAI-compatible /models route until the endpoint answers."""
     headers: dict[str, str] = {}
@@ -313,6 +331,14 @@ async def ensure_local_embedding_service_ready(
             )
             return False
 
+        if await is_embedding_healthy(
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            expected_dim=expected_dim,
+        ):
+            return True
+
         if not await try_autoload_embedding_model(model, api_base):
             _set_local_embedding_service_failure_reason(f"LM Studio model load failed for {model}")
             return False
@@ -380,14 +406,23 @@ async def try_autoload_embedding_model(model: str, api_base: str | None) -> bool
     if _is_lm_studio_endpoint(api_base) and shutil.which("lms"):
         from gobby.cli.installers.embedding import _LMSTUDIO_MODEL_KEY
 
+        load_identifier = _lm_studio_load_identifier(
+            model,
+            fallback_model_key=_LMSTUDIO_MODEL_KEY,
+        )
         try:
-            # Run lms load in a thread to avoid blocking the event loop
-            # Use the CLI model key, not the API identifier
-            result = await asyncio.to_thread(
-                subprocess.run,
-                ["lms", "load", _LMSTUDIO_MODEL_KEY, "-y"],
-                capture_output=True,
-                text=True,
+            ps_result = await _run_cli_command(["lms", "ps"], timeout=_LM_STUDIO_STATUS_TIMEOUT)
+            if ps_result.returncode == 0 and _lm_studio_model_loaded(
+                ps_result.stdout + ps_result.stderr,
+                model=model,
+                cli_model_key=load_identifier,
+            ):
+                logger.debug("LM Studio embedding model already loaded")
+                return True
+
+            # Run lms load off the event loop, using the exact configured LM Studio id when present.
+            result = await _run_cli_command(
+                ["lms", "load", load_identifier, "-y"],
                 timeout=120,
             )
             if result.returncode == 0:

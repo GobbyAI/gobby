@@ -3,6 +3,7 @@ import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
 import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
 import '../workflows/PipelinesPage.css'
 
 interface PipelinesTabProps {
@@ -36,7 +37,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [topHeight, setTopHeight] = useState(40)
+  const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT)
   const [detailExec, setDetailExec] = useState<PipelineExecution | null>(null)
   const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
@@ -216,7 +217,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
             ))}
             {hasMore && (
               <button
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
                 onClick={handleLoadMore}
                 disabled={loadingMore}
               >

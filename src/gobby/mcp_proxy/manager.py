@@ -15,6 +15,11 @@ from mcp import ClientSession
 from opentelemetry.trace import Status, StatusCode
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
+from gobby.mcp_proxy.connection_cleanup import (
+    describe_exception,
+    discard_connection,
+    finalize_disconnect_all,
+)
 from gobby.mcp_proxy.lazy import (
     CircuitBreakerOpen,
     LazyServerConnector,
@@ -502,82 +507,17 @@ class MCPClientManager:
     async def disconnect_all(self) -> None:
         """Disconnect all active connections."""
         self._running = False
-        health_check_task = self._health_check_task
-        reconnect_tasks = list(self._reconnect_tasks)
-        disconnect_tasks: list[asyncio.Task[None]] = []
-        cancellation: asyncio.CancelledError | None = None
-
-        async def disconnect_with_timeout(name: str, connection: Any) -> None:
-            try:
-                await asyncio.wait_for(connection.disconnect(), timeout=5.0)
-            except TimeoutError:
-                logger.warning(f"Connection disconnect timed out for {name}")
-            except Exception as e:
-                logger.warning(f"Error disconnecting {name}: {e}")
-
         try:
-            if health_check_task:
-                health_check_task.cancel()
-                await asyncio.gather(health_check_task, return_exceptions=True)
-                self._health_check_task = None
-
-            # Cancel any pending reconnect tasks
-            for task in reconnect_tasks:
-                task.cancel()
-            if reconnect_tasks:
-                await asyncio.gather(*reconnect_tasks, return_exceptions=True)
-            self._reconnect_tasks.clear()
-
-            for name, connection in self._connections.items():
-                if connection.is_connected:
-                    disconnect_tasks.append(
-                        asyncio.create_task(disconnect_with_timeout(name, connection))
-                    )
-                    self.health[name].state = ConnectionState.DISCONNECTED
-
-            if disconnect_tasks:
-                await asyncio.gather(*disconnect_tasks, return_exceptions=True)
-        except asyncio.CancelledError as exc:
-            cancellation = exc
-            logger.debug("MCP disconnect cleanup cancelled; finalizing state cleanup")
+            await finalize_disconnect_all(
+                connections=self._connections,
+                health=self.health,
+                lazy_connector=self._lazy_connector,
+                reconnect_tasks=self._reconnect_tasks,
+                health_check_task=self._health_check_task,
+                logger=logger,
+            )
         finally:
-            all_reconnect_tasks = [*reconnect_tasks, *self._reconnect_tasks]
-            cleanup_tasks: list[asyncio.Task[None]] = []
-
-            if health_check_task and not health_check_task.done():
-                health_check_task.cancel()
-                cleanup_tasks.append(health_check_task)
-
-            for task in all_reconnect_tasks:
-                task.cancel()
-                if task not in cleanup_tasks:
-                    cleanup_tasks.append(task)
-
-            for task in disconnect_tasks:
-                if not task.done():
-                    task.cancel()
-                if task not in cleanup_tasks:
-                    cleanup_tasks.append(task)
-
             self._health_check_task = None
-            self._reconnect_tasks.clear()
-
-            for name in list(self._connections):
-                if name in self.health:
-                    self.health[name].state = ConnectionState.DISCONNECTED
-                lazy_state = self._lazy_connector.get_state(name)
-                if lazy_state is not None:
-                    lazy_state.connected_at = None
-            self._connections.clear()
-
-            if cleanup_tasks:
-                try:
-                    await asyncio.gather(*cleanup_tasks, return_exceptions=True)
-                except asyncio.CancelledError:
-                    logger.debug("Cancelled while awaiting MCP disconnect cleanup tasks")
-
-        if cancellation is not None:
-            raise cancellation
 
     async def ensure_connected(self, server_name: str) -> ClientSession:
         """
@@ -778,37 +718,75 @@ class MCPClientManager:
             Dict mapping server names to tool lists
         """
         results = {}
-        servers = [server_name] if server_name else self._connections.keys()
+        if server_name:
+            return {server_name: await self._list_tools_for_server(server_name)}
 
-        for name in servers:
+        for name in list(self._connections.keys()):
             try:
-                session = await self.get_client_session(name)
-                tools = await session.list_tools()
-                # Assuming tools is a ListToolsResult or similar Pydantic model
-                # We need to serialize it or return it as is.
-                # Inspecting mcp-python-sdk, list_tools returns ListToolsResult.
-                # Let's return the raw object or access .tools
-                if hasattr(tools, "tools"):
-                    tool_list = [
-                        {
-                            "name": t.name,
-                            "description": getattr(t, "description", "") or "",
-                            "inputSchema": getattr(t, "inputSchema", {}) or {},
-                        }
-                        for t in tools.tools
-                    ]
-                    results[name] = tool_list
-                    self._cache_discovered_tools(name, tool_list)
-                else:
-                    results[name] = []
-
-                self.health[name].record_success()
+                results[name] = await self._list_tools_for_server(name)
             except Exception as e:
-                logger.warning(f"Failed to list tools for {name}: {e}")
-                self.health[name].record_failure(str(e))
+                logger.warning("Failed to list tools for %s: %s", name, e)
                 results[name] = []
 
         return results
+
+    async def _list_tools_for_server(self, server_name: str) -> list[dict[str, Any]]:
+        try:
+            session = await self.get_client_session(server_name)
+            tool_list = await self._list_tools_from_session(session)
+        except Exception as initial_error:
+            error_message = describe_exception(initial_error)
+            logger.warning("Failed to list tools for %s: %s", server_name, error_message)
+            if server_name in self.health:
+                self.health[server_name].record_failure(error_message)
+            return await self._retry_list_tools_after_failure(server_name, initial_error)
+
+        self.health[server_name].record_success()
+        self._cache_discovered_tools(server_name, tool_list)
+        return tool_list
+
+    async def _retry_list_tools_after_failure(
+        self,
+        server_name: str,
+        initial_error: Exception,
+    ) -> list[dict[str, Any]]:
+        await discard_connection(
+            server_name,
+            self._connections,
+            self.health,
+            self._lazy_connector,
+            logger,
+        )
+        try:
+            session = await self.ensure_connected(server_name)
+            tool_list = await self._list_tools_from_session(session)
+        except Exception as retry_error:
+            retry_message = describe_exception(retry_error)
+            if server_name in self.health:
+                self.health[server_name].record_failure(retry_message)
+            raise MCPError(
+                f"Failed to list tools for server '{server_name}': "
+                f"initial listing failed: {describe_exception(initial_error)}; "
+                f"reconnect retry failed: {retry_message}"
+            ) from retry_error
+
+        self.health[server_name].record_success()
+        self._cache_discovered_tools(server_name, tool_list)
+        return tool_list
+
+    @staticmethod
+    async def _list_tools_from_session(session: ClientSession) -> list[dict[str, Any]]:
+        tools = await session.list_tools()
+        if not hasattr(tools, "tools"):
+            return []
+        return [
+            {
+                "name": t.name,
+                "description": getattr(t, "description", "") or "",
+                "inputSchema": getattr(t, "inputSchema", {}) or {},
+            }
+            for t in tools.tools
+        ]
 
     def _cache_discovered_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
         """Cache discovered tools to DB and update in-memory config."""

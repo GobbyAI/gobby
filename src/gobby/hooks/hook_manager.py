@@ -46,6 +46,8 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
+    from gobby.storage.database import DatabaseProtocol
+    from gobby.storage.sessions import SessionManager
 
 
 class HookManager:
@@ -95,6 +97,8 @@ class HookManager:
         task_sync_manager: Any | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
+        database: "DatabaseProtocol | None" = None,
+        session_manager: "SessionManager | None" = None,
         code_index_trigger: Any | None = None,
     ):
         """
@@ -115,6 +119,8 @@ class HookManager:
             task_sync_manager: Optional TaskSyncManager instance
             agent_runner: Optional AgentRunner for workflow-bound agent completion
             completion_registry: Optional CompletionEventRegistry for wait wakeups
+            database: Optional database instance to share with daemon services
+            session_manager: Optional SessionManager instance to share with daemon services
         """
         self.daemon_host = daemon_host
         self.daemon_port = daemon_port
@@ -161,6 +167,8 @@ class HookManager:
             task_sync_manager=task_sync_manager,
             agent_runner=agent_runner,
             completion_registry=completion_registry,
+            database=database,
+            session_manager=session_manager,
             get_machine_id=self.get_machine_id,
             resolve_project_id=self._resolve_project_id,
             code_index_trigger=code_index_trigger,
