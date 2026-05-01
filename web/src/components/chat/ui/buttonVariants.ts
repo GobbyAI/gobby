@@ -12,10 +12,10 @@ export const buttonVariants = cva(
         ghost: 'hover:bg-muted text-foreground',
       },
       size: {
-        sm: 'h-8 px-3 text-xs',
-        md: 'h-9 px-4',
-        lg: 'h-10 px-6 text-base',
-        icon: 'h-9 w-9',
+        sm: 'h-8 px-3 text-xs pointer-coarse:min-h-11 pointer-coarse:min-w-11',
+        md: 'h-9 px-4 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
+        lg: 'h-10 px-6 text-base pointer-coarse:min-h-11 pointer-coarse:min-w-11',
+        icon: 'h-9 w-9 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
       },
     },
     defaultVariants: {

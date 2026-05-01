@@ -255,6 +255,14 @@ body {
   transition: all 0.15s;
   text-align: left;
   width: 100%;
+  min-height: 44px;
+}
+
+@media (pointer: coarse) {
+  .sidebar-collapse-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
 }
 
 .sidebar-item:hover {
