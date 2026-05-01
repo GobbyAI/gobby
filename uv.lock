@@ -20,6 +20,7 @@ resolution-markers = [
 constraints = [
     { name = "authlib", specifier = ">=1.6.11" },
     { name = "tokenizers", specifier = ">=0.21" },
+    { name = "torch", specifier = ">=2.8.0" },
 ]
 overrides = [{ name = "torch", specifier = ">=2.8.0" }]
 

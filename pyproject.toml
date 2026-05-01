@@ -88,11 +88,13 @@ constraint-dependencies = [
     "tokenizers>=0.21",
     # authlib <1.6.11 has GHSA-jj8c-mmj3-mmgv (transitive via fastmcp)
     "authlib>=1.6.11",
+    # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) — see override-dependencies below
+    "torch>=2.8.0",
 ]
-# torch is exact-pinned by chatterbox-tts==0.1.7 to ==2.6.0 on Python <3.14;
-# override (not constrain) to clear GHSA-887c-mr87-cxwp (medium, patched 2.8.0)
-# and GHSA-3749-ghw9-m3mg (low, patched 2.7.1-rc1). Voice extra is opt-in;
-# revisit if chatterbox-tts surfaces ABI/API drift at runtime.
+# torch is exact-pinned by chatterbox-tts==0.1.7 to ==2.6.0 on Python <3.14,
+# so the constraint above is unsatisfiable on its own; override forces 2.8+
+# and unifies the resolution at torch 2.11.0. Voice extra is opt-in; revisit
+# if chatterbox-tts surfaces ABI/API drift at runtime.
 override-dependencies = [
     "torch>=2.8.0",
 ]
