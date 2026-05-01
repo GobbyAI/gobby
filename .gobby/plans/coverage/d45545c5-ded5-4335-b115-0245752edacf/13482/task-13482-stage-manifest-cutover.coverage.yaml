@@ -1,11 +1,11 @@
 header:
   plan_id: task-13482-stage-manifest-cutover
-  plan_hash: c6a71ec52f5e4c06f99c7079cb014b4a2ff2e6d58c508a88c598ffd90d805f58
+  plan_hash: 6b17d3abc33b7d1bb74a3bad8bce7cf00b6a28d3fd5bfaa199cbc66152dfa481
   root_task_ref: '#13482'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-05-01T17:59:53Z'
+  generated_at: '2026-05-01T22:56:58Z'
   task_tree_source: db
-  task_tree_source_hash: c736dee704a90fc39935160e20a3420e690dd89e9f12ab3e6a8473da11f356be
+  task_tree_source_hash: 69900424957e07fdf26519e746c74524ce3f427d19c1dcc655575c29f1391988
   evidence_summary: []
 rows:
 - section_id: '1.1'
@@ -58,6 +58,12 @@ rows:
   evidence: []
 - section_id: '1.1'
   item_id: 1.1.8
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '1.1'
+  item_id: 1.1.9
   status: missing
   leaves: []
   deferral_target: null
@@ -207,6 +213,12 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '2.1'
+  item_id: 2.1.13
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.1'
   item_id: 2.1.10
   status: missing
   leaves: []
@@ -250,6 +262,48 @@ rows:
   evidence: []
 - section_id: '2.2'
   item_id: 2.2.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7a
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7b
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7c
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7d
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7e
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7f
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.2'
+  item_id: 2.2.7g
   status: missing
   leaves: []
   deferral_target: null
@@ -465,6 +519,18 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '2.3'
+  item_id: 2.3.6a
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.3'
+  item_id: 2.3.6b
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.3'
   item_id: 2.3.7
   status: missing
   leaves: []
@@ -555,6 +621,12 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '2.4'
+  item_id: 2.4.7
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.4'
   item_id: 2.4.4
   status: missing
   leaves: []
@@ -592,6 +664,12 @@ rows:
   evidence: []
 - section_id: '2.5'
   item_id: 2.5.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '2.5'
+  item_id: 2.5.5
   status: missing
   leaves: []
   deferral_target: null
@@ -652,6 +730,24 @@ rows:
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.1'
+  item_id: 3.1.4a
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.1'
+  item_id: 3.1.4b
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.1'
+  item_id: 3.1.4c
   status: missing
   leaves: []
   deferral_target: null
@@ -796,6 +892,12 @@ rows:
   evidence: []
 - section_id: '3.1'
   item_id: 3.1.20a
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '3.1'
+  item_id: 3.1.20b
   status: missing
   leaves: []
   deferral_target: null
@@ -1035,6 +1137,12 @@ rows:
   deferral_target: null
   evidence: []
 - section_id: '5.3'
+  item_id: 5.3.10
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '5.3'
   item_id: 5.3.9
   status: missing
   leaves: []
@@ -1060,6 +1168,12 @@ rows:
   evidence: []
 - section_id: '5.4'
   item_id: 5.4.4
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '5.4'
+  item_id: 5.4.4a
   status: missing
   leaves: []
   deferral_target: null
@@ -1126,6 +1240,12 @@ rows:
   evidence: []
 - section_id: '6.1'
   item_id: 6.1.5
+  status: missing
+  leaves: []
+  deferral_target: null
+  evidence: []
+- section_id: '6.1'
+  item_id: 6.1.5a
   status: missing
   leaves: []
   deferral_target: null
