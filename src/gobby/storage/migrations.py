@@ -15,15 +15,11 @@ To add a new migration:
     3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
 """
 
-import hashlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 __path__ = [str(Path(__file__).with_suffix(""))]
-
-import yaml
 
 from gobby.storage._migration_registry import MIGRATIONS as _REGISTRY_MIGRATIONS
 from gobby.storage.database import LocalDatabase
@@ -70,7 +66,6 @@ BASELINE_VERSION = 220
 _MIN_MIGRATION_VERSION = 219
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
 _STAGES_REGISTRY_PATH = Path(__file__).parent.parent / "install/shared/registry/stages.yaml"
-_STAGE_CATEGORIES = {"discovery", "design", "verification", "implementation", "delivery"}
 _ARTIFACT_REPORT_COLUMNS = (
     "pr_review_report",
     "structured_pr_verdict",
@@ -232,48 +227,6 @@ def _default_task_artifact_column(column: str) -> str:
     return f"NULL AS {column}"
 
 
-def _load_bundled_stages_yaml() -> tuple[list[dict[str, Any]], str]:
-    if not _STAGES_REGISTRY_PATH.exists():
-        raise FileNotFoundError(f"Bundled stages registry not found: {_STAGES_REGISTRY_PATH}")
-
-    raw = _STAGES_REGISTRY_PATH.read_bytes()
-    payload = yaml.safe_load(raw)
-    if not isinstance(payload, dict):
-        raise ValueError("Bundled stages registry must be a YAML mapping")
-    if payload.get("version") != 1:
-        raise ValueError("Bundled stages registry version must be 1")
-
-    stages = payload.get("stages")
-    if not isinstance(stages, list) or not stages:
-        raise ValueError("Bundled stages registry must contain a non-empty stages list")
-
-    required = {"name", "display_label", "description", "category", "position_hint"}
-    entries: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for index, raw_stage in enumerate(stages):
-        if not isinstance(raw_stage, dict):
-            raise ValueError(f"Stage entry {index} must be a mapping")
-        missing = required - set(raw_stage)
-        if missing:
-            raise ValueError(f"Stage entry {index} missing required fields: {sorted(missing)}")
-
-        name = raw_stage["name"]
-        category = raw_stage["category"]
-        if not isinstance(name, str) or not name:
-            raise ValueError(f"Stage entry {index} has invalid name")
-        if name in seen:
-            raise ValueError(f"Duplicate stage name in bundled registry: {name}")
-        if category not in _STAGE_CATEGORIES:
-            raise ValueError(f"Stage {name} has invalid category: {category}")
-        if not isinstance(raw_stage["position_hint"], int):
-            raise ValueError(f"Stage {name} position_hint must be an integer")
-
-        seen.add(name)
-        entries.append(raw_stage)
-
-    return entries, hashlib.sha256(raw).hexdigest()
-
-
 def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
     with db.transaction():
         db.execute(
@@ -361,7 +314,9 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                 """
             )
 
-        stages, bundled_hash = _load_bundled_stages_yaml()
+        from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+
+        stages, bundled_hash = StageRegistryLoader(path=_STAGES_REGISTRY_PATH).load_with_hash()
         for stage in stages:
             db.execute(
                 """
@@ -381,14 +336,14 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                     updated_at = datetime('now')
                 """,
                 (
-                    stage["name"],
-                    stage["display_label"],
-                    stage["description"],
-                    stage["category"],
-                    stage.get("default_agent"),
-                    stage["position_hint"],
-                    1 if bool(stage.get("requires_human", False)) else 0,
-                    1 if bool(stage.get("is_terminal", False)) else 0,
+                    stage.name,
+                    stage.display_label,
+                    stage.description,
+                    stage.category,
+                    stage.default_agent,
+                    stage.position_hint,
+                    1 if stage.requires_human else 0,
+                    1 if stage.is_terminal else 0,
                     bundled_hash,
                 ),
             )

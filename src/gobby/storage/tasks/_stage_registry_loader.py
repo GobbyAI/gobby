@@ -51,8 +51,12 @@ class StageRegistryLoader:
         return self.path if self.path is not None else get_install_dir() / self.BUNDLED_PATH
 
     def load(self) -> list[StageRegistryEntry]:
+        entries, _digest = self.load_with_hash()
+        return entries
+
+    def load_with_hash(self) -> tuple[list[StageRegistryEntry], str]:
         payload, _digest = self._read_payload()
-        return self._parse_entries(payload)
+        return self._parse_entries(payload), _digest
 
     def sync(self, db: DatabaseProtocol) -> StageRegistrySyncResult:
         payload, bundled_hash = self._read_payload()
