@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
+import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 
 interface AgentStatusBarProps {
   viewingMeta?: SessionObservationMeta | null
@@ -100,6 +101,7 @@ export function AgentStatusBar({
             className="btn btn-secondary btn-sm"
             onClick={onAttach}
           >
+            <LinkIcon />
             Attach
           </button>
         )}
@@ -109,6 +111,7 @@ export function AgentStatusBar({
             className="btn btn-secondary btn-sm"
             onClick={onResume}
           >
+            <PlayIcon />
             Resume
           </button>
         )}
@@ -118,6 +121,7 @@ export function AgentStatusBar({
             className="btn btn-secondary btn-sm"
             onClick={onDetach}
           >
+            <UnlinkIcon />
             Detach
           </button>
         )}
