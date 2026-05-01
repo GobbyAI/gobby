@@ -37,17 +37,17 @@ instructions: |
   re-check pass.
 
   PLAN-COVERAGE CONTRACT GATE:
-  Before qualitative review, load and call the A2 parser callable
-  `gobby.plans.parser.parse_plan` for typed implementation plans. Use
-  `parse_mode="draft"` on the pre-verdict pass so the loop does not deadlock
-  on a not-yet-written manifest (§2.21.3). Treat
-  `gobby.plans.parser.PlanParseError` as a mechanical rejection and format the
-  finding using the rejection messages documented in plan-review. This parser
-  gate checks the canonical heading regex, kind enum, acceptance-item shape,
-  typed deferral object, covers-ready artifact references, duplicate IDs, and
-  malformed item IDs. The qualitative pass must also enforce the table-row
-  decomposition rule: any deliverable table enumerating work items needs one
-  acceptance item per data row with stable IDs.
+  Mechanical parser rejection happens upstream. The planner side runs
+  `validate_plan_file` before every adversary spawn, which calls
+  `parse_plan(..., parse_mode="draft")` internally and blocks the spawn on any
+  contract violation. Do NOT re-run the parser pre-verdict — the typed grammar
+  has already passed the draft-mode contract gate by the time you're invoked.
+  Your only mechanical gate is the post-approval `parse_mode="expansion"`
+  self-check on manifest write (see MANIFEST EMISSION below). The qualitative
+  pass MUST still enforce the table-row decomposition rule: any deliverable
+  table enumerating work items needs one acceptance item per data row with
+  stable IDs. Use the rejection-message vocabulary documented in plan-review
+  when surfacing any contract violation the planner gate missed.
 
   PLAN-FILE WRITE SCOPE:
   Edit and Write are permitted; write only to the plan file at
