@@ -13,12 +13,14 @@ import { SessionsTab } from "./SessionsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
+import { OverviewTab } from "./OverviewTab";
 import type { Artifact } from "../../types/artifacts";
 import type { GobbySession } from "../../types/sessions";
 import type { CanvasPanelState } from "../canvas/hooks/useCanvasPanel";
 import type { SessionsFilters } from "./sessionsFilters";
 
 export type ActivityTab =
+  | "overview"
   | "sessions"
   | "pipelines"
   | "tasks"
@@ -40,6 +42,18 @@ const iconProps = {
 };
 
 const TABS: Array<{ id: ActivityTab; label: string; icon: ReactNode }> = [
+  {
+    id: "overview",
+    label: "Overview",
+    icon: (
+      <svg {...iconProps}>
+        <rect x="3" y="3" width="7" height="7" />
+        <rect x="14" y="3" width="7" height="7" />
+        <rect x="3" y="14" width="7" height="7" />
+        <rect x="14" y="14" width="7" height="7" />
+      </svg>
+    ),
+  },
   {
     id: "sessions",
     label: "Sessions",
@@ -184,6 +198,9 @@ interface ActivityPanelProps {
   onFocusSessionHandled?: () => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
+  // Overview tab — page navigation callbacks
+  onNavigateToPage?: (tab: string) => void;
+  onNavigateToTrace?: (traceId: string) => void;
   isMobile?: boolean;
 }
 
@@ -291,6 +308,8 @@ export function ActivityPanel({
   onFocusSessionHandled,
   onSwapSession,
   onResumeSession,
+  onNavigateToPage,
+  onNavigateToTrace,
   isMobile = false,
 }: ActivityPanelProps) {
   // Use overlay mode when viewport is too narrow for side-by-side layout
@@ -347,6 +366,14 @@ export function ActivityPanel({
 
   const tabContent = () => {
     switch (activeTab) {
+      case "overview":
+        return (
+          <OverviewTab
+            projectId={projectId}
+            onNavigateToPage={onNavigateToPage}
+            onNavigateToTrace={onNavigateToTrace}
+          />
+        );
       case "sessions":
         return (
           <SessionsTab

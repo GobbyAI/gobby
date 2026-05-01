@@ -6,6 +6,7 @@ const STORAGE_KEY_WIDTH = 'gobby-activity-panel-width'
 const LEGACY_STORAGE_KEY_TAB = 'gobby-activity-panel-tab'
 const STORAGE_KEY_TAB = 'gobby-activity-panel-tab-v2'
 const VALID_TABS: ActivityTab[] = [
+  'overview',
   'sessions',
   'tasks',
   'plans',

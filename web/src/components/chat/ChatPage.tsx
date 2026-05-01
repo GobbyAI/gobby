@@ -68,6 +68,8 @@ interface ChatPageProps {
   onSessionsFiltersChange?: (filters: SessionsFilters) => void;
   onSttEnabledChange?: (enabled: boolean) => void;
   onTtsEnabledChange?: (enabled: boolean) => void;
+  onNavigateToPage?: (tab: string) => void;
+  onNavigateToTrace?: (traceId: string) => void;
 }
 
 export function ChatPage({
@@ -95,6 +97,8 @@ export function ChatPage({
   onSessionsFiltersChange,
   onSttEnabledChange,
   onTtsEnabledChange,
+  onNavigateToPage,
+  onNavigateToTrace,
 }: ChatPageProps) {
   const messageListRef = useRef<MessageListHandle>(null);
   const lastAutoScrolledLoadRef = useRef<string | null>(null);
@@ -891,6 +895,8 @@ export function ChatPage({
         onSwapSession={handleSwapSession}
         onResumeSession={handleResumeSessionFromActivity}
         onAddFileToChat={handleAddFileToChat}
+        onNavigateToPage={onNavigateToPage}
+        onNavigateToTrace={onNavigateToTrace}
         isMobile={isMobile}
       />
 

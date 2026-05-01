@@ -47,6 +47,10 @@ vi.mock('../FilesTab', () => ({
   FilesTab: () => <div>Files Tab</div>,
 }))
 
+vi.mock('../OverviewTab', () => ({
+  OverviewTab: () => <div>Overview Tab</div>,
+}))
+
 describe('ActivityPanel', () => {
   it('uses a dropdown menu instead of the mobile icon strip', async () => {
     const onTabChange = vi.fn()
