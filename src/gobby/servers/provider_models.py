@@ -742,6 +742,7 @@ class ProviderModelCatalog:
             cli_name=provider,
             display_name=display_name,
             prompt_timeout_env=prompt_timeout_env,
+            purpose="model-discovery",
         )
         await client.start()
         try:

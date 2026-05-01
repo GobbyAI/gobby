@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -74,6 +75,16 @@ def _mock_process(
     return proc
 
 
+def _recording_wait_for(
+    calls: list[float],
+) -> Callable[[Awaitable[object], float], Awaitable[object]]:
+    async def wait_for(awaitable: Awaitable[object], timeout: float) -> object:
+        calls.append(timeout)
+        return await awaitable
+
+    return wait_for
+
+
 def _handshake_lines(session_id: str = "sess-1") -> list[str]:
     """Return the stdout lines for a successful initialize + session/new handshake."""
     return [
@@ -118,6 +129,7 @@ class TestConstruction:
         assert not client.is_started
         assert client._cli_path is None
         assert client.session_id is None
+        assert client._purpose == "runtime"
         assert client._prompt_timeout == DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS
 
     def test_custom_cli_path(self) -> None:
@@ -620,8 +632,9 @@ class TestSend:
 
 class TestStop:
     @pytest.mark.asyncio
-    async def test_stop_terminates_process(self) -> None:
+    async def test_stop_closes_stdin_and_waits_for_eof_exit(self) -> None:
         proc = _mock_process(stdout_lines=_handshake_lines())
+        wait_for_timeouts: list[float] = []
 
         with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
             with patch(
@@ -633,11 +646,78 @@ class TestStop:
                 await client.start()
                 assert client.is_started
 
+            with patch(
+                "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                new=_recording_wait_for(wait_for_timeouts),
+            ):
                 await client.stop()
 
         assert not client.is_started
         assert client.session_id is None
+        proc.stdin.close.assert_called_once()
+        proc.terminate.assert_not_called()
+        proc.kill.assert_not_called()
+        assert wait_for_timeouts == [2.0]
+
+    @pytest.mark.asyncio
+    async def test_stop_eof_timeout_escalates_to_terminate(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        proc.wait.side_effect = [TimeoutError(), None]
+        wait_for_timeouts: list[float] = []
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start()
+
+            with patch(
+                "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                new=_recording_wait_for(wait_for_timeouts),
+            ):
+                await client.stop()
+
+        proc.stdin.close.assert_called_once()
         proc.terminate.assert_called_once()
+        proc.kill.assert_not_called()
+        assert wait_for_timeouts == [2.0, 5.0]
+
+    @pytest.mark.asyncio
+    async def test_stop_terminate_timeout_escalates_to_kill_and_logs_context(self) -> None:
+        proc = _mock_process(stdout_lines=_handshake_lines())
+        proc.wait.side_effect = [TimeoutError(), TimeoutError(), None]
+        wait_for_timeouts: list[float] = []
+
+        with patch("gobby.adapters.gemini_acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient(purpose="model-discovery")
+                await client.start()
+
+            with (
+                patch(
+                    "gobby.adapters.gemini_acp_client.asyncio.wait_for",
+                    new=_recording_wait_for(wait_for_timeouts),
+                ),
+                patch("gobby.adapters.gemini_acp_client.logger.warning") as warning,
+            ):
+                await client.stop()
+
+        proc.stdin.close.assert_called_once()
+        proc.terminate.assert_called_once()
+        proc.kill.assert_called_once()
+        assert wait_for_timeouts == [2.0, 5.0]
+        warning.assert_called_once()
+        message = warning.call_args.args[0] % warning.call_args.args[1:]
+        assert "provider=gemini" in message
+        assert "pid=12345" in message
+        assert "purpose=model-discovery" in message
 
     @pytest.mark.asyncio
     async def test_stop_when_not_started_is_noop(self) -> None:
@@ -661,7 +741,9 @@ class TestStop:
                 await client.stop()
 
         assert not client.is_started
+        proc.stdin.close.assert_not_called()
         proc.terminate.assert_not_called()
+        proc.kill.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
