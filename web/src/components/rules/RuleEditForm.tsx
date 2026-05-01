@@ -4,7 +4,7 @@ import { CodeMirrorEditor } from "../shared/CodeMirrorEditor";
 import { ExpressionBuilder } from "./ExpressionBuilder";
 import { useMcp, type McpToolSchema } from "../../hooks/useMcp";
 import type { RuleFormData } from "./ruleFormData";
-import "./RuleEditForm.css";
+import { cn } from "../../lib/utils";
 
 const RULE_EVENTS = [
   "before_tool",
@@ -23,6 +23,64 @@ const EFFECT_TYPES = [
   "mcp_call",
   "observe",
 ];
+
+const META_WRAP_CLS = 'border-b border-[var(--border)] px-5 py-3'
+const META_ROW_CLS = 'flex items-center justify-between py-1 text-[length:var(--text-sm)]'
+const META_LABEL_CLS = 'mr-3 shrink-0 text-[var(--text-muted)]'
+const META_VALUE_CLS = 'max-w-[220px] flex-1 text-right [&>select]:w-full [&>input[type="number"]]:w-full'
+
+const SECTION_CLS = 'flex flex-col gap-1.5 border-b border-[var(--border)] px-5 py-3'
+const SECTION_TITLE_CLS = 'm-0 mb-1 text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
+
+const FIELD_CLS = 'flex flex-col gap-1'
+const FIELD_INLINE_CLS = 'flex flex-row items-center gap-2'
+const LABEL_CLS = 'text-[length:var(--text-xs)] uppercase tracking-[0.3px] text-[var(--text-muted)]'
+const LABEL_INLINE_CLS = 'text-[length:var(--text-xs)] normal-case tracking-normal text-[var(--text-muted)]'
+
+const INPUT_CLS =
+  'rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent,var(--color-agent))] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent,var(--color-agent))_20%,transparent)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+const TEXTAREA_CLS =
+  'min-h-[60px] resize-y rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent,var(--color-agent))] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent,var(--color-agent))_20%,transparent)]'
+const MONO_CLS = 'text-[length:var(--text-sm)]'
+
+const CHIPS_WRAP_CLS = 'flex flex-wrap items-center gap-1.5'
+const CHIP_CLS =
+  'inline-flex items-center gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)] py-0.5 pl-2.5 pr-2 text-[length:var(--text-sm)] text-[var(--text-primary)]'
+const CHIP_REMOVE_CLS =
+  'cursor-pointer border-0 bg-transparent px-0.5 text-[length:var(--text-base)] leading-none text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--color-error)]'
+const CHIP_ADD_CLS = 'flex items-center gap-1'
+const CHIP_INPUT_CLS = 'w-[120px] px-2 py-0.5 text-[length:var(--text-sm)]'
+
+const CONFLICT_CLS =
+  'my-1 rounded-md border border-[color-mix(in_srgb,var(--color-warning,var(--color-warning-foreground))_40%,transparent)] bg-[color-mix(in_srgb,var(--color-warning,var(--color-warning-foreground))_15%,transparent)] px-2.5 py-1.5 text-[length:var(--text-sm)] leading-snug text-[var(--color-warning-foreground)]'
+
+const KV_WRAP_CLS = 'flex flex-col gap-1.5'
+const KV_ROW_CLS = 'flex items-center gap-1.5'
+const KV_INPUT_CLS = 'flex-1 px-2 py-1 text-[length:var(--text-sm)]'
+const KV_LABEL_CLS =
+  'min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-primary)]'
+const KV_REMOVE_CLS =
+  'cursor-pointer border-0 bg-transparent px-1 text-[length:var(--text-base)] text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--color-error)] pointer-coarse:min-h-11 pointer-coarse:px-2'
+const KV_ADD_CLS =
+  'cursor-pointer self-start rounded-md border border-dashed border-[var(--border)] bg-transparent px-2.5 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+
+const REQUIRED_CLS = 'ml-0.5 text-[var(--color-error)]'
+const TOOL_DESC_CLS = 'py-0.5 text-[length:var(--text-xs)] leading-snug text-[var(--text-muted)]'
+const HINT_CLS = 'font-normal normal-case tracking-normal opacity-70'
+const TAGS_ERROR_CLS = 'text-[length:var(--text-xs)] text-[var(--text-muted)]'
+
+const READONLY_VALUE_CLS = 'break-words text-[length:var(--text-md)] text-[var(--text-primary)]'
+const READONLY_PRE_CLS =
+  'm-0 whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--bg-primary)] p-2 text-[length:var(--text-sm)] leading-normal text-[var(--text-secondary)]'
+
+const CODEMIRROR_WRAP_CLS =
+  'min-h-[150px] max-h-[300px] overflow-hidden rounded-md border border-[var(--border)] [&_.codemirror-container]:h-[150px]'
+const YAML_VIEW_CLS = 'h-full [&_.codemirror-container]:h-full'
+
+const BTN_CLS =
+  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1 text-[length:var(--text-sm)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-secondary)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+const BTN_PRIMARY_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent-hover)] hover:bg-[var(--accent-hover)]'
 
 export interface RuleEditFormProps {
   isOpen: boolean;
@@ -49,9 +107,9 @@ function MetaRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rule-edit-meta-row">
-      <span className="rule-edit-meta-label">{label}</span>
-      <div className="rule-edit-meta-value">{children}</div>
+    <div className={META_ROW_CLS}>
+      <span className={META_LABEL_CLS}>{label}</span>
+      <div className={META_VALUE_CLS}>{children}</div>
     </div>
   );
 }
@@ -154,11 +212,11 @@ export function RuleEditForm({
 
   const footer = !readOnly ? (
     <>
-      <button className="rule-edit-btn" onClick={onCancel} type="button">
+      <button className={BTN_CLS} onClick={onCancel} type="button">
         Cancel
       </button>
       <button
-        className="rule-edit-btn rule-edit-btn--primary"
+        className={cn(BTN_CLS, BTN_PRIMARY_CLS)}
         onClick={sidebarView === "yaml" ? onYamlSave : onSave}
         disabled={saveDisabled}
         type="button"
@@ -177,7 +235,7 @@ export function RuleEditForm({
       footer={footer}
     >
       {sidebarView === "yaml" ? (
-        <div className="rule-edit-yaml-view">
+        <div className={YAML_VIEW_CLS}>
           <CodeMirrorEditor
             content={yamlContent}
             language="yaml"
@@ -191,11 +249,11 @@ export function RuleEditForm({
       ) : (
         <>
           {/* Name */}
-          <div className="rule-edit-section">
-            <label className="rule-edit-field">
-              <span className="rule-edit-label">Name *</span>
+          <div className={SECTION_CLS}>
+            <label className={FIELD_CLS}>
+              <span className={LABEL_CLS}>Name *</span>
               <input
-                className="rule-edit-input"
+                className={INPUT_CLS}
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
                 placeholder="my-rule"
@@ -204,10 +262,10 @@ export function RuleEditForm({
           </div>
 
           {/* Meta */}
-          <div className="rule-edit-meta">
+          <div className={META_WRAP_CLS}>
             <MetaRow label="Event">
               <select
-                className="rule-edit-input"
+                className={INPUT_CLS}
                 value={form.event}
                 onChange={(e) => set("event", e.target.value)}
               >
@@ -220,7 +278,7 @@ export function RuleEditForm({
             </MetaRow>
             <MetaRow label="Priority">
               <input
-                className="rule-edit-input"
+                className={INPUT_CLS}
                 type="number"
                 value={form.priority}
                 onChange={(e) => set("priority", Number(e.target.value))}
@@ -228,11 +286,11 @@ export function RuleEditForm({
               />
             </MetaRow>
             {conflictWarning && (
-              <div className="rule-edit-conflict-warning">{conflictWarning}</div>
+              <div className={CONFLICT_CLS}>{conflictWarning}</div>
             )}
             <MetaRow label="Group">
               <input
-                className="rule-edit-input"
+                className={INPUT_CLS}
                 value={form.group}
                 onChange={(e) => set("group", e.target.value)}
                 placeholder="(none)"
@@ -241,10 +299,10 @@ export function RuleEditForm({
           </div>
 
           {/* Condition */}
-          <div className="rule-edit-section">
-            <h4 className="rule-edit-section-title">Condition</h4>
-            <div className="rule-edit-field">
-              <span className="rule-edit-label">When (expression)</span>
+          <div className={SECTION_CLS}>
+            <h4 className={SECTION_TITLE_CLS}>Condition</h4>
+            <div className={FIELD_CLS}>
+              <span className={LABEL_CLS}>When (expression)</span>
               <ExpressionBuilder
                 value={form.when}
                 onChange={(v) => set("when", v)}
@@ -253,12 +311,12 @@ export function RuleEditForm({
           </div>
 
           {/* Effect */}
-          <div className="rule-edit-section">
-            <h4 className="rule-edit-section-title">Effect</h4>
-            <label className="rule-edit-field">
-              <span className="rule-edit-label">Type</span>
+          <div className={SECTION_CLS}>
+            <h4 className={SECTION_TITLE_CLS}>Effect</h4>
+            <label className={FIELD_CLS}>
+              <span className={LABEL_CLS}>Type</span>
               <select
-                className="rule-edit-input"
+                className={INPUT_CLS}
                 value={form.effect.type}
                 onChange={(e) => changeEffectType(e.target.value)}
               >
@@ -273,15 +331,15 @@ export function RuleEditForm({
           </div>
 
           {/* Tags */}
-          <div className="rule-edit-section">
-            <h4 className="rule-edit-section-title">Tags</h4>
-            <div className="rule-edit-chips">
+          <div className={SECTION_CLS}>
+            <h4 className={SECTION_TITLE_CLS}>Tags</h4>
+            <div className={CHIPS_WRAP_CLS}>
               {form.tags.map((tag) => (
-                <span key={tag} className="rule-edit-chip">
+                <span key={tag} className={CHIP_CLS}>
                   {tag}
                   <button
                     type="button"
-                    className="rule-edit-chip-remove"
+                    className={CHIP_REMOVE_CLS}
                     onClick={() =>
                       set(
                         "tags",
@@ -293,9 +351,9 @@ export function RuleEditForm({
                   </button>
                 </span>
               ))}
-              <div className="rule-edit-chip-add">
+              <div className={CHIP_ADD_CLS}>
                 <input
-                  className="rule-edit-input"
+                  className={cn(INPUT_CLS, CHIP_INPUT_CLS)}
                   value={tagInput}
                   onChange={(e) => setTagInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -308,7 +366,7 @@ export function RuleEditForm({
                   list={tagListId}
                 />
                 {tagsError && (
-                  <span style={{ color: "var(--color-text-tertiary)", fontSize: 11 }}>
+                  <span className={TAGS_ERROR_CLS}>
                     Could not load tag suggestions
                   </span>
                 )}
@@ -324,10 +382,10 @@ export function RuleEditForm({
           </div>
 
           {/* Description */}
-          <div className="rule-edit-section">
-            <h4 className="rule-edit-section-title">Description</h4>
+          <div className={SECTION_CLS}>
+            <h4 className={SECTION_TITLE_CLS}>Description</h4>
             <textarea
-              className="rule-edit-textarea"
+              className={TEXTAREA_CLS}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               placeholder="What this rule does..."
@@ -343,7 +401,7 @@ export function RuleEditForm({
 function ReadOnlyView({ form }: { form: RuleFormData }) {
   return (
     <>
-      <div className="rule-edit-meta">
+      <div className={META_WRAP_CLS}>
         <MetaRow label="Event">
           <span>{form.event}</span>
         </MetaRow>
@@ -360,31 +418,31 @@ function ReadOnlyView({ form }: { form: RuleFormData }) {
         )}
       </div>
       {form.description && (
-        <div className="rule-edit-section">
-          <h4 className="rule-edit-section-title">Description</h4>
-          <span className="rule-edit-readonly-value">{form.description}</span>
+        <div className={SECTION_CLS}>
+          <h4 className={SECTION_TITLE_CLS}>Description</h4>
+          <span className={READONLY_VALUE_CLS}>{form.description}</span>
         </div>
       )}
       {form.when && (
-        <div className="rule-edit-section">
-          <h4 className="rule-edit-section-title">Condition</h4>
-          <code className="rule-edit-readonly-value rule-edit-mono">
+        <div className={SECTION_CLS}>
+          <h4 className={SECTION_TITLE_CLS}>Condition</h4>
+          <code className={cn(READONLY_VALUE_CLS, MONO_CLS)}>
             {form.when}
           </code>
         </div>
       )}
-      <div className="rule-edit-section">
-        <h4 className="rule-edit-section-title">Effect</h4>
-        <pre className="rule-edit-readonly-pre">
+      <div className={SECTION_CLS}>
+        <h4 className={SECTION_TITLE_CLS}>Effect</h4>
+        <pre className={READONLY_PRE_CLS}>
           {JSON.stringify(form.effect, null, 2)}
         </pre>
       </div>
       {form.tags.length > 0 && (
-        <div className="rule-edit-section">
-          <h4 className="rule-edit-section-title">Tags</h4>
-          <div className="rule-edit-chips">
+        <div className={SECTION_CLS}>
+          <h4 className={SECTION_TITLE_CLS}>Tags</h4>
+          <div className={CHIPS_WRAP_CLS}>
             {form.tags.map((tag) => (
-              <span key={tag} className="rule-edit-chip">
+              <span key={tag} className={CHIP_CLS}>
                 {tag}
               </span>
             ))}
@@ -407,20 +465,20 @@ function EffectFields({
   if (type === "block") {
     return (
       <>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Reason</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Reason</span>
           <textarea
-            className="rule-edit-textarea"
+            className={TEXTAREA_CLS}
             value={(effect.reason as string) ?? ""}
             onChange={(e) => onChange({ reason: e.target.value })}
             placeholder="Why this is blocked..."
             rows={2}
           />
         </label>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Tools (comma-separated)</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Tools (comma-separated)</span>
           <input
-            className="rule-edit-input"
+            className={INPUT_CLS}
             value={
               Array.isArray(effect.tools)
                 ? (effect.tools as string[]).join(", ")
@@ -437,10 +495,10 @@ function EffectFields({
             placeholder="Edit, Write"
           />
         </label>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">MCP Tools (comma-separated)</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>MCP Tools (comma-separated)</span>
           <input
-            className="rule-edit-input"
+            className={INPUT_CLS}
             value={
               Array.isArray(effect.mcp_tools)
                 ? (effect.mcp_tools as string[]).join(", ")
@@ -457,10 +515,10 @@ function EffectFields({
             placeholder="gobby-tasks.create_task"
           />
         </label>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Command pattern</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Command pattern</span>
           <input
-            className="rule-edit-input rule-edit-mono"
+            className={cn(INPUT_CLS, MONO_CLS)}
             value={(effect.command_pattern as string) ?? ""}
             onChange={(e) =>
               onChange({ command_pattern: e.target.value || undefined })
@@ -468,10 +526,10 @@ function EffectFields({
             placeholder="regex pattern"
           />
         </label>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Command NOT pattern</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Command NOT pattern</span>
           <input
-            className="rule-edit-input rule-edit-mono"
+            className={cn(INPUT_CLS, MONO_CLS)}
             value={(effect.command_not_pattern as string) ?? ""}
             onChange={(e) =>
               onChange({ command_not_pattern: e.target.value || undefined })
@@ -486,19 +544,19 @@ function EffectFields({
   if (type === "set_variable") {
     return (
       <>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Variable name</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Variable name</span>
           <input
-            className="rule-edit-input rule-edit-mono"
+            className={cn(INPUT_CLS, MONO_CLS)}
             value={(effect.variable as string) ?? ""}
             onChange={(e) => onChange({ variable: e.target.value })}
             placeholder="my_var"
           />
         </label>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Value</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Value</span>
           <textarea
-            className="rule-edit-textarea rule-edit-mono"
+            className={cn(TEXTAREA_CLS, MONO_CLS)}
             value={(effect.value as string) ?? ""}
             onChange={(e) => onChange({ value: e.target.value })}
             placeholder="value or expression"
@@ -511,9 +569,9 @@ function EffectFields({
 
   if (type === "inject_context") {
     return (
-      <div className="rule-edit-field">
-        <span className="rule-edit-label">Template</span>
-        <div className="rule-edit-codemirror">
+      <div className={FIELD_CLS}>
+        <span className={LABEL_CLS}>Template</span>
+        <div className={CODEMIRROR_WRAP_CLS}>
           <CodeMirrorEditor
             content={(effect.template as string) ?? ""}
             language="markdown"
@@ -531,19 +589,19 @@ function EffectFields({
   if (type === "observe") {
     return (
       <>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Category</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Category</span>
           <input
-            className="rule-edit-input"
+            className={INPUT_CLS}
             value={(effect.category as string) ?? ""}
             onChange={(e) => onChange({ category: e.target.value })}
             placeholder="audit"
           />
         </label>
-        <label className="rule-edit-field">
-          <span className="rule-edit-label">Message</span>
+        <label className={FIELD_CLS}>
+          <span className={LABEL_CLS}>Message</span>
           <textarea
-            className="rule-edit-textarea"
+            className={TEXTAREA_CLS}
             value={(effect.message as string) ?? ""}
             onChange={(e) => onChange({ message: e.target.value })}
             placeholder="Log message..."
@@ -598,10 +656,10 @@ function McpCallFields({
 
   return (
     <>
-      <label className="rule-edit-field">
-        <span className="rule-edit-label">Server</span>
+      <label className={FIELD_CLS}>
+        <span className={LABEL_CLS}>Server</span>
         <select
-          className="rule-edit-input"
+          className={INPUT_CLS}
           value={selectedServer}
           onChange={(e) => {
             onChange({ server: e.target.value, tool: "", arguments: {} });
@@ -620,10 +678,10 @@ function McpCallFields({
           ))}
         </select>
       </label>
-      <label className="rule-edit-field">
-        <span className="rule-edit-label">Tool</span>
+      <label className={FIELD_CLS}>
+        <span className={LABEL_CLS}>Tool</span>
         <select
-          className="rule-edit-input"
+          className={INPUT_CLS}
           value={selectedTool}
           disabled={!selectedServer}
           onChange={(e) => {
@@ -644,13 +702,13 @@ function McpCallFields({
         </select>
       </label>
       {schema?.description && (
-        <div className="rule-edit-tool-desc">{schema.description}</div>
+        <div className={TOOL_DESC_CLS}>{schema.description}</div>
       )}
-      <div className="rule-edit-field">
-        <span className="rule-edit-label">
+      <div className={FIELD_CLS}>
+        <span className={LABEL_CLS}>
           Arguments
           {loadingSchema && (
-            <span className="rule-edit-hint"> (loading schema...)</span>
+            <span className={HINT_CLS}> (loading schema...)</span>
           )}
         </span>
         <SchemaArgEditor
@@ -659,16 +717,13 @@ function McpCallFields({
           onChange={(newArgs) => onChange({ arguments: newArgs })}
         />
       </div>
-      <label
-        className="rule-edit-field"
-        style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-      >
+      <label className={FIELD_INLINE_CLS}>
         <input
           type="checkbox"
           checked={!!effect.background}
           onChange={(e) => onChange({ background: e.target.checked })}
         />
-        <span className="rule-edit-label" style={{ textTransform: "none" }}>
+        <span className={LABEL_INLINE_CLS}>
           Run in background
         </span>
       </label>
@@ -735,7 +790,7 @@ function SchemaArgEditor({
   };
 
   return (
-    <div className="rule-edit-kv">
+    <div className={KV_WRAP_CLS}>
       {visibleKeys.map((key) => {
         const prop = properties[key];
         const isRequired = requiredSet.has(key);
@@ -744,17 +799,17 @@ function SchemaArgEditor({
         const description = prop?.description as string | undefined;
 
         return (
-          <div key={key} className="rule-edit-kv-row">
+          <div key={key} className={KV_ROW_CLS}>
             {isSchema ? (
-              <span className="rule-edit-kv-label" title={description}>
+              <span className={KV_LABEL_CLS} title={description}>
                 {key}
                 {isRequired && (
-                  <span className="rule-edit-required">*</span>
+                  <span className={REQUIRED_CLS}>*</span>
                 )}
               </span>
             ) : (
               <input
-                className="rule-edit-input"
+                className={cn(INPUT_CLS, KV_INPUT_CLS)}
                 value={key}
                 onChange={(e) => {
                   const newKey = e.target.value;
@@ -775,7 +830,7 @@ function SchemaArgEditor({
             {!isRequired && (
               <button
                 type="button"
-                className="rule-edit-kv-remove"
+                className={KV_REMOVE_CLS}
                 onClick={() => removeArg(key)}
               >
                 &times;
@@ -785,11 +840,10 @@ function SchemaArgEditor({
         );
       })}
       {addingArg ? (
-        <div className="rule-edit-kv-row">
+        <div className={KV_ROW_CLS}>
           <select
             ref={addArgRef}
-            className="rule-edit-input"
-            style={{ flex: 1 }}
+            className={cn(INPUT_CLS, KV_INPUT_CLS)}
             value=""
             onChange={(e) => {
               if (e.target.value === "__custom__") {
@@ -817,7 +871,7 @@ function SchemaArgEditor({
       ) : (
         <button
           type="button"
-          className="rule-edit-kv-add"
+          className={KV_ADD_CLS}
           onClick={() => setAddingArg(true)}
         >
           + Add argument
@@ -840,16 +894,16 @@ function ArgValueInput({
     return (
       <input
         type="checkbox"
+        className="mx-auto"
         checked={!!value}
         onChange={(e) => onChange(e.target.checked)}
-        style={{ margin: "0 auto" }}
       />
     );
   }
   if (type === "number" || type === "integer") {
     return (
       <input
-        className="rule-edit-input"
+        className={cn(INPUT_CLS, KV_INPUT_CLS)}
         type="number"
         value={value == null ? "" : String(value)}
         onChange={(e) =>
@@ -861,7 +915,7 @@ function ArgValueInput({
   }
   return (
     <input
-      className="rule-edit-input"
+      className={cn(INPUT_CLS, KV_INPUT_CLS)}
       value={value == null ? "" : String(value)}
       onChange={(e) => onChange(e.target.value)}
       placeholder="value"
