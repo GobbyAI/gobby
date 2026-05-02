@@ -15,7 +15,10 @@ from typing import Any
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._crud import _session_exists, get_task, update_task
-from gobby.storage.tasks._lifecycle_events import record_lifecycle_event
+from gobby.storage.tasks._lifecycle_events import (
+    TaskLifecycleEventManager,
+    record_lifecycle_event,
+)
 from gobby.storage.tasks._models import (
     UNSET,
     MaybeUnset,
@@ -23,7 +26,11 @@ from gobby.storage.tasks._models import (
     TaskAlreadyClaimedError,
     TaskClosedError,
 )
-from gobby.storage.tasks._stage_states import _close_task_in_txn
+from gobby.storage.tasks._stage_states import (
+    NoCurrentStageError,
+    StageStatesManager,
+    _close_task_in_txn,
+)
 from gobby.tasks.state_semantics import is_task_closed, normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
@@ -85,6 +92,10 @@ POST_BUILD_DESTINATIONS = frozenset(
 
 def _state(lifecycle: str | None, status: str | None) -> str:
     return f"{lifecycle or 'open'}:{status or 'open'}"
+
+
+def _stage_states(db: DatabaseProtocol) -> StageStatesManager:
+    return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
 def _artifact_columns(db: DatabaseProtocol) -> set[str]:
@@ -463,15 +474,20 @@ def mark_task_needs_review(
     task_id: str,
     *,
     review_notes: str | None = None,
+    by_session_id: str | None = None,
 ) -> Task:
-    """Submit a task for review and release ownership."""
+    """Submit the current stage for review and release ownership."""
     task = get_task(db, task_id)
-    if is_task_closed(task) or task.status == "escalated":
-        raise ValueError(
-            f"Cannot mark task with status '{task.status}' as needs_review. "
-            "Task must be active (not closed or escalated)."
-        )
-
+    stages = _stage_states(db)
+    current = stages.current_stage(task_id)
+    if current is None:
+        raise NoCurrentStageError(task_id)
+    stages.submit_for_review(
+        task_id,
+        current.stage_name,
+        by_session_id=by_session_id,
+        notes=review_notes,
+    )
     description: MaybeUnset[str | None] = UNSET
     if review_notes:
         description = (task.description or "") + f"\n\n[Review Notes]\n{review_notes}"
@@ -479,13 +495,14 @@ def mark_task_needs_review(
         label for label in (task.labels or []) if label != "planning-current-verdict:rejected"
     ]
 
-    return release_task_claim(
+    update_task(
         db,
         task_id,
-        status="needs_review",
         description=description,
         labels=labels,
+        claimed_by_session_id=None,
     )
+    return get_task(db, task_id)
 
 
 def mark_task_review_approved(
@@ -493,54 +510,31 @@ def mark_task_review_approved(
     task_id: str,
     *,
     approval_notes: str | None = None,
+    by_session_id: str | None = None,
 ) -> Task:
-    """Approve a task after review and release ownership."""
+    """Approve review on the current stage and release ownership."""
     task = get_task(db, task_id)
-    lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
-    if task.status not in ("needs_review", "in_progress", "escalated", "open"):
-        raise ValueError(
-            f"Cannot approve task with status '{task.status}'. "
-            "Task must be in 'needs_review', 'in_progress', or 'escalated' status to approve."
-        )
-    if task.status == "open" and lifecycle not in {"plan_review", "test_arch", "holistic_review"}:
-        raise ValueError(f"Cannot approve open task in lifecycle '{lifecycle}'.")
-
+    stages = _stage_states(db)
+    current = stages.current_stage(task_id)
+    if current is None:
+        raise NoCurrentStageError(task_id)
+    stages.approve_review(
+        task_id,
+        current.stage_name,
+        by_session_id=by_session_id,
+        notes=approval_notes,
+    )
     description: MaybeUnset[str | None] = UNSET
     if approval_notes:
         description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
 
-    if lifecycle == "plan_review" and task.status == "open":
-        return advance_lifecycle(
-            db,
-            task_id,
-            "test_arch",
-            "open",
-            {"reason": "plan_approved", "clear_counters": ("plan_review_attempts",)},
-        )
-    if lifecycle == "test_arch" and task.status == "open":
-        return advance_lifecycle(
-            db,
-            task_id,
-            "expanding",
-            "open",
-            {"reason": "test_arch_approved", "clear_counters": ("test_arch_attempts",)},
-        )
-    if lifecycle == "in_development" and task.status == "needs_review":
-        return advance_lifecycle(
-            db, task_id, "holistic_review", "review_approved", {"reason": "qa_approved"}
-        )
-    if lifecycle == "holistic_review" and task.status == "open":
-        return advance_lifecycle(db, task_id, "pr", "open", {"reason": "holistic_approved"})
-    if lifecycle == "pr" and task.status == "needs_review":
-        return advance_lifecycle(db, task_id, "merging", "open", {"reason": "pr_approved"})
-
-    approved = advance_lifecycle(
-        db, task_id, lifecycle, "review_approved", {"reason": "review_approved"}
+    update_task(
+        db,
+        task_id,
+        description=description,
+        claimed_by_session_id=None,
     )
-    if description is not UNSET:
-        update_task(db, task_id, description=description)
-        return get_task(db, task_id)
-    return approved
+    return get_task(db, task_id)
 
 
 def mark_task_review_rejected(
@@ -551,24 +545,33 @@ def mark_task_review_rejected(
     round_number: int | None = None,
     plan_hash: str | None = None,
     cited_subtasks: list[str] | None = None,
+    by_session_id: str | None = None,
 ) -> Task:
-    """Reject a task after review and return it to open status."""
+    """Reject review on the current stage and release ownership."""
     task = get_task(db, task_id)
-    lifecycle = task.lifecycle.value if hasattr(task.lifecycle, "value") else str(task.lifecycle)
-    if task.status not in ("needs_review", "in_progress", "open"):
-        raise ValueError(
-            f"Cannot reject review for task with status '{task.status}'. "
-            "Task must be in 'needs_review' or 'in_progress' status to reject review."
-        )
-    if task.status == "open" and lifecycle not in {"plan_review", "test_arch", "holistic_review"}:
-        raise ValueError(f"Cannot reject open task in lifecycle '{lifecycle}'.")
-
     normalized_round = None
     if round_number is not None:
         # Tools/routes may pass an int-like value; normalize once before validation.
         normalized_round = int(round_number)
         if normalized_round < 1:
             raise ValueError("round must be >= 1 when provided")
+
+    stages = _stage_states(db)
+    current = stages.current_stage(task_id)
+    if current is None:
+        raise NoCurrentStageError(task_id)
+    notes = rejection_notes
+    if plan_hash:
+        notes = f"{notes or ''}\n\nplan_hash: {plan_hash}".strip()
+    if cited_subtasks:
+        notes = f"{notes or ''}\n\ncited_subtasks: {', '.join(cited_subtasks)}".strip()
+    stages.reject_review(
+        task_id,
+        current.stage_name,
+        reason=rejection_notes or "review_rejected",
+        by_session_id=by_session_id,
+        notes=notes,
+    )
 
     description: MaybeUnset[str | None] = UNSET
     if rejection_notes:
@@ -600,44 +603,14 @@ def mark_task_review_rejected(
         labels = [label for label in labels if not label.startswith("planning-round:")]
         labels.append(f"planning-round:{normalized_round}")
 
-    side_effects: dict[str, Any]
-    if lifecycle == "plan_review":
-        side_effects = {
-            "reason": "plan_rejected",
-            "artifact_updates": {"last_reviewed_plan_hash": plan_hash},
-            "increment_counters": ("plan_review_attempts",),
-        }
-        target_lifecycle = "plan_review"
-    elif lifecycle == "test_arch":
-        side_effects = {
-            "reason": "test_arch_rejected",
-            "increment_counters": ("test_arch_attempts",),
-        }
-        target_lifecycle = "plan_review"
-    elif lifecycle == "in_development":
-        side_effects = {"reason": "qa_rejected", "increment_counters": ("qa_attempts",)}
-        target_lifecycle = "in_development"
-    elif lifecycle == "holistic_review":
-        side_effects = {
-            "reason": "holistic_rejected",
-            "increment_counters": ("holistic_attempts",),
-            "cited_subtasks": cited_subtasks or [],
-        }
-        target_lifecycle = "holistic_review"
-    else:
-        side_effects = {"reason": "review_rejected"}
-        target_lifecycle = lifecycle
-
-    rejected = advance_lifecycle(db, task_id, target_lifecycle, "open", side_effects)
-    if description is not UNSET or normalized_round is not None:
-        update_task(
-            db,
-            task_id,
-            description=description,
-            labels=labels if normalized_round is not None else UNSET,
-        )
-        return get_task(db, task_id)
-    return rejected
+    update_task(
+        db,
+        task_id,
+        description=description,
+        labels=labels if normalized_round is not None else UNSET,
+        claimed_by_session_id=None,
+    )
+    return get_task(db, task_id)
 
 
 def mark_task_pr_opened(db: DatabaseProtocol, task_id: str, pr_url: str) -> Task:

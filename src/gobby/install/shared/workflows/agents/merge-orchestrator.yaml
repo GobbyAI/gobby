@@ -208,9 +208,9 @@ steps:
     description: "Write the campaign report and transition the campaign task"
     status_message: |
       Write the campaign JSON to task_artifacts.merge_campaign_report via
-      update_task_artifacts. Then transition: mark_task_review_approved on
-      clean success, escalate_task on needs_human, or advance_lifecycle to
-      merged under yolo with the failure list preserved.
+      update_task_artifacts. Then transition: mark_task_merged on clean
+      success, escalate_task on needs_human, or advance_lifecycle to merged
+      under yolo with the failure list preserved.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -218,7 +218,6 @@ steps:
       - mcp__gobby__get_tool_schema
     allowed_mcp_tools:
       - "gobby-tasks:update_task_artifacts"
-      - "gobby-tasks:mark_task_review_approved"
       - "gobby-tasks:mark_task_merged"
       - "gobby-tasks:mark_task_merge_failed"
       - "gobby-tasks:escalate_task"
@@ -226,7 +225,7 @@ steps:
       - "gobby-tasks:append_description_section"
     on_mcp_success:
       - server: gobby-tasks
-        tool: mark_task_review_approved
+        tool: mark_task_merged
         action: set_variable
         variable: report_complete
         value: true

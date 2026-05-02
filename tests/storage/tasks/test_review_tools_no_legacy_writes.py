@@ -26,7 +26,12 @@ def test_review_tools_call_first_class_stage_axis_methods() -> None:
 
 
 def test_no_complete_stage_or_fail_stage_in_review_tool_paths() -> None:
-    source = source_texts(("src/gobby/storage/tasks", "src/gobby/mcp_proxy/tools/tasks"))
+    source = source_texts(
+        (
+            "src/gobby/storage/tasks/_transitions.py",
+            "src/gobby/mcp_proxy/tools/tasks/_lifecycle_status.py",
+        )
+    )
 
     assert "complete_stage(" not in source
     assert "fail_stage(" not in source

@@ -608,7 +608,7 @@ The adversary's findings live in `anchor.description` under the heading `## Adve
 After reading the verdict, **close the anchor** so it does not linger. Then branch:
 
 - **`review_approved`** → close the anchor with reason "round approved"; go to Step 8.
-- **`open`** after `mark_task_review_rejected`
+- **current stage `ready`** after `mark_task_review_rejected`
   1. Extract `## Adversary Findings — Round {current_round + 1}` from the anchor description (the exact heading the adversary wrote; prevents leaking prior rounds' findings).
   2. Close the anchor with reason "round rejected; findings captured".
   3. If `current_round + 1 >= max_rounds` → go to Step 9.

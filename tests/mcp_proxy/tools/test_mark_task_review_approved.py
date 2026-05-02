@@ -4,7 +4,7 @@ Tests status transitions, validation, and blocked status in update_task.
 """
 
 from dataclasses import replace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -115,6 +115,7 @@ class TestMarkTaskReviewApproved:
         mock_task_manager.mark_task_review_approved.assert_called_once_with(
             "#42",
             approval_notes=None,
+            by_session_id=ANY,
         )
 
     def test_approve_in_progress_task(
@@ -134,8 +135,11 @@ class TestMarkTaskReviewApproved:
     def test_approve_rejects_open_task(
         self, lifecycle_registry, mock_task_manager, sample_task_open
     ) -> None:
-        """Test that approving an open task is rejected."""
+        """Open legacy status is delegated to stage-state validation."""
         mock_task_manager.get_task.return_value = sample_task_open
+        mock_task_manager.mark_task_review_approved.side_effect = ValueError(
+            "Illegal stage transition"
+        )
 
         tool_func = lifecycle_registry._tools["mark_task_review_approved"].func
         result = tool_func(
@@ -143,11 +147,11 @@ class TestMarkTaskReviewApproved:
         )
 
         assert "error" in result
-        assert "Cannot approve" in result["error"]
-        mock_task_manager.mark_task_review_approved.assert_not_called()
+        assert "Illegal stage transition" in result["error"]
+        mock_task_manager.mark_task_review_approved.assert_called_once()
 
     def test_approve_rejects_closed_task(self, lifecycle_registry, mock_task_manager) -> None:
-        """Test that approving a closed task is rejected."""
+        """Closed legacy status is delegated to stage-state validation."""
         closed_task = Task(
             id="550e8400-e29b-41d4-a716-446655440000",
             project_id="proj-1",
@@ -159,6 +163,9 @@ class TestMarkTaskReviewApproved:
             updated_at="2024-01-01T00:00:00Z",
         )
         mock_task_manager.get_task.return_value = closed_task
+        mock_task_manager.mark_task_review_approved.side_effect = ValueError(
+            "No current stage"
+        )
 
         tool_func = lifecycle_registry._tools["mark_task_review_approved"].func
         result = tool_func(
@@ -166,7 +173,7 @@ class TestMarkTaskReviewApproved:
         )
 
         assert "error" in result
-        assert "Cannot approve" in result["error"]
+        assert "No current stage" in result["error"]
 
     def test_approve_with_notes(
         self, lifecycle_registry, mock_task_manager, sample_task_needs_review
@@ -186,6 +193,7 @@ class TestMarkTaskReviewApproved:
         mock_task_manager.mark_task_review_approved.assert_called_once_with(
             "#42",
             approval_notes="Looks good, all tests pass.",
+            by_session_id=ANY,
         )
 
     def test_approve_task_not_found(self, lifecycle_registry, mock_task_manager) -> None:

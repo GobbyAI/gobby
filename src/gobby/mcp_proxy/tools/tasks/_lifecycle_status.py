@@ -252,10 +252,7 @@ def register_mark_task_review_approved(
         approval_notes: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
-        """Approve a task after review.
-
-        Sets status to 'review_approved', indicating the review gate has passed.
-        Accepts tasks in 'needs_review', 'in_progress', or 'escalated' status.
+        """Approve review on the current task stage.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -289,14 +286,6 @@ def register_mark_task_review_approved(
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
-        # Validate: current status must be needs_review, in_progress, or escalated
-        if task.status not in ("needs_review", "in_progress", "escalated"):
-            return _status_error(
-                f"Cannot approve task with status '{task.status}'. "
-                "Task must be in 'needs_review', 'in_progress', or 'escalated' status to approve.",
-                task.status,
-            )
-
         # Resolve session_id
         try:
             resolved_session_id = ctx.resolve_session_id(session_id)
@@ -325,6 +314,7 @@ def register_mark_task_review_approved(
             updated = ctx.task_manager.mark_task_review_approved(
                 resolved_id,
                 approval_notes=approval_notes,
+                by_session_id=resolved_session_id,
             )
         except ValueError as e:
             return _lifecycle_value_error(str(e))
@@ -364,7 +354,10 @@ def register_mark_task_review_approved(
 
     registry.register(
         name="mark_task_review_approved",
-        description="Approve a task after review. Sets status to 'review_approved' (review gate passed). Accepts tasks in 'needs_review', 'in_progress', or 'escalated' status.",
+        description=(
+            "Approve review on the task's current stage. Transitions the stage row from "
+            "needs_review to review_approved."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -442,13 +435,6 @@ def register_mark_task_review_rejected(
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
-        if task.status not in ("needs_review", "in_progress"):
-            return _status_error(
-                f"Cannot reject review for task with status '{task.status}'. "
-                "Task must be in 'needs_review' or 'in_progress' status to reject review.",
-                task.status,
-            )
-
         try:
             resolved_session_id = ctx.resolve_session_id(session_id)
         except ValueError as e:
@@ -459,6 +445,7 @@ def register_mark_task_review_rejected(
                 resolved_id,
                 rejection_notes=rejection_notes,
                 round_number=round_number,
+                by_session_id=resolved_session_id,
             )
         except ValueError as e:
             return _lifecycle_value_error(str(e))
@@ -505,8 +492,8 @@ def register_mark_task_review_rejected(
     registry.register(
         name="mark_task_review_rejected",
         description=(
-            "Reject a task after review. Returns the task to 'open', optionally appends "
-            "review findings, and can bump the planning-round label."
+            "Reject review on the task's current stage. Returns that stage row to ready, "
+            "optionally appends review findings, and can bump the planning-round label."
         ),
         input_schema={
             "type": "object",
@@ -548,10 +535,7 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
         task_id: str,
         review_notes: str | None = None,
     ) -> dict[str, Any]:
-        """Mark a task as ready for review.
-
-        Sets status to 'needs_review'. Use this when work is complete
-        but needs human verification before closing.
+        """Submit the current task stage for review.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -582,13 +566,6 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
-        if task.status in ("closed", "escalated"):
-            return _status_error(
-                f"Cannot mark task with status '{task.status}' as needs_review. "
-                "Task must be active (not closed or escalated).",
-                task.status,
-            )
-
         # Resolve session_id to UUID (accepts #N, N, UUID, or prefix)
         try:
             resolved_session_id = ctx.resolve_session_id(session_id)
@@ -618,6 +595,7 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
             updated = ctx.task_manager.mark_task_needs_review(
                 resolved_id,
                 review_notes=review_notes,
+                by_session_id=resolved_session_id,
             )
         except ValueError as e:
             return _lifecycle_value_error(str(e))
@@ -648,7 +626,10 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
 
     registry.register(
         name="mark_task_needs_review",
-        description="Mark a task as ready for review. Sets status to 'needs_review'. Use this when work is complete but needs human verification before closing.",
+        description=(
+            "Submit the task's current stage for review. Transitions the stage row from "
+            "in_progress to needs_review."
+        ),
         input_schema={
             "type": "object",
             "properties": {

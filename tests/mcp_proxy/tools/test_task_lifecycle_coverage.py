@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -653,6 +653,7 @@ class TestMarkTaskReviewApproved:
     async def test_approve_wrong_status(self, mock_task_manager, mock_sync_manager):
         task = _make_task(status="closed")
         mock_task_manager.get_task.return_value = task
+        mock_task_manager.mark_task_review_approved.side_effect = ValueError("No current stage")
         registry = _create_registry(mock_task_manager, mock_sync_manager)
 
         result = await registry.call(
@@ -660,7 +661,7 @@ class TestMarkTaskReviewApproved:
             {"task_id": task.id},
         )
         assert "error" in result
-        assert "closed" in result["error"]
+        assert "No current stage" in result["error"]
 
     @pytest.mark.asyncio
     async def test_approve_with_notes(self, mock_task_manager, mock_sync_manager):
@@ -680,6 +681,7 @@ class TestMarkTaskReviewApproved:
         mock_task_manager.mark_task_review_approved.assert_called_once_with(
             task.id,
             approval_notes="Looks good",
+            by_session_id=ANY,
         )
 
     @pytest.mark.asyncio

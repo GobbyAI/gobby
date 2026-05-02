@@ -8,14 +8,18 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
-from gobby.storage.tasks._stage_registry import ReviewPolicy, StageRegistryManager
+from gobby.storage.tasks._stage_registry import (
+    ReviewPolicy,
+    StageRegistryEntry,
+    StageRegistryManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,14 @@ class IllegalStageTransitionError(ValueError):
         self.attempted_transition = attempted_transition
         self.review_policy = review_policy
         super().__init__(stage_name, current_state, attempted_transition, review_policy)
+
+
+class NoCurrentStageError(ValueError):
+    """Raised when a task manifest has no active stage row."""
+
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        super().__init__(task_id)
 
 
 class IllegalManifestMutationError(ValueError):
@@ -736,7 +748,7 @@ class StageStatesManager:
             return "ready", "fail_stage"
         raise ValueError(f"Unknown stage transition '{verb}'")
 
-    def _state_from_row(self, row) -> StageState:
+    def _state_from_row(self, row: Any) -> StageState:
         return StageState(
             task_id=row["task_id"],
             stage_name=row["stage_name"],
@@ -909,7 +921,7 @@ class StageStatesManager:
             seen_names.add(item.stage_name)
             seen_positions.add(item.position)
 
-    def _registry_entry(self, stage_name: str):
+    def _registry_entry(self, stage_name: str) -> StageRegistryEntry:
         entry = self.registry.get(stage_name)
         if entry is None:
             raise ValueError(f"Unknown stage '{stage_name}'")

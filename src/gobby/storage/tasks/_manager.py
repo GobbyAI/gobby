@@ -598,9 +598,20 @@ class LocalTaskManager:
         self._notify_listeners()
         return task
 
-    def mark_task_needs_review(self, task_id: str, review_notes: str | None = None) -> Task:
+    def mark_task_needs_review(
+        self,
+        task_id: str,
+        review_notes: str | None = None,
+        *,
+        by_session_id: str | None = None,
+    ) -> Task:
         """Mark a task as ready for review and release ownership."""
-        task = _mark_task_needs_review(self.db, task_id=task_id, review_notes=review_notes)
+        task = _mark_task_needs_review(
+            self.db,
+            task_id=task_id,
+            review_notes=review_notes,
+            by_session_id=by_session_id,
+        )
         self._notify_listeners()
         return task
 
@@ -608,12 +619,15 @@ class LocalTaskManager:
         self,
         task_id: str,
         approval_notes: str | None = None,
+        *,
+        by_session_id: str | None = None,
     ) -> Task:
         """Mark a task as review-approved and release ownership."""
         task = _mark_task_review_approved(
             self.db,
             task_id=task_id,
             approval_notes=approval_notes,
+            by_session_id=by_session_id,
         )
         self._notify_listeners()
         return task
@@ -623,6 +637,8 @@ class LocalTaskManager:
         task_id: str,
         rejection_notes: str | None = None,
         round_number: int | None = None,
+        *,
+        by_session_id: str | None = None,
         **legacy_kwargs: Any,
     ) -> Task:
         """Reject a task after review and return it to open status."""
@@ -641,6 +657,7 @@ class LocalTaskManager:
             task_id=task_id,
             rejection_notes=rejection_notes,
             round_number=round_number,
+            by_session_id=by_session_id,
         )
         self._notify_listeners()
         return task

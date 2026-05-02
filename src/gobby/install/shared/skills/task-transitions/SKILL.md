@@ -140,7 +140,7 @@ call_tool("gobby-tasks", "mark_task_review_approved", {
 
 Used by QA agents after reviewing work. Same gates apply — if the reviewer made fixes and committed, those commits are auto-linked.
 
-### mark_task_review_rejected — send reviewed work back to open
+### mark_task_review_rejected — send reviewed stage work back to ready
 
 ```python
 call_tool("gobby-tasks", "mark_task_review_rejected", {
@@ -150,9 +150,9 @@ call_tool("gobby-tasks", "mark_task_review_rejected", {
 }, session_id="#2333")
 ```
 
-Used by structured review loops such as plan adversary rounds. The task returns
-to `open`; `round_number` is optional and updates `planning-round:N` when the
-review loop tracks numbered revisions.
+Used by structured review loops such as plan adversary rounds. The current
+stage row returns to `ready`; `round_number` is optional and updates
+`planning-round:N` when the review loop tracks numbered revisions.
 
 ### Interactive vs Autonomous
 
@@ -160,7 +160,7 @@ review loop tracks numbered revisions.
 |---------|-----|-----|
 | Interactive (user present) | `close_task` | User is the reviewer — no separate review step needed |
 | Autonomous (pipeline/agent) | `mark_task_needs_review` | **Required** — autonomous agents cannot close tasks directly |
-| QA review agent | `mark_task_review_approved` | Approves reviewed work, transitions toward close |
+| QA review agent | `mark_task_review_approved` | Moves reviewed stage work to `review_approved` |
 
 `mark_task_needs_review`, `mark_task_review_approved`, and `mark_task_review_rejected`
 are blocked in interactive sessions — use `close_task` directly. Conversely,

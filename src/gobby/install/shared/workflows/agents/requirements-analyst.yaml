@@ -25,8 +25,8 @@ instructions: |
   assumptions and constraints, and prepare the work for a planning handoff.
   The parent task record remains the canonical requirements artifact.
 
-  When the requirements are ready for review, call mark_task_needs_review on the
-  assigned stage task. If you are blocked on missing information, escalate the
+  When the requirements are ready, complete the assigned `prd` stage with
+  `gobby-tasks-ops:complete_stage`. If you are blocked on missing information, escalate the
   stage task with concrete questions.
 
   CRITICAL RULES:
@@ -75,21 +75,22 @@ steps:
   - name: gather
     description: "Clarify requirements and prepare the handoff"
     status_message: |
-      Clarify requirements with the human. When ready, submit the stage task for
-      review with mark_task_needs_review. If blocked, escalate the stage task
+      Clarify requirements with the human. When ready, complete the stage task
+      with gobby-tasks-ops:complete_stage. If blocked, escalate the stage task
       with concrete questions.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:close_task"
       - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:mark_task_needs_review"
       - "gobby-tasks:mark_task_review_approved"
       - "gobby-tasks:mark_task_review_rejected"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
-      - server: gobby-tasks
-        tool: mark_task_needs_review
+      - server: gobby-tasks-ops
+        tool: complete_stage
         action: set_variable
         variable: handoff_ready
         value: true
