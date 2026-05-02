@@ -21,7 +21,6 @@ def _options(**overrides: object) -> object:
         "profile": "auto",
         "skip_stages": [],
         "isolation": "worktree",
-        "max_review_rounds": 3,
         "target_branch": None,
         "assigned_agent": None,
     }
@@ -49,7 +48,9 @@ def _project(temp_db, tmp_path: Path) -> tuple[str, Path]:
 
 
 @pytest.mark.asyncio
-async def test_target_branch_none_resolves_to_head_on_plan_or_epic_build(temp_db, tmp_path: Path) -> None:
+async def test_target_branch_none_resolves_to_head_on_plan_or_epic_build(
+    temp_db, tmp_path: Path
+) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n", encoding="utf-8")
@@ -61,7 +62,9 @@ async def test_target_branch_none_resolves_to_head_on_plan_or_epic_build(temp_db
 
 
 @pytest.mark.asyncio
-async def test_explicit_target_branch_validated(monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path) -> None:
+async def test_explicit_target_branch_validated(
+    monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
+) -> None:
     from gobby.build.service import _validate_target_branch
 
     project_id, repo_path = _project(temp_db, tmp_path)
@@ -89,7 +92,9 @@ async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path
         category="planning",
     )
 
-    await _build(f"#{task.seq_num}", _options(target_branch="release"), db=temp_db, project_id=project_id)
+    await _build(
+        f"#{task.seq_num}", _options(target_branch="release"), db=temp_db, project_id=project_id
+    )
 
     artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(task.id)
     assert artifacts.target_branch == "release"
@@ -99,9 +104,16 @@ async def test_target_branch_persisted_before_isolation_action(temp_db, tmp_path
 async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: Path) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
     manager = LocalTaskManager(temp_db)
-    leaf = manager.create_task(project_id=project_id, title="Leaf", task_type="task", category="code")
+    leaf = manager.create_task(
+        project_id=project_id, title="Leaf", task_type="task", category="code"
+    )
 
-    await _build(f"#{leaf.seq_num}", _options(isolation="none", target_branch="release"), db=temp_db, project_id=project_id)
+    await _build(
+        f"#{leaf.seq_num}",
+        _options(isolation="none", target_branch="release"),
+        db=temp_db,
+        project_id=project_id,
+    )
 
     artifacts = manager.artifacts.get_artifacts(leaf.id)
     assert artifacts.target_branch is None

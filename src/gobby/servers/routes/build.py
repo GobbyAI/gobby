@@ -11,9 +11,18 @@ from pydantic import BaseModel, Field
 
 from gobby.build import BuildOptions, BuildResult, build
 from gobby.config.build import Isolation
+from gobby.config.build import StageCapOverride as BuildStageCapOverride
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+
+class StageCapOverride(BaseModel):
+    """Per-stage build cap override."""
+
+    stage_name: str
+    max_work_attempts: int | None = None
+    max_review_rounds: int | None = None
 
 
 class BuildRequest(BaseModel):
@@ -26,11 +35,7 @@ class BuildRequest(BaseModel):
     unattended: bool = False
     composer_yolo: bool = False
     yolo: bool | None = Field(default=None, json_schema_extra={"deprecated": True})
-    max_review_rounds: int = 3
-    max_expansion_attempts: int | None = None
-    max_qa_rounds: int | None = None
-    max_merge_attempts: int | None = None
-    max_holistic_rounds: int | None = None
+    stage_caps: list[StageCapOverride] = Field(default_factory=list)
     target_branch: str | None = None
     agent: str | None = None
     clones_dir: str | None = None
@@ -47,11 +52,14 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         isolation=request_data.isolation,
         unattended=unattended,
         composer_yolo=request_data.composer_yolo,
-        max_review_rounds=request_data.max_review_rounds,
-        max_expansion_attempts=request_data.max_expansion_attempts,
-        max_qa_rounds=request_data.max_qa_rounds,
-        max_merge_attempts=request_data.max_merge_attempts,
-        max_holistic_rounds=request_data.max_holistic_rounds,
+        stage_caps=[
+            BuildStageCapOverride(
+                stage_name=item.stage_name,
+                max_work_attempts=item.max_work_attempts,
+                max_review_rounds=item.max_review_rounds,
+            )
+            for item in request_data.stage_caps
+        ],
         target_branch=request_data.target_branch,
         assigned_agent=request_data.agent,
         clones_dir=clones_dir,

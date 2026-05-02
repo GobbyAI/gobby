@@ -21,7 +21,6 @@ def _options(**overrides: object) -> BuildOptions:
         "isolation": "clone",
         "unattended": True,
         "composer_yolo": False,
-        "max_review_rounds": 4,
         "target_branch": "main",
         "assigned_agent": None,
     }
@@ -95,7 +94,8 @@ async def test_build_epic_cascades_resolved_dispatch_state_to_subtree(
         assert task.allow_automation is True
         assert task.isolation == "clone"
         assert task.unattended is True
-        assert {"stage-:test_arch", "stage-:qa"}.issubset(set(task.labels))
+        assert {"stage-:test_arch"}.issubset(set(task.labels))
+        assert "stage-:qa" not in set(task.labels)
 
 
 @pytest.mark.asyncio

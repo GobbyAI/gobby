@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.build.service import BuildOptions, build
+from gobby.config.build import StageCapOverride
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 if TYPE_CHECKING:
@@ -41,11 +42,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         unattended: bool = False,
         composer_yolo: bool = False,
         yolo: bool | None = None,
-        max_review_rounds: int = 3,
-        max_expansion_attempts: int | None = None,
-        max_qa_rounds: int | None = None,
-        max_merge_attempts: int | None = None,
-        max_holistic_rounds: int | None = None,
+        stage_caps: list[dict[str, Any]] | None = None,
         target_branch: str | None = None,
         agent: str | None = None,
         project_id: str | None = None,
@@ -70,11 +67,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             isolation=isolation,
             unattended=unattended,
             composer_yolo=composer_yolo,
-            max_review_rounds=max_review_rounds,
-            max_expansion_attempts=max_expansion_attempts,
-            max_qa_rounds=max_qa_rounds,
-            max_merge_attempts=max_merge_attempts,
-            max_holistic_rounds=max_holistic_rounds,
+            stage_caps=_stage_caps_from_payload(stage_caps or []),
             target_branch=target_branch,
             assigned_agent=agent,
         )
@@ -120,11 +113,18 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "unattended": {"type": "boolean", "default": False},
                 "composer_yolo": {"type": "boolean", "default": False},
                 "yolo": {"type": "boolean", "deprecated": True},
-                "max_review_rounds": {"type": "integer", "default": 3, "minimum": 1},
-                "max_expansion_attempts": {"type": "integer", "minimum": 1},
-                "max_qa_rounds": {"type": "integer", "minimum": 1},
-                "max_merge_attempts": {"type": "integer", "minimum": 1},
-                "max_holistic_rounds": {"type": "integer", "minimum": 1},
+                "stage_caps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "stage_name": {"type": "string"},
+                            "max_work_attempts": {"type": "integer", "minimum": 1},
+                            "max_review_rounds": {"type": "integer", "minimum": 1},
+                        },
+                        "required": ["stage_name"],
+                    },
+                },
                 "target_branch": {"type": "string"},
                 "agent": {"type": "string"},
                 "project_id": {"type": "string"},
@@ -137,4 +137,15 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
     return registry
 
 
-__all__ = ["create_build_registry"]
+def _stage_caps_from_payload(payload: list[dict[str, Any]]) -> list[StageCapOverride]:
+    return [
+        StageCapOverride(
+            stage_name=str(item["stage_name"]),
+            max_work_attempts=item.get("max_work_attempts"),
+            max_review_rounds=item.get("max_review_rounds"),
+        )
+        for item in payload
+    ]
+
+
+__all__ = ["StageCapOverride", "create_build_registry"]

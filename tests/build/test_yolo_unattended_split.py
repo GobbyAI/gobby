@@ -22,7 +22,6 @@ def test_build_options_carries_unattended_and_composer_yolo() -> None:
         isolation="worktree",
         unattended=True,
         composer_yolo=False,
-        max_review_rounds=3,
     )
     assert opts.unattended is True
     assert opts.composer_yolo is False
@@ -47,6 +46,7 @@ def test_yolo_flag_is_noop_with_composer_stub(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("gobby.cli.build.resolve_project_id", lambda: "project-1")
     monkeypatch.setattr("gobby.cli.build.LocalDatabase", lambda: _ClosableDb())
+    monkeypatch.setattr("gobby.cli.build.run_migrations", lambda _db: 0)
     monkeypatch.setattr("gobby.cli.build.build", fake_build)
 
     result = CliRunner().invoke(build_command, ["#42", "--yolo"])
@@ -108,7 +108,6 @@ async def test_build_rejects_composer_yolo_for_plan_file(
         isolation="worktree",
         unattended=False,
         composer_yolo=True,
-        max_review_rounds=3,
     )
 
     with pytest.raises(ValueError, match="composer.*upstream"):

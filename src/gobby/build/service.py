@@ -5,19 +5,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 
-from gobby.config.build import SKIPPABLE_STAGES, Isolation
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.runner import install_dispatcher_cron_row
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifacts
+from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, Task, TaskArtifacts
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StageInsertion:
+    """Stage insertion requested by a build ingress surface."""
+
+    stage_name: str
+    position: int | None = None
 
 
 @dataclass
@@ -29,22 +37,12 @@ class BuildOptions:
     isolation: Isolation
     unattended: bool
     composer_yolo: bool
-    max_review_rounds: int
-    max_expansion_attempts: int | None = None
-    max_qa_rounds: int | None = None
-    max_merge_attempts: int | None = None
-    max_holistic_rounds: int | None = None
+    stages: list[str] | None = None
+    add_stages: list[StageInsertion] = field(default_factory=list)
+    stage_caps: list[StageCapOverride] = field(default_factory=list)
     target_branch: str | None = None
     assigned_agent: str | None = None
     clones_dir: Path | None = None
-
-
-class RetryCaps(TypedDict):
-    max_expansion_attempts: int | None
-    max_qa_rounds: int | None
-    max_merge_attempts: int | None
-    max_holistic_rounds: int | None
-    max_review_rounds: int
 
 
 @dataclass
@@ -56,7 +54,7 @@ class BuildResult:
     initial_lifecycle: str
     applied_stages_skipped: list[str]
     tick_dispatched: int
-    retry_caps: RetryCaps | None = None
+    stage_manifest: list[dict[str, str | int | None]] | None = None
 
 
 @dataclass(frozen=True)
@@ -92,7 +90,30 @@ _SKIPPABLE_STAGE_ORDER = (
     "holistic_review",
     "pr",
 )
-_PLAN_START_SEQUENCE = ("plan_review", "test_arch", "expanding", "in_development")
+_PLAN_START_SEQUENCE = (
+    ("planning", "plan_review"),
+    ("test_arch", "test_arch"),
+    ("expansion", "expanding"),
+)
+_CANONICAL_STAGE_NAMES = {
+    "ideation",
+    "research",
+    "architecture",
+    "prd",
+    "planning",
+    "test_arch",
+    "expansion",
+    "development",
+    "holistic_qa",
+    "pr",
+    "merge",
+}
+_LEGACY_STAGE_ALIASES: dict[str, str | None] = {
+    "plan_review": "planning",
+    "expanding": "expansion",
+    "holistic_review": "holistic_qa",
+    "qa": None,
+}
 
 
 async def build(
@@ -161,8 +182,8 @@ async def _build_plan_file(
         task.id,
         plan_file_path=str(plan_file),
         target_branch=target_branch,
-        **_retry_cap_artifacts(opts),
     )
+    specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
     _record_build_event(task_manager, task, initial_lifecycle)
     return BuildResult(
         task_id=task.id,
@@ -170,7 +191,7 @@ async def _build_plan_file(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=await _kick_dispatcher_tick(task_manager.db, project_id),
-        retry_caps=_retry_cap_artifacts(opts),
+        stage_manifest=_specs_payload(specs),
     )
 
 
@@ -200,7 +221,7 @@ async def _build_leaf(
         isolation="none",
         assigned_agent=opts.assigned_agent,
     )
-    task_manager.artifacts.set_artifacts_atomic(task.id, **_retry_cap_artifacts(opts))
+    specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
     _record_build_event(task_manager, task, initial_lifecycle)
     return BuildResult(
         task_id=task.id,
@@ -208,7 +229,7 @@ async def _build_leaf(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=await _kick_dispatcher_tick(db, project_id),
-        retry_caps=_retry_cap_artifacts(opts),
+        stage_manifest=_specs_payload(specs),
     )
 
 
@@ -226,8 +247,8 @@ async def _build_epic(
     task_manager.artifacts.set_artifacts_atomic(
         task.id,
         target_branch=target_branch,
-        **_retry_cap_artifacts(opts),
     )
+    specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
     task_manager.cascade_build_state_to_subtree(
         task.id,
         isolation=opts.isolation,
@@ -243,7 +264,7 @@ async def _build_epic(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=await _kick_dispatcher_tick(db, project_id),
-        retry_caps=_retry_cap_artifacts(opts),
+        stage_manifest=_specs_payload(specs),
     )
 
 
@@ -309,11 +330,16 @@ def _resolve_input(
 
 
 def _validate_skip_stages(skip_stages: list[str]) -> list[str]:
-    unknown = [stage for stage in skip_stages if stage not in SKIPPABLE_STAGES]
-    if unknown:
-        allowed = ", ".join(_SKIPPABLE_STAGE_ORDER)
-        raise ValueError(f"invalid skip stage {unknown[0]}; valid skip stages: {allowed}")
-    return list(dict.fromkeys(skip_stages))
+    normalized: list[str] = []
+    for stage in skip_stages:
+        canonical = _canonical_stage_name_or_none(stage)
+        if canonical is None:
+            continue
+        if canonical not in _CANONICAL_STAGE_NAMES:
+            allowed = ", ".join(sorted(_CANONICAL_STAGE_NAMES | set(_SKIPPABLE_STAGE_ORDER)))
+            raise ValueError(f"invalid skip stage {stage}; valid skip stages: {allowed}")
+        normalized.append(canonical)
+    return list(dict.fromkeys(normalized))
 
 
 def _validate_profile_for_input(profile: str | None, input_kind: InputKind) -> None:
@@ -331,16 +357,15 @@ def _validate_clones_dir(opts: BuildOptions) -> None:
 
 
 def _validate_retry_caps(opts: BuildOptions) -> None:
-    for field in (
-        "max_review_rounds",
-        "max_expansion_attempts",
-        "max_qa_rounds",
-        "max_merge_attempts",
-        "max_holistic_rounds",
-    ):
-        value = getattr(opts, field)
-        if value is not None and value < 1:
-            raise ValueError(f"{field} must be greater than or equal to 1")
+    for override in opts.stage_caps:
+        if override.max_work_attempts is not None and override.max_work_attempts < 1:
+            raise ValueError(
+                f"stage_caps.{override.stage_name}.max_work_attempts must be greater than or equal to 1"
+            )
+        if override.max_review_rounds is not None and override.max_review_rounds < 1:
+            raise ValueError(
+                f"stage_caps.{override.stage_name}.max_review_rounds must be greater than or equal to 1"
+            )
 
 
 async def _resolve_target_branch(
@@ -439,9 +464,9 @@ def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArti
 
 def _initial_lifecycle_for_plan(skip_stages: list[str]) -> str:
     skipped = set(skip_stages)
-    for stage in _PLAN_START_SEQUENCE:
-        if stage not in skipped:
-            return stage
+    for stage_name, lifecycle in _PLAN_START_SEQUENCE:
+        if stage_name not in skipped:
+            return lifecycle
     return "in_development"
 
 
@@ -473,14 +498,89 @@ def _record_build_event(
     )
 
 
-def _retry_cap_artifacts(opts: BuildOptions) -> RetryCaps:
-    return {
-        "max_expansion_attempts": opts.max_expansion_attempts,
-        "max_qa_rounds": opts.max_qa_rounds,
-        "max_merge_attempts": opts.max_merge_attempts,
-        "max_holistic_rounds": opts.max_holistic_rounds,
-        "max_review_rounds": opts.max_review_rounds,
+def _initialize_stage_manifest(
+    task_manager: LocalTaskManager,
+    task: Task,
+    opts: BuildOptions,
+    skip_stages: list[str],
+) -> list[StageManifestSpec]:
+    specs = resolve_stage_manifest_specs(task_manager, task.task_type, opts, skip_stages)
+    task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+    return specs
+
+
+def resolve_stage_manifest_specs(
+    task_manager: LocalTaskManager,
+    task_type: str,
+    opts: BuildOptions,
+    skip_stages: list[str] | None = None,
+) -> list[StageManifestSpec]:
+    """Resolve explicit/default build stage flags to StageManifestSpec rows."""
+
+    if opts.stages:
+        manifest = [_canonical_stage_name(stage) for stage in opts.stages]
+    else:
+        defaults = task_manager.stages_registry.list_default_stages(task_type)
+        if not defaults and task_type != "task":
+            defaults = task_manager.stages_registry.list_default_stages("task")
+        manifest = [_canonical_stage_name(stage_name) for stage_name, _position in defaults]
+
+    skipped = {
+        canonical
+        for stage in (skip_stages or [])
+        if (canonical := _canonical_stage_name_or_none(stage)) is not None
     }
+    manifest = [stage_name for stage_name in manifest if stage_name not in skipped]
+
+    for insertion in opts.add_stages:
+        stage_name = _canonical_stage_name(insertion.stage_name)
+        if stage_name in manifest:
+            continue
+        if insertion.position is None:
+            manifest.append(stage_name)
+            continue
+        if insertion.position < 1:
+            raise ValueError("stage insertion position must be greater than or equal to 1")
+        index = min(insertion.position - 1, len(manifest))
+        manifest.insert(index, stage_name)
+
+    cap_by_stage = {override.stage_name: override for override in opts.stage_caps}
+    unknown_caps = sorted(set(cap_by_stage) - set(manifest))
+    if unknown_caps:
+        raise ValueError(f"stage_caps target stage not in resolved manifest: {unknown_caps[0]}")
+
+    specs: list[StageManifestSpec] = []
+    for position, stage_name in enumerate(manifest, start=1):
+        override = cap_by_stage.get(stage_name)
+        specs.append(
+            StageManifestSpec(
+                stage_name=stage_name,
+                position=position,
+                max_work_attempts=override.max_work_attempts if override else None,
+                max_review_rounds=override.max_review_rounds if override else None,
+            )
+        )
+    return specs
+
+
+def _canonical_stage_name(stage_name: str) -> str:
+    canonical = _canonical_stage_name_or_none(stage_name)
+    if canonical is None:
+        raise ValueError(f"stage {stage_name} no longer exists in the stage manifest")
+    if canonical not in _CANONICAL_STAGE_NAMES:
+        raise ValueError(f"unknown stage: {stage_name}")
+    return canonical
+
+
+def _canonical_stage_name_or_none(stage_name: str) -> str | None:
+    normalized = stage_name.strip()
+    if not normalized:
+        raise ValueError("stage name is required")
+    return _LEGACY_STAGE_ALIASES.get(normalized, normalized)
+
+
+def _specs_payload(specs: list[StageManifestSpec]) -> list[dict[str, str | int | None]]:
+    return [asdict(spec) for spec in specs]
 
 
 async def _kick_dispatcher_tick(
@@ -570,8 +670,9 @@ __all__ = [
     "BuildLifecycleEvent",
     "BuildOptions",
     "BuildResult",
-    "RetryCaps",
     "build",
     "build_resume",
     "build_stop",
+    "resolve_stage_manifest_specs",
+    "StageInsertion",
 ]

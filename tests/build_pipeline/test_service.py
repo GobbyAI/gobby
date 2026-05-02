@@ -32,7 +32,6 @@ def _options(**overrides: object) -> BuildOptions:
         "isolation": "worktree",
         "unattended": False,
         "composer_yolo": False,
-        "max_review_rounds": 3,
         "target_branch": None,
         "assigned_agent": None,
     }
@@ -54,7 +53,7 @@ async def test_build_rejects_unknown_skip_stage_with_valid_values(
 ) -> None:
     project_id, _repo_path = _project(temp_db, tmp_path)
 
-    with pytest.raises(ValueError, match="skip.*dev.*plan_review.*test_arch.*pr"):
+    with pytest.raises(ValueError, match="skip.*dev.*plan_review.*pr.*test_arch"):
         await _build(
             "#1",
             _options(skip_stages=["dev"]),
@@ -199,21 +198,34 @@ async def test_build_plan_file_creates_planning_epic_artifacts_labels_and_kicks_
 
     assert result.created is True
     assert result.initial_lifecycle == "test_arch"
-    assert result.applied_stages_skipped == ["plan_review", "pr"]
+    assert result.applied_stages_skipped == ["planning", "pr"]
     assert result.tick_dispatched >= 0
     assert task.task_type == "epic"
     assert task.category == "planning"
     assert task.allow_automation is True
     assert task.lifecycle == "test_arch"
     assert task.isolation == "worktree"
-    assert set(task.labels) >= {"stage-:plan_review", "stage-:pr"}
+    assert set(task.labels) >= {"stage-:planning", "stage-:pr"}
     assert artifacts.plan_file_path == str(plan_file)
     assert artifacts.target_branch == "main"
     assert events[-1].reason == "gobby build"
+    assert [row.stage_name for row in task_manager.stage_states.list_for_task(task.id)] == [
+        "ideation",
+        "research",
+        "architecture",
+        "prd",
+        "test_arch",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "merge",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_build_persists_retry_caps_in_artifacts(temp_db, tmp_path: Path) -> None:
+async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Path) -> None:
+    from gobby.config.build import StageCapOverride
+
     project_id, _repo_path = _project(temp_db, tmp_path)
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n")
@@ -221,55 +233,59 @@ async def test_build_persists_retry_caps_in_artifacts(temp_db, tmp_path: Path) -
     result = await _build(
         str(plan_file),
         _options(
-            max_expansion_attempts=4,
-            max_qa_rounds=6,
-            max_merge_attempts=2,
-            max_holistic_rounds=5,
-            max_review_rounds=7,
+            stage_caps=[
+                StageCapOverride("expansion", max_work_attempts=4),
+                StageCapOverride("development", max_review_rounds=6),
+                StageCapOverride("merge", max_work_attempts=2),
+                StageCapOverride("holistic_qa", max_review_rounds=5),
+                StageCapOverride("pr", max_review_rounds=7),
+            ],
         ),
         db=temp_db,
         project_id=project_id,
     )
 
-    artifacts = LocalTaskManager(temp_db).artifacts.get_artifacts(result.task_id)
-    assert artifacts.max_expansion_attempts == 4
-    assert artifacts.max_qa_rounds == 6
-    assert artifacts.max_merge_attempts == 2
-    assert artifacts.max_holistic_rounds == 5
-    assert artifacts.max_review_rounds == 7
-    assert result.retry_caps == {
-        "max_expansion_attempts": 4,
-        "max_qa_rounds": 6,
-        "max_merge_attempts": 2,
-        "max_holistic_rounds": 5,
-        "max_review_rounds": 7,
+    rows = {
+        row.stage_name: row
+        for row in LocalTaskManager(temp_db).stage_states.list_for_task(result.task_id)
     }
+    assert rows["expansion"].max_work_attempts == 4
+    assert rows["development"].max_review_rounds == 6
+    assert rows["merge"].max_work_attempts == 2
+    assert rows["holistic_qa"].max_review_rounds == 5
+    assert rows["pr"].max_review_rounds == 7
+    assert result.stage_manifest is not None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "field",
+    ("stage_name", "cap_name"),
     [
-        "max_qa_rounds",
-        "max_expansion_attempts",
-        "max_merge_attempts",
-        "max_holistic_rounds",
-        "max_review_rounds",
+        ("development", "max_review_rounds"),
+        ("expansion", "max_work_attempts"),
     ],
 )
-async def test_build_rejects_retry_caps_below_one(
+async def test_build_rejects_stage_caps_below_one(
     temp_db,
     tmp_path: Path,
-    field: str,
+    stage_name: str,
+    cap_name: str,
 ) -> None:
+    from gobby.config.build import StageCapOverride
+
     project_id, _repo_path = _project(temp_db, tmp_path)
     plan_file = tmp_path / "plan.md"
     plan_file.write_text("# Plan\n")
+    override = (
+        StageCapOverride(stage_name, max_work_attempts=0)
+        if cap_name == "max_work_attempts"
+        else StageCapOverride(stage_name, max_review_rounds=0)
+    )
 
-    with pytest.raises(ValueError, match=f"{field}.*greater than or equal to 1"):
+    with pytest.raises(ValueError, match=f"{cap_name}.*greater than or equal to 1"):
         await _build(
             str(plan_file),
-            _options(**{field: 0}),
+            _options(stage_caps=[override]),
             db=temp_db,
             project_id=project_id,
         )

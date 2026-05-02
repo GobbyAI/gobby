@@ -11,11 +11,12 @@ from gobby.build import (
     BuildControlResult,
     BuildOptions,
     BuildResult,
+    StageInsertion,
     build,
     build_resume,
     build_stop,
 )
-from gobby.config.build import Isolation
+from gobby.config.build import Isolation, StageCapOverride
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
 
@@ -35,10 +36,63 @@ def invoke_build_skill() -> None:
     click.echo("No build input provided. Invoke the build skill from your active Gobby session.")
 
 
-def _parse_skip_stages(raw: str | None) -> list[str]:
+def _parse_stage_list(raw: str | None) -> list[str] | None:
     if not raw:
-        return []
-    return [stage.strip() for stage in raw.split(",") if stage.strip()]
+        return None
+    stages = [stage.strip() for stage in raw.split(",") if stage.strip()]
+    return stages or None
+
+
+def _parse_skip_stages(raw_values: tuple[str, ...]) -> list[str]:
+    stages: list[str] = []
+    for raw in raw_values:
+        stages.extend(stage.strip() for stage in raw.split(",") if stage.strip())
+    return stages
+
+
+def _parse_add_stage(raw_values: tuple[str, ...]) -> list[StageInsertion]:
+    insertions: list[StageInsertion] = []
+    for raw in raw_values:
+        stage_name, separator, position_text = raw.partition("@")
+        stage_name = stage_name.strip()
+        if not stage_name:
+            raise click.ClickException("--add-stage requires a stage name")
+        position = None
+        if separator:
+            try:
+                position = int(position_text)
+            except ValueError as exc:
+                raise click.ClickException("--add-stage position must be an integer") from exc
+        insertions.append(StageInsertion(stage_name=stage_name, position=position))
+    return insertions
+
+
+def _parse_stage_cap(raw_values: tuple[str, ...]) -> list[StageCapOverride]:
+    by_stage: dict[str, dict[str, int | None]] = {}
+    for raw in raw_values:
+        stage_name, separator, cap_text = raw.partition(":")
+        if not separator or not stage_name.strip():
+            raise click.ClickException("--stage must use <stage>:<cap>=<value>")
+        cap_name, cap_separator, value_text = cap_text.partition("=")
+        if not cap_separator:
+            raise click.ClickException("--stage cap must use <name>=<value>")
+        cap_name = cap_name.strip()
+        if cap_name not in {"max_work_attempts", "max_review_rounds"}:
+            raise click.ClickException("--stage cap must be max_work_attempts or max_review_rounds")
+        try:
+            value = int(value_text)
+        except ValueError as exc:
+            raise click.ClickException("--stage cap value must be an integer") from exc
+        stage_caps = by_stage.setdefault(stage_name.strip(), {})
+        stage_caps[cap_name] = value
+    return [
+        StageCapOverride(
+            stage_name=stage_name,
+            max_work_attempts=values.get("max_work_attempts"),
+            max_review_rounds=values.get("max_review_rounds"),
+        )
+        for stage_name, values in by_stage.items()
+    ]
 
 
 def _echo_build_result(result: BuildResult) -> None:
@@ -70,7 +124,17 @@ def _open_database() -> LocalDatabase:
 @click.command("build")
 @click.argument("input_ref", required=False, metavar="[INPUT]")
 @click.option("--profile", help="Build profile to apply.")
-@click.option("--skip-stage", help="Comma-separated lifecycle stages to skip.")
+@click.option("--stages", help="Comma-separated explicit stage manifest.")
+@click.option("--add-stage", multiple=True, help="Add a stage, optionally as name@position.")
+@click.option(
+    "--skip-stage", multiple=True, help="Stage to skip. May be repeated or comma-separated."
+)
+@click.option(
+    "--stage",
+    "stage_cap",
+    multiple=True,
+    help="Per-stage cap override, e.g. development:max_review_rounds=4.",
+)
 @click.option(
     "--isolation",
     type=click.Choice(["none", "worktree", "clone"]),
@@ -91,32 +155,19 @@ def _open_database() -> LocalDatabase:
     show_default=True,
     help="Enable composer yolo mode.",
 )
-@click.option(
-    "--max-review-rounds",
-    default=3,
-    show_default=True,
-    type=int,
-    help="Maximum review rounds before stopping.",
-)
 @click.option("--target-branch", help="Target branch for the build.")
-@click.option("--max-expansion-attempts", type=int, help="Expansion retry cap.")
-@click.option("--max-qa-rounds", type=int, help="Per-leaf QA retry cap.")
-@click.option("--max-merge-attempts", type=int, help="Merge retry cap.")
-@click.option("--max-holistic-rounds", type=int, help="Holistic-review retry cap.")
 @click.option("--agent", "assigned_agent", help="Agent to assign to build work.")
 def build_command(
     input_ref: str | None,
     profile: str | None,
-    skip_stage: str | None,
+    stages: str | None,
+    add_stage: tuple[str, ...],
+    skip_stage: tuple[str, ...],
+    stage_cap: tuple[str, ...],
     isolation: str,
     unattended: bool,
     yolo: bool,
-    max_review_rounds: int,
     target_branch: str | None,
-    max_expansion_attempts: int | None,
-    max_qa_rounds: int | None,
-    max_merge_attempts: int | None,
-    max_holistic_rounds: int | None,
     assigned_agent: str | None,
 ) -> None:
     """Start lifecycle automation from a plan file or task reference."""
@@ -136,11 +187,9 @@ def build_command(
         isolation=cast(Isolation, isolation),
         unattended=unattended,
         composer_yolo=yolo,
-        max_review_rounds=max_review_rounds,
-        max_expansion_attempts=max_expansion_attempts,
-        max_qa_rounds=max_qa_rounds,
-        max_merge_attempts=max_merge_attempts,
-        max_holistic_rounds=max_holistic_rounds,
+        stages=_parse_stage_list(stages),
+        add_stages=_parse_add_stage(add_stage),
+        stage_caps=_parse_stage_cap(stage_cap),
         target_branch=target_branch,
         assigned_agent=assigned_agent,
     )

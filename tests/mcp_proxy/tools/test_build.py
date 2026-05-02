@@ -46,9 +46,12 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db) -> None:
     assert schema["properties"]["composer_yolo"]["type"] == "boolean"
     assert schema["properties"]["yolo"]["type"] == "boolean"
     assert schema["properties"]["yolo"]["deprecated"] is True
-    assert schema["properties"]["max_review_rounds"]["type"] == "integer"
-    assert schema["properties"]["max_review_rounds"]["minimum"] == 1
-    assert schema["properties"]["max_qa_rounds"]["minimum"] == 1
+    assert "max_review_rounds" not in schema["properties"]
+    assert "max_qa_rounds" not in schema["properties"]
+    assert schema["properties"]["stage_caps"]["type"] == "array"
+    assert (
+        schema["properties"]["stage_caps"]["items"]["properties"]["stage_name"]["type"] == "string"
+    )
     assert schema["properties"]["target_branch"]["type"] == "string"
     assert schema["properties"]["agent"]["type"] == "string"
 
@@ -89,7 +92,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
             isolation="none",
             unattended=True,
             composer_yolo=False,
-            max_review_rounds=2,
+            stage_caps=[{"stage_name": "pr", "max_review_rounds": 2}],
             target_branch="release/0.4",
             agent="backend-developer",
             project_id="project-1",
@@ -101,7 +104,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
         "initial_lifecycle": "in_development",
         "applied_stages_skipped": ["qa"],
         "tick_dispatched": 1,
-        "retry_caps": None,
+        "stage_manifest": None,
     }
     call = build.call_args
     assert call.args[0] == "#42"
@@ -111,7 +114,10 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
     assert opts.isolation == "none"
     assert opts.unattended is True
     assert opts.composer_yolo is False
-    assert opts.max_review_rounds == 2
+    assert [
+        (item.stage_name, item.max_work_attempts, item.max_review_rounds)
+        for item in opts.stage_caps
+    ] == [("pr", None, 2)]
     assert opts.target_branch == "release/0.4"
     assert opts.assigned_agent == "backend-developer"
     assert call.kwargs["db"] is temp_db

@@ -51,7 +51,9 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
                 "isolation": "worktree",
                 "unattended": True,
                 "composer_yolo": False,
-                "max_review_rounds": 3,
+                "stage_caps": [
+                    {"stage_name": "pr", "max_review_rounds": 3},
+                ],
                 "target_branch": "main",
                 "agent": "backend-developer",
             },
@@ -64,7 +66,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         "initial_lifecycle": "plan_review",
         "applied_stages_skipped": ["pr"],
         "tick_dispatched": 0,
-        "retry_caps": None,
+        "stage_manifest": None,
     }
     call = build.call_args
     assert call.args[0] == "plan.md"
@@ -74,7 +76,10 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
     assert opts.isolation == "worktree"
     assert opts.unattended is True
     assert opts.composer_yolo is False
-    assert opts.max_review_rounds == 3
+    assert [
+        (item.stage_name, item.max_work_attempts, item.max_review_rounds)
+        for item in opts.stage_caps
+    ] == [("pr", None, 3)]
     assert opts.target_branch == "main"
     assert opts.assigned_agent == "backend-developer"
     assert call.kwargs["project_id"] == "project-1"

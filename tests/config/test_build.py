@@ -21,7 +21,7 @@ def test_build_config_defaults_include_profiles_and_dispatch_knobs() -> None:
     assert cfg.default_skip_stages == ()
     assert cfg.default_isolation == "worktree"
     assert cfg.default_yolo is False
-    assert cfg.default_max_review_rounds == 3
+    assert cfg.stage_caps == {}
     assert cfg.default_target_branch is None
     assert cfg.clones_dir == Path.home() / ".gobby" / "clones"
     assert cfg.cleanup_clones_on_merge is True
@@ -108,7 +108,8 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     assert cfg.default_skip_stages == ("qa",)
     assert cfg.default_isolation == "none"
     assert cfg.default_yolo is False
-    assert cfg.default_max_review_rounds == 5
+    assert cfg.stage_caps["pr"].max_review_rounds == 5
+    assert cfg.stage_caps["pr"].max_work_attempts is None
     assert cfg.default_target_branch == "release/0.4"
     assert cfg.clones_dir == home / "custom-clones"
     assert cfg.cleanup_clones_on_merge is False

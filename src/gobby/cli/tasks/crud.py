@@ -8,6 +8,7 @@ from typing import Any
 
 import click
 
+from gobby.cli.tasks._stage_filters import STAGE_STATE_CHOICE, filter_tasks_by_stage
 from gobby.cli.tasks._utils import (
     collect_ancestors,
     compute_tree_prefixes,
@@ -43,6 +44,8 @@ from gobby.utils.project_context import get_project_context
     help="Show all non-closed work (canonical active tasks)",
 )
 @click.option("--project", "-p", "project_ref", help="Filter by project (name or UUID)")
+@click.option("--stage", "stage_name", help="Filter by exact stage name")
+@click.option("--state", "stage_state", type=STAGE_STATE_CHOICE, help="Filter by stage state")
 @click.option("--assignee", "-a", help="Filter by assignee")
 @click.option("--claimed", is_flag=True, help="Show only claimed tasks")
 @click.option("--unclaimed", is_flag=True, help="Show only unclaimed tasks")
@@ -68,6 +71,8 @@ def list_tasks(
     lifecycle: str | None,
     active: bool,
     project_ref: str | None,
+    stage_name: str | None,
+    stage_state: str | None,
     assignee: str | None,
     claimed: bool,
     unclaimed: bool,
@@ -95,14 +100,20 @@ def list_tasks(
         click.echo("Error: --status and --lifecycle are mutually exclusive.", err=True)
         return
 
+    if stage_state and not stage_name:
+        click.echo("Error: --state requires --stage.", err=True)
+        return
+
     if active and closed_only:
         click.echo("Error: --active and --closed are mutually exclusive.", err=True)
         return
 
-    if (ready or blocked) and any((status, lifecycle, active, claimed, unclaimed, closed_only)):
+    if (ready or blocked) and any(
+        (status, lifecycle, active, claimed, unclaimed, closed_only, stage_name)
+    ):
         click.echo(
             "Error: --ready/--blocked cannot be combined with --status, --lifecycle, "
-            "--active, --claimed, --unclaimed, or --closed.",
+            "--active, --claimed, --unclaimed, --closed, or --stage.",
             err=True,
         )
         return
@@ -163,8 +174,15 @@ def list_tasks(
             assignee=assignee,
             claimed=claimed_filter,
             closed=closed_filter,
-            limit=limit,
+            limit=10000 if stage_name else limit,
         )
+        tasks_list = filter_tasks_by_stage(
+            manager,
+            tasks_list,
+            stage_name=stage_name,
+            state=stage_state,
+            project_id=project_id,
+        )[:limit]
         if closed_filter:
             label = "closed tasks"
         elif claimed_filter is True:
@@ -173,6 +191,8 @@ def list_tasks(
             label = "unclaimed tasks"
         elif active:
             label = "active tasks"
+        elif stage_name:
+            label = "stage-filtered tasks"
         elif lifecycle_filter:
             label = "lifecycle-filtered tasks"
         else:
@@ -195,6 +215,7 @@ def list_tasks(
         or blocked
         or status_filter
         or lifecycle_filter
+        or stage_name
         or claimed_filter is not None
         or closed_filter is not None
     ):

@@ -5,9 +5,11 @@ from gobby.build.service import (
     BuildLifecycleEvent,
     BuildOptions,
     BuildResult,
+    StageInsertion,
     build,
     build_resume,
     build_stop,
+    resolve_stage_manifest_specs,
 )
 
 __all__ = [
@@ -15,7 +17,9 @@ __all__ = [
     "BuildLifecycleEvent",
     "BuildOptions",
     "BuildResult",
+    "StageInsertion",
     "build",
     "build_resume",
     "build_stop",
+    "resolve_stage_manifest_specs",
 ]
