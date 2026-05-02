@@ -1669,7 +1669,7 @@ Per-rule coverage (one acceptance per data row of the §3.1 rule rewrite table, 
 
 `kind: deliverable`
 
-Target: `src/gobby/build/service.py`, `src/gobby/storage/tasks/_blocking.py`, `src/gobby/storage/tasks/_aggregates.py`, `src/gobby/dispatch/dispatcher.py`
+Target: `src/gobby/build/service.py`, `src/gobby/storage/tasks/_blocking.py`, `src/gobby/storage/tasks/_aggregates.py`, `src/gobby/storage/tasks/_queries.py` (existing — `list_ready_tasks` at lines 171–284, `list_blocked_tasks` at lines 287–348; both rewritten to project from manifest reads while preserving the existing parent-blocker carve-outs), `src/gobby/storage/tasks/_manager.py` (existing — `LocalTaskManager.list_ready_tasks` at lines 754–786, `LocalTaskManager.list_blocked_tasks` at lines 788–820; thin wrappers updated for any signature/return-shape changes from the projection rewrite), `src/gobby/mcp_proxy/tools/task_readiness.py` (existing — `list_ready_tasks` MCP tool at line 397; updated for any response-shape changes propagating from the manager wrapper), `src/gobby/dispatch/dispatcher.py`
 
 `gobby build` flow rewrite. Build resolves the task's manifest before the dispatcher ever sees it:
 
@@ -1935,7 +1935,7 @@ The cascade-close behavior from `mark_task_merged` (`src/gobby/storage/tasks/_tr
 
 `kind: deliverable`
 
-Target: `src/gobby/install/shared/registry/stages.yaml` (extension), `src/gobby/storage/tasks/_models.py`, `src/gobby/cli/tasks/crud.py`, `src/gobby/storage/migrations.py`
+Target: `src/gobby/install/shared/registry/stages.yaml` (extension), `src/gobby/storage/tasks/_models.py`, `src/gobby/cli/tasks/crud.py`, `src/gobby/storage/migrations.py`, `src/gobby/servers/routes/tasks.py` (existing — `TaskCreateRequest` at lines 32–53; extends `task_type` validation to accept the four new types), `src/gobby/mcp_proxy/tools/tasks/_crud.py` (existing — `create_task` MCP tool at lines 34–239; extends inputSchema's `task_type` enum to accept the four new types)
 
 Add four new task types and their default-stages bundles. Migration version 235:
 
