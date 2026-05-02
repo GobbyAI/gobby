@@ -332,8 +332,7 @@ export function ChatPage({
     : chat.isContinuingSession
       ? "Message input — resuming session"
       : undefined;
-  const activityPanelChatSessionId =
-    isReadOnlySession ? chat.viewingSessionId ?? chat.dbSessionId : chat.dbSessionId;
+  const activityPanelChatSessionId = chat.dbSessionId;
 
   const handleResumeViewedSession = useCallback(() => {
     if (

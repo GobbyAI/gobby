@@ -583,7 +583,7 @@ describe("ChatPage", () => {
     );
   });
 
-  it("treats a read-only swapped terminal as the main session for the activity panel", async () => {
+  it("keeps the main web chat as the activity panel chat session while watching a terminal", async () => {
     await act(async () => {
       render(
         <ChatPage
@@ -609,7 +609,7 @@ describe("ChatPage", () => {
 
     expect(
       screen.getByTestId("activity-panel-chat-session-id"),
-    ).toHaveTextContent("terminal-2");
+    ).toHaveTextContent("web-main-1");
   });
 
   it("threads the shared session catalog into the activity panel and resumes with auto fallback", async () => {
