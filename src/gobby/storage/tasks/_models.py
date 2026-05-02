@@ -241,6 +241,8 @@ class Task:
     # Dependency fields (populated on demand, not stored in tasks table)
     blocked_by: set[str] = field(default_factory=set)
     active_blocked_by: set[str] = field(default_factory=set)
+    # Stage manifest rows (populated on demand, not stored in tasks table)
+    stages: tuple[Any, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Fill canonical lifecycle stage for manually constructed legacy-style tasks."""

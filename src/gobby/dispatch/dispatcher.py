@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ from gobby.storage.tasks._crud import get_task, list_automation_candidates, upda
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
-from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.tasks._stage_states import StageState, StageStatesManager
 from gobby.storage.tasks._transitions import advance_lifecycle
 
 MAX_ACTIVE_AGENTS = 10
@@ -154,10 +155,101 @@ def reload_candidate(
 ) -> Task | None:
     if db is None:
         return None
-    try:
-        return get_task(db, task_id, project_id=project_id)
-    except ValueError:
+    where_clause, params = _candidate_lookup_clause(task_id, project_id)
+    if where_clause is None:
         return None
+    rows = db.fetchall(
+        f"""
+        SELECT
+            t.*,
+            s.task_id AS stage_task_id,
+            s.stage_name AS stage_name,
+            s.position AS stage_position,
+            s.state AS stage_state,
+            s.review_policy AS stage_review_policy,
+            s.reviewer_agent AS stage_reviewer_agent,
+            s.entered_at AS stage_entered_at,
+            s.entered_by_session_id AS stage_entered_by_session_id,
+            s.completed_at AS stage_completed_at,
+            s.completed_by_session_id AS stage_completed_by_session_id,
+            s.completed_commit_sha AS stage_completed_commit_sha,
+            s.work_attempt_count AS stage_work_attempt_count,
+            s.review_round_count AS stage_review_round_count,
+            s.max_work_attempts AS stage_max_work_attempts,
+            s.max_review_rounds AS stage_max_review_rounds,
+            s.artifact_refs AS stage_artifact_refs,
+            s.notes AS stage_notes,
+            s.updated_at AS stage_updated_at
+        FROM tasks t
+        LEFT JOIN task_stage_states s ON s.task_id = t.id
+        WHERE {where_clause}
+        ORDER BY s.position, s.stage_name
+        """,  # nosec B608 - where_clause is selected from fixed templates.
+        tuple(params),
+    )
+    if not rows:
+        return None
+    task = Task.from_row(rows[0])
+    task.stages = tuple(_stage_from_joined_row(row) for row in rows if row["stage_task_id"])
+    return task
+
+
+def _candidate_lookup_clause(
+    task_id: str,
+    project_id: str | None,
+) -> tuple[str | None, list[object]]:
+    if task_id.startswith("#") or task_id.isdigit():
+        if project_id is None:
+            return None, []
+        try:
+            seq_num = int(task_id[1:] if task_id.startswith("#") else task_id)
+        except ValueError:
+            return None, []
+        return "t.project_id = ? AND t.seq_num = ?", [project_id, seq_num]
+
+    if "." in task_id and all(part.isdigit() for part in task_id.split(".")):
+        if project_id is None:
+            return None, []
+        return "t.project_id = ? AND t.path_cache = ?", [project_id, task_id]
+
+    params: list[object] = [task_id]
+    clause = "t.id = ?"
+    if project_id is not None:
+        clause += " AND t.project_id = ?"
+        params.append(project_id)
+    return clause, params
+
+
+def _stage_from_joined_row(row: Any) -> StageState:
+    return StageState(
+        task_id=row["stage_task_id"],
+        stage_name=row["stage_name"],
+        position=int(row["stage_position"]),
+        state=row["stage_state"],
+        review_policy=row["stage_review_policy"],
+        reviewer_agent=row["stage_reviewer_agent"],
+        entered_at=row["stage_entered_at"],
+        entered_by_session_id=row["stage_entered_by_session_id"],
+        completed_at=row["stage_completed_at"],
+        completed_by_session_id=row["stage_completed_by_session_id"],
+        completed_commit_sha=row["stage_completed_commit_sha"],
+        work_attempt_count=int(row["stage_work_attempt_count"]),
+        review_round_count=int(row["stage_review_round_count"]),
+        max_work_attempts=row["stage_max_work_attempts"],
+        max_review_rounds=row["stage_max_review_rounds"],
+        artifact_refs=_artifact_refs(row["stage_artifact_refs"]),
+        notes=row["stage_notes"],
+        updated_at=row["stage_updated_at"],
+    )
+
+
+def _artifact_refs(value: str | None) -> dict[str, str] | None:
+    if not value:
+        return None
+    decoded = json.loads(value)
+    if not isinstance(decoded, dict):
+        return None
+    return {str(key): str(item) for key, item in decoded.items()}
 
 
 def build_context(

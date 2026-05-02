@@ -18,6 +18,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._crud import get_task, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
 
@@ -25,6 +26,8 @@ pytestmark = pytest.mark.unit
 def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title=title)
+    stage_name = fields.pop("stage_name", "development")
+    stage_state = fields.pop("stage_state", "ready")
     update_task(
         temp_db,
         task.id,
@@ -37,6 +40,8 @@ def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
         claimed_by_session_id=fields.pop("claimed_by_session_id", None),
         **fields,
     )
+    initialize_manifest(temp_db, task.id, [spec(stage_name, 0)])
+    set_stage_state(temp_db, task.id, stage_name, stage_state)
     return get_task(temp_db, task.id)
 
 
@@ -477,7 +482,7 @@ async def test_create_isolation_action_missing_target_branch_escalates(
     assert escalations[0]["reason"] == "isolation_missing_target_branch"
 
 
-async def test_dev_rule_fires_on_next_heartbeat_after_isolation_created(
+async def test_dev_rule_fires_after_isolation_and_stage_start(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -496,9 +501,11 @@ async def test_dev_rule_fires_on_next_heartbeat_after_isolation_created(
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
     second = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    third = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert first.executed == 1
     assert second.executed == 1
+    assert third.executed == 1
     assert spawned == [task.id]
 
 

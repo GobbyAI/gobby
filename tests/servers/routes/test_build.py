@@ -66,7 +66,7 @@ def test_post_api_build_accepts_json_body_and_returns_build_result() -> None:
         "initial_lifecycle": "plan_review",
         "applied_stages_skipped": ["pr"],
         "tick_dispatched": 0,
-        "stage_manifest": None,
+        "manifest": None,
     }
     call = build.call_args
     assert call.args[0] == "plan.md"

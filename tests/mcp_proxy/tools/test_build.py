@@ -104,7 +104,7 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(temp
         "initial_lifecycle": "in_development",
         "applied_stages_skipped": ["qa"],
         "tick_dispatched": 1,
-        "stage_manifest": None,
+        "manifest": None,
     }
     call = build.call_args
     assert call.args[0] == "#42"

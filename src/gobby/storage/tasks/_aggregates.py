@@ -10,7 +10,76 @@ This module provides aggregate operations for task counts and statistics:
 from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.tasks._state_sql import canonical_status_case, is_ready_sql, status_filter_sql
+
+
+def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOIN") -> str:
+    return f"""
+    {join_type} task_stage_states current_stage
+      ON current_stage.task_id = {task_alias}.id
+     AND current_stage.state != 'done'
+     AND current_stage.position = (
+         SELECT MIN(stage_scan.position)
+           FROM task_stage_states stage_scan
+          WHERE stage_scan.task_id = {task_alias}.id
+            AND stage_scan.state != 'done'
+     )
+    """
+
+
+def _projected_status_sql(task_alias: str = "t") -> str:
+    return (
+        "CASE "
+        f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
+        f"WHEN {task_alias}.escalated_at IS NOT NULL "
+        f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
+        "WHEN current_stage.state = 'ready' THEN 'open' "
+        "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
+        "THEN current_stage.state "
+        "ELSE 'open' END"
+    )
+
+
+def _status_filter_sql(status: str | list[str] | None) -> tuple[str | None, list[Any]]:
+    if not status:
+        return None, []
+    statuses = [status] if isinstance(status, str) else list(status)
+    placeholders = ", ".join("?" for _ in statuses)
+    return f"{_projected_status_sql()} IN ({placeholders})", statuses
+
+
+def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
+    return (
+        f"{task_alias}.closed_at IS NULL "
+        f"AND {task_alias}.escalated_at IS NULL "
+        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+    )
+
+
+def _external_blocker_exists_sql(task_alias: str = "t") -> str:
+    return f"""
+    EXISTS (
+        SELECT 1 FROM task_dependencies d
+        JOIN tasks blocker ON d.depends_on = blocker.id
+        WHERE d.task_id = {task_alias}.id
+          AND d.dep_type = 'blocks'
+          AND blocker.closed_at IS NULL
+          AND NOT EXISTS (
+              WITH RECURSIVE ancestors AS (
+                  SELECT blocker.parent_task_id AS ancestor_id
+                  UNION ALL
+                  SELECT p.parent_task_id
+                  FROM tasks p
+                  JOIN ancestors a ON p.id = a.ancestor_id
+                  WHERE p.parent_task_id IS NOT NULL
+              )
+              SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
+          )
+    )
+    """
+
+
+def _no_external_blocker_sql(task_alias: str = "t") -> str:
+    return f"NOT {_external_blocker_exists_sql(task_alias)}"
 
 
 def count_tasks(
@@ -28,14 +97,19 @@ def count_tasks(
     Returns:
         Count of matching tasks
     """
-    query = "SELECT COUNT(*) as count FROM tasks WHERE 1=1"
+    query = f"""
+    SELECT COUNT(*) as count
+      FROM tasks t
+      {_current_stage_join_sql("t")}
+     WHERE 1=1
+    """
     params: list[Any] = []
 
     if project_id:
-        query += " AND project_id = ?"
+        query += " AND t.project_id = ?"
         params.append(project_id)
     if status:
-        clause, clause_params = status_filter_sql(status)
+        clause, clause_params = _status_filter_sql(status)
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
@@ -57,12 +131,16 @@ def count_by_status(
     Returns:
         Dictionary mapping status to count
     """
-    projected_status = canonical_status_case()
-    query = f"SELECT {projected_status} as status, COUNT(*) as count FROM tasks"
+    projected_status = _projected_status_sql("t")
+    query = f"""
+    SELECT {projected_status} as status, COUNT(*) as count
+      FROM tasks t
+      {_current_stage_join_sql("t")}
+    """
     params: list[Any] = []
 
     if project_id:
-        query += " WHERE project_id = ?"
+        query += " WHERE t.project_id = ?"
         params.append(project_id)
 
     query += " GROUP BY status"
@@ -93,27 +171,10 @@ def count_ready_tasks(
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
     query = f"""
     SELECT COUNT(*) as count FROM tasks t
-    WHERE {is_ready_sql("t")}
-    AND NOT EXISTS (
-        SELECT 1 FROM task_dependencies d
-        JOIN tasks blocker ON d.depends_on = blocker.id
-        WHERE d.task_id = t.id
-          AND d.dep_type = 'blocks'
-          AND blocker.closed_at IS NULL
-          -- Exclude ancestor blocked by any descendant (completion block, not work block)
-          -- Check if t.id appears anywhere in blocker's ancestor chain
-          AND NOT EXISTS (
-              WITH RECURSIVE ancestors AS (
-                  SELECT blocker.parent_task_id AS ancestor_id
-                  UNION ALL
-                  SELECT p.parent_task_id
-                  FROM tasks p
-                  JOIN ancestors a ON p.id = a.ancestor_id
-                  WHERE p.parent_task_id IS NOT NULL
-              )
-              SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-          )
-    )
+    {_current_stage_join_sql("t", join_type="JOIN")}
+    WHERE {_not_closed_or_escalated_sql("t")}
+    AND current_stage.state IN ('ready', 'in_progress')
+    AND {_no_external_blocker_sql("t")}
     """
     params: list[Any] = []
 
@@ -173,28 +234,13 @@ def count_blocked_tasks(
     # Uses the same descendant-aware predicate as list_ready_tasks.
     # The is_descendant_of check uses a recursive CTE to walk up the blocker's
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
-    query = """
+    query = f"""
     SELECT COUNT(*) as count FROM tasks t
     WHERE t.closed_at IS NULL
-    AND EXISTS (
-        SELECT 1 FROM task_dependencies d
-        JOIN tasks blocker ON d.depends_on = blocker.id
-        WHERE d.task_id = t.id
-          AND d.dep_type = 'blocks'
-          AND blocker.closed_at IS NULL
-          -- Exclude ancestor blocked by any descendant (completion block, not work block)
-          -- Check if t.id appears anywhere in blocker's ancestor chain
-          AND NOT EXISTS (
-              WITH RECURSIVE ancestors AS (
-                  SELECT blocker.parent_task_id AS ancestor_id
-                  UNION ALL
-                  SELECT p.parent_task_id
-                  FROM tasks p
-                  JOIN ancestors a ON p.id = a.ancestor_id
-                  WHERE p.parent_task_id IS NOT NULL
-              )
-              SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-          )
+    AND (
+        t.escalated_at IS NOT NULL
+        OR COALESCE(t.is_escalated, 0) = 1
+        OR {_external_blocker_exists_sql("t")}
     )
     """
     params: list[Any] = []

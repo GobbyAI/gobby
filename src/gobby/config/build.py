@@ -11,15 +11,32 @@ from typing import Any, Literal, TypedDict, cast
 import yaml
 
 Isolation = Literal["none", "worktree", "clone"]
-SkippableStage = Literal["plan_review", "test_arch", "expanding", "qa", "holistic_review", "pr"]
+SkippableStage = Literal[
+    "ideation",
+    "research",
+    "architecture",
+    "prd",
+    "planning",
+    "test_arch",
+    "expansion",
+    "development",
+    "holistic_qa",
+    "pr",
+    "merge",
+]
 
 _SKIPPABLE_STAGE_VALUES: tuple[SkippableStage, ...] = (
-    "plan_review",
+    "ideation",
+    "research",
+    "architecture",
+    "prd",
+    "planning",
     "test_arch",
-    "expanding",
-    "qa",
-    "holistic_review",
+    "expansion",
+    "development",
+    "holistic_qa",
     "pr",
+    "merge",
 )
 SKIPPABLE_STAGES: frozenset[SkippableStage] = frozenset(_SKIPPABLE_STAGE_VALUES)
 logger = logging.getLogger(__name__)
@@ -54,18 +71,18 @@ class BuildProfile(TypedDict):
 
 _DEFAULT_PROFILE_TEMPLATES: Mapping[str, tuple[tuple[str, ...], Isolation, bool]] = {
     "quick": (
-        ("plan_review", "test_arch", "expanding", "qa", "holistic_review", "pr"),
+        ("research", "holistic_qa"),
         "none",
         False,
     ),
-    "review": (("plan_review", "pr"), "worktree", False),
+    "review": ((), "worktree", False),
     "full": ((), "worktree", False),
     "default_unattended": ((), "worktree", False),
-    "full-unattended": (("pr",), "worktree", True),
+    "full-yolo": ((), "worktree", True),
 }
 _PROFILE_ALIASES = {
     "default_yolo": "default_unattended",
-    "full-yolo": "full-unattended",
+    "full-unattended": "full-yolo",
 }
 
 

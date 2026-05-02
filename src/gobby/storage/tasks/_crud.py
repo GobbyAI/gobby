@@ -348,12 +348,23 @@ def list_automation_candidates(
         f"""
         SELECT tasks.*
         FROM tasks
+        JOIN task_stage_states current_stage
+          ON current_stage.task_id = tasks.id
+         AND current_stage.state != 'done'
+         AND current_stage.position = (
+             SELECT MIN(stage_scan.position)
+               FROM task_stage_states stage_scan
+              WHERE stage_scan.task_id = tasks.id
+                AND stage_scan.state != 'done'
+         )
         LEFT JOIN task_dispatch_mutex mutex ON mutex.task_id = tasks.id
         WHERE tasks.allow_automation = 1
           AND tasks.claimed_by_session_id IS NULL
           AND tasks.lifecycle != 'merged'
           AND tasks.closed_at IS NULL
           AND tasks.escalated_at IS NULL
+          AND COALESCE(tasks.is_escalated, 0) = 0
+          AND current_stage.state IN ('ready', 'in_progress', 'needs_review', 'review_approved')
           AND (
               mutex.task_id IS NULL
               OR mutex.lease_until IS NULL

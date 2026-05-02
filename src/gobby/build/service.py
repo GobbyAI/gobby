@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -54,7 +54,12 @@ class BuildResult:
     initial_lifecycle: str
     applied_stages_skipped: list[str]
     tick_dispatched: int
-    stage_manifest: list[dict[str, str | int | None]] | None = None
+    manifest: list[dict[str, str | int | None]] | None = None
+
+    @property
+    def stage_manifest(self) -> list[dict[str, str | int | None]] | None:
+        """Backward-compatible alias for callers still reading stage_manifest."""
+        return self.manifest
 
 
 @dataclass(frozen=True)
@@ -114,6 +119,25 @@ _LEGACY_STAGE_ALIASES: dict[str, str | None] = {
     "holistic_review": "holistic_qa",
     "qa": None,
 }
+_PROFILE_ALIASES = {
+    "default_yolo": "default_unattended",
+    "full-unattended": "full-yolo",
+}
+
+
+@dataclass(frozen=True)
+class ProfileBundle:
+    skip: tuple[str, ...] = ()
+    yolo: bool = False
+
+
+PROFILE_BUNDLES: dict[str, ProfileBundle] = {
+    "quick": ProfileBundle(skip=("research", "holistic_qa")),
+    "review": ProfileBundle(),
+    "full": ProfileBundle(),
+    "default_unattended": ProfileBundle(),
+    "full-yolo": ProfileBundle(yolo=True),
+}
 
 
 async def build(
@@ -125,9 +149,10 @@ async def build(
 ) -> BuildResult:
     """Start lifecycle automation for a plan file, epic, or automated leaf task."""
 
-    skip_stages = _validate_skip_stages(opts.skip_stages)
+    _validate_skip_stages(opts.skip_stages)
     task_manager = LocalTaskManager(db)
     input_kind, task_or_plan = _resolve_input(input_ref, task_manager, project_id)
+    opts, skip_stages = _apply_profile_bundle(opts, input_kind)
 
     _composer_scope_cap(
         input_kind=input_kind,
@@ -191,7 +216,7 @@ async def _build_plan_file(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=await _kick_dispatcher_tick(task_manager.db, project_id),
-        stage_manifest=_specs_payload(specs),
+        manifest=_specs_payload(specs),
     )
 
 
@@ -229,7 +254,7 @@ async def _build_leaf(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=await _kick_dispatcher_tick(db, project_id),
-        stage_manifest=_specs_payload(specs),
+        manifest=_specs_payload(specs),
     )
 
 
@@ -264,7 +289,7 @@ async def _build_epic(
         initial_lifecycle=initial_lifecycle,
         applied_stages_skipped=skip_stages,
         tick_dispatched=await _kick_dispatcher_tick(db, project_id),
-        stage_manifest=_specs_payload(specs),
+        manifest=_specs_payload(specs),
     )
 
 
@@ -340,6 +365,30 @@ def _validate_skip_stages(skip_stages: list[str]) -> list[str]:
             raise ValueError(f"invalid skip stage {stage}; valid skip stages: {allowed}")
         normalized.append(canonical)
     return list(dict.fromkeys(normalized))
+
+
+def _apply_profile_bundle(
+    opts: BuildOptions, input_kind: InputKind
+) -> tuple[BuildOptions, list[str]]:
+    profile_name = _resolve_profile_name(opts.profile, input_kind)
+    bundle = PROFILE_BUNDLES.get(profile_name) if profile_name else None
+    if profile_name and bundle is None:
+        allowed = ", ".join(sorted(set(PROFILE_BUNDLES) | {"auto"} | set(_PROFILE_ALIASES)))
+        raise ValueError(f"unknown build profile: {profile_name}; valid profiles: {allowed}")
+
+    bundled_skips = list(bundle.skip) if bundle else []
+    skip_stages = _validate_skip_stages([*bundled_skips, *opts.skip_stages])
+    if bundle is not None and bundle.yolo and not opts.unattended:
+        opts = replace(opts, unattended=True)
+    return opts, skip_stages
+
+
+def _resolve_profile_name(profile: str | None, input_kind: InputKind) -> str | None:
+    if profile is None:
+        return None
+    if profile == "auto":
+        return {"plan_file": "review", "leaf": "quick", "epic": "full"}[input_kind]
+    return _PROFILE_ALIASES.get(profile, profile)
 
 
 def _validate_profile_for_input(profile: str | None, input_kind: InputKind) -> None:
@@ -550,7 +599,7 @@ def resolve_stage_manifest_specs(
         raise ValueError(f"stage_caps target stage not in resolved manifest: {unknown_caps[0]}")
 
     specs: list[StageManifestSpec] = []
-    for position, stage_name in enumerate(manifest, start=1):
+    for position, stage_name in enumerate(manifest):
         override = cap_by_stage.get(stage_name)
         specs.append(
             StageManifestSpec(

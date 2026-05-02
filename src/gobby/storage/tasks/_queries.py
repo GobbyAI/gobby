@@ -13,7 +13,7 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
-from gobby.storage.tasks._state_sql import is_ready_sql, status_filter_sql
+from gobby.storage.tasks._state_sql import status_filter_sql
 from gobby.tasks.state_semantics import normalize_lifecycle_stage
 
 
@@ -47,6 +47,55 @@ def _lifecycle_stage_filter_sql(
     if not clauses:
         return None, []
     return "(" + " OR ".join(clauses) + ")", params
+
+
+def _current_stage_join_sql(task_alias: str = "t") -> str:
+    return f"""
+    JOIN task_stage_states current_stage
+      ON current_stage.task_id = {task_alias}.id
+     AND current_stage.state != 'done'
+     AND current_stage.position = (
+         SELECT MIN(stage_scan.position)
+           FROM task_stage_states stage_scan
+          WHERE stage_scan.task_id = {task_alias}.id
+            AND stage_scan.state != 'done'
+     )
+    """
+
+
+def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
+    return (
+        f"{task_alias}.closed_at IS NULL "
+        f"AND {task_alias}.escalated_at IS NULL "
+        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+    )
+
+
+def _external_blocker_exists_sql(task_alias: str = "t") -> str:
+    return f"""
+    EXISTS (
+        SELECT 1 FROM task_dependencies d
+        JOIN tasks blocker ON d.depends_on = blocker.id
+        WHERE d.task_id = {task_alias}.id
+          AND d.dep_type = 'blocks'
+          AND blocker.closed_at IS NULL
+          AND NOT EXISTS (
+              WITH RECURSIVE ancestors AS (
+                  SELECT blocker.parent_task_id AS ancestor_id
+                  UNION ALL
+                  SELECT p.parent_task_id
+                  FROM tasks p
+                  JOIN ancestors a ON p.id = a.ancestor_id
+                  WHERE p.parent_task_id IS NOT NULL
+              )
+              SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
+          )
+    )
+    """
+
+
+def _no_external_blocker_sql(task_alias: str = "t") -> str:
+    return f"NOT {_external_blocker_exists_sql(task_alias)}"
 
 
 def list_tasks(
@@ -200,53 +249,21 @@ def list_ready_tasks(
     WITH RECURSIVE ready_tasks AS (
         -- Base case: open/in_progress tasks with no parent and no external blocking deps
         SELECT t.id FROM tasks t
-        WHERE {is_ready_sql("t")}
+        {_current_stage_join_sql("t")}
+        WHERE {_not_closed_or_escalated_sql("t")}
+        AND current_stage.state IN ('ready', 'in_progress')
         AND t.parent_task_id IS NULL
-        AND NOT EXISTS (
-            SELECT 1 FROM task_dependencies d
-            JOIN tasks blocker ON d.depends_on = blocker.id
-            WHERE d.task_id = t.id
-              AND d.dep_type = 'blocks'
-              AND blocker.closed_at IS NULL
-              -- Exclude ancestor blocked by any descendant (completion block, not work block)
-              AND NOT EXISTS (
-                  WITH RECURSIVE ancestors AS (
-                      SELECT blocker.parent_task_id AS ancestor_id
-                      UNION ALL
-                      SELECT p.parent_task_id
-                      FROM tasks p
-                      JOIN ancestors a ON p.id = a.ancestor_id
-                      WHERE p.parent_task_id IS NOT NULL
-                  )
-                  SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-              )
-        )
+        AND {_no_external_blocker_sql("t")}
 
         UNION ALL
 
         -- Recursive case: open/in_progress tasks whose parent is ready and no external blocking deps
         SELECT t.id FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        WHERE {is_ready_sql("t")}
-        AND NOT EXISTS (
-            SELECT 1 FROM task_dependencies d
-            JOIN tasks blocker ON d.depends_on = blocker.id
-            WHERE d.task_id = t.id
-              AND d.dep_type = 'blocks'
-              AND blocker.closed_at IS NULL
-              -- Exclude ancestor blocked by any descendant (completion block, not work block)
-              AND NOT EXISTS (
-                  WITH RECURSIVE ancestors AS (
-                      SELECT blocker.parent_task_id AS ancestor_id
-                      UNION ALL
-                      SELECT p.parent_task_id
-                      FROM tasks p
-                      JOIN ancestors a ON p.id = a.ancestor_id
-                      WHERE p.parent_task_id IS NOT NULL
-                  )
-                  SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-              )
-        )
+        {_current_stage_join_sql("t")}
+        WHERE {_not_closed_or_escalated_sql("t")}
+        AND current_stage.state IN ('ready', 'in_progress')
+        AND {_no_external_blocker_sql("t")}
     )
     SELECT t.* FROM tasks t
     JOIN ready_tasks rt ON t.id = rt.id
@@ -302,27 +319,13 @@ def list_blocked_tasks(
     Note: The limit is applied AFTER hierarchical ordering to ensure coherent
     tree structures.
     """
-    query = """
+    query = f"""
     SELECT t.* FROM tasks t
     WHERE t.closed_at IS NULL
-    AND EXISTS (
-        SELECT 1 FROM task_dependencies d
-        JOIN tasks blocker ON d.depends_on = blocker.id
-        WHERE d.task_id = t.id
-          AND d.dep_type = 'blocks'
-          AND blocker.closed_at IS NULL
-          -- Exclude ancestor blocked by any descendant (completion block, not work block)
-          AND NOT EXISTS (
-              WITH RECURSIVE ancestors AS (
-                  SELECT blocker.parent_task_id AS ancestor_id
-                  UNION ALL
-                  SELECT p.parent_task_id
-                  FROM tasks p
-                  JOIN ancestors a ON p.id = a.ancestor_id
-                  WHERE p.parent_task_id IS NOT NULL
-              )
-              SELECT 1 FROM ancestors WHERE ancestor_id = t.id
-          )
+    AND (
+        t.escalated_at IS NOT NULL
+        OR COALESCE(t.is_escalated, 0) = 1
+        OR {_external_blocker_exists_sql("t")}
     )
     """
     params: list[Any] = []

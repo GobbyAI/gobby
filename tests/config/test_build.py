@@ -16,7 +16,19 @@ def test_build_config_defaults_include_profiles_and_dispatch_knobs() -> None:
     cfg = BuildConfig()
 
     assert SKIPPABLE_STAGES == frozenset(
-        {"plan_review", "test_arch", "expanding", "qa", "holistic_review", "pr"}
+        {
+            "ideation",
+            "research",
+            "architecture",
+            "prd",
+            "planning",
+            "test_arch",
+            "expansion",
+            "development",
+            "holistic_qa",
+            "pr",
+            "merge",
+        }
     )
     assert cfg.default_skip_stages == ()
     assert cfg.default_isolation == "worktree"
@@ -28,12 +40,12 @@ def test_build_config_defaults_include_profiles_and_dispatch_knobs() -> None:
     assert cfg.max_active_agents == 10
     assert cfg.dispatch_interval_seconds == 60
     assert cfg.profiles["quick"] == {
-        "skip_stages": ["plan_review", "test_arch", "expanding", "qa", "holistic_review", "pr"],
+        "skip_stages": ["research", "holistic_qa"],
         "isolation": "none",
         "yolo": False,
     }
     assert cfg.profiles["review"] == {
-        "skip_stages": ["plan_review", "pr"],
+        "skip_stages": [],
         "isolation": "worktree",
         "yolo": False,
     }
@@ -47,8 +59,8 @@ def test_build_config_defaults_include_profiles_and_dispatch_knobs() -> None:
         "isolation": "worktree",
         "yolo": False,
     }
-    assert cfg.profiles["full-unattended"] == {
-        "skip_stages": ["pr"],
+    assert cfg.profiles["full-yolo"] == {
+        "skip_stages": [],
         "isolation": "worktree",
         "yolo": True,
     }
@@ -67,7 +79,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     (home / ".gobby" / "build.yaml").write_text(
         yaml.safe_dump(
             {
-                "default_skip_stages": ["plan_review"],
+                "default_skip_stages": ["research"],
                 "default_isolation": "clone",
                 "default_yolo": True,
                 "default_max_review_rounds": 5,
@@ -76,7 +88,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
                 "max_active_agents": 4,
                 "profiles": {
                     "review": {
-                        "skip_stages": ["plan_review", "holistic_review", "pr"],
+                        "skip_stages": ["planning", "holistic_qa", "pr"],
                         "isolation": "clone",
                         "yolo": True,
                     }
@@ -87,7 +99,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     (project_root / ".gobby" / "build.yaml").write_text(
         yaml.safe_dump(
             {
-                "default_skip_stages": ["qa"],
+                "default_skip_stages": ["holistic_qa"],
                 "default_yolo": False,
                 "cleanup_clones_on_merge": False,
                 "dispatch_interval_seconds": 15,
@@ -105,7 +117,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
         },
     )
 
-    assert cfg.default_skip_stages == ("qa",)
+    assert cfg.default_skip_stages == ("holistic_qa",)
     assert cfg.default_isolation == "none"
     assert cfg.default_yolo is False
     assert cfg.stage_caps["pr"].max_review_rounds == 5
@@ -116,7 +128,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     assert cfg.max_active_agents == 2
     assert cfg.dispatch_interval_seconds == 15
     assert cfg.profiles["review"] == {
-        "skip_stages": ["plan_review", "holistic_review", "pr"],
+        "skip_stages": ["planning", "holistic_qa", "pr"],
         "isolation": "clone",
         "yolo": True,
     }
@@ -128,22 +140,15 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
         (
             "quick",
             {
-                "skip_stages": [
-                    "plan_review",
-                    "test_arch",
-                    "expanding",
-                    "qa",
-                    "holistic_review",
-                    "pr",
-                ],
+                "skip_stages": ["research", "holistic_qa"],
                 "isolation": "none",
                 "yolo": False,
             },
         ),
-        ("review", {"skip_stages": ["plan_review", "pr"], "isolation": "worktree", "yolo": False}),
+        ("review", {"skip_stages": [], "isolation": "worktree", "yolo": False}),
         ("full", {"skip_stages": [], "isolation": "worktree", "yolo": False}),
-        ("full-unattended", {"skip_stages": ["pr"], "isolation": "worktree", "yolo": True}),
-        ("full-yolo", {"skip_stages": ["pr"], "isolation": "worktree", "yolo": True}),
+        ("full-unattended", {"skip_stages": [], "isolation": "worktree", "yolo": True}),
+        ("full-yolo", {"skip_stages": [], "isolation": "worktree", "yolo": True}),
     ],
 )
 def test_resolve_profile_returns_builtin_presets(profile: str, expected: dict[str, object]) -> None:
