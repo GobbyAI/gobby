@@ -203,6 +203,65 @@ function normalizeTasks<T extends RawTaskPayload>(tasks: T[] | undefined): Array
   return (tasks ?? []).map(task => normalizeTask(task))
 }
 
+function setQueryParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | null | undefined,
+): void {
+  if (value === null || value === undefined || value === '') return
+  params.set(key, String(value))
+}
+
+function buildTaskListParams(filters: TaskFilters, offset: number, limit: number): URLSearchParams {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  })
+  params.set('sort_by', 'updated_at')
+  params.set('sort_order', 'desc')
+  params.set('include_stages', '1')
+  setQueryParam(params, 'priority', filters.priority)
+  setQueryParam(params, 'task_type', filters.taskType)
+  setQueryParam(params, 'assignee', filters.assignee)
+  setQueryParam(params, 'label', filters.label)
+  setQueryParam(params, 'parent_task_id', filters.parentTaskId)
+  setQueryParam(params, 'stage', filters.stage)
+  setQueryParam(params, 'stage_state', filters.stageState)
+  setQueryParam(params, 'search', filters.search)
+  setQueryParam(params, 'project_id', filters.projectId)
+  return params
+}
+
+function appendIncomingTasks(current: GobbyTask[], incoming: GobbyTask[]): GobbyTask[] {
+  const seen = new Set(current.map(task => task.id))
+  const merged = current.slice()
+  for (const task of incoming) {
+    if (!seen.has(task.id)) merged.push(task)
+  }
+  return merged
+}
+
+function applyTaskEvent(
+  tasks: GobbyTask[],
+  event: string,
+  taskData: Record<string, unknown>,
+): GobbyTask[] {
+  const taskId = taskData.id as string
+  if (event === 'task_deleted') {
+    return tasks.filter(task => task.id !== taskId)
+  }
+  if (event === 'task_created') {
+    const newTask = normalizeTask(taskData as unknown as RawTaskPayload)
+    if (tasks.some(task => task.id === taskId)) return tasks
+    return [...tasks, newTask]
+  }
+
+  const updated = taskData as unknown as RawTaskPayload
+  return tasks.map(task =>
+    task.id === taskId ? normalizeTask({ ...task, ...updated }) : task
+  )
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -237,23 +296,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   }, [projectId])
 
   const buildParams = useCallback((offset: number, limit: number) => {
-    const params = new URLSearchParams({
-      limit: String(limit),
-      offset: String(offset),
-    })
-    params.set('sort_by', 'updated_at')
-    params.set('sort_order', 'desc')
-    params.set('include_stages', '1')
-    if (filters.priority !== null) params.set('priority', String(filters.priority))
-    if (filters.taskType) params.set('task_type', filters.taskType)
-    if (filters.assignee) params.set('assignee', filters.assignee)
-    if (filters.label) params.set('label', filters.label)
-    if (filters.parentTaskId) params.set('parent_task_id', filters.parentTaskId)
-    if (filters.stage) params.set('stage', filters.stage)
-    if (filters.stageState) params.set('stage_state', filters.stageState)
-    if (filters.search) params.set('search', filters.search)
-    if (filters.projectId) params.set('project_id', filters.projectId)
-    return params
+    return buildTaskListParams(filters, offset, limit)
   }, [filters])
 
   // Fetch first page (replaces accumulated tasks)
@@ -297,15 +340,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
         const data: TaskListResponse = await response.json()
         const incoming = normalizeTasks(data.tasks)
         if (incoming.length > 0) {
-          setAllTasks(prev => {
-            // Avoid duplicates if the server returns overlapping rows after a refetch.
-            const seen = new Set(prev.map(t => t.id))
-            const merged = prev.slice()
-            for (const t of incoming) {
-              if (!seen.has(t.id)) merged.push(t)
-            }
-            return merged
-          })
+          setAllTasks(prev => appendIncomingTasks(prev, incoming))
         }
         setServerTotal((prev) => data.total ?? prev)
         setError(null)
@@ -603,19 +638,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     const taskId = taskData.id as string
     if (!taskId) return
 
-    if (event === 'task_deleted') {
-      setAllTasks(prev => prev.filter(t => t.id !== taskId))
-    } else if (event === 'task_created') {
-      const newTask = normalizeTask(taskData as unknown as RawTaskPayload)
-      setAllTasks(prev => {
-        if (prev.some(t => t.id === taskId)) return prev
-        return [...prev, newTask]
-      })
-    } else {
-      // task_updated, task_closed, task_reopened
-      const updated = taskData as unknown as RawTaskPayload
-      setAllTasks(prev => prev.map(t => t.id === taskId ? normalizeTask({ ...t, ...updated }) : t))
-    }
+    setAllTasks(prev => applyTaskEvent(prev, event, taskData))
 
     // Debounced full refetch to sync stats, total, and filter accuracy
     scheduleRefetch()
