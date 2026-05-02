@@ -1,5 +1,4 @@
 import { useState, useMemo, useCallback } from "react";
-import "./ProjectsPage.css";
 import { TabBar } from "../shared/TabBar";
 import { useProjects } from "../../hooks/useProjects";
 import { useSourceControl } from "../../hooks/useSourceControl";
@@ -11,6 +10,12 @@ import { PullRequestsView } from "../source-control/PullRequestsView";
 import { IssuesView } from "../source-control/IssuesView";
 import { CICDView } from "../source-control/CICDView";
 import { FilesTab } from "../activity/FilesTab";
+
+const PAGE_CLS = "flex flex-1 flex-col overflow-hidden";
+const PAGE_HEADER_CLS = "shrink-0 border-b border-[var(--border)] px-6";
+const PAGE_CONTENT_CLS = "flex-1 overflow-y-auto px-6 py-4";
+const EMPTY_CLS =
+  "flex items-center justify-center p-12 text-[length:var(--text-base)] text-[var(--text-muted)]";
 
 type ProjectsTab =
   | "overview"
@@ -49,7 +54,6 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
 
   const sc = useSourceControl(projectId ?? null);
 
-  // Find the project matching the global selector for settings
   const activeProject = useMemo(() => {
     if (selectedProject) return selectedProject;
     if (projectId) return allProjects.find((p) => p.id === projectId) ?? null;
@@ -72,7 +76,7 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
   const renderSettingsTab = () => {
     if (!activeProject) {
       return (
-        <div className="projects-empty">
+        <div className={EMPTY_CLS}>
           Select a project from the header to configure settings.
         </div>
       );
@@ -87,8 +91,8 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
   };
 
   return (
-    <main className="projects-page">
-      <div className="projects-page-header">
+    <main className={PAGE_CLS}>
+      <div className={PAGE_HEADER_CLS}>
         <TabBar
           tabs={TABS}
           activeTab={activeTab}
@@ -96,12 +100,12 @@ export function ProjectsPage({ projectId }: ProjectsPageProps = {}) {
         />
       </div>
 
-      <div className="projects-page-content">
+      <div className={PAGE_CONTENT_CLS}>
         {activeTab === "overview" &&
           (activeProject ? (
             <ProjectSummary project={activeProject} />
           ) : (
-            <div className="projects-empty">
+            <div className={EMPTY_CLS}>
               Select a project from the header to view overview.
             </div>
           ))}

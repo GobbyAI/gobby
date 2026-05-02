@@ -12,6 +12,51 @@ import { SessionModelBreakdown } from './SessionModelBreakdown'
 import { ConfirmDialog } from '../chat/ui/ConfirmDialog'
 import { DURATION_INVALID, formatDuration, formatTokens } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { cn } from '../../lib/utils'
+import { STATUS_BADGE_CLS, STATUS_BADGE_BG } from './styles'
+
+const DETAIL_CLS = 'relative flex-1 overflow-y-auto'
+
+const STICKY_HEADER_CLS =
+  'sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--bg-primary)] px-6 py-3'
+const HEADER_CLS = 'flex flex-wrap items-center justify-between gap-2'
+const HEADER_LEFT_CLS = 'flex min-w-0 items-center gap-2'
+const HEADER_RIGHT_CLS = 'flex shrink-0 items-center gap-2'
+const TITLE_CLS =
+  'overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)]'
+const TITLE_INPUT_CLS =
+  'w-full min-w-0 rounded-sm border border-[var(--accent)] bg-[var(--bg-primary)] px-1 py-0 font-[inherit] text-[length:var(--text-xl)] font-semibold text-[var(--text-primary)] outline-none'
+
+const MODEL_TAG_CLS =
+  'rounded bg-[var(--bg-tertiary)] px-1.5 py-0.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-muted)]'
+const BRANCH_TAG_CLS =
+  'flex items-center gap-1 rounded bg-[var(--bg-tertiary)] px-1.5 py-0.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-muted)]'
+
+const COMPACT_STATS_CLS = 'mt-1.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-muted)]'
+
+const METADATA_PANEL_CLS = 'px-6 py-4'
+const METADATA_TOGGLE_CLS =
+  'flex cursor-pointer select-none list-none items-center gap-1.5 py-1.5 text-[length:var(--text-base)] font-semibold uppercase tracking-[0.03em] text-[var(--text-secondary)] [&::-webkit-details-marker]:hidden'
+const METADATA_CHEVRON_CLS =
+  'shrink-0 transition-transform duration-150 [details:not([open])>summary>&]:-rotate-90'
+const METADATA_CONTENT_CLS = 'py-2'
+
+const GENERATE_BTN_CLS =
+  'ml-auto flex cursor-pointer items-center gap-1.5 rounded border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] text-white transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+const REGENERATE_BTN_CLS =
+  'ml-auto flex cursor-pointer items-center rounded border border-[var(--border)] bg-transparent p-1 text-[var(--text-muted)] transition-all duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+
+const GENERATING_CLS =
+  'flex items-center gap-2 py-3 text-[length:var(--text-base)] text-[var(--text-secondary)]'
+const NO_SUMMARY_CLS = 'italic text-[length:var(--text-base)] text-[var(--text-muted)]'
+
+const ACTIONS_CLS = 'relative'
+const ASK_BTN_CLS =
+  'flex cursor-pointer items-center gap-1 rounded-md border-0 bg-[var(--accent)] px-2.5 py-1 text-[length:var(--text-sm)] font-medium text-white transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+const DROPDOWN_CLS =
+  'absolute right-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'
+const DROPDOWN_ITEM_CLS =
+  'flex w-full cursor-pointer items-center gap-2 rounded-md border-0 bg-transparent px-3 py-2 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent pointer-coarse:min-h-11'
 
 interface SessionDetailProps {
   session: GobbySession
@@ -49,7 +94,7 @@ function formatCompactStats(session: GobbySession): string {
   if ((session.tasks_closed ?? 0) > 0) parts.push(`${session.tasks_closed} tasks`)
   if ((session.memories_created ?? 0) > 0) parts.push(`${session.memories_created} memories`)
   if (session.had_edits) parts.push('edited files')
-  return parts.join(' \u00b7 ')
+  return parts.join(' · ')
 }
 
 export function SessionDetail({
@@ -82,15 +127,14 @@ export function SessionDetail({
   }, [session.id])
 
   return (
-    <div className="session-detail">
-      {/* Sticky header */}
-      <div className="session-detail-sticky-header">
-        <div className="session-detail-header">
-          <div className="session-detail-header-left">
+    <div className={DETAIL_CLS}>
+      <div className={STICKY_HEADER_CLS}>
+        <div className={HEADER_CLS}>
+          <div className={HEADER_LEFT_CLS}>
             <SourceIcon source={session.source} size={18} />
             {isEditingTitle ? (
               <input
-                className="session-detail-title-input"
+                className={TITLE_INPUT_CLS}
                 value={editValue}
                 onChange={e => setEditValue(e.target.value)}
                 onBlur={() => {
@@ -115,7 +159,7 @@ export function SessionDetail({
               />
             ) : (
               <h2
-                className="session-detail-title"
+                className={TITLE_CLS}
                 onDoubleClick={() => {
                   if (!onRenameSession) return
                   setIsEditingTitle(true)
@@ -126,15 +170,15 @@ export function SessionDetail({
               </h2>
             )}
           </div>
-          <div className="session-detail-header-right">
-            <span className={`session-detail-status session-detail-status-${session.status}`}>
+          <div className={HEADER_RIGHT_CLS}>
+            <span className={cn(STATUS_BADGE_CLS, STATUS_BADGE_BG[session.status] ?? '')}>
               {statusLabel(session.status)}
             </span>
             {session.model && (
-              <span className="session-detail-model">{session.model}</span>
+              <span className={MODEL_TAG_CLS}>{session.model}</span>
             )}
             {session.git_branch && (
-              <span className="session-detail-branch">
+              <span className={BRANCH_TAG_CLS}>
                 <BranchIcon /> {session.git_branch}
               </span>
             )}
@@ -149,7 +193,7 @@ export function SessionDetail({
             )}
           </div>
         </div>
-        <div className="session-detail-compact-stats">
+        <div className={COMPACT_STATS_CLS}>
           {formatCompactStats(session)}
         </div>
         {tokenEventsEnabled && (
@@ -160,15 +204,13 @@ export function SessionDetail({
         )}
       </div>
 
-      {/* Collapsible metadata */}
-      <div className="session-metadata-panel">
-        {/* Summary */}
-        <details open>
-          <summary className="session-metadata-toggle">
+      <div className={METADATA_PANEL_CLS}>
+        <details open className="mb-3">
+          <summary className={METADATA_TOGGLE_CLS}>
             <ChevronIcon /> Summary
             {!session.summary_markdown && !isGeneratingSummary && (
               <button
-                className="session-detail-generate-btn"
+                className={GENERATE_BTN_CLS}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGenerateSummary() }}
               >
                 <SummaryIcon /> Generate
@@ -176,7 +218,7 @@ export function SessionDetail({
             )}
             {session.summary_markdown && !isGeneratingSummary && (
               <button
-                className="session-detail-regenerate-btn"
+                className={REGENERATE_BTN_CLS}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onGenerateSummary() }}
                 title="Regenerate summary"
                 aria-label="Regenerate summary"
@@ -185,9 +227,9 @@ export function SessionDetail({
               </button>
             )}
           </summary>
-          <div className="session-metadata-content">
+          <div className={METADATA_CONTENT_CLS}>
             {isGeneratingSummary && (
-              <div className="session-detail-generating">
+              <div className={GENERATING_CLS}>
                 <span className="thinking-spinner" /> Generating summary...
               </div>
             )}
@@ -197,12 +239,11 @@ export function SessionDetail({
               </div>
             )}
             {!session.summary_markdown && !isGeneratingSummary && (
-              <div className="session-detail-no-summary">No summary available yet.</div>
+              <div className={NO_SUMMARY_CLS}>No summary available yet.</div>
             )}
           </div>
         </details>
 
-        {/* Lineage */}
         <SessionLineage
           session={session}
           allSessions={allSessions}
@@ -210,7 +251,6 @@ export function SessionDetail({
         />
       </div>
 
-      {/* Transcript */}
       <SessionTranscript
         messages={messages}
         totalMessages={totalMessages}
@@ -252,19 +292,19 @@ function SessionActions({
   const isActiveTerminal = session.status === 'active' && session.session_type === 'terminal'
 
   return (
-    <div className="session-detail-actions" ref={dropdownRef}>
+    <div className={ACTIONS_CLS} ref={dropdownRef}>
       <button
-        className="session-detail-ask-btn"
+        className={ASK_BTN_CLS}
         onClick={() => setDropdownOpen(!dropdownOpen)}
       >
         <ChatIcon /> Ask Gobby
         <ChevronDownIcon />
       </button>
       {dropdownOpen && (
-        <div className="session-detail-dropdown">
+        <div className={DROPDOWN_CLS}>
           {onWatchInChat && session.session_type === 'terminal' && (
             <button
-              className="session-detail-dropdown-item"
+              className={DROPDOWN_ITEM_CLS}
               disabled={!hasMessages}
               title={!hasMessages ? 'No messages recorded' : 'Watch this CLI session live in chat'}
               onClick={() => {
@@ -277,7 +317,7 @@ function SessionActions({
           )}
           {onContinueInChat && (
             <button
-              className="session-detail-dropdown-item"
+              className={DROPDOWN_ITEM_CLS}
               disabled={!hasMessages}
               title={!hasMessages ? 'No messages recorded' : isActiveTerminal
                 ? 'Take over this terminal session in web chat (terminal will be closed)'
@@ -296,7 +336,7 @@ function SessionActions({
           )}
           {onAskGobby && (
             <button
-              className="session-detail-dropdown-item"
+              className={DROPDOWN_ITEM_CLS}
               onClick={() => {
                 setDropdownOpen(false)
                 onAskGobby(`Tell me about session ${session.ref || 'unknown'} (${title}). Here's the summary:\n\n${session.summary_markdown || 'No summary available.'}`)
@@ -335,7 +375,7 @@ function ChevronDownIcon() {
 
 function ChevronIcon() {
   return (
-    <svg className="session-metadata-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg className={METADATA_CHEVRON_CLS} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="6 9 12 15 18 9" />
     </svg>
   )

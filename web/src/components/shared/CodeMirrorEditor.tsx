@@ -181,5 +181,5 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
     }
   }, [content])
 
-  return <div ref={containerRef} className="codemirror-container" style={{ background: '#0a0a0a', height: '100%' }} />
+  return <div ref={containerRef} className="codemirror-container h-full overflow-hidden [&_.cm-editor]:h-full" style={{ background: '#0a0a0a', height: '100%' }} />
 }

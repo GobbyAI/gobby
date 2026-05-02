@@ -2,16 +2,140 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConfiguration } from '../hooks/useConfiguration'
 import type { SecretInfo, PromptInfo, PromptDetail } from '../hooks/useConfiguration'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
-import './ConfigurationPage.css'
-
-// =============================================================================
-// Types
-// =============================================================================
+import { cn } from '../lib/utils'
 
 type TabId = 'config' | 'approvals' | 'secrets' | 'prompts' | 'variables' | 'template'
 type ApprovalRuleRow = { id: string; value: string }
 
 const BACKEND_SECRET_MASK = '********'
+
+const PAGE_CLS = 'flex flex-1 flex-col overflow-hidden'
+const TOOLBAR_CLS =
+  'flex min-h-11 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2 max-md:flex-wrap max-md:px-3'
+const TOOLBAR_LEFT_CLS = 'flex min-w-0 flex-[1_1_0] items-center gap-3 overflow-hidden'
+const TOOLBAR_RIGHT_CLS = 'flex shrink-0 items-center gap-2'
+const TABS_CLS =
+  'flex min-w-0 gap-0.5 overflow-x-auto rounded-md bg-[var(--bg-tertiary)] p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
+const TAB_CLS =
+  'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-3.5 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--text-secondary)] transition-all duration-150 hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const TAB_ACTIVE_CLS = 'bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
+
+const TOOLBAR_BTN_CLS =
+  'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-all duration-150 hover:border-[var(--border-active)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const TOOLBAR_BTN_PRIMARY_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)] hover:opacity-90'
+const TOOLBAR_BTN_DANGER_CLS =
+  'border-[color-mix(in_srgb,var(--color-error)_20%,transparent)] text-[var(--color-error)] hover:border-[color-mix(in_srgb,var(--color-error)_40%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)] hover:text-[var(--color-error)]'
+
+const CONTENT_CLS = 'flex-1 overflow-y-auto'
+
+const RESTART_BANNER_CLS =
+  'flex items-center justify-between border-b border-[color-mix(in_srgb,var(--color-warning-foreground)_20%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,transparent)] px-4 py-2.5 text-[length:var(--text-md)] text-[var(--color-warning-foreground)]'
+const RESTART_BTN_CLS =
+  'cursor-pointer rounded border-0 bg-[var(--color-warning-foreground)] px-3 py-1 text-[length:var(--text-sm)] font-semibold text-[var(--text-on-warning)] pointer-coarse:min-h-11'
+
+const FORM_CLS = 'max-w-[800px] p-4 max-md:p-3'
+const FORM_SECTION_CLS = 'mb-5 overflow-hidden rounded-lg border border-[var(--border)]'
+const SECTION_HEADER_CLS =
+  'flex cursor-pointer select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5 hover:bg-[var(--bg-tertiary)]'
+const SECTION_HEADER_STATIC_CLS =
+  'flex select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5'
+const SECTION_TITLE_CLS = 'text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
+const SECTION_TOGGLE_CLS =
+  'text-[length:var(--text-xs)] text-[var(--text-tertiary)] transition-transform duration-200'
+const SECTION_TOGGLE_OPEN_CLS = 'rotate-90'
+const SECTION_BODY_CLS = 'flex flex-col gap-3 px-3.5 py-3'
+const SECTION_BODY_COLLAPSED_CLS = 'hidden'
+
+const FORM_FIELD_CLS = 'flex flex-col gap-1'
+const FIELD_LABEL_CLS = 'text-[length:var(--text-md)] font-medium text-[var(--text-primary)]'
+const FIELD_HELP_CLS = 'text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-tertiary)]'
+const INPUT_CLS =
+  'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
+const SELECT_CLS =
+  'rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
+
+const TOGGLE_ROW_CLS = 'flex items-center justify-between py-1'
+const TOGGLE_CLS =
+  'relative h-5 w-9 shrink-0 cursor-pointer rounded-[10px] border-0 bg-[var(--bg-tertiary)] transition-colors duration-200 after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-[var(--text-primary)] after:transition-transform after:duration-200 after:content-[""] pointer-coarse:h-11 pointer-coarse:w-[88px] pointer-coarse:rounded-[22px] pointer-coarse:after:h-10 pointer-coarse:after:w-10'
+const TOGGLE_ON_CLS = 'bg-[var(--accent)] after:translate-x-4 pointer-coarse:after:translate-x-[44px]'
+
+const FORM_FOOTER_CLS =
+  'sticky bottom-0 flex justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-3'
+
+const SECRET_BADGE_CLS =
+  'ml-1.5 inline-block rounded-sm bg-[var(--bg-tertiary)] px-1.5 py-px align-middle text-[length:var(--text-2xs)] font-medium text-[var(--text-tertiary)]'
+
+const SECRETS_CLS = 'max-w-[800px] p-4 max-md:p-3'
+const SECRETS_HEADER_CLS = 'mb-4 flex items-center justify-between'
+const SECRETS_HEADER_H3_CLS = 'm-0 text-[length:var(--text-base)] font-semibold'
+
+const SECRETS_TABLE_CLS =
+  'w-full border-collapse text-[length:var(--text-md)] max-md:text-[length:var(--text-sm)] max-sm:block [&_thead]:max-sm:hidden [&_tbody]:max-sm:block [&_tr]:max-sm:mb-2 [&_tr]:max-sm:block [&_tr]:max-sm:rounded-md [&_tr]:max-sm:border [&_tr]:max-sm:border-[var(--border)] [&_tr]:max-sm:bg-[var(--bg-secondary)] [&_tr]:max-sm:px-2.5 [&_tr]:max-sm:py-2 [&_td]:max-sm:block [&_td]:max-sm:border-b-0 [&_td]:max-sm:px-0 [&_td]:max-sm:py-1 [&_td]:max-sm:before:mb-0.5 [&_td]:max-sm:before:block [&_td]:max-sm:before:text-[length:var(--text-xs)] [&_td]:max-sm:before:uppercase [&_td]:max-sm:before:tracking-[0.5px] [&_td]:max-sm:before:text-[var(--text-tertiary)] [&_td]:max-sm:before:[content:attr(data-label)]'
+const SECRETS_TH_CLS =
+  'border-b border-[var(--border)] px-2.5 py-2 text-left text-[length:var(--text-xs)] font-medium uppercase tracking-[0.5px] text-[var(--text-tertiary)] max-md:px-1.5 max-md:py-1.5'
+const SECRETS_TD_CLS = 'border-b border-[var(--border)] px-2.5 py-2 text-[var(--text-primary)] max-md:px-1.5 max-md:py-1.5'
+
+const SECRET_MASKED_CLS = 'text-[length:var(--text-sm)] italic text-[var(--text-tertiary)]'
+const SECRET_ACTIONS_CLS = 'flex gap-1.5 max-sm:flex-wrap'
+const SECRET_ACTION_BTN_CLS =
+  'cursor-pointer rounded-sm border border-[var(--border)] bg-transparent px-2 py-0.5 text-[length:var(--text-xs)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const SECRET_ACTION_DELETE_CLS =
+  'hover:border-[color-mix(in_srgb,var(--color-error)_40%,transparent)] hover:text-[var(--color-error)]'
+
+const SECRET_HINT_CLS =
+  'mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5 text-[length:var(--text-sm)] leading-[1.5] text-[var(--text-secondary)] [&_code]:rounded-sm [&_code]:bg-[var(--bg-tertiary)] [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[length:var(--text-xs)]'
+
+const SECRET_FORM_CLS =
+  'mb-4 flex flex-col gap-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-3.5'
+const SECRET_FORM_ROW_CLS = 'flex gap-2.5 max-sm:flex-col [&>*]:flex-1'
+const SECRET_FORM_ACTIONS_CLS = 'flex justify-end gap-2'
+
+const PROMPTS_CLS = 'flex flex-1 overflow-hidden max-sm:flex-col'
+const PROMPTS_SIDEBAR_CLS =
+  'flex w-[220px] min-w-[220px] flex-col overflow-y-auto border-r border-[var(--border)] bg-[var(--bg-secondary)] max-sm:w-full max-sm:min-w-0 max-sm:flex-row max-sm:overflow-x-auto max-sm:border-b max-sm:border-r-0 max-sm:border-b-[var(--border)]'
+const PROMPTS_SIDEBAR_TITLE_CLS =
+  'border-b border-[var(--border)] px-3.5 py-2.5 text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.5px] text-[var(--text-tertiary)] max-sm:hidden'
+const PROMPT_CATEGORY_CLS =
+  'flex cursor-pointer items-center justify-between px-3.5 py-2 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-all duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] max-sm:whitespace-nowrap max-sm:px-3 pointer-coarse:min-h-11'
+const PROMPT_CATEGORY_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] font-medium text-[var(--text-primary)]'
+const PROMPT_CATEGORY_COUNT_CLS =
+  'rounded-[10px] bg-[var(--bg-primary)] px-1.5 py-px text-[length:var(--text-xs)] text-[var(--text-tertiary)]'
+
+const PROMPTS_MAIN_CLS = 'flex flex-1 flex-col overflow-hidden'
+const PROMPTS_LIST_CLS = 'flex flex-1 flex-col gap-1.5 overflow-y-auto p-3'
+const PROMPT_CARD_CLS =
+  'flex cursor-pointer items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 transition-all duration-100 hover:border-[var(--border-active)] hover:bg-[var(--bg-secondary)]'
+const PROMPT_CARD_NAME_CLS = 'text-[length:var(--text-md)] font-medium text-[var(--text-primary)]'
+const PROMPT_CARD_DESC_CLS = 'mt-0.5 text-[length:var(--text-xs)] text-[var(--text-tertiary)]'
+
+const PROMPT_BADGE_CLS =
+  'shrink-0 rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-semibold uppercase tracking-[0.3px]'
+const PROMPT_BADGE_BG: Record<string, string> = {
+  bundled:
+    'bg-[color-mix(in_srgb,var(--color-success-foreground)_8%,transparent)] text-[var(--color-success-foreground)]',
+  overridden:
+    'bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,transparent)] text-[var(--color-warning-foreground)]',
+}
+
+const PROMPT_DETAIL_CLS = 'flex flex-1 flex-col overflow-hidden'
+const PROMPT_DETAIL_HEADER_CLS =
+  'flex items-center justify-between border-b border-[var(--border)] px-3.5 py-2.5 max-sm:flex-col max-sm:items-start max-sm:gap-2'
+const PROMPT_DETAIL_TITLE_CLS = 'text-[length:var(--text-base)] font-semibold'
+const PROMPT_DETAIL_ACTIONS_CLS = 'flex gap-1.5'
+const PROMPT_EDITOR_CLS = 'flex-1 overflow-hidden [&_.codemirror-container]:h-full'
+const PROMPT_EMPTY_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-md)] text-[var(--text-tertiary)]'
+
+const YAML_CLS = 'flex flex-1 flex-col overflow-hidden'
+const YAML_EDITOR_CLS = 'flex-1 overflow-hidden [&_.codemirror-container]:h-full'
+const YAML_FOOTER_CLS =
+  'flex items-center justify-between border-t border-[var(--border)] bg-[var(--bg-secondary)] px-4 py-2'
+const YAML_ERRORS_CLS = 'text-[length:var(--text-sm)] text-[var(--color-error)]'
+
+const EMPTY_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-base)] text-[var(--text-tertiary)]'
+const LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-md)] text-[var(--text-tertiary)]'
+
+const ERRORS_CLS = 'mb-3 text-[length:var(--text-sm)] text-[var(--color-error)]'
 
 function createApprovalRuleRow(value = ''): ApprovalRuleRow {
   const id =
@@ -25,10 +149,6 @@ function toApprovalRuleRows(rules: string[]): ApprovalRuleRow[] {
   return rules.map((rule) => createApprovalRuleRow(rule))
 }
 
-// =============================================================================
-// Secret field detection
-// =============================================================================
-
 const SECRET_PATTERNS = ['api_key', 'api_token', 'api_secret', 'password', 'access_token', 'auth_token', 'secret_key', 'secret', 'credentials', 'private_key', 'client_secret']
 
 function isSecretField(path: string, secretKeys: string[]): boolean {
@@ -36,10 +156,6 @@ function isSecretField(path: string, secretKeys: string[]): boolean {
   const last = path.split('.').pop() || ''
   return SECRET_PATTERNS.some(p => last.includes(p))
 }
-
-// =============================================================================
-// Helpers
-// =============================================================================
 
 function formatFieldName(name: string): string {
   return name
@@ -63,10 +179,6 @@ function getSchemaType(fieldSchema: Record<string, unknown>): string {
   return (fieldSchema.type as string) || 'string'
 }
 
-// =============================================================================
-// SchemaField - Renders a single form field from JSON Schema
-// =============================================================================
-
 interface SchemaFieldProps {
   name: string
   fieldSchema: Record<string, unknown>
@@ -84,11 +196,11 @@ function SchemaField({ name, fieldSchema, value, onChange, path, secretKeys = []
 
   if (enumValues) {
     return (
-      <div className="config-form-field">
-        <label className="config-field-label">{formatFieldName(name)}</label>
-        {description && <span className="config-field-help">{description}</span>}
+      <div className={FORM_FIELD_CLS}>
+        <label className={FIELD_LABEL_CLS}>{formatFieldName(name)}</label>
+        {description && <span className={FIELD_HELP_CLS}>{description}</span>}
         <select
-          className="config-select"
+          className={SELECT_CLS}
           value={String(value ?? '')}
           onChange={e => onChange(fullPath, e.target.value)}
         >
@@ -102,14 +214,14 @@ function SchemaField({ name, fieldSchema, value, onChange, path, secretKeys = []
 
   if (type === 'boolean') {
     return (
-      <div className="config-form-field">
-        <div className="config-toggle-row">
+      <div className={FORM_FIELD_CLS}>
+        <div className={TOGGLE_ROW_CLS}>
           <div>
-            <div className="config-field-label">{formatFieldName(name)}</div>
-            {description && <span className="config-field-help">{description}</span>}
+            <div className={FIELD_LABEL_CLS}>{formatFieldName(name)}</div>
+            {description && <span className={FIELD_HELP_CLS}>{description}</span>}
           </div>
           <button type="button"
-            className={`config-toggle ${value ? 'on' : ''}`}
+            className={cn(TOGGLE_CLS, Boolean(value) && TOGGLE_ON_CLS)}
             onClick={() => onChange(fullPath, !value)}
             aria-label={`Toggle ${name}`}
           />
@@ -122,12 +234,12 @@ function SchemaField({ name, fieldSchema, value, onChange, path, secretKeys = []
     const min = fieldSchema.minimum as number | undefined
     const max = fieldSchema.maximum as number | undefined
     return (
-      <div className="config-form-field">
-        <label className="config-field-label">{formatFieldName(name)}</label>
-        {description && <span className="config-field-help">{description}</span>}
+      <div className={FORM_FIELD_CLS}>
+        <label className={FIELD_LABEL_CLS}>{formatFieldName(name)}</label>
+        {description && <span className={FIELD_HELP_CLS}>{description}</span>}
         <input
           type="number"
-          className="config-input"
+          className={INPUT_CLS}
           value={value != null ? String(value) : ''}
           min={min}
           max={max}
@@ -141,19 +253,18 @@ function SchemaField({ name, fieldSchema, value, onChange, path, secretKeys = []
     )
   }
 
-  // Default: string input (password for secret fields)
   const secret = isSecretField(fullPath, secretKeys)
   const isMasked = secret && value === BACKEND_SECRET_MASK
   return (
-    <div className="config-form-field">
-      <label className="config-field-label">
+    <div className={FORM_FIELD_CLS}>
+      <label className={FIELD_LABEL_CLS}>
         {formatFieldName(name)}
-        {secret && <span className="config-secret-badge">encrypted</span>}
+        {secret && <span className={SECRET_BADGE_CLS}>encrypted</span>}
       </label>
-      {description && <span className="config-field-help">{description}</span>}
+      {description && <span className={FIELD_HELP_CLS}>{description}</span>}
       <input
         type={secret ? 'password' : 'text'}
-        className="config-input"
+        className={INPUT_CLS}
         value={String(value ?? '')}
         placeholder={isMasked ? 'Enter new value to change' : undefined}
         onChange={e => onChange(fullPath, e.target.value)}
@@ -161,10 +272,6 @@ function SchemaField({ name, fieldSchema, value, onChange, path, secretKeys = []
     </div>
   )
 }
-
-// =============================================================================
-// SchemaSection - Collapsible section for sub-configs
-// =============================================================================
 
 interface SchemaSectionProps {
   name: string
@@ -184,20 +291,19 @@ function SchemaSection({ name, sectionSchema, values, onChange, parentPath, secr
   const sectionValues = (values || {}) as Record<string, unknown>
 
   return (
-    <div className="config-form-section">
-      <div className="config-section-header" onClick={() => setOpen(!open)}>
+    <div className={FORM_SECTION_CLS}>
+      <div className={SECTION_HEADER_CLS} onClick={() => setOpen(!open)}>
         <div>
-          <span className="config-section-title">{formatFieldName(name)}</span>
-          {description && <span className="config-field-help" style={{ marginLeft: 8 }}>{description}</span>}
+          <span className={SECTION_TITLE_CLS}>{formatFieldName(name)}</span>
+          {description && <span className={cn(FIELD_HELP_CLS, 'ml-2')}>{description}</span>}
         </div>
-        <span className={`config-section-toggle ${open ? 'open' : ''}`}>&#9654;</span>
+        <span className={cn(SECTION_TOGGLE_CLS, open && SECTION_TOGGLE_OPEN_CLS)}>&#9654;</span>
       </div>
-      <div className={`config-section-body ${open ? '' : 'collapsed'}`}>
+      <div className={cn(SECTION_BODY_CLS, !open && SECTION_BODY_COLLAPSED_CLS)}>
         {Object.entries(props).map(([fieldName, fieldSchema]) => {
           const fs = fieldSchema as Record<string, unknown>
           const fieldType = getSchemaType(fs)
 
-          // Nested object = sub-section (but only one level deep to avoid excess nesting)
           if (fieldType === 'object' && fs.properties) {
             return (
               <SchemaSection
@@ -228,12 +334,6 @@ function SchemaSection({ name, sectionSchema, values, onChange, parentPath, secr
     </div>
   )
 }
-
-// =============================================================================
-// ConfigFormTab
-// =============================================================================
-
-// TODO: Replace schema-driven rendering with hand-crafted sections when config stabilizes
 
 interface ConfigFormTabProps {
   schema: Record<string, unknown> | null
@@ -290,19 +390,17 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
     if (ok) setShowRestart(true)
   }
 
-  if (!schema) return <div className="config-loading">Loading schema...</div>
+  if (!schema) return <div className={LOADING_CLS}>Loading schema...</div>
 
   const properties = getSchemaProperties(schema)
   const defs = (schema.$defs || schema.definitions || {}) as Record<string, Record<string, unknown>>
 
-  // Separate top-level primitives from object sections
   const primitiveFields: [string, Record<string, unknown>][] = []
   const objectSections: [string, Record<string, unknown>][] = []
 
   for (const [name, fieldSchema] of Object.entries(properties)) {
     const fs = fieldSchema as Record<string, unknown>
 
-    // Resolve $ref
     let resolved = fs
     if (fs.$ref) {
       const refName = (fs.$ref as string).split('/').pop()!
@@ -320,37 +418,36 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
   return (
     <>
       {showRestart && (
-        <div className="config-restart-banner">
+        <div className={RESTART_BANNER_CLS}>
           <span>Configuration saved. Restart the daemon to apply changes.</span>
-          <button type="button" onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
+          <button type="button" className={RESTART_BTN_CLS} onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
             Restart Now
           </button>
         </div>
       )}
-      <div className="config-form">
+      <div className={FORM_CLS}>
         {errors.length > 0 && (
-          <div style={{ color: 'var(--color-error)', fontSize: 13, marginBottom: 12 }}>
+          <div className={ERRORS_CLS}>
             {errors.map((e, i) => <div key={i}>{e}</div>)}
           </div>
         )}
 
-        {/* Rules enforcement toggle */}
         {onToggleRulesEnforcement && (
-          <div className="config-form-section">
-            <div className="config-section-header" style={{ cursor: 'default' }}>
-              <span className="config-section-title">Rules Engine</span>
+          <div className={FORM_SECTION_CLS}>
+            <div className={SECTION_HEADER_STATIC_CLS}>
+              <span className={SECTION_TITLE_CLS}>Rules Engine</span>
             </div>
-            <div className="config-section-body">
-              <div className="config-form-field">
-                <div className="config-toggle-row">
+            <div className={SECTION_BODY_CLS}>
+              <div className={FORM_FIELD_CLS}>
+                <div className={TOGGLE_ROW_CLS}>
                   <div>
-                    <div className="config-field-label">Rules Enforcement</div>
-                    <span className="config-field-help">
+                    <div className={FIELD_LABEL_CLS}>Rules Enforcement</div>
+                    <span className={FIELD_HELP_CLS}>
                       Enable or disable the rule engine globally. When disabled, no rules will be evaluated.
                     </span>
                   </div>
                   <button type="button"
-                    className={`config-toggle ${rulesEnforcement ? 'on' : ''}`}
+                    className={cn(TOGGLE_CLS, rulesEnforcement && TOGGLE_ON_CLS)}
                     onClick={() => onToggleRulesEnforcement(!rulesEnforcement)}
                     aria-label="Toggle rules enforcement"
                   />
@@ -360,13 +457,12 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
           </div>
         )}
 
-        {/* Top-level primitive fields */}
         {primitiveFields.length > 0 && (
-          <div className="config-form-section">
-            <div className="config-section-header" style={{ cursor: 'default' }}>
-              <span className="config-section-title">General</span>
+          <div className={FORM_SECTION_CLS}>
+            <div className={SECTION_HEADER_STATIC_CLS}>
+              <span className={SECTION_TITLE_CLS}>General</span>
             </div>
-            <div className="config-section-body">
+            <div className={SECTION_BODY_CLS}>
               {primitiveFields.map(([name, fs]) => (
                 <SchemaField
                   key={name}
@@ -382,7 +478,6 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
           </div>
         )}
 
-        {/* Object sub-config sections */}
         {objectSections.map(([name, sectionSchema]) => {
           let resolved = sectionSchema
           if (sectionSchema.$ref) {
@@ -402,9 +497,9 @@ function ConfigFormTab({ schema, values: initialValues, onSave, onReset, secretK
           )
         })}
       </div>
-      <div className="config-form-footer">
-        <button type="button" className="config-toolbar-btn danger" onClick={handleReset}>Reset to Defaults</button>
-        <button type="button" className="config-toolbar-btn primary" onClick={handleSave} disabled={saving}>
+      <div className={FORM_FOOTER_CLS}>
+        <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_DANGER_CLS)} onClick={handleReset}>Reset to Defaults</button>
+        <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)} onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Configuration'}
         </button>
       </div>
@@ -450,40 +545,40 @@ function ApprovalRulesTab({
   }
 
   return (
-    <div className="config-form">
-      <div className="config-form-section">
-        <div className="config-section-header">
+    <div className={FORM_CLS}>
+      <div className={FORM_SECTION_CLS}>
+        <div className={SECTION_HEADER_STATIC_CLS}>
           <div>
-            <span className="config-section-title">Built-In Exemptions</span>
-            <span className="config-field-help" style={{ marginLeft: 8 }}>
+            <span className={SECTION_TITLE_CLS}>Built-In Exemptions</span>
+            <span className={cn(FIELD_HELP_CLS, 'ml-2')}>
               Always auto-allowed and read-only
             </span>
           </div>
         </div>
-        <div className="config-section-body">
+        <div className={SECTION_BODY_CLS}>
           {builtInExemptions.map((rule) => (
-            <div key={rule} className="config-form-field">
-              <input type="text" className="config-input" value={rule} readOnly />
+            <div key={rule} className={FORM_FIELD_CLS}>
+              <input type="text" className={INPUT_CLS} value={rule} readOnly />
             </div>
           ))}
         </div>
       </div>
 
-      <div className="config-form-section">
-        <div className="config-section-header">
+      <div className={FORM_SECTION_CLS}>
+        <div className={SECTION_HEADER_STATIC_CLS}>
           <div>
-            <span className="config-section-title">Global Auto-Allow Rules</span>
-            <span className="config-field-help" style={{ marginLeft: 8 }}>
+            <span className={SECTION_TITLE_CLS}>Global Auto-Allow Rules</span>
+            <span className={cn(FIELD_HELP_CLS, 'ml-2')}>
               Shared across providers for interactive web chat
             </span>
           </div>
         </div>
-        <div className="config-section-body">
+        <div className={SECTION_BODY_CLS}>
           {localRules.map((rule, index) => (
-            <div key={rule.id} className="config-toggle-row" style={{ marginBottom: 12, gap: 8 }}>
+            <div key={rule.id} className={cn(TOGGLE_ROW_CLS, 'mb-3 gap-2')}>
               <input
                 type="text"
-                className="config-input"
+                className={cn(INPUT_CLS, 'flex-1')}
                 value={rule.value}
                 onChange={(e) =>
                   setLocalRules((prev) => {
@@ -497,7 +592,7 @@ function ApprovalRulesTab({
               />
               <button
                 type="button"
-                className="config-toolbar-btn"
+                className={TOOLBAR_BTN_CLS}
                 onClick={() =>
                   setLocalRules((prev) => {
                     setSaveError(null)
@@ -510,14 +605,14 @@ function ApprovalRulesTab({
             </div>
           ))}
 
-          <div className="config-field-help" style={{ marginBottom: 12 }}>
+          <div className={cn(FIELD_HELP_CLS, 'mb-3')}>
             Recommended defaults: {defaultRules.join(', ')}
           </div>
 
-          <div className="config-toolbar-right">
+          <div className={TOOLBAR_RIGHT_CLS}>
             <button
               type="button"
-              className="config-toolbar-btn"
+              className={TOOLBAR_BTN_CLS}
               onClick={() =>
                 setLocalRules((prev) => {
                   setSaveError(null)
@@ -529,7 +624,7 @@ function ApprovalRulesTab({
             </button>
             <button
               type="button"
-              className="config-toolbar-btn"
+              className={TOOLBAR_BTN_CLS}
               onClick={() => {
                 setSaveError(null)
                 setLocalRules(toApprovalRuleRows(defaultRules))
@@ -539,7 +634,7 @@ function ApprovalRulesTab({
             </button>
             <button
               type="button"
-              className="config-toolbar-btn primary"
+              className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)}
               onClick={handleSave}
               disabled={saving}
             >
@@ -548,9 +643,8 @@ function ApprovalRulesTab({
           </div>
           {saveError && (
             <div
-              className="config-field-help"
+              className={cn(FIELD_HELP_CLS, 'mt-2 text-[var(--color-error)]')}
               role="alert"
-              style={{ color: 'var(--status-escalated, #ef4444)', marginTop: 8 }}
             >
               {saveError}
             </div>
@@ -560,10 +654,6 @@ function ApprovalRulesTab({
     </div>
   )
 }
-
-// =============================================================================
-// SecretsTab
-// =============================================================================
 
 interface SecretsTabProps {
   secrets: SecretInfo[]
@@ -609,11 +699,11 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
   }
 
   return (
-    <div className="config-secrets">
-      <div className="config-secrets-header">
-        <h3>Secrets Store</h3>
+    <div className={SECRETS_CLS}>
+      <div className={SECRETS_HEADER_CLS}>
+        <h3 className={SECRETS_HEADER_H3_CLS}>Secrets Store</h3>
         <button type="button"
-          className="config-toolbar-btn primary"
+          className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)}
           onClick={() => {
             setEditingName(null)
             setFormName('')
@@ -628,17 +718,17 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
       </div>
 
       {showForm && (
-        <div className="config-secret-form">
-          <div className="config-secret-form-row">
+        <div className={SECRET_FORM_CLS}>
+          <div className={SECRET_FORM_ROW_CLS}>
             <input
-              className="config-input"
+              className={INPUT_CLS}
               placeholder="Secret name (e.g. anthropic_key)"
               value={formName}
               onChange={e => setFormName(e.target.value)}
               disabled={editingName !== null}
             />
             <select
-              className="config-select"
+              className={SELECT_CLS}
               value={formCategory}
               onChange={e => setFormCategory(e.target.value)}
             >
@@ -648,21 +738,21 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
             </select>
           </div>
           <input
-            className="config-input"
+            className={INPUT_CLS}
             type="password"
             placeholder={editingName ? 'Enter new value' : 'Secret value'}
             value={formValue}
             onChange={e => setFormValue(e.target.value)}
           />
           <input
-            className="config-input"
+            className={INPUT_CLS}
             placeholder="Description (optional)"
             value={formDescription}
             onChange={e => setFormDescription(e.target.value)}
           />
-          <div className="config-secret-form-actions">
-            <button type="button" className="config-toolbar-btn" onClick={() => setShowForm(false)}>Cancel</button>
-            <button type="button" className="config-toolbar-btn primary" onClick={handleSubmit}>
+          <div className={SECRET_FORM_ACTIONS_CLS}>
+            <button type="button" className={TOOLBAR_BTN_CLS} onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)} onClick={handleSubmit}>
               {editingName ? 'Update' : 'Save'}
             </button>
           </div>
@@ -670,31 +760,31 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
       )}
 
       {secrets.length === 0 ? (
-        <div className="config-empty" style={{ padding: 40 }}>
+        <div className={cn(EMPTY_CLS, 'p-10')}>
           No secrets stored yet. Add API keys and sensitive values here.
         </div>
       ) : (
-        <table className="config-secrets-table">
+        <table className={SECRETS_TABLE_CLS}>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Value</th>
-              <th>Description</th>
-              <th style={{ width: 120 }}>Actions</th>
+              <th className={SECRETS_TH_CLS}>Name</th>
+              <th className={SECRETS_TH_CLS}>Category</th>
+              <th className={SECRETS_TH_CLS}>Value</th>
+              <th className={SECRETS_TH_CLS}>Description</th>
+              <th className={SECRETS_TH_CLS} style={{ width: 120 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {secrets.map(s => (
               <tr key={s.id}>
-                <td data-label="Name"><code>{s.name}</code></td>
-                <td data-label="Category">{s.category}</td>
-                <td data-label="Value"><span className="config-secret-masked">encrypted</span></td>
-                <td data-label="Description">{s.description || '-'}</td>
-                <td data-label="Actions">
-                  <div className="config-secret-actions">
-                    <button type="button" onClick={() => handleEdit(s)}>Update</button>
-                    <button type="button" className="delete" onClick={() => handleDelete(s.name)}>Delete</button>
+                <td className={SECRETS_TD_CLS} data-label="Name"><code>{s.name}</code></td>
+                <td className={SECRETS_TD_CLS} data-label="Category">{s.category}</td>
+                <td className={SECRETS_TD_CLS} data-label="Value"><span className={SECRET_MASKED_CLS}>encrypted</span></td>
+                <td className={SECRETS_TD_CLS} data-label="Description">{s.description || '-'}</td>
+                <td className={SECRETS_TD_CLS} data-label="Actions">
+                  <div className={SECRET_ACTIONS_CLS}>
+                    <button type="button" className={SECRET_ACTION_BTN_CLS} onClick={() => handleEdit(s)}>Update</button>
+                    <button type="button" className={cn(SECRET_ACTION_BTN_CLS, SECRET_ACTION_DELETE_CLS)} onClick={() => handleDelete(s.name)}>Delete</button>
                   </div>
                 </td>
               </tr>
@@ -703,17 +793,13 @@ function SecretsTab({ secrets, categories, onSave, onDelete }: SecretsTabProps) 
         </table>
       )}
 
-      <div className="config-secret-hint">
+      <div className={SECRET_HINT_CLS}>
         Use <code>$secret:NAME</code> in MCP server headers or env vars to reference secrets.
         The daemon resolves them at connection time — agents never see raw values.
       </div>
     </div>
   )
 }
-
-// =============================================================================
-// PromptsTab
-// =============================================================================
 
 interface PromptsTabProps {
   prompts: PromptInfo[]
@@ -767,51 +853,49 @@ function PromptsTab({ prompts, categories, onGetDetail, onSaveOverride, onDelete
   }, [categories])
 
   return (
-    <div className="config-prompts">
-      {/* Category sidebar */}
-      <div className="config-prompts-sidebar">
-        <div className="config-prompts-sidebar-title">Categories</div>
+    <div className={PROMPTS_CLS}>
+      <div className={PROMPTS_SIDEBAR_CLS}>
+        <div className={PROMPTS_SIDEBAR_TITLE_CLS}>Categories</div>
         <div
-          className={`config-prompt-category ${selectedCategory === null ? 'active' : ''}`}
+          className={cn(PROMPT_CATEGORY_CLS, selectedCategory === null && PROMPT_CATEGORY_ACTIVE_CLS)}
           onClick={() => setSelectedCategory(null)}
         >
           <span>All</span>
-          <span className="config-prompt-category-count">{prompts.length}</span>
+          <span className={PROMPT_CATEGORY_COUNT_CLS}>{prompts.length}</span>
         </div>
         {categoryList.map(([cat, count]) => (
           <div
             key={cat}
-            className={`config-prompt-category ${selectedCategory === cat ? 'active' : ''}`}
+            className={cn(PROMPT_CATEGORY_CLS, selectedCategory === cat && PROMPT_CATEGORY_ACTIVE_CLS)}
             onClick={() => setSelectedCategory(cat)}
           >
             <span>{formatFieldName(cat)}</span>
-            <span className="config-prompt-category-count">{count}</span>
+            <span className={PROMPT_CATEGORY_COUNT_CLS}>{count}</span>
           </div>
         ))}
       </div>
 
-      {/* Main area */}
-      <div className="config-prompts-main">
+      <div className={PROMPTS_MAIN_CLS}>
         {selectedPrompt ? (
-          <div className="config-prompt-detail">
-            <div className="config-prompt-detail-header">
+          <div className={PROMPT_DETAIL_CLS}>
+            <div className={PROMPT_DETAIL_HEADER_CLS}>
               <div>
-                <div className="config-prompt-detail-title">{selectedPrompt.path}</div>
+                <div className={PROMPT_DETAIL_TITLE_CLS}>{selectedPrompt.path}</div>
                 {selectedPrompt.description && (
-                  <span className="config-field-help">{selectedPrompt.description}</span>
+                  <span className={FIELD_HELP_CLS}>{selectedPrompt.description}</span>
                 )}
               </div>
-              <div className="config-prompt-detail-actions">
-                <button type="button" className="config-toolbar-btn" onClick={() => setSelectedPrompt(null)}>Back</button>
+              <div className={PROMPT_DETAIL_ACTIONS_CLS}>
+                <button type="button" className={TOOLBAR_BTN_CLS} onClick={() => setSelectedPrompt(null)}>Back</button>
                 {selectedPrompt.has_override && (
-                  <button type="button" className="config-toolbar-btn danger" onClick={handleRevert}>Revert</button>
+                  <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_DANGER_CLS)} onClick={handleRevert}>Revert</button>
                 )}
-                <button type="button" className="config-toolbar-btn primary" onClick={handleSaveOverride} disabled={saving}>
+                <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)} onClick={handleSaveOverride} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Override'}
                 </button>
               </div>
             </div>
-            <div className="config-prompt-editor">
+            <div className={PROMPT_EDITOR_CLS}>
               <CodeMirrorEditor
                 content={editContent}
                 language="markdown"
@@ -821,21 +905,23 @@ function PromptsTab({ prompts, categories, onGetDetail, onSaveOverride, onDelete
             </div>
           </div>
         ) : (
-          <div className="config-prompts-list">
+          <div className={PROMPTS_LIST_CLS}>
             {filteredPrompts.length === 0 ? (
-              <div className="config-prompt-empty">No prompts in this category</div>
+              <div className={PROMPT_EMPTY_CLS}>No prompts in this category</div>
             ) : (
               filteredPrompts.map(p => (
                 <div
                   key={p.path}
-                  className="config-prompt-card"
+                  className={PROMPT_CARD_CLS}
                   onClick={() => handleSelectPrompt(p)}
                 >
                   <div>
-                    <div className="config-prompt-card-name">{p.path}</div>
-                    {p.description && <div className="config-prompt-card-desc">{p.description}</div>}
+                    <div className={PROMPT_CARD_NAME_CLS}>{p.path}</div>
+                    {p.description && <div className={PROMPT_CARD_DESC_CLS}>{p.description}</div>}
                   </div>
-                  <span className={`config-prompt-badge ${p.source}`}>{p.source}</span>
+                  <span className={cn(PROMPT_BADGE_CLS, PROMPT_BADGE_BG[p.source] ?? '')}>
+                    {p.source}
+                  </span>
                 </div>
               ))
             )}
@@ -845,10 +931,6 @@ function PromptsTab({ prompts, categories, onGetDetail, onSaveOverride, onDelete
     </div>
   )
 }
-
-// =============================================================================
-// VariablesTab
-// =============================================================================
 
 interface VariableDefinition {
   id: string
@@ -892,7 +974,6 @@ function VariablesTab() {
     const trimmedName = formName.trim()
     if (!trimmedName) return
 
-    // Auto-detect value type
     let parsedValue: unknown = formValue
     if (formValue === 'true') parsedValue = true
     else if (formValue === 'false') parsedValue = false
@@ -963,14 +1044,14 @@ function VariablesTab() {
     }
   }
 
-  if (loading) return <div className="config-loading">Loading variables...</div>
+  if (loading) return <div className={LOADING_CLS}>Loading variables...</div>
 
   return (
-    <div className="config-secrets">
-      <div className="config-secrets-header">
-        <h3>Variable Defaults</h3>
+    <div className={SECRETS_CLS}>
+      <div className={SECRETS_HEADER_CLS}>
+        <h3 className={SECRETS_HEADER_H3_CLS}>Variable Defaults</h3>
         <button type="button"
-          className="config-toolbar-btn primary"
+          className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)}
           onClick={() => {
             setFormName('')
             setFormValue('')
@@ -983,68 +1064,70 @@ function VariablesTab() {
       </div>
 
       {showForm && (
-        <div className="config-secret-form">
-          <div className="config-secret-form-row">
+        <div className={SECRET_FORM_CLS}>
+          <div className={SECRET_FORM_ROW_CLS}>
             <input
-              className="config-input"
+              className={INPUT_CLS}
               placeholder="Variable name (e.g. my_custom_var)"
               value={formName}
               onChange={e => setFormName(e.target.value)}
             />
           </div>
           <input
-            className="config-input"
+            className={INPUT_CLS}
             placeholder="Default value (e.g. true, 42, hello)"
             value={formValue}
             onChange={e => setFormValue(e.target.value)}
           />
           <input
-            className="config-input"
+            className={INPUT_CLS}
             placeholder="Description (optional)"
             value={formDescription}
             onChange={e => setFormDescription(e.target.value)}
           />
-          <div className="config-secret-form-actions">
-            <button type="button" className="config-toolbar-btn" onClick={() => setShowForm(false)}>Cancel</button>
-            <button type="button" className="config-toolbar-btn primary" onClick={handleCreate}>Save</button>
+          <div className={SECRET_FORM_ACTIONS_CLS}>
+            <button type="button" className={TOOLBAR_BTN_CLS} onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)} onClick={handleCreate}>Save</button>
           </div>
         </div>
       )}
 
       {variables.length === 0 ? (
-        <div className="config-empty" style={{ padding: 40 }}>
+        <div className={cn(EMPTY_CLS, 'p-10')}>
           No variable definitions found. Add session variable defaults here.
         </div>
       ) : (
-        <table className="config-secrets-table">
+        <table className={SECRETS_TABLE_CLS}>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Default Value</th>
-              <th>Description</th>
-              <th>Source</th>
-              <th style={{ width: 80 }}>Enabled</th>
-              <th style={{ width: 80 }}>Actions</th>
+              <th className={SECRETS_TH_CLS}>Name</th>
+              <th className={SECRETS_TH_CLS}>Default Value</th>
+              <th className={SECRETS_TH_CLS}>Description</th>
+              <th className={SECRETS_TH_CLS}>Source</th>
+              <th className={SECRETS_TH_CLS} style={{ width: 80 }}>Enabled</th>
+              <th className={SECRETS_TH_CLS} style={{ width: 80 }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {variables.map(v => (
               <tr key={v.id}>
-                <td data-label="Name"><code>{v.name}</code></td>
-                <td data-label="Default Value"><code>{getDisplayValue(v.definition_json)}</code></td>
-                <td data-label="Description">{v.description || '-'}</td>
-                <td data-label="Source"><span className={`config-prompt-badge ${v.source}`}>{v.source}</span></td>
-                <td data-label="Enabled">
+                <td className={SECRETS_TD_CLS} data-label="Name"><code>{v.name}</code></td>
+                <td className={SECRETS_TD_CLS} data-label="Default Value"><code>{getDisplayValue(v.definition_json)}</code></td>
+                <td className={SECRETS_TD_CLS} data-label="Description">{v.description || '-'}</td>
+                <td className={SECRETS_TD_CLS} data-label="Source">
+                  <span className={cn(PROMPT_BADGE_CLS, PROMPT_BADGE_BG[v.source] ?? '')}>{v.source}</span>
+                </td>
+                <td className={SECRETS_TD_CLS} data-label="Enabled">
                   <button type="button"
-                    className={`config-toggle ${v.enabled ? 'on' : ''}`}
+                    className={cn(TOGGLE_CLS, v.enabled && TOGGLE_ON_CLS)}
                     onClick={() => handleToggle(v)}
                     aria-label={`Toggle ${v.name}`}
                   />
                 </td>
-                <td data-label="Actions">
+                <td className={SECRETS_TD_CLS} data-label="Actions">
                   {v.source !== 'template' && (
-                    <div className="config-secret-actions">
-                      <button type="button" className="delete" onClick={() => handleDelete(v)}>Delete</button>
+                    <div className={SECRET_ACTIONS_CLS}>
+                      <button type="button" className={cn(SECRET_ACTION_BTN_CLS, SECRET_ACTION_DELETE_CLS)} onClick={() => handleDelete(v)}>Delete</button>
                     </div>
                   )}
                 </td>
@@ -1054,17 +1137,13 @@ function VariablesTab() {
         </table>
       )}
 
-      <div className="config-secret-hint">
+      <div className={SECRET_HINT_CLS}>
         Variables define default session values. Template variables are bundled with Gobby.
         Custom variables use <code>source: installed</code> and can be deleted.
       </div>
     </div>
   )
 }
-
-// =============================================================================
-// TemplateTab
-// =============================================================================
 
 interface TemplateTabProps {
   content: string
@@ -1099,16 +1178,16 @@ function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
   }
 
   return (
-    <div className="config-yaml">
+    <div className={YAML_CLS}>
       {showRestart && (
-        <div className="config-restart-banner">
+        <div className={RESTART_BANNER_CLS}>
           <span>Configuration saved to database. Restart the daemon to apply changes.</span>
-          <button type="button" onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
+          <button type="button" className={RESTART_BTN_CLS} onClick={() => fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/admin/restart`, { method: 'POST' }).then(() => setShowRestart(false))}>
             Restart Now
           </button>
         </div>
       )}
-      <div className="config-yaml-editor">
+      <div className={YAML_EDITOR_CLS}>
         <CodeMirrorEditor
           content={localContent}
           language="yaml"
@@ -1116,11 +1195,11 @@ function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
           onSave={handleSave}
         />
       </div>
-      <div className="config-yaml-footer">
-        <div className="config-yaml-errors">
+      <div className={YAML_FOOTER_CLS}>
+        <div className={YAML_ERRORS_CLS}>
           {errors.map((e, i) => <span key={i}>{e}</span>)}
         </div>
-        <button type="button" className="config-toolbar-btn primary" onClick={handleSave} disabled={saving}>
+        <button type="button" className={cn(TOOLBAR_BTN_CLS, TOOLBAR_BTN_PRIMARY_CLS)} onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Template'}
         </button>
       </div>
@@ -1128,9 +1207,12 @@ function TemplateTab({ content, onFetch, onSave }: TemplateTabProps) {
   )
 }
 
-// =============================================================================
-// ConfigurationPage (main export)
-// =============================================================================
+const SCROLL_SHADOW =
+  'inset 12px 0 10px -12px color-mix(in srgb, var(--text-primary) 28%, transparent)'
+const SCROLL_SHADOW_RIGHT =
+  'inset -12px 0 10px -12px color-mix(in srgb, var(--text-primary) 28%, transparent)'
+const NO_SHADOW = 'inset 12px 0 10px -12px transparent'
+const NO_SHADOW_RIGHT = 'inset -12px 0 10px -12px transparent'
 
 export function ConfigurationPage() {
   const [activeTab, setActiveTab] = useState<TabId>('config')
@@ -1156,7 +1238,6 @@ export function ConfigurationPage() {
     )
   }, [])
 
-  // Initial data load
   useEffect(() => {
     config.fetchConfig()
     config.fetchSecrets()
@@ -1205,7 +1286,7 @@ export function ConfigurationPage() {
         const bundle = JSON.parse(text)
         const result = await config.importConfig({
           config_store: bundle.config_store,
-          config: bundle.config,  // Legacy support
+          config: bundle.config,
           prompts: bundle.prompts,
         })
         if (result.success) {
@@ -1231,21 +1312,17 @@ export function ConfigurationPage() {
     { id: 'template', label: 'Template' },
   ]
 
-  const tabClasses = [
-    'config-tabs',
-    tabScrollState.canScrollLeft ? 'can-scroll-left' : '',
-    tabScrollState.canScrollRight ? 'can-scroll-right' : '',
-  ].filter(Boolean).join(' ')
+  const tabsBoxShadow = `${tabScrollState.canScrollLeft ? SCROLL_SHADOW : NO_SHADOW}, ${tabScrollState.canScrollRight ? SCROLL_SHADOW_RIGHT : NO_SHADOW_RIGHT}`
 
   return (
-    <div className="config-page">
-      <div className="config-toolbar">
-        <div className="config-toolbar-left">
-          <div ref={tabsRef} className={tabClasses}>
+    <div className={PAGE_CLS}>
+      <div className={TOOLBAR_CLS}>
+        <div className={TOOLBAR_LEFT_CLS}>
+          <div ref={tabsRef} className={TABS_CLS} style={{ boxShadow: tabsBoxShadow }}>
             {tabs.map(t => (
               <button type="button"
                 key={t.id}
-                className={`config-tab ${activeTab === t.id ? 'active' : ''}`}
+                className={cn(TAB_CLS, activeTab === t.id && TAB_ACTIVE_CLS)}
                 onClick={() => setActiveTab(t.id)}
               >
                 {t.label}
@@ -1253,13 +1330,13 @@ export function ConfigurationPage() {
             ))}
           </div>
         </div>
-        <div className="config-toolbar-right">
-          <button type="button" className="config-toolbar-btn" onClick={handleImport}>Import</button>
-          <button type="button" className="config-toolbar-btn" onClick={handleExport}>Export</button>
+        <div className={TOOLBAR_RIGHT_CLS}>
+          <button type="button" className={TOOLBAR_BTN_CLS} onClick={handleImport}>Import</button>
+          <button type="button" className={TOOLBAR_BTN_CLS} onClick={handleExport}>Export</button>
         </div>
       </div>
 
-      <div className="config-content">
+      <div className={CONTENT_CLS}>
         {activeTab === 'config' && (
           <ConfigFormTab
             schema={config.schema}

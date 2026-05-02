@@ -9,8 +9,17 @@ import { SkillForm } from './SkillForm'
 import type { SkillFormData } from './SkillForm'
 import { SkillHubBrowser } from './SkillHubBrowser'
 import { SkillImportModal } from './SkillImportModal'
+import { cn } from '../../lib/utils'
 import '../workflows/WorkflowsPage.css'
-import './SkillsPage.css'
+
+const ERROR_TOAST_CLS =
+  'fixed right-5 top-[60px] z-[1000] cursor-pointer rounded-md bg-[var(--color-error)] px-4 py-2 text-[length:var(--text-base)] text-[var(--accent-foreground)] [animation:fadeIn_0.2s_ease]'
+
+const VIEW_TOGGLE_CLS =
+  'flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5'
+const VIEW_BTN_CLS =
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-[var(--text-muted)] transition-all duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const VIEW_BTN_ACTIVE_CLS = 'bg-[var(--accent)] text-[var(--bg-primary)] hover:bg-[var(--accent)] hover:text-[var(--bg-primary)]'
 
 type ActiveTab = 'installed' | 'hub'
 type SourceFilter = 'installed' | 'project' | 'deleted'
@@ -64,7 +73,6 @@ export function SkillsPage() {
   const [showFilterPopover, setShowFilterPopover] = useState(false)
   const filterRef = useRef<HTMLDivElement>(null)
 
-  // Click-outside to close popover
   useEffect(() => {
     if (!showFilterPopover) return
     const handleMouseDown = (e: MouseEvent) => {
@@ -81,7 +89,6 @@ export function SkillsPage() {
     setTimeout(() => setErrorMessage(null), 4000)
   }, [])
 
-  // Apply source filter + search + source type filter to skills
   const filteredSkills = useMemo(() => {
     let result = skills
 
@@ -234,28 +241,27 @@ export function SkillsPage() {
     <main className="workflows-page">
       {ConfirmDialogElement}
       {errorMessage && (
-        <div className="skills-error-toast" onClick={() => setErrorMessage(null)}>
+        <div className={ERROR_TOAST_CLS} onClick={() => setErrorMessage(null)}>
           {errorMessage}
         </div>
       )}
 
-      {/* Title row */}
       <div className="workflows-toolbar">
         <div className="workflows-toolbar-left">
           <h2 className="workflows-toolbar-title">Skills</h2>
           <span className="workflows-toolbar-count">{stats?.total ?? 0}</span>
         </div>
         <div className="workflows-toolbar-right">
-          <div className="skills-view-toggle" style={{ marginRight: activeTab === 'installed' ? '8px' : '0' }}>
+          <div className={VIEW_TOGGLE_CLS} style={{ marginRight: activeTab === 'installed' ? '8px' : '0' }}>
             <button
-              className={`skills-view-btn ${activeTab === 'installed' ? 'skills-view-btn--active' : ''}`}
+              className={cn(VIEW_BTN_CLS, activeTab === 'installed' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('installed')}
               title="Library"
             >
               <LibraryIcon />
             </button>
             <button
-              className={`skills-view-btn ${activeTab === 'hub' ? 'skills-view-btn--active' : ''}`}
+              className={cn(VIEW_BTN_CLS, activeTab === 'hub' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('hub')}
               title="Hub Browser"
             >
@@ -276,7 +282,6 @@ export function SkillsPage() {
         </div>
       </div>
 
-      {/* Filter row */}
       <div className="workflows-filter-row">
         {activeTab === 'installed' && (
           <input
@@ -322,7 +327,6 @@ export function SkillsPage() {
         )}
       </div>
 
-      {/* Installed View */}
       {activeTab === 'installed' && (
         <>
           <SkillsFilters
@@ -355,7 +359,6 @@ export function SkillsPage() {
         </>
       )}
 
-      {/* Hub View */}
       {activeTab === 'hub' && (
         <div className="workflows-content">
           <SkillHubBrowser
@@ -370,7 +373,6 @@ export function SkillsPage() {
         </div>
       )}
 
-      {/* Detail slide-out */}
       {selectedSkill && (
         <SkillDetail
           skill={selectedSkill}
@@ -381,7 +383,6 @@ export function SkillsPage() {
         />
       )}
 
-      {/* Create/Edit modal */}
       {showForm && (
         <SkillForm
           skill={editSkill}
@@ -390,7 +391,6 @@ export function SkillsPage() {
         />
       )}
 
-      {/* Import modal */}
       {showImport && (
         <SkillImportModal
           onImport={handleImport}

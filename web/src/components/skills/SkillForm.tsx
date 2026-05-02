@@ -1,6 +1,42 @@
 import { useState, useCallback } from 'react'
 import type { GobbySkill } from '../../hooks/useSkills'
 import { MemoizedMarkdown } from '../shared/MemoizedMarkdown'
+import { FORM_CANCEL_BTN_CLS, FORM_SAVE_BTN_CLS } from './styles'
+
+const OVERLAY_CLS =
+  'fixed inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)] [animation:fadeIn_0.15s_ease]'
+const MODAL_CLS =
+  'flex max-h-[90vh] w-[90vw] max-w-[1000px] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
+const HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-5 py-4'
+const HEADER_TITLE_CLS = 'm-0 text-[length:var(--text-lg)] font-semibold'
+const CLOSE_CLS =
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-xl)] text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] pointer-coarse:h-11 pointer-coarse:w-11'
+
+const BODY_CLS = 'flex flex-1 flex-col overflow-y-auto'
+const TOP_CLS = 'border-b border-[var(--border)] px-5 py-4'
+const FIELDS_CLS = 'flex flex-col gap-2.5'
+const ROW_CLS = 'flex flex-col gap-1'
+const ROW_GROUP_CLS = 'flex gap-3'
+const ROW_HALF_CLS = 'flex-1'
+
+const LABEL_CLS = 'text-[length:var(--text-sm)] font-medium text-[var(--text-muted)]'
+const INPUT_CLS =
+  'rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1.5 font-[inherit] text-[length:var(--text-base)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-11'
+const SELECT_CLS = INPUT_CLS
+
+const CHECKBOXES_CLS = 'flex gap-4'
+const CHECKBOX_CLS =
+  'flex cursor-pointer items-center gap-1.5 text-[length:var(--text-base)] text-[var(--text-secondary)]'
+
+const EDITOR_CONTAINER_CLS = 'flex h-[40vh] border-b border-[var(--border)]'
+const EDITOR_PANE_CLS = 'flex flex-1 flex-col overflow-hidden px-5 py-3'
+const TEXTAREA_CLS =
+  'flex-1 resize-none rounded border border-[var(--border)] bg-[var(--bg-secondary)] p-2 font-[inherit] text-[length:var(--text-base)] leading-[1.5] text-[var(--text-primary)] outline-none focus:border-[var(--accent)]'
+const PREVIEW_PANE_CLS =
+  'flex-1 overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-secondary)] px-5 py-3'
+const PREVIEW_CONTENT_CLS = 'text-[length:var(--text-base)]'
+
+const FOOTER_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] px-5 py-3'
 
 export interface SkillFormData {
   name: string
@@ -55,20 +91,20 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
   }, [name, description, content, version, license, compatibility, allowedToolsStr, enabled, alwaysApply, injectionFormat, onSave])
 
   return (
-    <div className="skill-form-overlay" onClick={onCancel}>
-      <div className="skill-form-modal" onClick={e => e.stopPropagation()}>
-        <div className="skill-form-header">
-          <h3>{skill ? 'Edit Skill' : 'New Skill'}</h3>
-          <button className="skill-form-close" onClick={onCancel}>&times;</button>
+    <div className={OVERLAY_CLS} onClick={onCancel}>
+      <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
+        <div className={HEADER_CLS}>
+          <h3 className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h3>
+          <button className={CLOSE_CLS} onClick={onCancel}>&times;</button>
         </div>
 
-        <form onSubmit={handleSubmit} className="skill-form-body">
-          <div className="skill-form-top">
-            <div className="skill-form-fields">
-              <div className="skill-form-row">
-                <label className="skill-form-label">Name</label>
+        <form onSubmit={handleSubmit} className={BODY_CLS}>
+          <div className={TOP_CLS}>
+            <div className={FIELDS_CLS}>
+              <div className={ROW_CLS}>
+                <label className={LABEL_CLS}>Name</label>
                 <input
-                  className="skill-form-input"
+                  className={INPUT_CLS}
                   value={name}
                   onChange={e => setName(e.target.value)}
                   placeholder="my-skill"
@@ -77,10 +113,10 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                 />
               </div>
 
-              <div className="skill-form-row">
-                <label className="skill-form-label">Description</label>
+              <div className={ROW_CLS}>
+                <label className={LABEL_CLS}>Description</label>
                 <input
-                  className="skill-form-input"
+                  className={INPUT_CLS}
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   placeholder="What this skill does"
@@ -88,20 +124,20 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                 />
               </div>
 
-              <div className="skill-form-row-group">
-                <div className="skill-form-row skill-form-row--half">
-                  <label className="skill-form-label">Version</label>
+              <div className={ROW_GROUP_CLS}>
+                <div className={`${ROW_CLS} ${ROW_HALF_CLS}`}>
+                  <label className={LABEL_CLS}>Version</label>
                   <input
-                    className="skill-form-input"
+                    className={INPUT_CLS}
                     value={version}
                     onChange={e => setVersion(e.target.value)}
                     placeholder="1.0.0"
                   />
                 </div>
-                <div className="skill-form-row skill-form-row--half">
-                  <label className="skill-form-label">License</label>
+                <div className={`${ROW_CLS} ${ROW_HALF_CLS}`}>
+                  <label className={LABEL_CLS}>License</label>
                   <input
-                    className="skill-form-input"
+                    className={INPUT_CLS}
                     value={license}
                     onChange={e => setLicense(e.target.value)}
                     placeholder="MIT"
@@ -109,30 +145,30 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                 </div>
               </div>
 
-              <div className="skill-form-row">
-                <label className="skill-form-label">Compatibility</label>
+              <div className={ROW_CLS}>
+                <label className={LABEL_CLS}>Compatibility</label>
                 <input
-                  className="skill-form-input"
+                  className={INPUT_CLS}
                   value={compatibility}
                   onChange={e => setCompatibility(e.target.value)}
                   placeholder="Claude Code, Gemini CLI"
                 />
               </div>
 
-              <div className="skill-form-row">
-                <label className="skill-form-label">Allowed Tools (comma-separated)</label>
+              <div className={ROW_CLS}>
+                <label className={LABEL_CLS}>Allowed Tools (comma-separated)</label>
                 <input
-                  className="skill-form-input"
+                  className={INPUT_CLS}
                   value={allowedToolsStr}
                   onChange={e => setAllowedToolsStr(e.target.value)}
                   placeholder="Edit, Write, Bash"
                 />
               </div>
 
-              <div className="skill-form-row">
-                <label className="skill-form-label">Injection Format</label>
+              <div className={ROW_CLS}>
+                <label className={LABEL_CLS}>Injection Format</label>
                 <select
-                  className="skill-form-select"
+                  className={SELECT_CLS}
                   value={injectionFormat}
                   onChange={e => setInjectionFormat(e.target.value)}
                 >
@@ -142,12 +178,12 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
                 </select>
               </div>
 
-              <div className="skill-form-checkboxes">
-                <label className="skill-form-checkbox">
+              <div className={CHECKBOXES_CLS}>
+                <label className={CHECKBOX_CLS}>
                   <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
                   Enabled
                 </label>
-                <label className="skill-form-checkbox">
+                <label className={CHECKBOX_CLS}>
                   <input type="checkbox" checked={alwaysApply} onChange={e => setAlwaysApply(e.target.checked)} />
                   Always Apply
                 </label>
@@ -155,28 +191,28 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
             </div>
           </div>
 
-          <div className="skill-form-editor-container">
-            <div className="skill-form-editor-pane">
-              <label className="skill-form-label">Content (Markdown)</label>
+          <div className={EDITOR_CONTAINER_CLS}>
+            <div className={EDITOR_PANE_CLS}>
+              <label className={LABEL_CLS}>Content (Markdown)</label>
               <textarea
-                className="skill-form-textarea"
+                className={TEXTAREA_CLS}
                 value={content}
                 onChange={e => setContent(e.target.value)}
                 placeholder="# Skill Instructions&#10;&#10;Write your skill content here..."
                 spellCheck={false}
               />
             </div>
-            <div className="skill-form-preview-pane">
-              <label className="skill-form-label">Preview</label>
-              <div className="skill-form-preview-content">
+            <div className={PREVIEW_PANE_CLS}>
+              <label className={LABEL_CLS}>Preview</label>
+              <div className={PREVIEW_CONTENT_CLS}>
                 <MemoizedMarkdown content={content || '*No content yet*'} id="skill-form-preview" />
               </div>
             </div>
           </div>
 
-          <div className="skill-form-footer">
-            <button type="button" className="skill-form-cancel-btn" onClick={onCancel}>Cancel</button>
-            <button type="submit" className="skill-form-save-btn">
+          <div className={FOOTER_CLS}>
+            <button type="button" className={FORM_CANCEL_BTN_CLS} onClick={onCancel}>Cancel</button>
+            <button type="submit" className={FORM_SAVE_BTN_CLS}>
               {skill ? 'Save Changes' : 'Create Skill'}
             </button>
           </div>

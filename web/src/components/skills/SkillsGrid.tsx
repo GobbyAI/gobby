@@ -1,4 +1,6 @@
 import type { GobbySkill } from '../../hooks/useSkills'
+import { cn } from '../../lib/utils'
+import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG } from './styles'
 
 interface SkillsGridProps {
   skills: GobbySkill[]
@@ -15,7 +17,7 @@ interface SkillsGridProps {
 
 function SourceBadge({ source }: { source: string | null }) {
   const s = source || 'unknown'
-  return <span className={`skills-source-badge skills-source-badge--${s}`}>{s}</span>
+  return <span className={cn(SOURCE_BADGE_CLS, SOURCE_BADGE_BG[s] ?? SOURCE_BADGE_BG.unknown)}>{s}</span>
 }
 
 function getCategory(skill: GobbySkill): string | null {

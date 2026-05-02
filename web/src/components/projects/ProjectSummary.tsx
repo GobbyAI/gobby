@@ -1,6 +1,33 @@
 import { useState, useEffect } from 'react'
 import type { ProjectWithStats } from '../../hooks/useProjects'
 
+const SUMMARY_CLS = 'max-w-[800px]'
+const GRID_CLS = 'flex max-w-[900px] flex-col gap-5'
+const STATS_ROW_CLS =
+  'grid gap-4 gap-x-6 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4 [grid-template-columns:repeat(auto-fit,minmax(80px,1fr))]'
+const STAT_CLS = 'flex flex-col items-center gap-1'
+const STAT_VALUE_CLS = 'font-[inherit] text-[length:var(--text-2xl)] font-semibold text-[var(--accent)]'
+const STAT_LABEL_CLS = 'text-[length:var(--text-xs)] uppercase text-[var(--text-muted)]'
+
+const SECTION_CLS = 'rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-4'
+const HEADING_CLS = 'm-0 mb-3 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
+const TWO_COL_CLS = 'grid gap-5 [grid-template-columns:1fr_1fr] max-sm:[grid-template-columns:1fr]'
+
+const TASK_BAR_CLS = 'mb-3 flex h-2 gap-0.5 overflow-hidden rounded'
+const TASK_SEGMENT_CLS = 'rounded-sm'
+const TASK_LEGEND_CLS = 'flex flex-wrap gap-x-5 gap-y-3'
+const TASK_LEGEND_ITEM_CLS = 'flex items-center gap-1.5 text-[length:var(--text-sm)]'
+const TASK_DOT_CLS = 'h-2 w-2 shrink-0 rounded-full'
+const TASK_LEGEND_LABEL_CLS = 'text-[var(--text-secondary)]'
+const TASK_LEGEND_COUNT_CLS = 'font-mono font-semibold text-[var(--text-primary)]'
+
+const DL_CLS =
+  'm-0 grid gap-2 gap-x-4 [grid-template-columns:140px_1fr] max-sm:[grid-template-columns:1fr] max-sm:gap-y-1 max-sm:[&>dt:not(:first-of-type)]:mt-2'
+const DT_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
+const DD_CLS = 'm-0 break-words text-[length:var(--text-base)] text-[var(--text-primary)]'
+const EMPTY_CLS = 'italic text-[var(--text-muted)]'
+const LINK_CLS = 'text-[var(--accent)] no-underline hover:underline'
+
 interface ProjectSummaryProps {
   project: ProjectWithStats
 }
@@ -54,97 +81,94 @@ export function ProjectSummary({ project }: ProjectSummaryProps) {
     : []
 
   return (
-    <div className="projects-summary">
-      <div className="projects-overview-grid">
-        {/* Activity stats row */}
-        <div className="projects-overview-stats-row">
-          <div className="projects-summary-stat">
-            <span className="projects-summary-stat-value">{project.session_count}</span>
-            <span className="projects-summary-stat-label">Sessions</span>
+    <div className={SUMMARY_CLS}>
+      <div className={GRID_CLS}>
+        <div className={STATS_ROW_CLS}>
+          <div className={STAT_CLS}>
+            <span className={STAT_VALUE_CLS}>{project.session_count}</span>
+            <span className={STAT_LABEL_CLS}>Sessions</span>
           </div>
-          <div className="projects-summary-stat">
-            <span className="projects-summary-stat-value">{project.open_task_count}</span>
-            <span className="projects-summary-stat-label">Open Tasks</span>
+          <div className={STAT_CLS}>
+            <span className={STAT_VALUE_CLS}>{project.open_task_count}</span>
+            <span className={STAT_LABEL_CLS}>Open Tasks</span>
           </div>
-          <div className="projects-summary-stat">
-            <span className="projects-summary-stat-value">{taskTotal}</span>
-            <span className="projects-summary-stat-label">Total Tasks</span>
+          <div className={STAT_CLS}>
+            <span className={STAT_VALUE_CLS}>{taskTotal}</span>
+            <span className={STAT_LABEL_CLS}>Total Tasks</span>
           </div>
-          <div className="projects-summary-stat">
-            <span className="projects-summary-stat-value">
+          <div className={STAT_CLS}>
+            <span className={STAT_VALUE_CLS}>
               {project.last_activity_at
                 ? new Date(project.last_activity_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
                 : '—'}
             </span>
-            <span className="projects-summary-stat-label">Last Activity</span>
+            <span className={STAT_LABEL_CLS}>Last Activity</span>
           </div>
         </div>
 
-        {/* Task status breakdown */}
         {taskStats && activeStatuses.length > 0 && (
-          <div className="projects-summary-section">
-            <h3 className="projects-summary-heading">Task Breakdown</h3>
-            <div className="projects-overview-task-bar">
+          <div className={SECTION_CLS}>
+            <h3 className={HEADING_CLS}>Task Breakdown</h3>
+            <div className={TASK_BAR_CLS}>
               {activeStatuses.map(status => {
                 const count = taskStats[status] || 0
                 const pct = taskTotal > 0 ? (count / taskTotal) * 100 : 0
                 return (
                   <div
                     key={status}
-                    className="projects-overview-task-segment"
+                    className={TASK_SEGMENT_CLS}
                     style={{ width: `${Math.max(pct, 2)}%`, backgroundColor: STATUS_COLORS[status] }}
                     title={`${STATUS_LABELS[status]}: ${count}`}
                   />
                 )
               })}
             </div>
-            <div className="projects-overview-task-legend">
+            <div className={TASK_LEGEND_CLS}>
               {activeStatuses.map(status => (
-                <div key={status} className="projects-overview-task-legend-item">
-                  <span className="projects-overview-task-dot" style={{ backgroundColor: STATUS_COLORS[status] }} />
-                  <span className="projects-overview-task-legend-label">{STATUS_LABELS[status]}</span>
-                  <span className="projects-overview-task-legend-count">{taskStats[status] || 0}</span>
+                <div key={status} className={TASK_LEGEND_ITEM_CLS}>
+                  <span className={TASK_DOT_CLS} style={{ backgroundColor: STATUS_COLORS[status] }} />
+                  <span className={TASK_LEGEND_LABEL_CLS}>{STATUS_LABELS[status]}</span>
+                  <span className={TASK_LEGEND_COUNT_CLS}>{taskStats[status] || 0}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Two-column layout for Details + Integrations */}
-        <div className="projects-overview-two-col">
-          <div className="projects-summary-section">
-            <h3 className="projects-summary-heading">Details</h3>
-            <dl className="projects-summary-dl">
-              <dt>Name</dt>
-              <dd>{project.display_name}</dd>
+        <div className={TWO_COL_CLS}>
+          <div className={SECTION_CLS}>
+            <h3 className={HEADING_CLS}>Details</h3>
+            <dl className={DL_CLS}>
+              <dt className={DT_CLS}>Name</dt>
+              <dd className={DD_CLS}>{project.display_name}</dd>
 
-              <dt>Repository Path</dt>
-              <dd>{project.repo_path || <span className="projects-summary-empty">Not configured</span>}</dd>
+              <dt className={DT_CLS}>Repository Path</dt>
+              <dd className={DD_CLS}>{project.repo_path || <span className={EMPTY_CLS}>Not configured</span>}</dd>
 
-              <dt>Created</dt>
-              <dd>{new Date(project.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</dd>
+              <dt className={DT_CLS}>Created</dt>
+              <dd className={DD_CLS}>{new Date(project.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</dd>
 
-              <dt>Last Updated</dt>
-              <dd>{new Date(project.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</dd>
+              <dt className={DT_CLS}>Last Updated</dt>
+              <dd className={DD_CLS}>{new Date(project.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</dd>
             </dl>
           </div>
 
-          <div className="projects-summary-section">
-            <h3 className="projects-summary-heading">Integrations</h3>
-            <dl className="projects-summary-dl">
-              <dt>GitHub</dt>
-              <dd>
+          <div className={SECTION_CLS}>
+            <h3 className={HEADING_CLS}>Integrations</h3>
+            <dl className={DL_CLS}>
+              <dt className={DT_CLS}>GitHub</dt>
+              <dd className={DD_CLS}>
                 {project.github_url ? (
-                  <a href={project.github_url} target="_blank" rel="noopener noreferrer" className="projects-summary-link">
+                  <a href={project.github_url} target="_blank" rel="noopener noreferrer" className={LINK_CLS}>
                     {project.github_repo || project.github_url}
                   </a>
                 ) : (
-                  <span className="projects-summary-empty">Not linked</span>
+                  <span className={EMPTY_CLS}>Not linked</span>
                 )}
               </dd>
 
-              <dt>Linear Team</dt>
-              <dd>{project.linear_team_id || <span className="projects-summary-empty">Not linked</span>}</dd>
+              <dt className={DT_CLS}>Linear Team</dt>
+              <dd className={DD_CLS}>{project.linear_team_id || <span className={EMPTY_CLS}>Not linked</span>}</dd>
             </dl>
           </div>
         </div>
