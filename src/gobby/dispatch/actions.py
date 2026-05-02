@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,14 @@ class StartExpansionAction:
     task_ref: str
 
 
+@dataclass(frozen=True, slots=True)
+class StartStageAction:
+    """Start a ready task manifest stage."""
+
+    task_id: str
+    stage_name: str
+
+
 @dataclass(frozen=True)
 class CreateIsolationAction:
     """Create the configured task isolation environment."""
@@ -35,6 +44,16 @@ class CreateIsolationAction:
     task_ref: str
     isolation: str
     base_branch: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AdvanceStageAction:
+    """Advance a task manifest stage through the stage-state manager."""
+
+    task_id: str
+    stage_name: str
+    method: Literal["complete_stage", "approve_review"]
+    by_session_id: str = "dispatcher"
 
 
 @dataclass(frozen=True)
@@ -70,7 +89,9 @@ class EscalateAction:
 type Action = (
     SpawnAgentAction
     | StartExpansionAction
+    | StartStageAction
     | CreateIsolationAction
+    | AdvanceStageAction
     | AdvanceLifecycleAction
     | AppendAuditMarkerAction
     | EscalateAction
@@ -79,10 +100,12 @@ type Action = (
 
 __all__ = [
     "Action",
+    "AdvanceStageAction",
     "AdvanceLifecycleAction",
     "AppendAuditMarkerAction",
     "CreateIsolationAction",
     "EscalateAction",
     "SpawnAgentAction",
     "StartExpansionAction",
+    "StartStageAction",
 ]

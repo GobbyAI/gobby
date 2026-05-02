@@ -13,11 +13,13 @@ from gobby.dispatch import rules as dispatch_rules
 from gobby.dispatch.actions import (
     Action,
     AdvanceLifecycleAction,
+    AdvanceStageAction,
     AppendAuditMarkerAction,
     CreateIsolationAction,
     EscalateAction,
     SpawnAgentAction,
     StartExpansionAction,
+    StartStageAction,
 )
 from gobby.dispatch.mutex import (
     DispatchCandidateChangedError,
@@ -35,7 +37,9 @@ from gobby.storage.tasks._artifacts import (
 )
 from gobby.storage.tasks._crud import get_task, list_automation_candidates, update_task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._transitions import advance_lifecycle
 
 MAX_ACTIVE_AGENTS = 10
@@ -232,6 +236,27 @@ def execute_action(
         )
 
     try:
+        if isinstance(action, StartStageAction):
+            manager = _stage_states_manager(db=db, services=services)
+            return manager.start_stage(
+                action.task_id,
+                action.stage_name,
+                by_session_id="dispatcher",
+            )
+        if isinstance(action, AdvanceStageAction):
+            manager = _stage_states_manager(db=db, services=services)
+            if action.method == "complete_stage":
+                return manager.complete_stage(
+                    action.task_id,
+                    action.stage_name,
+                    by_session_id=action.by_session_id,
+                )
+            if action.method == "approve_review":
+                return manager.approve_review(
+                    action.task_id,
+                    action.stage_name,
+                    by_session_id=action.by_session_id,
+                )
         if isinstance(action, AdvanceLifecycleAction):
             return advance_lifecycle(
                 db,
@@ -249,6 +274,14 @@ def execute_action(
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")
     finally:
         mutex.release()
+
+
+def _stage_states_manager(*, db: DatabaseProtocol, services: object | None) -> StageStatesManager:
+    task_manager = getattr(services, "task_manager", None)
+    manager = getattr(task_manager, "stage_states", None)
+    if manager is not None:
+        return cast(StageStatesManager, manager)
+    return StageStatesManager(db, TaskLifecycleEventManager(db))
 
 
 def count_active_agents(*args: object, **kwargs: object) -> int:

@@ -1,23 +1,23 @@
-"""Ordered pure decision rules for lifecycle dispatch."""
+"""Ordered pure decision rules for stage-native dispatch."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 from gobby.dispatch.actions import (
     Action,
-    AdvanceLifecycleAction,
+    AdvanceStageAction,
     CreateIsolationAction,
     EscalateAction,
     SpawnAgentAction,
     StartExpansionAction,
+    StartStageAction,
 )
 from gobby.dispatch.prompts import PROMPT_BUILDERS
 
 Rule = Callable[[object, object], Action | None]
 
-_SKIP_PREFIX = "stage-:"
 NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION = {
     "research_spike": ("ideation.ready", "research.ready", "prd.done", "manifest_exhausted"),
     "prd_doc": ("ideation.ready", "prd.done", "manifest_exhausted"),
@@ -30,6 +30,15 @@ DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS = {
     "prd": "prd_no_agent",
 }
 
+_AUTO_ADVANCE_NON_AGENT_STAGES = {"expansion", "pr"}
+_AUTO_ADVANCE_DEDICATED_STAGES = {"development", "holistic_qa"}
+_DISABLED_AGENT_EXCLUDED_STAGES = {
+    "expansion",
+    "pr",
+    "development",
+    "holistic_qa",
+}
+
 
 def evaluate(task: object, context: object, rules: Sequence[Rule] | None = None) -> Action | None:
     """Return the first action emitted by the ordered rule list."""
@@ -40,53 +49,57 @@ def evaluate(task: object, context: object, rules: Sequence[Rule] | None = None)
     return None
 
 
-def plan_review_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("plan_review", "open"):
+def auto_advance_ready_rule(task: object, context: object) -> Action | None:
+    stage = _current_stage(task, context)
+    if stage is None or _stage_state(stage) != "ready":
         return None
-
-    artifacts = _artifacts(context)
-    if _stage_skipped(task, "plan_review"):
-        return _advance(task, "test_arch", "open", "plan_review_skipped")
-    if not _field(artifacts, "plan_file_path"):
+    stage_name = _stage_name(stage)
+    if stage_name in _AUTO_ADVANCE_DEDICATED_STAGES:
         return None
-    if _plan_is_awaiting_revision(artifacts):
+    if not _previous_stage_done(task, stage):
         return None
-    if _maxed_out(task, artifacts, context, "plan_review_attempts", "max_review_rounds"):
-        return _fallback(task, "plan_review", "test_arch", "open")
-    return _spawn(task, context, "plan-reviewer")
-
-
-def test_arch_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("test_arch", "open"):
+    registry_entry = _registry_entry(context, stage_name, stage)
+    if bool(_field(registry_entry, "requires_human", _field(stage, "requires_human", False))):
         return None
-    if _stage_skipped(task, "test_arch"):
-        return _advance(task, "expanding", "open", "test_arch_skipped")
-    if _maxed_out(task, _artifacts(context), context, "test_arch_attempts", "max_review_rounds"):
-        return _fallback(task, "test_arch", "expanding", "open")
-    return _spawn(task, context, "test-architect")
+    if stage_name not in _AUTO_ADVANCE_NON_AGENT_STAGES:
+        if not _default_agent(stage, context):
+            return None
+        if not stage_agent_available(context, stage_name):
+            return None
+    return StartStageAction(task_id=_task_id(task), stage_name=stage_name)
 
 
-def expansion_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("expanding", "open"):
+def disabled_agent_escalation_rule(task: object, context: object) -> Action | None:
+    stage = _current_stage(task, context)
+    if stage is None or _stage_state(stage) != "ready":
         return None
-    if _stage_skipped(task, "expanding"):
-        return _advance(task, "in_development", "open", "expansion_skipped")
-    artifacts = _artifacts(context)
-    if _maxed_out(task, artifacts, context, "expansion_attempts", "max_expansion_attempts"):
-        return _fallback(task, "expansion", "in_development", "open")
-    return StartExpansionAction(task_id=_task_id(task), task_ref=_task_ref(task))
+    stage_name = _stage_name(stage)
+    if stage_name in _DISABLED_AGENT_EXCLUDED_STAGES:
+        return None
+    if not _default_agent(stage, context):
+        return None
+    if stage_agent_available(context, stage_name):
+        return None
+    reason = DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS.get(stage_name, f"{stage_name}_no_agent")
+    return EscalateAction(task_id=_task_id(task), reason=reason)
 
 
-def isolation_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("in_development", "open") or not _is_leaf(task):
+def development_isolation_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "development", "ready")
+    if stage is None or not _is_leaf(task):
         return None
 
     isolation = _isolation(task)
+    if isolation == "none":
+        return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
     if isolation not in {"worktree", "clone"}:
-        return None
-    artifacts = _artifacts(context)
+        return EscalateAction(
+            task_id=_task_id(task), reason=f"development_isolation_invalid:{isolation}"
+        )
+
+    artifacts = _artifacts(task, context)
     if _has_isolation_pair(artifacts, isolation):
-        return None
+        return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
     return CreateIsolationAction(
         task_id=_task_id(task),
         task_ref=_task_ref(task),
@@ -95,126 +108,403 @@ def isolation_rule(task: object, context: object) -> Action | None:
     )
 
 
-def dev_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("in_development", "open") or not _is_leaf(task):
-        return None
-    if is_blocked_by_deps(task) or not _field(task, "assigned_agent"):
-        return None
-    isolation = _isolation(task)
-    if isolation in {"worktree", "clone"} and not _has_isolation_pair(
-        _artifacts(context), isolation
-    ):
-        return None
-    return _spawn(task, context, str(_field(task, "assigned_agent")))
-
-
-def qa_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("in_development", "needs_review") or not _is_leaf(task):
-        return None
-    if _stage_skipped(task, "qa"):
-        return _advance(task, "holistic_review", "review_approved", "qa_skipped")
-    artifacts = _artifacts(context)
-    if _maxed_out(task, artifacts, context, "qa_attempts", "max_qa_rounds"):
-        return _fallback(task, "qa", "holistic_review", "review_approved")
-    return _spawn(task, context, "qa-reviewer")
-
-
-def leaf_park_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("in_development", "review_approved") or not _is_leaf(task):
-        return None
-    return _advance(task, "holistic_review", "review_approved", "leaf_parked")
-
-
 def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("in_development", "open") or _field(task, "task_type") != "epic":
+    stage = _matching_current_stage(task, context, "holistic_qa", "ready")
+    if stage is None or not _is_epic(task):
         return None
-    children = list(_children(context))
-    if not children or not all(_is_child_terminal_or_parked(child) for child in children):
+    children = list(_children(task, context))
+    if not children:
         return None
-    return _advance(task, "holistic_review", "open", "all_leaves_holistic")
+    if not all(is_child_parked(child) or _is_closed(child) for child in children):
+        return None
+    return StartStageAction(task_id=_task_id(task), stage_name="holistic_qa")
 
 
-def holistic_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("holistic_review", "open"):
-        return None
-    if _stage_skipped(task, "holistic_review"):
-        return _advance(task, "pr", "open", "holistic_review_skipped")
-    if _field(task, "task_type") != "epic":
-        return None
-    children = list(_children(context))
-    if not children or not all(_is_child_terminal_or_parked(child) for child in children):
-        return None
-    artifacts = _artifacts(context)
-    if _maxed_out(task, artifacts, context, "holistic_attempts", "max_holistic_rounds"):
-        return _fallback(task, "holistic_review", "pr", "open")
-    return _spawn(task, context, "reviewer")
+def ideation_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "ideation", "in_progress", "analyst")
 
 
-def pr_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("pr", "open"):
+def research_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "research", "in_progress", "researcher")
+
+
+def architecture_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "architecture", "in_progress", "architect")
+
+
+def prd_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "prd", "in_progress", "product-manager")
+
+
+def planning_work_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "planning", "in_progress", "planner")
+
+
+def planning_review_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "planning", "needs_review", "plan-adversary")
+
+
+def planning_advance_rule(task: object, context: object) -> Action | None:
+    return _complete_stage_on_state(task, context, "planning", "review_approved")
+
+
+def test_arch_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "test_arch", "in_progress", "test-architect")
+
+
+def expansion_work_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "expansion", "in_progress")
+    if stage is None or _stage_work_exhausted(stage, context):
         return None
-    if _stage_skipped(task, "pr") or _is_unattended(task):
-        return _advance(task, "merging", "open", "pr_unattended")
-    return EscalateAction(task_id=_task_id(task), reason="pr_creation_required")
+    return StartExpansionAction(task_id=_task_id(task), task_ref=_task_ref(task))
+
+
+def expansion_review_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "expansion", "needs_review", "expansion-qa")
+
+
+def expansion_advance_rule(task: object, context: object) -> Action | None:
+    return _complete_stage_on_state(task, context, "expansion", "review_approved")
+
+
+def development_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "development", "in_progress")
+    if stage is None or not _is_leaf(task) or is_blocked_by_deps(task):
+        return None
+    if _stage_work_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="development_max_work_attempts")
+    agent_slug = (
+        _default_agent(stage, context) or _field(task, "assigned_agent") or "backend-developer"
+    )
+    return _spawn_stage_agent(task, stage, context, str(agent_slug))
+
+
+def development_review_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "development", "needs_review")
+    if stage is None or not _is_leaf(task):
+        return None
+    if _stage_review_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="development_max_review_rounds")
+    return _spawn_stage_agent(task, stage, context, "qa-reviewer")
+
+
+def development_advance_rule(task: object, context: object) -> Action | None:
+    if not _is_leaf(task):
+        return None
+    return _complete_stage_on_state(task, context, "development", "review_approved")
+
+
+def holistic_qa_rule(task: object, context: object) -> Action | None:
+    return _spawn_on_stage(task, context, "holistic_qa", "in_progress", "holistic-reviewer")
+
+
+def holistic_qa_review_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "holistic_qa", "needs_review")
+    if stage is None or _stage_review_exhausted(stage, context):
+        return None
+    return _spawn_stage_agent(task, stage, context, "holistic-reviewer", resume_review=True)
+
+
+def holistic_qa_advance_rule(task: object, context: object) -> Action | None:
+    return _complete_stage_on_state(task, context, "holistic_qa", "review_approved")
+
+
+def pr_work_rule(task: object, context: object) -> Action | None:
+    if _matching_current_stage(task, context, "pr", "in_progress") is None:
+        return None
+    return EscalateAction(task_id=_task_id(task), reason="pr_no_agent")
+
+
+def pr_review_rule(task: object, context: object) -> Action | None:
+    if _matching_current_stage(task, context, "pr", "needs_review") is None:
+        return None
+    return None
+
+
+def pr_advance_rule(task: object, context: object) -> Action | None:
+    return _complete_stage_on_state(task, context, "pr", "review_approved")
 
 
 def merge_rule(task: object, context: object) -> Action | None:
-    if _state(task) != ("merging", "open") or _field(task, "task_type") != "epic":
-        return None
+    return _spawn_on_stage(task, context, "merge", "in_progress", "merge-orchestrator")
 
-    if _maxed_out(task, _artifacts(context), context, "merge_attempts", "max_merge_attempts"):
-        if _is_unattended(task):
-            return _advance(task, "merging", "open", "merge_failed:max_attempts_unattended")
-        return EscalateAction(task_id=_task_id(task), reason="merge_failed:max_attempts")
-    return _spawn(task, context, "merge-orchestrator")
+
+def task_has_stage(task: object, stage_name: str) -> bool:
+    """True when the task manifest contains stage_name."""
+    return any(_stage_name(stage) == stage_name for stage in _stages(task))
+
+
+def current_stage(task: object) -> object | None:
+    """Return the leftmost manifest row whose state is not done."""
+    pending = [stage for stage in _stages(task) if _stage_state(stage) != "done"]
+    if not pending:
+        return None
+    return min(pending, key=_stage_position)
+
+
+def is_child_parked(child: object) -> bool:
+    """True when a leaf child is no longer blocking parent holistic QA."""
+    return (
+        _is_leaf(child)
+        and not bool(_field(child, "is_escalated", False))
+        and (_is_closed(child) or current_stage(child) is None)
+    )
 
 
 def stage_agent_available(context: object, stage_name: str) -> bool:
-    registry_entry = _mapping_field(_field(context, "stage_registry", {}), stage_name)
-    if registry_entry is None:
+    agent_slug = _default_agent(_field(context, "current_stage"), context, stage_name)
+    if not agent_slug:
         return False
-    default_agent = _field(registry_entry, "default_agent")
-    if not default_agent:
-        return False
-    agent = _mapping_field(_field(context, "agent_definitions", {}), str(default_agent))
-    return bool(agent is not None and _field(agent, "enabled", False))
+    agent = _agent_definition(context, str(agent_slug))
+    if agent is None:
+        return True
+    return bool(_field(agent, "enabled", True))
 
 
-def disabled_agent_escalation_rule(task: object, context: object) -> Action | None:
-    current_stage = _field(context, "current_stage")
-    stage_name = _field(current_stage, "name")
-    if not stage_name or _field(current_stage, "state") != "ready":
-        return None
-    if stage_name in {"development", "holistic_qa"}:
-        return None
-    registry_entry = _mapping_field(_field(context, "stage_registry", {}), str(stage_name))
-    if registry_entry is None:
-        return None
-    if not _field(registry_entry, "default_agent"):
-        return None
-    if stage_agent_available(context, str(stage_name)):
-        return None
-    reason = DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS.get(
-        str(stage_name),
-        f"{stage_name}_no_agent",
-    )
-    return EscalateAction(task_id=_task_id(task), reason=reason)
+def is_blocked_by_deps(task: object) -> bool:
+    blocked_by = _field(task, "active_blocked_by", None)
+    if blocked_by is None:
+        blocked_by = _field(task, "blocked_by", ())
+    return bool(blocked_by)
 
 
 BASE_RULES: list[Rule] = [
-    plan_review_rule,
-    test_arch_rule,
-    expansion_rule,
-    isolation_rule,
-    dev_rule,
-    qa_rule,
-    leaf_park_rule,
+    auto_advance_ready_rule,
+    disabled_agent_escalation_rule,
+    development_isolation_rule,
     all_leaves_holistic_rule,
-    holistic_rule,
-    pr_rule,
+    ideation_rule,
+    research_rule,
+    architecture_rule,
+    prd_rule,
+    planning_work_rule,
+    planning_review_rule,
+    planning_advance_rule,
+    test_arch_rule,
+    expansion_work_rule,
+    expansion_review_rule,
+    expansion_advance_rule,
+    development_rule,
+    development_review_rule,
+    development_advance_rule,
+    holistic_qa_rule,
+    holistic_qa_review_rule,
+    holistic_qa_advance_rule,
+    pr_work_rule,
+    pr_review_rule,
+    pr_advance_rule,
 ]
 
 RULES: list[Rule] = [*BASE_RULES, merge_rule]
+
+
+def _spawn_on_stage(
+    task: object,
+    context: object,
+    stage_name: str,
+    state: str,
+    agent_slug: str,
+) -> Action | None:
+    stage = _matching_current_stage(task, context, stage_name, state)
+    if stage is None:
+        return None
+    if state == "needs_review" and _stage_review_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_review_rounds")
+    if state == "in_progress" and _stage_work_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_work_attempts")
+    return _spawn_stage_agent(task, stage, context, agent_slug)
+
+
+def _complete_stage_on_state(
+    task: object,
+    context: object,
+    stage_name: str,
+    state: str,
+) -> AdvanceStageAction | None:
+    if _matching_current_stage(task, context, stage_name, state) is None:
+        return None
+    return AdvanceStageAction(
+        task_id=_task_id(task),
+        stage_name=stage_name,
+        method="complete_stage",
+    )
+
+
+def _spawn_stage_agent(
+    task: object,
+    stage: object,
+    context: object,
+    agent_slug: str,
+    *,
+    resume_review: bool = False,
+) -> SpawnAgentAction:
+    prompt_context = _prompt_context(context)
+    prompt_context["stage_name"] = _stage_name(stage)
+    prompt_context["stage_state"] = _stage_state(stage)
+    if resume_review:
+        prompt_context["reason"] = "holistic_qa_resume_review"
+        prompt_context["resume_review"] = True
+    builder = PROMPT_BUILDERS.get(agent_slug) or PROMPT_BUILDERS["default"]
+    initial_variables: dict[str, object] = {
+        "stage_name": _stage_name(stage),
+        "stage_state": _stage_state(stage),
+    }
+    if resume_review:
+        initial_variables["resume_review"] = True
+    return SpawnAgentAction(
+        task_id=_task_id(task),
+        task_ref=_task_ref(task),
+        agent_slug=agent_slug,
+        prompt=builder(task, prompt_context),
+        initial_variables=initial_variables,
+        additional_skills=tuple(_field(task, "additional_skills", ()) or ()),
+    )
+
+
+def _matching_current_stage(
+    task: object,
+    context: object,
+    stage_name: str,
+    state: str,
+) -> object | None:
+    stage = _current_stage(task, context)
+    if stage is None:
+        return None
+    if _stage_name(stage) == stage_name and _stage_state(stage) == state:
+        return stage
+    return None
+
+
+def _current_stage(task: object, context: object) -> object | None:
+    return current_stage(task) or _field(context, "current_stage")
+
+
+def _previous_stage_done(task: object, stage: object) -> bool:
+    position = _stage_position(stage)
+    if position == 0:
+        return True
+    for candidate in _stages(task):
+        if _stage_position(candidate) == position - 1:
+            return _stage_state(candidate) == "done"
+    return False
+
+
+def _stage_work_exhausted(stage: object, context: object) -> bool:
+    cap = _stage_cap(stage, context, "max_work_attempts", "default_max_work_attempts")
+    return cap is not None and int(_field(stage, "work_attempt_count", 0) or 0) >= cap
+
+
+def _stage_review_exhausted(stage: object, context: object) -> bool:
+    cap = _stage_cap(stage, context, "max_review_rounds", "default_max_review_rounds")
+    return cap is not None and int(_field(stage, "review_round_count", 0) or 0) >= cap
+
+
+def _stage_cap(
+    stage: object,
+    context: object,
+    stage_cap_name: str,
+    registry_cap_name: str,
+) -> int | None:
+    value = _field(stage, stage_cap_name)
+    if value is None:
+        registry_entry = _registry_entry(context, _stage_name(stage), stage)
+        value = _field(registry_entry, registry_cap_name)
+    return int(value) if value is not None else None
+
+
+def _default_agent(
+    stage: object | None,
+    context: object,
+    stage_name: str | None = None,
+) -> str | None:
+    resolved_stage_name = stage_name or (_stage_name(stage) if stage is not None else None)
+    registry_entry = _registry_entry(context, resolved_stage_name, stage)
+    value = _field(registry_entry, "default_agent", _field(stage, "default_agent"))
+    return str(value) if value else None
+
+
+def _registry_entry(
+    context: object, stage_name: str | None, stage: object | None = None
+) -> object | None:
+    if not stage_name:
+        return stage
+    registry = _field(context, "stage_registry", {})
+    if isinstance(registry, dict):
+        entry = registry.get(stage_name)
+        return cast(object, entry) if entry is not None else stage
+    if isinstance(registry, Sequence) and not isinstance(registry, str):
+        for entry in registry:
+            if str(_field(entry, "name", "")) == stage_name:
+                return cast(object, entry)
+    mapped = _mapping_field(registry, stage_name)
+    return mapped if mapped is not None else stage
+
+
+def _artifacts(task: object, context: object) -> object:
+    return _field(context, "artifacts", _field(task, "artifacts", {}))
+
+
+def _children(task: object, context: object) -> Sequence[object]:
+    return tuple(_field(context, "children", _field(task, "children", ())) or ())
+
+
+def _is_leaf(task: object) -> bool:
+    return str(_field(task, "task_type", "")) != "epic" and not bool(_field(task, "children", ()))
+
+
+def _is_epic(task: object) -> bool:
+    return str(_field(task, "task_type", "")) == "epic"
+
+
+def _is_closed(task: object) -> bool:
+    return bool(_field(task, "is_closed", False) or _field(task, "closed_at")) or (
+        _field(task, "status") == "closed"
+    )
+
+
+def _isolation(task: object) -> str:
+    return str(_field(task, "isolation", "worktree"))
+
+
+def _has_isolation_pair(artifacts: object, isolation: str) -> bool:
+    if isolation == "clone":
+        return bool(_field(artifacts, "clone_path")) and bool(_field(artifacts, "clone_id"))
+    return bool(_field(artifacts, "worktree_path")) and bool(_field(artifacts, "worktree_id"))
+
+
+def _stages(task: object) -> Sequence[object]:
+    return tuple(_field(task, "stages", ()) or ())
+
+
+def _stage_name(stage: object | None) -> str:
+    if stage is None:
+        return ""
+    value = _field(stage, "stage_name", _field(stage, "name", ""))
+    return str(value)
+
+
+def _stage_state(stage: object) -> str:
+    return str(_field(stage, "state", ""))
+
+
+def _stage_position(stage: object) -> int:
+    return int(_field(stage, "position", 0) or 0)
+
+
+def _task_id(task: object) -> str:
+    return str(_field(task, "id"))
+
+
+def _task_ref(task: object) -> str:
+    return str(_field(task, "ref", _task_id(task)))
+
+
+def _prompt_context(context: object) -> dict[str, object]:
+    return {
+        "artifacts": _field(context, "artifacts"),
+        "build_config": _field(context, "build_config"),
+        "reason": _field(context, "reason"),
+    }
 
 
 def _field(obj: object, name: str, default: Any = None) -> Any:
@@ -229,162 +519,48 @@ def _mapping_field(obj: object, key: str) -> object | None:
     return getattr(obj, key, None)
 
 
-def _state(task: object) -> tuple[str, str]:
-    return str(_field(task, "lifecycle")), str(_field(task, "status"))
-
-
-def _task_id(task: object) -> str:
-    return str(_field(task, "id"))
-
-
-def _task_ref(task: object) -> str:
-    return str(_field(task, "ref") or _field(task, "task_ref") or _field(task, "id"))
-
-
-def _has_label(task: object, label: str) -> bool:
-    return label in set(_field(task, "labels", ()) or ())
-
-
-def _stage_skipped(task: object, stage: str) -> bool:
-    return _has_label(task, f"{_SKIP_PREFIX}{stage}")
-
-
-def _artifacts(context: object) -> object:
-    return _field(context, "artifacts")
-
-
-def _children(context: object) -> Sequence[object]:
-    return _field(context, "children", ()) or ()
-
-
-def _is_leaf(task: object) -> bool:
-    return bool(_field(task, "task_type") == "task")
-
-
-def _is_unattended(task: object) -> bool:
-    return bool(_field(task, "unattended", False))
-
-
-def _isolation(task: object) -> str:
-    return str(_field(task, "isolation", "none") or "none")
-
-
-def is_blocked_by_deps(task: object) -> bool:
-    blocked_by = _field(task, "active_blocked_by", None)
-    if blocked_by is None:
-        blocked_by = _field(task, "blocked_by", ())
-    return bool(blocked_by)
-
-
-def _has_isolation_pair(artifacts: object, isolation: str) -> bool:
-    path = _field(artifacts, f"{isolation}_path")
-    ident = _field(artifacts, f"{isolation}_id")
-    if ident is None:
-        ident = _field(artifacts, "base_commit_sha")
-    return bool(path and ident)
-
-
-def _plan_is_awaiting_revision(artifacts: object) -> bool:
-    last_hash = _field(artifacts, "last_reviewed_plan_hash")
-    current_hash = _field(artifacts, "plan_file_hash")
-    return bool(last_hash and last_hash == current_hash)
-
-
-def _maxed_out(
-    task: object,
-    artifacts: object,
-    context: object,
-    counter_name: str,
-    cap_name: str,
-) -> bool:
-    attempts = _attempts(task, artifacts, counter_name)
-    cap = _cap(context, artifacts, cap_name)
-    return cap is not None and attempts >= cap
-
-
-def _attempts(task: object, artifacts: object, counter_name: str) -> int:
-    artifact_attempts = _field(artifacts, counter_name)
-    if artifact_attempts is not None:
-        return int(artifact_attempts)
-    if counter_name in {"qa_attempts", "holistic_attempts"}:
-        return int(_field(task, "validation_fail_count", 0) or 0)
-    return int(_field(task, "dispatch_failure_count", 0) or 0)
-
-
-def _cap(context: object, artifacts: object, name: str) -> int | None:
-    artifact_cap = _field(artifacts, name)
-    if artifact_cap is not None:
-        return int(artifact_cap)
-    build_config = _field(context, "build_config")
-    if build_config is not None and _field(build_config, name) is not None:
-        return int(_field(build_config, name))
-    value = _field(context, name)
-    return int(value) if value is not None else None
-
-
-def _spawn(task: object, context: object, agent_slug: str) -> SpawnAgentAction:
-    prompt_context = _prompt_context(context)
-    builder = PROMPT_BUILDERS.get(agent_slug) or PROMPT_BUILDERS["default"]
-    return SpawnAgentAction(
-        task_id=_task_id(task),
-        task_ref=_task_ref(task),
-        agent_slug=agent_slug,
-        prompt=builder(task, prompt_context),
-        additional_skills=tuple(_field(task, "additional_skills", ()) or ()),
-    )
-
-
-def _prompt_context(context: object) -> dict[str, object]:
-    if isinstance(context, dict):
-        return dict(context)
-    return {name: value for name, value in vars(context).items() if not name.startswith("_")}
-
-
-def _advance(task: object, lifecycle: str, status: str, reason: str) -> AdvanceLifecycleAction:
-    from_lifecycle, from_status = _state(task)
-    return AdvanceLifecycleAction(
-        task_id=_task_id(task),
-        from_lifecycle=from_lifecycle,
-        from_status=from_status,
-        to_lifecycle=lifecycle,
-        to_status=status,
-        reason=reason,
-    )
-
-
-def _fallback(task: object, rule_name: str, lifecycle: str, status: str) -> Action:
-    if _is_unattended(task):
-        return _advance(task, lifecycle, status, f"{rule_name}_max_attempts_unattended")
-    return EscalateAction(task_id=_task_id(task), reason=f"{rule_name}_rejected:max_attempts")
-
-
-def _is_child_terminal_or_parked(child: object) -> bool:
-    lifecycle, status = _state(child)
-    if status in {"closed", "escalated"}:
-        return True
-    return (lifecycle, status) in {
-        ("holistic_review", "review_approved"),
-        ("merged", "closed"),
-    }
+def _agent_definition(context: object, agent_slug: str) -> object | None:
+    agent = _mapping_field(_field(context, "agents", {}), agent_slug)
+    if agent is not None:
+        return agent
+    return _mapping_field(_field(context, "agent_definitions", {}), agent_slug)
 
 
 __all__ = [
     "BASE_RULES",
     "DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS",
     "NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION",
+    "RULES",
     "Rule",
     "all_leaves_holistic_rule",
-    "dev_rule",
+    "architecture_rule",
+    "auto_advance_ready_rule",
+    "current_stage",
+    "development_advance_rule",
+    "development_isolation_rule",
+    "development_review_rule",
+    "development_rule",
+    "disabled_agent_escalation_rule",
     "evaluate",
-    "expansion_rule",
-    "holistic_rule",
+    "expansion_advance_rule",
+    "expansion_review_rule",
+    "expansion_work_rule",
+    "holistic_qa_advance_rule",
+    "holistic_qa_review_rule",
+    "holistic_qa_rule",
+    "ideation_rule",
     "is_blocked_by_deps",
-    "isolation_rule",
-    "leaf_park_rule",
+    "is_child_parked",
     "merge_rule",
-    "plan_review_rule",
-    "pr_rule",
-    "qa_rule",
-    "RULES",
+    "planning_advance_rule",
+    "planning_review_rule",
+    "planning_work_rule",
+    "pr_advance_rule",
+    "pr_review_rule",
+    "pr_work_rule",
+    "prd_rule",
+    "research_rule",
+    "stage_agent_available",
+    "task_has_stage",
     "test_arch_rule",
 ]
