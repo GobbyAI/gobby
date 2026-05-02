@@ -7,8 +7,9 @@ import type {
   StageState5,
   StageStateView,
 } from '../lib/stageActions'
+import { currentStage as selectCurrentStage } from '../lib/stageActions'
 import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
-import { countTasksByBucket, matchesTaskBucketFilter } from '../lib/taskState'
+import { countTasksByState, getCanonicalTaskState, matchesTaskStateFilter } from '../lib/taskState'
 
 export type {
   LifecycleTask,
@@ -22,7 +23,7 @@ export type {
 // Types
 // =============================================================================
 
-export interface GobbyTask {
+export interface GobbyTask extends LifecycleTask {
   id: string
   ref: string
   title: string
@@ -44,13 +45,13 @@ export interface GobbyTask {
   due_date: string | null
   project_id: string
   claimed_by_session_id?: string | null
-  lifecycle_stage?: string | null
   closed_at?: string | null
   closed_in_session_id?: string | null
   escalated_at?: string | null
   pre_escalation_status?: string | null
   category?: string | null
-  stages?: StageStateView[]
+  current_stage: StageStateView | null
+  stages: StageStateView[]
 }
 
 export interface GobbyTaskDetail extends GobbyTask {
@@ -83,7 +84,6 @@ export interface GobbyTaskDetail extends GobbyTask {
   dispatch_failure_count?: number | null
   additional_skills?: string[] | null
   assigned_agent?: string | null
-  lifecycle?: string | null
 }
 
 export interface TaskFilters {
@@ -153,6 +153,56 @@ function getBaseUrl(): string {
   return ''
 }
 
+type RawTaskPayload = Omit<Partial<GobbyTask>, 'stages' | 'current_stage' | 'state'> & {
+  id: string
+  title?: string
+  type?: string
+  stages?: StageStateView[] | null
+  current_stage?: StageStateView | null
+  state?: Partial<CanonicalTaskState> | null
+}
+
+function normalizeTask<T extends RawTaskPayload>(task: T): T & GobbyTask {
+  const stages = Array.isArray(task.stages) ? task.stages : []
+  const projected = {
+    ...task,
+    ref: task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : task.id),
+    title: task.title ?? '',
+    status: task.status ?? 'open',
+    priority: task.priority ?? 2,
+    task_type: task.task_type ?? task.type ?? 'task',
+    parent_task_id: task.parent_task_id ?? null,
+    created_at: task.created_at ?? '',
+    updated_at: task.updated_at ?? '',
+    seq_num: task.seq_num ?? null,
+    path_cache: task.path_cache ?? null,
+    assignee: task.assignee ?? null,
+    agent_name: task.agent_name ?? null,
+    sequence_order: task.sequence_order ?? null,
+    start_date: task.start_date ?? null,
+    due_date: task.due_date ?? null,
+    project_id: task.project_id ?? '',
+    current_stage: task.current_stage ?? task.state?.current_stage ?? null,
+    stages,
+  } as GobbyTask
+  const current = projected.current_stage ?? selectCurrentStage(projected)
+  const canonical = getCanonicalTaskState({
+    ...projected,
+    current_stage: current,
+    state: task.state,
+  })
+
+  return {
+    ...projected,
+    current_stage: canonical.current_stage,
+    state: canonical,
+  } as T & GobbyTask
+}
+
+function normalizeTasks<T extends RawTaskPayload>(tasks: T[] | undefined): Array<T & GobbyTask> {
+  return (tasks ?? []).map(task => normalizeTask(task))
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -216,7 +266,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        setAllTasks(data.tasks || [])
+        setAllTasks(normalizeTasks(data.tasks))
         setServerTotal(data.total ?? (data.tasks?.length ?? 0))
         setError(null)
       } else {
@@ -245,7 +295,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       if (requestVersionRef.current !== requestVersion) return
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        const incoming = data.tasks || []
+        const incoming = normalizeTasks(data.tasks)
         if (incoming.length > 0) {
           setAllTasks(prev => {
             // Avoid duplicates if the server returns overlapping rows after a refetch.
@@ -272,13 +322,13 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
   }, [allTasks.length, buildParams, isLoadingMore, pageSize])
 
   const tasks = useMemo(
-    () => allTasks.filter(task => matchesTaskBucketFilter(task, filters.status)),
+    () => allTasks.filter(task => matchesTaskStateFilter(task, filters.status)),
     [allTasks, filters.status]
   )
 
   const total = serverTotal
   const hasMore = allTasks.length < serverTotal
-  const stats = useMemo(() => countTasksByBucket(allTasks), [allTasks])
+  const stats = useMemo(() => countTasksByState(allTasks), [allTasks])
 
   // Get single task detail
   const getTask = useCallback(async (taskId: string): Promise<GobbyTaskDetail | null> => {
@@ -286,7 +336,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}`)
       if (response.ok) {
-        return await response.json()
+        return normalizeTask(await response.json())
       }
     } catch (e) {
       console.error('Failed to get task:', e)
@@ -305,7 +355,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           body: JSON.stringify(params),
         })
         if (response.ok) {
-          const task = await response.json()
+          const task = normalizeTask(await response.json())
           fetchTasks()
           return task
         }
@@ -328,7 +378,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           body: JSON.stringify(params),
         })
         if (response.ok) {
-          const task = await response.json()
+          const task = normalizeTask(await response.json())
           fetchTasks()
           return task
         }
@@ -353,7 +403,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
           }
         )
         if (response.ok) {
-          const task = await response.json()
+          const task = normalizeTask(await response.json())
           fetchTasks()
           return task
         }
@@ -519,7 +569,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
       )
       if (response.ok) {
         const data: TaskListResponse = await response.json()
-        return data.tasks || []
+        return normalizeTasks(data.tasks)
       }
     } catch (e) {
       console.error('Failed to get subtasks:', e)
@@ -556,15 +606,15 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     if (event === 'task_deleted') {
       setAllTasks(prev => prev.filter(t => t.id !== taskId))
     } else if (event === 'task_created') {
-      const newTask = taskData as unknown as GobbyTask
+      const newTask = normalizeTask(taskData as unknown as RawTaskPayload)
       setAllTasks(prev => {
         if (prev.some(t => t.id === taskId)) return prev
         return [...prev, newTask]
       })
     } else {
       // task_updated, task_closed, task_reopened
-      const updated = taskData as unknown as GobbyTask
-      setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...updated } : t))
+      const updated = taskData as unknown as RawTaskPayload
+      setAllTasks(prev => prev.map(t => t.id === taskId ? normalizeTask({ ...t, ...updated }) : t))
     }
 
     // Debounced full refetch to sync stats, total, and filter accuracy

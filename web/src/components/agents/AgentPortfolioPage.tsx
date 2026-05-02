@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { CanonicalTaskState, TaskCompatProjection } from '../../lib/taskState'
-import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 
 // =============================================================================
 // Types
@@ -41,7 +41,6 @@ interface TaskData {
   closed_in_session_id: string | null
   created_in_session_id: string | null
   claimed_by_session_id?: string | null
-  lifecycle_stage?: string | null
   validation_fail_count: number
   escalated_at: string | null
 }
@@ -372,13 +371,13 @@ export function AgentPortfolioPage() {
       const closed = tasks.filter(
         t => {
           const state = getCanonicalTaskState(t)
-          const bucket = getTaskBucket(t)
+          const displayState = getTaskDisplayState(t)
 
-          if (bucket === 'closed') {
+          if (displayState === 'closed') {
             return Boolean(state.closed_in_session_id && sessionIds.has(state.closed_in_session_id))
           }
 
-          if (bucket === 'merge_ready') {
+          if (displayState === 'review_approved') {
             return Boolean(state.owner_session_id && sessionIds.has(state.owner_session_id))
           }
 
@@ -412,7 +411,7 @@ export function AgentPortfolioPage() {
         : 0
 
       // Success rate: closed / (assigned non-open)
-      const attempted = assigned.filter(t => getTaskBucket(t) !== 'ready')
+      const attempted = assigned.filter(t => getTaskDisplayState(t) !== 'ready')
       const successRate = attempted.length > 0 ? closed.length / attempted.length : 0
 
       // Category breakdown from closed tasks

@@ -24,6 +24,8 @@ const SAMPLE_TASK: GobbyTaskDetail = {
   start_date: null,
   due_date: null,
   project_id: 'proj-1',
+  current_stage: null,
+  stages: [],
   description: 'A detailed bug description',
   labels: ['backend'],
   category: 'fix',

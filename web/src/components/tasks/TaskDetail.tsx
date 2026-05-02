@@ -12,7 +12,7 @@ import { TokenTracker } from './TokenTracker'
 import { TaskMemories } from './TaskMemories'
 import { TaskComments } from './TaskComments'
 import { PermissionOverrides } from './PermissionOverrides'
-import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 
 interface TaskActions {
@@ -179,8 +179,8 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
   const blockingIds = deps?.blocking?.map(b => b.id) || []
 
   const closedCount = subtasks.filter(t => {
-    const bucket = getTaskBucket(t)
-    return bucket === 'closed' || bucket === 'merge_ready'
+    const displayState = getTaskDisplayState(t)
+    return displayState === 'closed' || displayState === 'review_approved'
   }).length
   const progressPct = subtasks.length > 0 ? Math.round((closedCount / subtasks.length) * 100) : 0
 
@@ -490,7 +490,7 @@ function getStatusOptions(task: GobbyTaskDetail, actions: TaskActions): StatusOp
         call: () => actions.releaseTaskClaim(id),
       })
     }
-    if (state.lifecycle_stage !== 'needs_review' && !state.is_merge_ready) {
+    if (state.current_stage?.state !== 'needs_review' && !state.is_merge_ready) {
       options.push({
         value: 'needs_review',
         label: 'Send to Review',
@@ -498,7 +498,7 @@ function getStatusOptions(task: GobbyTaskDetail, actions: TaskActions): StatusOp
         call: (reason) => actions.markTaskNeedsReview(id, reason || undefined),
       })
     }
-    if (state.lifecycle_stage === 'needs_review') {
+    if (state.current_stage?.state === 'needs_review') {
       options.push({
         value: 'review_approved',
         label: 'Approve Review',

@@ -127,9 +127,9 @@ describe('useTasks', () => {
     expect(result.current.stats).toEqual({
       ready: 2,
       in_progress: 0,
-      review: 0,
+      needs_review: 0,
       blocked: 0,
-      merge_ready: 0,
+      review_approved: 0,
       closed: 0,
     })
   })
@@ -457,7 +457,7 @@ describe('useTasks', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false))
   })
 
-  it('maps recently_done to the closed bucket client-side', async () => {
+  it('maps recently_done to the closed state client-side', async () => {
     mockFetch.resetRoutes()
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       ...TASK_LIST_RESPONSE,
@@ -480,7 +480,7 @@ describe('useTasks', () => {
     })
   })
 
-  it('maps in_review to review and merge-ready buckets client-side', async () => {
+  it('maps in_review to review stage states client-side', async () => {
     mockFetch.resetRoutes()
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       ...TASK_LIST_RESPONSE,

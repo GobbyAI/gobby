@@ -2,7 +2,8 @@ import { useMemo } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
-import { getTaskBucket, getTaskStateSummary } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState, getTaskStateSummary } from '../../lib/taskState'
+import type { StageAdvanceAction } from '../../lib/stageActions'
 
 interface PriorityColumnDef {
   key: 'now' | 'next' | 'later'
@@ -47,14 +48,14 @@ const DONE_SUMMARY_CLS =
   'p-2 text-center text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
 
 function classifyTask(task: GobbyTask): 'now' | 'next' | 'later' | null {
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
 
-  if (bucket === 'closed') return null
+  if (displayState === 'closed') return null
 
-  if (bucket === 'in_progress' || bucket === 'blocked') return 'now'
+  if (displayState === 'in_progress' || displayState === 'blocked') return 'now'
   if (task.priority <= 1) return 'now'
 
-  if (bucket === 'review' || bucket === 'merge_ready') return 'next'
+  if (displayState === 'needs_review' || displayState === 'review_approved') return 'next'
   if (task.priority === 2) return 'next'
 
   return 'later'
@@ -82,12 +83,19 @@ function groupByPriority(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
 function PriorityCard({
   task,
   onSelect,
-  onUpdateStatus,
+  onAdvanceStage,
 }: {
   task: GobbyTask
   onSelect: (id: string) => void
-  onUpdateStatus?: (taskId: string, newStatus: string) => void
+  onAdvanceStage?: (
+    taskId: string,
+    stageName: string,
+    action: StageAdvanceAction,
+  ) => void | Promise<void>
 }) {
+  const current = getCanonicalTaskState(task).current_stage
+  const canStart = Boolean(onAdvanceStage && current && getTaskDisplayState(task) === 'ready')
+
   return (
     <button
       className={CARD_CLS}
@@ -102,12 +110,12 @@ function PriorityCard({
       <div className={CARD_FOOTER_CLS}>
         <TypeBadge type={task.task_type} />
         <span className={CARD_STATUS_CLS}>{getTaskStateSummary(task)}</span>
-        {onUpdateStatus && getTaskBucket(task) === 'ready' && (
+        {canStart && current && (
           <button
             type="button"
             className={CARD_ACTION_CLS}
             title="Start work"
-            onClick={e => { e.stopPropagation(); onUpdateStatus(task.id, 'in_progress') }}
+            onClick={e => { e.stopPropagation(); void onAdvanceStage?.(task.id, current.name, 'start') }}
           >
             ▶
           </button>
@@ -122,12 +130,16 @@ function PriorityColumn({
   col,
   tasks,
   onSelectTask,
-  onUpdateStatus,
+  onAdvanceStage,
 }: {
   col: PriorityColumnDef
   tasks: GobbyTask[]
   onSelectTask: (id: string) => void
-  onUpdateStatus?: (taskId: string, newStatus: string) => void
+  onAdvanceStage?: (
+    taskId: string,
+    stageName: string,
+    action: StageAdvanceAction,
+  ) => void | Promise<void>
 }) {
   return (
     <div className={COLUMN_CLS}>
@@ -146,7 +158,7 @@ function PriorityColumn({
               key={task.id}
               task={task}
               onSelect={onSelectTask}
-              onUpdateStatus={onUpdateStatus}
+              onAdvanceStage={onAdvanceStage}
             />
           ))
         )}
@@ -158,13 +170,17 @@ function PriorityColumn({
 interface PriorityBoardProps {
   tasks: GobbyTask[]
   onSelectTask: (id: string) => void
-  onUpdateStatus?: (taskId: string, newStatus: string) => void
+  onAdvanceStage?: (
+    taskId: string,
+    stageName: string,
+    action: StageAdvanceAction,
+  ) => void | Promise<void>
 }
 
-export function PriorityBoard({ tasks, onSelectTask, onUpdateStatus }: PriorityBoardProps) {
+export function PriorityBoard({ tasks, onSelectTask, onAdvanceStage }: PriorityBoardProps) {
   const grouped = useMemo(() => groupByPriority(tasks), [tasks])
   const doneCount = useMemo(
-    () => tasks.filter(t => getTaskBucket(t) === 'closed').length,
+    () => tasks.filter(t => getTaskDisplayState(t) === 'closed').length,
     [tasks]
   )
 
@@ -177,7 +193,7 @@ export function PriorityBoard({ tasks, onSelectTask, onUpdateStatus }: PriorityB
             col={col}
             tasks={grouped.get(col.key) || []}
             onSelectTask={onSelectTask}
-            onUpdateStatus={onUpdateStatus}
+            onAdvanceStage={onAdvanceStage}
           />
         ))}
       </div>

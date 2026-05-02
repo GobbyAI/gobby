@@ -1,6 +1,11 @@
 import { useMemo } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
-import { getCanonicalTaskState, getTaskBucket, TASK_BUCKET_COLORS, TASK_BUCKET_LABELS } from '../../lib/taskState'
+import {
+  getCanonicalTaskState,
+  getTaskDisplayState,
+  TASK_STATE_COLORS,
+  TASK_STATE_LABELS,
+} from '../../lib/taskState'
 
 interface ResultSection {
   key: string
@@ -69,11 +74,13 @@ function formatDate(iso: string): string {
 }
 
 function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
   const state = getCanonicalTaskState(task)
 
-  if (bucket === 'merge_ready') return { text: 'Approved', color: TASK_BUCKET_COLORS.merge_ready }
-  if (bucket === 'closed') {
+  if (displayState === 'review_approved') {
+    return { text: 'Approved', color: TASK_STATE_COLORS.review_approved }
+  }
+  if (displayState === 'closed') {
     switch (state.closed_reason) {
       case 'completed': return { text: 'Completed', color: 'var(--color-success-foreground)' }
       case 'duplicate': return { text: 'Duplicate', color: 'var(--text-muted)' }
@@ -86,10 +93,10 @@ function outcomeLabel(task: GobbyTaskDetail): { text: string; color: string } {
   if (state.is_escalated) {
     return { text: 'Escalated', color: 'var(--color-error)' }
   }
-  if (bucket === 'blocked') {
-    return { text: 'Blocked', color: TASK_BUCKET_COLORS.blocked }
+  if (displayState === 'blocked') {
+    return { text: 'Blocked', color: TASK_STATE_COLORS.blocked }
   }
-  return { text: TASK_BUCKET_LABELS[bucket], color: TASK_BUCKET_COLORS[bucket] }
+  return { text: TASK_STATE_LABELS[displayState], color: TASK_STATE_COLORS[displayState] }
 }
 
 const VALIDATION_COLORS: Record<string, string> = {
@@ -106,13 +113,13 @@ interface TaskResultsProps {
 export function TaskResults({ task }: TaskResultsProps) {
   const sections = useMemo(() => {
     const result: ResultSection[] = []
-    const bucket = getTaskBucket(task)
+    const displayState = getTaskDisplayState(task)
     const state = getCanonicalTaskState(task)
 
-    const isDone = bucket === 'closed' || bucket === 'merge_ready' || state.is_escalated
+    const isDone = displayState === 'closed' || displayState === 'review_approved' || state.is_escalated
     if (isDone) {
       const outcome = outcomeLabel(task)
-      const outcomeDate = task.closed_at || (bucket !== 'closed' ? task.updated_at : null)
+      const outcomeDate = task.closed_at || (displayState !== 'closed' ? task.updated_at : null)
       result.push({
         key: 'outcome',
         label: 'Outcome',

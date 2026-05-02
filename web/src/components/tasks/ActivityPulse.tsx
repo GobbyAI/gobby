@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
-import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 
 type ActivityState = 'active' | 'idle' | 'stuck' | 'none'
@@ -21,7 +21,7 @@ const LABEL_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.6)] 
 function classifyActivity(task: GobbyTask): ActivityState {
   const state = getCanonicalTaskState(task)
 
-  if (getTaskBucket(task) !== 'in_progress' || !state.owner_session_id) return 'none'
+  if (getTaskDisplayState(task) !== 'in_progress' || !state.owner_session_id) return 'none'
 
   const elapsed = Date.now() - new Date(task.updated_at).getTime()
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { GobbyTaskDetail } from '../../hooks/useTasks'
 import { relativeTime } from '../../utils/formatTime'
-import { getCanonicalTaskState, getTaskBucket } from '../../lib/taskState'
+import { getCanonicalTaskState, getTaskDisplayState, type TaskDisplayState } from '../../lib/taskState'
 
 interface TimelinePhase {
   key: string
@@ -45,28 +45,38 @@ const BTN_DANGER_CLS =
   'border-[color-mix(in_srgb,var(--color-error)_25%,transparent)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)]'
 const BTN_ICON_CLS = 'text-[length:var(--text-sm)]'
 
-const TIMELINE_BUCKET_ORDER = ['ready', 'in_progress', 'review', 'merge_ready', 'closed'] as const
+const TIMELINE_STATE_ORDER: TaskDisplayState[] = [
+  'ready',
+  'in_progress',
+  'needs_review',
+  'review_approved',
+  'closed',
+]
 
-function getTimelineBucketIndex(task: GobbyTaskDetail): number {
+function getTimelineStateIndex(task: GobbyTaskDetail): number {
   const state = getCanonicalTaskState(task)
-  const bucket = getTaskBucket(task)
+  const displayState = getTaskDisplayState(task)
 
-  if (bucket !== 'blocked') {
-    return TIMELINE_BUCKET_ORDER.indexOf(bucket)
+  if (displayState !== 'blocked') {
+    return TIMELINE_STATE_ORDER.indexOf(displayState)
   }
 
-  if (state.is_merge_ready) return TIMELINE_BUCKET_ORDER.indexOf('merge_ready')
-  if (state.lifecycle_stage === 'needs_review') return TIMELINE_BUCKET_ORDER.indexOf('review')
-  if (state.is_claimed || state.lifecycle_stage === 'in_progress') {
-    return TIMELINE_BUCKET_ORDER.indexOf('in_progress')
+  if (state.is_merge_ready || state.current_stage?.state === 'review_approved') {
+    return TIMELINE_STATE_ORDER.indexOf('review_approved')
+  }
+  if (state.current_stage?.state === 'needs_review') {
+    return TIMELINE_STATE_ORDER.indexOf('needs_review')
+  }
+  if (state.is_claimed || state.current_stage?.state === 'in_progress') {
+    return TIMELINE_STATE_ORDER.indexOf('in_progress')
   }
 
-  return TIMELINE_BUCKET_ORDER.indexOf('ready')
+  return TIMELINE_STATE_ORDER.indexOf('ready')
 }
 
 function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
   const state = getCanonicalTaskState(task)
-  const bucketIdx = getTimelineBucketIndex(task)
+  const stateIdx = getTimelineStateIndex(task)
   const isFailed = state.is_escalated
 
   const phases: TimelinePhase[] = []
@@ -80,13 +90,13 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
     summary: `Task created: ${task.title}`,
   })
 
-  const investigateReached = bucketIdx >= 1 || isFailed
+  const investigateReached = stateIdx >= 1 || isFailed
   phases.push({
     key: 'investigate',
     icon: '\u{1F50D}',
     label: 'Investigate',
     status: investigateReached
-      ? (bucketIdx === 1 && !isFailed ? 'active' : 'complete')
+      ? (stateIdx === 1 && !isFailed ? 'active' : 'complete')
       : 'pending',
     timestamp: investigateReached ? task.updated_at : null,
     summary: state.owner_session_id
@@ -94,13 +104,13 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
       : investigateReached ? 'Work started' : null,
   })
 
-  const actReached = bucketIdx >= 2 || (task.commits && task.commits.length > 0) || isFailed
+  const actReached = stateIdx >= 2 || (task.commits && task.commits.length > 0) || isFailed
   phases.push({
     key: 'act',
     icon: '\u{2699}\u{FE0F}',
     label: 'Act',
     status: actReached
-      ? (bucketIdx === 2 && !isFailed ? 'active' : 'complete')
+      ? (stateIdx === 2 && !isFailed ? 'active' : 'complete')
       : 'pending',
     timestamp: actReached ? task.updated_at : null,
     summary: task.commits && task.commits.length > 0
@@ -108,7 +118,7 @@ function derivePhases(task: GobbyTaskDetail): TimelinePhase[] {
       : actReached ? 'Changes submitted' : null,
   })
 
-  const verifyReached = bucketIdx >= 3 || task.validation_status !== 'pending' || isFailed
+  const verifyReached = stateIdx >= 3 || task.validation_status !== 'pending' || isFailed
   let verifySummary: string | null = null
   if (isFailed) {
     verifySummary = `Escalated: ${task.escalation_reason || 'needs attention'}`

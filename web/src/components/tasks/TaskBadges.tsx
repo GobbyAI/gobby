@@ -3,13 +3,13 @@
 
 import type { TaskStateLike } from '../../lib/taskState'
 import {
-  getTaskBucket,
+  getTaskDisplayState,
   getTaskStateSummary,
   getTaskStateTokens,
-  TASK_BUCKET_COLORS,
-  TASK_BUCKET_LABELS,
-  TASK_BUCKET_ORDER,
-  type TaskBucket,
+  TASK_STATE_COLORS,
+  TASK_STATE_LABELS,
+  TASK_STATE_ORDER,
+  type TaskDisplayState,
 } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 
@@ -18,7 +18,7 @@ import { cn } from '../../lib/utils'
 // =============================================================================
 
 const STATUS_COLORS: Record<string, string> = {
-  open: TASK_BUCKET_COLORS.ready,
+  open: TASK_STATE_COLORS.ready,
   in_progress: "var(--color-warning-foreground)",
   needs_review: "var(--color-agent)",
   review_approved: "var(--color-review)",
@@ -73,21 +73,21 @@ export function StatusBadge({ status }: { status: string }) {
 // =============================================================================
 
 export function StatusDot({ status, task }: { status?: string; task?: TaskStateLike }) {
-  const isBucketStatus = Boolean(status && TASK_BUCKET_ORDER.includes(status as TaskBucket))
-  const bucket = task
-    ? getTaskBucket(task)
-    : isBucketStatus
-      ? status as TaskBucket
-      : getTaskBucket({ status })
+  const isKnownState = Boolean(status && TASK_STATE_ORDER.includes(status as TaskDisplayState))
+  const displayState = task
+    ? getTaskDisplayState(task)
+    : isKnownState
+      ? status as TaskDisplayState
+      : getTaskDisplayState({ status })
   const label = task
     ? getTaskStateSummary(task)
-    : isBucketStatus
-      ? TASK_BUCKET_LABELS[status as TaskBucket]
+    : isKnownState
+      ? TASK_STATE_LABELS[status as TaskDisplayState]
       : (status ?? 'unknown').replace(/_/g, ' ')
   return (
     <span
       className={TASK_BADGE_DOT_STANDALONE_CLS}
-      style={{ backgroundColor: TASK_BUCKET_COLORS[bucket] || "var(--text-muted)" }}
+      style={{ backgroundColor: TASK_STATE_COLORS[displayState] || "var(--text-muted)" }}
       title={label}
       aria-label={`Status: ${label}`}
     />

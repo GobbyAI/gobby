@@ -4,9 +4,10 @@ import { Markdown } from "../chat/Markdown";
 import type { DependencyTree, GobbyTask, GobbyTaskDetail } from "../../hooks/useTasks";
 import {
   getCanonicalTaskState,
-  getTaskBucket,
-  TASK_BUCKET_LABELS,
-  type TaskBucket,
+  getTaskDisplayState,
+  getTaskStateLabel,
+  TASK_STATE_LABELS,
+  type TaskDisplayState,
 } from "../../lib/taskState";
 
 export type { GobbyTaskDetail };
@@ -25,16 +26,16 @@ interface TasksTabDetailPanelProps {
   subtasks?: GobbyTask[];
 }
 
-const SUBTASK_BUCKET_ORDER: TaskBucket[] = [
+const SUBTASK_STATE_ORDER: TaskDisplayState[] = [
   "ready",
   "in_progress",
-  "review",
-  "merge_ready",
+  "needs_review",
+  "review_approved",
   "blocked",
   "closed",
 ];
 
-function formatLifecycleStage(stage: string): string {
+function formatStageState(stage: string): string {
   return stage
     .split("_")
     .map((part) => (part.length > 0 ? part[0].toUpperCase() + part.slice(1) : part))
@@ -71,7 +72,7 @@ export function TasksTabDetailPanel({
   const taskState = getCanonicalTaskState(task);
   const ownerLabel = task.agent_name ?? taskState.owner_session_id ?? "Unassigned";
   const ownerMono = !task.agent_name && Boolean(taskState.owner_session_id);
-  const stateLabel = TASK_BUCKET_LABELS[getTaskBucket(task)];
+  const stateLabel = getTaskStateLabel(task);
   const categoryLabel = task.category ?? task.task_type;
   const labels = task.labels?.filter(Boolean) ?? [];
   const blockerCount = dependencies?.blockers?.length ?? 0;
@@ -79,12 +80,12 @@ export function TasksTabDetailPanel({
   const commits = task.commits?.filter(Boolean) ?? [];
 
   const { subtaskBuckets, subtaskTotal } = useMemo(() => {
-    const buckets: Partial<Record<TaskBucket, number>> = {};
+    const states: Partial<Record<TaskDisplayState, number>> = {};
     for (const child of subtasks ?? []) {
-      const bucket = getTaskBucket(child);
-      buckets[bucket] = (buckets[bucket] ?? 0) + 1;
+      const displayState = getTaskDisplayState(child);
+      states[displayState] = (states[displayState] ?? 0) + 1;
     }
-    return { subtaskBuckets: buckets, subtaskTotal: subtasks?.length ?? 0 };
+    return { subtaskBuckets: states, subtaskTotal: subtasks?.length ?? 0 };
   }, [subtasks]);
 
   const validationStatus = task.validation_status?.trim() || null;
@@ -135,11 +136,11 @@ export function TasksTabDetailPanel({
           />
         )}
         <TaskDetailMetaRow label="State" value={stateLabel} />
-        {task.lifecycle_stage && (
+        {taskState.current_stage && (
           <TaskDetailMetaRow
-            label="Lifecycle"
-            value={formatLifecycleStage(task.lifecycle_stage)}
-            title="Internal lifecycle stage"
+            label="Stage"
+            value={`${taskState.current_stage.display_name}: ${formatStageState(taskState.current_stage.state)}`}
+            title="Current manifest stage"
           />
         )}
         <TaskDetailMetaRow label="Created" value={formatTaskDetailDate(task.created_at)} />
@@ -296,16 +297,16 @@ export function TasksTabDetailPanel({
             Subtasks <span className="activity-task-detail-section-count">{subtaskTotal}</span>
           </div>
           <div className="activity-task-detail-pillrow">
-            {SUBTASK_BUCKET_ORDER.map((bucket) => {
-              const count = subtaskBuckets[bucket] ?? 0;
+            {SUBTASK_STATE_ORDER.map((displayState) => {
+              const count = subtaskBuckets[displayState] ?? 0;
               if (count === 0) return null;
               return (
                 <span
-                  key={bucket}
+                  key={displayState}
                   className="activity-task-detail-pill"
-                  title={`${TASK_BUCKET_LABELS[bucket]} subtasks`}
+                  title={`${TASK_STATE_LABELS[displayState]} subtasks`}
                 >
-                  <strong>{count}</strong> {TASK_BUCKET_LABELS[bucket].toLowerCase()}
+                  <strong>{count}</strong> {TASK_STATE_LABELS[displayState].toLowerCase()}
                 </span>
               );
             })}

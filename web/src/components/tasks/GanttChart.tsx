@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
-import { getTaskBucket, TASK_BUCKET_COLORS } from '../../lib/taskState'
+import { getTaskDisplayState, TASK_STATE_COLORS } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 
 type ZoomLevel = 'day' | 'week' | 'month'
@@ -325,8 +325,8 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
             const x = dateToX(bar.startDate) + dragOffsetPx
             const w = Math.max(dateToX(bar.endDate) - dateToX(bar.startDate), 8)
             const y = rowToY(bar.row)
-            const bucket = getTaskBucket(bar.task)
-            const color = TASK_BUCKET_COLORS[bucket] || 'var(--text-muted)'
+            const displayState = getTaskDisplayState(bar.task)
+            const color = TASK_STATE_COLORS[displayState] || 'var(--text-muted)'
 
             if (bar.isMilestone) {
               const cx = x + w / 2
@@ -370,7 +370,7 @@ export function GanttChart({ tasks, onSelectTask, onReschedule }: GanttChartProp
                   style={{ fill: color }}
                   className={cn(BAR_CLS, isDragging && BAR_DRAGGING_CLS)}
                 />
-                {(bucket === 'closed' || bucket === 'merge_ready') && (
+                {(displayState === 'closed' || displayState === 'review_approved') && (
                   <rect
                     x={x} y={y + 4} width={w} height={ROW_HEIGHT - 8}
                     rx={3} ry={3}

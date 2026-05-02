@@ -3,7 +3,7 @@ import { Tree, TreeApi, NodeRendererProps } from 'react-arborist'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
-import { getTaskBucket } from '../../lib/taskState'
+import { getTaskDisplayState } from '../../lib/taskState'
 
 interface TreeNode {
   id: string
@@ -39,7 +39,7 @@ const CTX_ITEM_CLS =
   'block w-full cursor-pointer rounded border-none bg-transparent px-2.5 py-1.5 text-left font-[var(--font-sans)] text-[length:calc(var(--font-size-base)*0.72)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 
 function buildTree(tasks: GobbyTask[], hideClosed: boolean): TreeNode[] {
-  const filtered = hideClosed ? tasks.filter(t => getTaskBucket(t) !== 'closed') : tasks
+  const filtered = hideClosed ? tasks.filter(t => getTaskDisplayState(t) !== 'closed') : tasks
   const nodeMap = new Map<string, TreeNode>()
   const roots: TreeNode[] = []
 

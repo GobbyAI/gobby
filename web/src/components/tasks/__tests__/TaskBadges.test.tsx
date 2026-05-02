@@ -31,7 +31,7 @@ describe('StatusDot', () => {
 
   it('renders with title', () => {
     render(<StatusDot status="needs_review" />)
-    expect(screen.getByTitle('needs review')).toBeTruthy()
+    expect(screen.getByTitle('Needs Review')).toBeTruthy()
   })
 })
 

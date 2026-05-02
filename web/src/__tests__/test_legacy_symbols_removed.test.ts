@@ -11,6 +11,9 @@ const legacyTerms = [
   ['lifecycle', '_stage'].join(''),
 ]
 const legacyPattern = new RegExp(legacyTerms.join('|'))
+const taskGroupTerms = legacyTerms.slice(0, 3)
+const taskGroupPattern = new RegExp(taskGroupTerms.join('|'))
+const stageFieldPattern = new RegExp(['lifecycle', '_stage'].join(''))
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap(entry => {
@@ -33,7 +36,7 @@ describe('Legacy task-state symbols are removed from web source', () => {
   it('test_no_task_bucket_imports', () => {
     const offenders = legacyMatches().filter(file => {
       const source = readFileSync(join(process.cwd(), file), 'utf8')
-      return /getTaskBucket|TaskBucket|TASK_BUCKET_/.test(source)
+      return taskGroupPattern.test(source)
     })
 
     expect(offenders).toEqual([])
@@ -42,16 +45,16 @@ describe('Legacy task-state symbols are removed from web source', () => {
   it('test_no_task_bucket_imports_in_web_src', () => {
     const offenders = legacyMatches().filter(file => {
       const source = readFileSync(join(process.cwd(), file), 'utf8')
-      return /getTaskBucket|TaskBucket|TASK_BUCKET_/.test(source)
+      return taskGroupPattern.test(source)
     })
 
     expect(offenders).toEqual([])
   })
 
-  it('test_no_lifecycle_stage_reads_in_web_src', () => {
+  it('test_no_legacy_stage_reads_in_web_src', () => {
     const offenders = legacyMatches().filter(file => {
       const source = readFileSync(join(process.cwd(), file), 'utf8')
-      return new RegExp(['lifecycle', '_stage'].join('')).test(source)
+      return stageFieldPattern.test(source)
     })
 
     expect(offenders).toEqual([])

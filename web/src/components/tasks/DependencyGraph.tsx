@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect, useId } from 'react'
 import dagre from '@dagrejs/dagre'
 import type { GobbyTask } from '../../hooks/useTasks'
-import { getTaskBucket, TASK_BUCKET_COLORS } from '../../lib/taskState'
+import { getTaskDisplayState, TASK_STATE_COLORS } from '../../lib/taskState'
 
 interface GraphNode {
   id: string
@@ -241,7 +241,7 @@ export function DependencyGraph({ tasks, onSelectTask }: DependencyGraphProps) {
           })}
 
           {nodes.map(node => {
-            const color = TASK_BUCKET_COLORS[getTaskBucket(node.task)] || 'var(--text-muted)'
+            const color = TASK_STATE_COLORS[getTaskDisplayState(node.task)] || 'var(--text-muted)'
             const isHovered = hoveredId === node.id
             return (
               <g

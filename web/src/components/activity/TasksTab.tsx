@@ -14,10 +14,10 @@ import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
 import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
-  getTaskBucket,
-  TASK_BUCKET_COLORS,
-  TASK_BUCKET_LABELS,
-  type TaskBucket,
+  getTaskDisplayState,
+  TASK_STATE_COLORS,
+  TASK_STATE_LABELS,
+  type TaskDisplayState,
 } from "../../lib/taskState";
 import {
   TasksTabDetailPanel,
@@ -30,10 +30,6 @@ interface TasksTabProps {
   projectId?: string | null;
   chatSessionId?: string | null;
 }
-
-// =============================================================================
-// Tree node type (mirrors TaskTree.tsx)
-// =============================================================================
 
 interface TreeNode {
   id: string;
@@ -48,7 +44,7 @@ interface VisibleTaskRow {
   isOpen: boolean;
 }
 
-type TaskFilterKey = TaskBucket | "escalated";
+type TaskFilterKey = TaskDisplayState | "escalated";
 
 interface TaskContextMenu {
   x: number;
@@ -56,28 +52,22 @@ interface TaskContextMenu {
   task: GobbyTask;
 }
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-const LIFECYCLE_BUCKETS: TaskBucket[] = [
+const STAGE_STATE_FILTERS: TaskDisplayState[] = [
   "ready",
   "in_progress",
-  "review",
-  "merge_ready",
+  "needs_review",
+  "review_approved",
 ];
 const STATUS_FILTERS: TaskFilterKey[] = ["blocked", "escalated", "closed"];
 const DEFAULT_FILTERS = new Set<TaskFilterKey>([
-  ...LIFECYCLE_BUCKETS,
+  ...STAGE_STATE_FILTERS,
   "blocked",
   "escalated",
 ]);
 const RECENT_CLOSED_TASK_LIMIT = 20;
 
-const STATUS_DOT_COLORS = TASK_BUCKET_COLORS;
+const STATUS_DOT_COLORS = TASK_STATE_COLORS;
 
-// Priority is encoded as lightness + weight, never as hue alone (deutan-safe).
-// Bucket state colour lives in the status dot; this just tints the title text.
 const PRIORITY_TEXT_COLORS: Record<number, string> = {
   0: "var(--text-primary)",
   1: "var(--text-primary)",
@@ -117,10 +107,6 @@ function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {
 
   return (a.updated_at ?? "").localeCompare(b.updated_at ?? "");
 }
-
-// =============================================================================
-// Build tree from flat task list (same logic as TaskTree.tsx)
-// =============================================================================
 
 function buildTree(tasks: GobbyTask[]): TreeNode[] {
   const nodeMap = new Map<string, TreeNode>();
@@ -227,7 +213,7 @@ function getTaskFilterLabel(filter: TaskFilterKey): string {
   if (filter === "escalated") {
     return "Escalated";
   }
-  return TASK_BUCKET_LABELS[filter];
+  return TASK_STATE_LABELS[filter];
 }
 
 function getTaskFilterColor(filter: TaskFilterKey): string {
@@ -241,13 +227,9 @@ function matchesTaskFilter(task: GobbyTask, filters: Set<TaskFilterKey>): boolea
   const state = getCanonicalTaskState(task);
   if (state.is_closed) return filters.has("closed");
   if (state.is_escalated) return filters.has("escalated");
-  const bucket = getTaskBucket(task);
-  return filters.has(bucket);
+  const displayState = getTaskDisplayState(task);
+  return filters.has(displayState);
 }
-
-// =============================================================================
-// Filter dropdown
-// =============================================================================
 
 function FilterDropdown({
   filters,
@@ -258,9 +240,9 @@ function FilterDropdown({
   onToggle: (status: TaskFilterKey) => void;
   onClose: () => void;
 }) {
-  const filterGroups: Array<{ label: string; buckets: TaskFilterKey[] }> = [
-    { label: "Lifecycle", buckets: LIFECYCLE_BUCKETS },
-    { label: "Status", buckets: STATUS_FILTERS },
+  const filterGroups: Array<{ label: string; states: TaskFilterKey[] }> = [
+    { label: "Stage", states: STAGE_STATE_FILTERS },
+    { label: "Status", states: STATUS_FILTERS },
   ];
 
   return (
@@ -275,7 +257,7 @@ function FilterDropdown({
             <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
               {group.label}
             </div>
-            {group.buckets.map((status) => (
+            {group.states.map((status) => (
               <label
                 key={status}
                 className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50"
@@ -301,10 +283,6 @@ function FilterDropdown({
     </>
   );
 }
-
-// =============================================================================
-// TasksTab
-// =============================================================================
 
 export const TasksTab = memo(function TasksTab({
   projectId,
@@ -336,7 +314,7 @@ export const TasksTab = memo(function TasksTab({
     () => new Set(),
   );
 
-  // Fetch tasks, then apply canonical bucket filters client-side.
+  // Fetch tasks, then apply canonical state filters client-side.
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
@@ -536,7 +514,7 @@ export const TasksTab = memo(function TasksTab({
     );
     const recentClosedIds = new Set(
       matchingTasks
-        .filter((task) => getTaskBucket(task) === "closed")
+        .filter((task) => getTaskDisplayState(task) === "closed")
         .sort((a, b) => {
           const closedAtA = getCanonicalTaskState(a).closed_at ?? a.updated_at ?? "";
           const closedAtB = getCanonicalTaskState(b).closed_at ?? b.updated_at ?? "";
@@ -548,7 +526,7 @@ export const TasksTab = memo(function TasksTab({
 
     return matchingTasks
       .filter((task) => {
-        if (getTaskBucket(task) !== "closed") {
+        if (getTaskDisplayState(task) !== "closed") {
           return true;
         }
         return recentClosedIds.has(task.id);
@@ -735,7 +713,7 @@ export const TasksTab = memo(function TasksTab({
       const taskState = getCanonicalTaskState(task);
       const dotColor = taskState.is_escalated
         ? getTaskFilterColor("escalated")
-        : STATUS_DOT_COLORS[getTaskBucket(task)] ?? "#737373";
+        : STATUS_DOT_COLORS[getTaskDisplayState(task)] ?? "#737373";
       const textColor =
         PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
       const textWeight =
@@ -747,7 +725,7 @@ export const TasksTab = memo(function TasksTab({
       const taskRowClass = [
         "activity-task-row",
         isSelected && "activity-task-row--selected",
-        getTaskBucket(task) === "closed" && "activity-task-row--closed",
+        getTaskDisplayState(task) === "closed" && "activity-task-row--closed",
       ]
         .filter(Boolean)
         .join(" ");

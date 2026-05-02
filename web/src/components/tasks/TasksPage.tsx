@@ -17,12 +17,11 @@ import { TaskSelectionToolbar } from './TaskSelectionToolbar'
 import { cn } from '../../lib/utils'
 import {
   getCanonicalTaskState,
-  getTaskBucket,
-  TASK_BUCKET_LABELS,
-  TASK_BUCKET_ORDER,
-  type TaskBucket,
+  getTaskDisplayState,
+  TASK_STATE_LABELS,
+  TASK_STATE_ORDER,
+  type TaskDisplayState,
 } from '../../lib/taskState'
-import type { LifecycleTask } from '../../lib/stageActions'
 
 // =============================================================================
 // Tailwind class constants
@@ -96,21 +95,21 @@ type GroupBy = 'all' | 'agent'
 type SortColumn = 'ref' | 'title' | 'type' | 'priority' | 'state'
 type SortDirection = 'asc' | 'desc'
 
-const STATE_FILTER_OPTIONS: TaskBucket[] = [
+const STATE_FILTER_OPTIONS: TaskDisplayState[] = [
   'ready',
   'in_progress',
-  'review',
+  'needs_review',
   'blocked',
-  'merge_ready',
+  'review_approved',
   'closed',
 ]
 
-const FILTER_DOT_STATUS: Record<TaskBucket, string> = {
+const FILTER_DOT_STATUS: Record<TaskDisplayState, string> = {
   ready: 'open',
   in_progress: 'in_progress',
-  review: 'needs_review',
+  needs_review: 'needs_review',
   blocked: 'escalated',
-  merge_ready: 'review_approved',
+  review_approved: 'review_approved',
   closed: 'closed',
 }
 
@@ -231,7 +230,7 @@ function compareTasks(a: GobbyTask, b: GobbyTask, col: SortColumn, dir: SortDire
       cmp = a.priority - b.priority
       break
     case 'state':
-      cmp = TASK_BUCKET_ORDER.indexOf(getTaskBucket(a)) - TASK_BUCKET_ORDER.indexOf(getTaskBucket(b))
+      cmp = TASK_STATE_ORDER.indexOf(getTaskDisplayState(a)) - TASK_STATE_ORDER.indexOf(getTaskDisplayState(b))
       break
   }
   return dir === 'asc' ? cmp : -cmp
@@ -327,12 +326,13 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     escalateTask,
     deEscalateTask,
     advanceStage,
+    failStage,
     closeTask,
     reopenTask,
     getDependencies,
     getSubtasks,
   } = useTasks(projectFilter)
-  const { registry: stagesRegistry } = useStagesRegistry()
+  const { registry } = useStagesRegistry()
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -419,84 +419,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     return defaults
   }, [filters.taskType, filters.priority, selectedTaskId, allTasks, cloneDefaults])
 
-  const promptForSessionId = useCallback((ownerSessionId?: string | null): string | null => {
-    if (ownerSessionId?.trim()) return ownerSessionId
-    const value = window.prompt('Enter the session ID that should own this task')
-    return value?.trim() || null
-  }, [])
-
-  const moveTaskToBucket = useCallback(async (taskId: string, targetBucket: string) => {
-    if (!STATE_FILTER_OPTIONS.includes(targetBucket as TaskBucket)) return
-
-    const task = allTasks.find(candidate => candidate.id === taskId)
-    if (!task) return
-
-    const state = getCanonicalTaskState(task)
-    const currentBucket = getTaskBucket(task)
-    if (currentBucket === targetBucket) return
-
-    switch (targetBucket as TaskBucket) {
-      case 'ready':
-        if (state.is_closed) {
-          await reopenTask(taskId, 'Returned to ready state from tasks view')
-        } else if (state.is_escalated) {
-          await deEscalateTask(taskId, 'Returned to ready state from tasks view', 'open')
-        } else if (state.is_claimed) {
-          await releaseTaskClaim(taskId, 'open')
-        } else if (state.lifecycle_stage) {
-          await reopenTask(taskId, 'Returned to ready state from tasks view')
-        }
-        break
-      case 'in_progress': {
-        if (state.is_escalated) {
-          await deEscalateTask(taskId, 'Resumed active work from tasks view', 'in_progress')
-          break
-        }
-        const sessionId = promptForSessionId(state.owner_session_id)
-        if (!sessionId) return
-        if (state.is_closed || state.lifecycle_stage === 'needs_review' || state.is_merge_ready) {
-          await reopenTask(taskId, 'Returned to active work from tasks view')
-        }
-        await claimTask(taskId, sessionId, true)
-        break
-      }
-      case 'review':
-        if (state.is_escalated) {
-          await deEscalateTask(taskId, 'Returned to review from tasks view', 'needs_review')
-        } else {
-          await markTaskNeedsReview(taskId)
-        }
-        break
-      case 'merge_ready':
-        if (state.is_escalated) {
-          await deEscalateTask(taskId, 'Returned to approval from tasks view', 'review_approved')
-        } else {
-          await markTaskReviewApproved(taskId)
-        }
-        break
-      case 'blocked': {
-        const reason = window.prompt('Why is this task blocked?', state.escalation_reason ?? '')
-        if (!reason?.trim()) return
-        await escalateTask(taskId, reason.trim())
-        break
-      }
-      case 'closed':
-        await closeTask(taskId)
-        break
-    }
-  }, [
-    allTasks,
-    claimTask,
-    closeTask,
-    deEscalateTask,
-    escalateTask,
-    markTaskNeedsReview,
-    markTaskReviewApproved,
-    promptForSessionId,
-    releaseTaskClaim,
-    reopenTask,
-  ])
-
   return (
     <main className={PAGE_CLS}>
       <div className={TOOLBAR_CLS}>
@@ -550,7 +472,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
                 }
               >
                 <StatusDot status={FILTER_DOT_STATUS[bucket]} />
-                {TASK_BUCKET_LABELS[bucket]} ({stats[bucket] || 0})
+                {TASK_STATE_LABELS[bucket]} ({stats[bucket] || 0})
               </button>
           ))}
         </div>
@@ -591,7 +513,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           >
             <option value="">All States</option>
             {STATE_FILTER_OPTIONS.map(bucket => (
-              <option key={bucket} value={bucket}>{TASK_BUCKET_LABELS[bucket]}</option>
+              <option key={bucket} value={bucket}>{TASK_STATE_LABELS[bucket]}</option>
             ))}
           </select>
           {hasActiveFilters && (
@@ -646,7 +568,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         <PriorityBoard
           tasks={displayTasks}
           onSelectTask={setSelectedTaskId}
-          onUpdateStatus={moveTaskToBucket}
+          onAdvanceStage={advanceStage}
         />
       ) : viewMode === 'kanban' ? (
         <>
@@ -662,10 +584,11 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             </div>
           )}
           <LifecycleBoard
-            tasks={(subtreeRootId ? kanbanTasks : displayTasks) as unknown as LifecycleTask[]}
-            stagesRegistry={stagesRegistry}
+            tasks={subtreeRootId ? kanbanTasks : displayTasks}
+            registry={registry}
             onSelectTask={setSelectedTaskId}
             onAdvanceStage={advanceStage}
+            onFailStage={failStage}
           />
         </>
       ) : viewMode === 'tree' ? (

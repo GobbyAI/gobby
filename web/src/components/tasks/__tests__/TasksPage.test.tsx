@@ -4,9 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { useTasksMock } = vi.hoisted(() => ({
   useTasksMock: vi.fn(),
 }))
+const { useStagesRegistryMock } = vi.hoisted(() => ({
+  useStagesRegistryMock: vi.fn(),
+}))
 
 vi.mock('../../../hooks/useTasks', () => ({
   useTasks: useTasksMock,
+}))
+vi.mock('../../../hooks/useStagesRegistry', () => ({
+  useStagesRegistry: useStagesRegistryMock,
 }))
 
 import { TasksPage } from '../TasksPage'
@@ -42,9 +48,9 @@ function useTasksResult() {
     stats: {
       ready: 1,
       in_progress: 0,
-      review: 0,
+      needs_review: 0,
       blocked: 0,
-      merge_ready: 0,
+      review_approved: 0,
       closed: 0,
     },
     hasMore: false,
@@ -73,6 +79,9 @@ function useTasksResult() {
     markTaskReviewApproved: vi.fn(),
     escalateTask: vi.fn(),
     deEscalateTask: vi.fn(),
+    advanceStage: vi.fn(),
+    failStage: vi.fn(),
+    startStage: vi.fn(),
     closeTask: vi.fn(),
     reopenTask: vi.fn(),
     deleteTask: vi.fn(),
@@ -84,6 +93,11 @@ function useTasksResult() {
 describe('TasksPage lifecycle board integration', () => {
   beforeEach(() => {
     useTasksMock.mockReturnValue(useTasksResult())
+    useStagesRegistryMock.mockReturnValue({
+      registry: [],
+      isLoading: false,
+      error: null,
+    })
   })
 
   it('test_kanban_mode_renders_lifecycle_board', () => {

@@ -493,7 +493,15 @@ describe("TasksTab", () => {
     });
   });
 
-  it("renders canonical state tasks and groups the filter menu by lifecycle and status", async () => {
+  it("renders canonical state tasks and groups the filter menu by stage and status", async () => {
+    const reviewStage = {
+      name: "development",
+      display_name: "Development",
+      category: "delivery",
+      state: "needs_review",
+      review_policy: "required",
+      updated_at: "2026-04-13T00:00:00Z",
+    };
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [
@@ -509,9 +517,11 @@ describe("TasksTab", () => {
           seq_num: 601,
           path_cache: "601",
           project_id: "proj-1",
+          current_stage: reviewStage,
+          stages: [reviewStage],
           state: {
             owner_session_id: "session-1",
-            lifecycle_stage: "needs_review",
+            current_stage: reviewStage,
             is_claimed: true,
             is_closed: false,
             is_escalated: false,
@@ -536,10 +546,10 @@ describe("TasksTab", () => {
 
     fireEvent.click(screen.getByTitle("Filter by task state"));
 
-    expect(screen.getByText("Lifecycle")).toBeTruthy();
+    expect(screen.getByText("Stage")).toBeTruthy();
     expect(screen.getByText("Status")).toBeTruthy();
     expect(screen.getByText("Needs Review")).toBeTruthy();
-    expect(screen.getByText("Merge Ready")).toBeTruthy();
+    expect(screen.getByText("Review Approved")).toBeTruthy();
     expect(screen.getByText("Closed")).toBeTruthy();
   });
 

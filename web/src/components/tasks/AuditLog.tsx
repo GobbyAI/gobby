@@ -4,7 +4,12 @@ import { useNow } from '../../hooks/useNow'
 import { StatusDot } from './TaskBadges'
 import { RiskBadge } from './RiskBadges'
 import { classifyTaskRisk } from './riskUtils'
-import { getCanonicalTaskState, getTaskBucket, getTaskStateSummary, type TaskBucket } from '../../lib/taskState'
+import {
+  getCanonicalTaskState,
+  getTaskDisplayState,
+  getTaskStateSummary,
+  type TaskDisplayState,
+} from '../../lib/taskState'
 
 interface AuditEntry {
   timestamp: string
@@ -14,7 +19,7 @@ interface AuditEntry {
   targetId: string
   result: string
   riskLevel: 'critical' | 'high' | 'medium' | 'low' | 'none'
-  status: TaskBucket
+  status: TaskDisplayState
 }
 
 type ActionFilter = 'all' | 'created' | 'closed' | 'status_change' | 'high_risk'
@@ -52,7 +57,7 @@ function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
 
   for (const task of tasks) {
     const risk = classifyTaskRisk(task.title, task.task_type)
-    const bucket = getTaskBucket(task)
+    const displayState = getTaskDisplayState(task)
 
     entries.push({
       timestamp: task.created_at,
@@ -62,19 +67,19 @@ function deriveAuditEntries(tasks: GobbyTask[]): AuditEntry[] {
       targetId: task.id,
       result: 'success',
       riskLevel: risk,
-      status: bucket,
+      status: displayState,
     })
 
-    if (bucket !== 'ready') {
+    if (displayState !== 'ready') {
       entries.push({
         timestamp: task.updated_at,
-        action: bucket === 'closed' ? 'closed' : 'status_change',
+        action: displayState === 'closed' ? 'closed' : 'status_change',
         actor: getCanonicalTaskState(task).owner_session_id || 'system',
         target: `${task.ref} → ${getTaskStateSummary(task)}`,
         targetId: task.id,
-        result: bucket === 'blocked' ? 'failure' : 'success',
+        result: displayState === 'blocked' ? 'failure' : 'success',
         riskLevel: risk,
-        status: bucket,
+        status: displayState,
       })
     }
   }

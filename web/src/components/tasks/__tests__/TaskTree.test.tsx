@@ -58,6 +58,8 @@ const SAMPLE_TASKS: GobbyTask[] = [
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   },
   {
     id: 'task-2',
@@ -78,6 +80,8 @@ const SAMPLE_TASKS: GobbyTask[] = [
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   },
   {
     id: 'task-3',
@@ -98,6 +102,8 @@ const SAMPLE_TASKS: GobbyTask[] = [
     start_date: null,
     due_date: null,
     project_id: 'proj-1',
+    current_stage: null,
+    stages: [],
   },
 ]
 

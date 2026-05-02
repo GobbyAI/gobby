@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { relativeTime } from '../../utils/formatTime'
-import { getTaskBucket } from '../../lib/taskState'
+import { getTaskDisplayState } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
 
 type TimePeriod = 'today' | 'week' | 'all'
@@ -76,23 +76,23 @@ export function DigestView({ tasks, onSelectTask }: DigestViewProps) {
 
   const sections = useMemo((): DigestSection[] => {
     const completed = tasks.filter(
-      t => getTaskBucket(t) === 'closed' && isAfter(t.updated_at, cutoff)
+      t => getTaskDisplayState(t) === 'closed' && isAfter(t.updated_at, cutoff)
     )
 
-    const inProgress = tasks.filter(t => getTaskBucket(t) === 'in_progress')
+    const inProgress = tasks.filter(t => getTaskDisplayState(t) === 'in_progress')
 
-    const review = tasks.filter(t => getTaskBucket(t) === 'review')
-    const mergeReady = tasks.filter(t => getTaskBucket(t) === 'merge_ready')
-    const blocked = tasks.filter(t => getTaskBucket(t) === 'blocked')
+    const review = tasks.filter(t => getTaskDisplayState(t) === 'needs_review')
+    const approved = tasks.filter(t => getTaskDisplayState(t) === 'review_approved')
+    const blocked = tasks.filter(t => getTaskDisplayState(t) === 'blocked')
 
     const newTasks = tasks.filter(
-      t => getTaskBucket(t) === 'ready' && isAfter(t.created_at, cutoff)
+      t => getTaskDisplayState(t) === 'ready' && isAfter(t.created_at, cutoff)
     )
 
     return [
       { key: 'blocked', title: 'Blocked', icon: '⚠', tasks: blocked, color: 'var(--color-warning-foreground)' },
       { key: 'review', title: 'In Review', icon: '\u{1F50D}', tasks: review, color: 'var(--color-agent)' },
-      { key: 'merge-ready', title: 'Merge Ready', icon: '\u{1F9F7}', tasks: mergeReady, color: 'var(--color-review)' },
+      { key: 'approved', title: 'Review Approved', icon: '\u{1F9F7}', tasks: approved, color: 'var(--color-review)' },
       { key: 'in-progress', title: 'In Progress', icon: '\u{1F504}', tasks: inProgress, color: 'var(--color-info)' },
       {
         key: 'completed',
