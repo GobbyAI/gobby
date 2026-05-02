@@ -1,4 +1,4 @@
-"""Red tests for ready-stage paths whose default agent is disabled or missing."""
+"""Tests for ready-stage paths whose default agent is disabled or missing."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ pytestmark = pytest.mark.unit
 
 
 def _task(stage_name: str = "ideation"):
-    return SimpleNamespace(id="task-1", ref="#1", task_type="task", current_stage=stage_name)
+    stage = SimpleNamespace(name=stage_name, state="ready", position=0)
+    return SimpleNamespace(id="task-1", ref="#1", task_type="task", stages=[stage])
 
 
 def _context(stage_name: str, *, enabled: bool | None):
