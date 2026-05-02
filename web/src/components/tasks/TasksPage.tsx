@@ -1,6 +1,4 @@
 import { useState, useMemo, useCallback } from 'react'
-import './tasks-page.css'
-import './task-views.css'
 import { useTasks } from '../../hooks/useTasks'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge, TaskStateBadges } from './TaskBadges'
@@ -15,6 +13,7 @@ import { GanttChart } from './GanttChart'
 import { DigestView } from './DigestView'
 import { DependencyGraph } from './DependencyGraph'
 import { TaskSelectionToolbar } from './TaskSelectionToolbar'
+import { cn } from '../../lib/utils'
 import {
   getCanonicalTaskState,
   getTaskBucket,
@@ -22,6 +21,69 @@ import {
   TASK_BUCKET_ORDER,
   type TaskBucket,
 } from '../../lib/taskState'
+
+// =============================================================================
+// Tailwind class constants
+// =============================================================================
+
+const PAGE_CLS = 'flex flex-1 flex-col overflow-hidden px-6 py-4 max-md:max-w-screen max-md:overflow-x-hidden max-md:px-3'
+const TOOLBAR_CLS = 'flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-3 mb-2 max-md:flex-col max-md:items-start max-md:gap-2'
+const TOOLBAR_LEFT_CLS = 'flex flex-wrap items-center gap-2 max-md:w-full'
+const TOOLBAR_RIGHT_CLS = 'flex items-center gap-2 max-md:w-full max-md:flex-wrap'
+const TITLE_CLS = 'mr-1 text-[length:calc(var(--font-size-base)*1.1)] font-semibold'
+const GROUP_TABS_CLS = 'flex items-center gap-px ml-2 rounded-md bg-[var(--bg-secondary)] p-0.5'
+const GROUP_TAB_CLS = 'cursor-pointer whitespace-nowrap rounded border-0 bg-transparent px-2.5 py-[3px] text-[length:calc(var(--font-size-base)*0.7)] font-medium text-[var(--text-muted)] transition-colors duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const GROUP_TAB_ACTIVE_CLS = 'bg-[var(--bg-primary)] text-[var(--text-primary)] shadow-[var(--shadow-sm)]'
+
+const VIEW_TOGGLE_CLS = 'flex overflow-hidden rounded-md border border-[var(--border)]'
+const VIEW_BTN_CLS = 'flex h-8 w-8 cursor-pointer items-center justify-center border-0 border-r border-[var(--border)] bg-transparent text-[var(--text-muted)] transition-colors duration-150 last:border-r-0 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const VIEW_BTN_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] text-[var(--accent)]'
+
+const SEARCH_CLS = 'w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11'
+const REFRESH_BTN_CLS = 'flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-[var(--border)] bg-transparent text-[length:calc(var(--font-size-base)*1.1)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+const NEW_BTN_CLS = 'flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] pointer-coarse:min-h-11'
+
+const FILTER_BAR_CLS = 'flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] py-2 mb-2 max-md:flex-col max-md:items-start'
+const FILTER_CHIPS_CLS = 'flex flex-wrap items-center gap-1.5 max-md:flex-nowrap max-md:max-w-full max-md:overflow-x-auto max-md:pb-1'
+const FILTER_DROPDOWNS_CLS = 'flex flex-wrap items-center gap-1.5 max-md:w-full'
+const STAT_CHIP_CLS = 'inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-transparent px-2.5 py-0.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+const STAT_CHIP_ACTIVE_CLS = 'bg-[var(--bg-tertiary)] border-[var(--accent)] text-[var(--text-primary)]'
+const FILTER_SELECT_CLS = 'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none max-md:flex-1 max-md:min-w-0 pointer-coarse:min-h-11'
+const FILTER_CLEAR_CLS = 'cursor-pointer rounded-md border border-[var(--border)] bg-transparent px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] transition-colors duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+
+const STATE_CONTENT_LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:calc(var(--font-size-base)*0.9)] text-[var(--text-muted)]'
+const TABLE_CONTAINER_CLS = 'flex-1 overflow-y-auto max-md:overflow-x-auto max-sm:overflow-x-visible'
+const TABLE_CLS = 'w-full border-collapse text-[length:calc(var(--font-size-base)*0.85)] max-sm:[&_thead]:hidden max-sm:[&_tr]:relative max-sm:[&_tr]:mb-2 max-sm:[&_tr]:block max-sm:[&_tr]:rounded-md max-sm:[&_tr]:border max-sm:[&_tr]:border-[var(--border)] max-sm:[&_tr]:bg-[var(--bg-secondary)] max-sm:[&_tr]:px-2.5 max-sm:[&_tr]:py-2 max-sm:[&_tr]:pl-7 max-sm:[&_td]:block max-sm:[&_td]:w-full max-sm:[&_td]:border-b-0 max-sm:[&_td]:px-0 max-sm:[&_td]:py-1 max-sm:[&_td]:whitespace-normal'
+const TH_CLS = 'sticky top-0 z-[1] border-b border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-2 text-left text-[length:calc(var(--font-size-base)*0.7)] font-medium uppercase tracking-[0.05em] text-[var(--text-muted)]'
+const TH_SORTABLE_CLS = 'cursor-pointer select-none whitespace-nowrap hover:text-[var(--text-primary)]'
+const ROW_CLS = 'cursor-pointer transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+const CELL_CLS = 'whitespace-nowrap border-b border-[var(--border)] px-2.5 py-1.5'
+const CELL_TITLE_CLS = 'whitespace-normal break-words max-sm:text-[length:calc(var(--font-size-base)*0.85)]'
+const CELL_LABEL_BEFORE_CLS = 'max-sm:before:mb-0.5 max-sm:before:block max-sm:before:text-[length:calc(var(--font-size-base)*0.65)] max-sm:before:uppercase max-sm:before:tracking-[0.05em] max-sm:before:text-[var(--text-muted)] max-sm:before:content-[attr(data-label)]'
+const CELL_TYPE_HIDE_CLS = 'max-md:hidden'
+const CELL_PRIORITY_HIDE_CLS = 'max-md:hidden'
+const CELL_STATE_HIDE_CLS = 'max-md:hidden'
+const CELL_STATUS_CLS = 'max-sm:absolute max-sm:left-2 max-sm:top-2 max-sm:w-auto max-sm:p-0'
+const CELL_REF_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const CELL_STATE_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.8)] capitalize text-[var(--text-secondary)]'
+
+const GROUP_SECTION_CLS = 'mb-4'
+const GROUP_HEADER_CLS = 'mb-1 rounded-md bg-[var(--bg-tertiary)] px-3 py-2 text-[length:calc(var(--font-size-base)*0.85)] font-semibold text-[var(--text-primary)]'
+const GROUP_COUNT_CLS = 'font-normal text-[var(--text-muted)]'
+
+const SORT_ARROW_MUTED_CLS = 'ml-0.5 text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)] opacity-40'
+const SORT_ARROW_ACTIVE_CLS = 'ml-0.5 text-[length:calc(var(--font-size-base)*0.7)] text-[var(--accent)]'
+
+const LOAD_MORE_WRAP_CLS = 'flex justify-center py-3'
+const LOAD_MORE_BTN_CLS = 'inline-flex cursor-pointer items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-progress disabled:opacity-60 pointer-coarse:min-h-11'
+
+const SUBTREE_BANNER_CLS = 'mb-2 flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)]'
+const SUBTREE_LABEL_CLS = 'flex-1'
+const SUBTREE_COUNT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const SUBTREE_CLEAR_CLS = 'cursor-pointer rounded border border-[var(--border)] bg-transparent px-2 py-0.5 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+
+const SELECT_CHECKBOX_CLS = 'cursor-pointer'
+const STATE_BADGES_WRAP_CLS = 'flex flex-wrap items-center gap-1'
 
 // =============================================================================
 // Constants
@@ -185,8 +247,8 @@ function groupTasksByAgent(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
 }
 
 function SortArrow({ column, sortColumn, sortDirection }: { column: SortColumn; sortColumn: SortColumn; sortDirection: SortDirection }) {
-  if (column !== sortColumn) return <span className="sort-arrow muted">{'\u2195'}</span>
-  return <span className="sort-arrow active">{sortDirection === 'asc' ? '\u2191' : '\u2193'}</span>
+  if (column !== sortColumn) return <span className={SORT_ARROW_MUTED_CLS}>{'↕'}</span>
+  return <span className={SORT_ARROW_ACTIVE_CLS}>{sortDirection === 'asc' ? '↑' : '↓'}</span>
 }
 
 // =============================================================================
@@ -200,32 +262,32 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
   onToggleSelect?: (id: string, e: React.MouseEvent) => void
 }) {
   return (
-    <tr className={`tasks-row ${isSelected ? 'tasks-row--selected' : ''}`} onClick={() => onSelect(task.id)} style={{ cursor: 'pointer' }}>
-      <td className="tasks-cell tasks-cell--status" data-label="">
+    <tr className={ROW_CLS} onClick={() => onSelect(task.id)}>
+      <td className={cn(CELL_CLS, CELL_STATUS_CLS)} data-label="">
         {onToggleSelect ? (
           <input
             type="checkbox"
-            className="task-select-checkbox"
+            className={SELECT_CHECKBOX_CLS}
             checked={isSelected || false}
             onChange={() => {}}
-            onClick={e => { e.stopPropagation(); onToggleSelect(task.id, e as any) }}
+            onClick={e => { e.stopPropagation(); onToggleSelect(task.id, e as unknown as React.MouseEvent) }}
           />
         ) : (
           <StatusDot task={task} />
         )}
       </td>
-      <td className="tasks-cell tasks-cell--ref" data-label="Ref">
-        <span className="tasks-ref">{task.ref}</span>
+      <td className={cn(CELL_CLS, CELL_LABEL_BEFORE_CLS)} data-label="Ref">
+        <span className={CELL_REF_CLS}>{task.ref}</span>
       </td>
-      <td className="tasks-cell tasks-cell--title" data-label="Title">{task.title}</td>
-      <td className="tasks-cell tasks-cell--type" data-label="Type">
+      <td className={cn(CELL_CLS, CELL_TITLE_CLS, CELL_LABEL_BEFORE_CLS)} data-label="Title">{task.title}</td>
+      <td className={cn(CELL_CLS, CELL_TYPE_HIDE_CLS, CELL_LABEL_BEFORE_CLS)} data-label="Type">
         <TypeBadge type={task.task_type} />
       </td>
-      <td className="tasks-cell tasks-cell--priority" data-label="Priority">
+      <td className={cn(CELL_CLS, CELL_PRIORITY_HIDE_CLS, CELL_LABEL_BEFORE_CLS)} data-label="Priority">
         <PriorityBadge priority={task.priority} />
       </td>
-      <td className="tasks-cell tasks-cell--status-text" data-label="State">
-        <div className="flex items-center gap-1 flex-wrap">
+      <td className={cn(CELL_CLS, CELL_STATE_HIDE_CLS, CELL_STATE_TEXT_CLS, CELL_LABEL_BEFORE_CLS)} data-label="State">
+        <div className={STATE_BADGES_WRAP_CLS}>
           <TaskStateBadges task={task} />
         </div>
       </td>
@@ -297,13 +359,11 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     })
   }, [])
 
-  // Sorted tasks
   const scopedTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => compareTasks(a, b, sortColumn, sortDirection))
     return sorted
   }, [tasks, sortColumn, sortDirection])
 
-  // Compute stats from the filtered task array so overview cards reflect project scope
   const displayTasks = scopedTasks
 
   const selectedTaskObjects = useMemo(() => {
@@ -314,10 +374,8 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     }))
   }, [displayTasks, selectedTaskIds])
 
-  // Subtree kanban: filter to leaf tasks under a specific parent
   const kanbanTasks = useMemo(() => {
     if (!subtreeRootId) return displayTasks
-    // Collect all descendant IDs
     const descendantIds = new Set<string>()
     const collect = (parentId: string) => {
       for (const t of allTasks) {
@@ -328,7 +386,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
       }
     }
     collect(subtreeRootId)
-    // Leaf = has no children in the task set
     const parentIds = new Set(allTasks.map(t => t.parent_task_id).filter(Boolean))
     return displayTasks.filter(t => descendantIds.has(t.id) && !parentIds.has(t.id))
   }, [allTasks, subtreeRootId, displayTasks])
@@ -343,17 +400,12 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   const hasActiveFilters = filters.status !== null || filters.priority !== null
     || filters.taskType !== null || filters.assignee !== null
 
-  // Context-aware defaults for task creation
   const createDefaults = useMemo((): TaskCreateDefaults => {
-    // Clone defaults take priority when set
     if (cloneDefaults) return cloneDefaults
 
     const defaults: TaskCreateDefaults = {}
-    // Pre-fill type from active filter
     if (filters.taskType) defaults.taskType = filters.taskType
-    // Pre-fill priority from active filter
     if (filters.priority !== null) defaults.priority = filters.priority
-    // Pre-fill parent from selected task (if it's an epic/task)
     if (selectedTaskId) {
       const selected = allTasks.find(t => t.id === selectedTaskId)
       if (selected && (selected.task_type === 'epic' || selected.task_type === 'task')) {
@@ -396,8 +448,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           await deEscalateTask(taskId, 'Resumed active work from tasks view', 'in_progress')
           break
         }
-        // Prompt for a session BEFORE any mutating action — a cancelled
-        // prompt must not leave the task reopened-but-unclaimed.
         const sessionId = promptForSessionId(state.owner_session_id)
         if (!sessionId) return
         if (state.is_closed || state.lifecycle_stage === 'needs_review' || state.is_merge_ready) {
@@ -444,23 +494,22 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   ])
 
   return (
-    <main className="tasks-page">
-      {/* Toolbar */}
-      <div className="tasks-toolbar">
-        <div className="tasks-toolbar-left">
-          <h2 className="tasks-title">Tasks</h2>
-          <div className="task-group-tabs">
-            <button className={`task-group-tab ${groupBy === 'all' ? 'active' : ''}`} onClick={() => setGroupBy('all')}>All Tasks</button>
-            <button className={`task-group-tab ${groupBy === 'agent' ? 'active' : ''}`} onClick={() => setGroupBy('agent')}>By Agent</button>
+    <main className={PAGE_CLS}>
+      <div className={TOOLBAR_CLS}>
+        <div className={TOOLBAR_LEFT_CLS}>
+          <h2 className={TITLE_CLS}>Tasks</h2>
+          <div className={GROUP_TABS_CLS}>
+            <button className={cn(GROUP_TAB_CLS, groupBy === 'all' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('all')}>All Tasks</button>
+            <button className={cn(GROUP_TAB_CLS, groupBy === 'agent' && GROUP_TAB_ACTIVE_CLS)} onClick={() => setGroupBy('agent')}>By Agent</button>
           </div>
         </div>
-        <div className="tasks-toolbar-right">
-          <div className="tasks-view-toggle">
+        <div className={TOOLBAR_RIGHT_CLS}>
+          <div className={VIEW_TOGGLE_CLS}>
             {([['list', ListIcon], ['tree', TreeIcon], ['kanban', KanbanIcon], ['priority', PriorityIcon], ['audit', AuditIcon], ['gantt', GanttIcon], ['digest', DigestIcon], ['graph', GraphIcon]] as const).map(
               ([mode, Icon]) => (
                 <button
                   key={mode}
-                  className={`tasks-view-btn ${viewMode === mode ? 'active' : ''}`}
+                  className={cn(VIEW_BTN_CLS, viewMode === mode && VIEW_BTN_ACTIVE_CLS)}
                   onClick={() => setViewMode(mode as ViewMode)}
                   title={`${mode.charAt(0).toUpperCase() + mode.slice(1)} view`}
                 >
@@ -471,28 +520,27 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           </div>
           <input
             type="text"
-            className="tasks-search"
+            className={SEARCH_CLS}
             placeholder="Search tasks..."
             value={filters.search}
             onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           />
-          <button className="tasks-refresh-btn" onClick={refreshTasks} title="Refresh">
+          <button className={REFRESH_BTN_CLS} onClick={refreshTasks} title="Refresh">
             ↻
           </button>
-          <button className="tasks-new-btn" title="New Task" onClick={() => setShowCreateForm(true)}>
+          <button className={NEW_BTN_CLS} title="New Task" onClick={() => setShowCreateForm(true)}>
             <PlusIcon />
             <span>New Task</span>
           </button>
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="tasks-filter-bar">
-        <div className="tasks-filter-chips">
+      <div className={FILTER_BAR_CLS}>
+        <div className={FILTER_CHIPS_CLS}>
           {STATE_FILTER_OPTIONS.filter(bucket => (stats[bucket] || 0) > 0).map(bucket => (
               <button
                 key={bucket}
-                className={`tasks-stat-chip ${filters.status === bucket ? 'active' : ''}`}
+                className={cn(STAT_CHIP_CLS, filters.status === bucket && STAT_CHIP_ACTIVE_CLS)}
                 onClick={() =>
                   setFilters(f => ({ ...f, status: f.status === bucket ? null : bucket }))
                 }
@@ -502,9 +550,9 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               </button>
           ))}
         </div>
-        <div className="tasks-filter-dropdowns">
+        <div className={FILTER_DROPDOWNS_CLS}>
           <select
-            className="tasks-filter-select"
+            className={FILTER_SELECT_CLS}
             value={filters.priority ?? ''}
             onChange={e =>
               setFilters(f => ({
@@ -519,7 +567,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             ))}
           </select>
           <select
-            className="tasks-filter-select"
+            className={FILTER_SELECT_CLS}
             value={filters.taskType ?? ''}
             onChange={e =>
               setFilters(f => ({ ...f, taskType: e.target.value || null }))
@@ -531,7 +579,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             ))}
           </select>
           <select
-            className="tasks-filter-select"
+            className={FILTER_SELECT_CLS}
             value={filters.status ?? ''}
             onChange={e =>
               setFilters(f => ({ ...f, status: e.target.value || null }))
@@ -544,7 +592,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           </select>
           {hasActiveFilters && (
             <button
-              className="tasks-filter-clear"
+              className={FILTER_CLEAR_CLS}
               onClick={() =>
                 setFilters(f => ({
                   ...f,
@@ -561,11 +609,10 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
         </div>
       </div>
 
-      {/* Content */}
       {isLoading ? (
-        <div className="tasks-loading">Loading tasks...</div>
+        <div className={STATE_CONTENT_LOADING_CLS}>Loading tasks...</div>
       ) : displayTasks.length === 0 ? (
-        <div className="tasks-empty">No tasks found</div>
+        <div className={STATE_CONTENT_LOADING_CLS}>No tasks found</div>
       ) : viewMode === 'digest' ? (
         <DigestView
           tasks={displayTasks}
@@ -581,7 +628,6 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           tasks={displayTasks}
           onSelectTask={setSelectedTaskId}
           onReschedule={(taskId, offsetDays) => {
-            // Persist position change via sequence_order (offset * 1000 for granularity)
             const task = displayTasks.find(t => t.id === taskId)
             const currentOrder = task?.sequence_order ?? 0
             updateTask(taskId, { sequence_order: currentOrder + offsetDays * 1000 })
@@ -601,13 +647,13 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
       ) : viewMode === 'kanban' ? (
         <>
           {subtreeRoot && (
-            <div className="subtree-kanban-banner">
-              <span className="subtree-kanban-label">
-                {'\u25A6'} Subtree of <strong>{subtreeRoot.ref}</strong> {subtreeRoot.title}
+            <div className={SUBTREE_BANNER_CLS}>
+              <span className={SUBTREE_LABEL_CLS}>
+                {'▦'} Subtree of <strong>{subtreeRoot.ref}</strong> {subtreeRoot.title}
               </span>
-              <span className="subtree-kanban-count">{kanbanTasks.length} leaf task{kanbanTasks.length !== 1 ? 's' : ''}</span>
-              <button className="subtree-kanban-clear" onClick={() => setSubtreeRootId(null)}>
-                {'\u2715'} Show all
+              <span className={SUBTREE_COUNT_CLS}>{kanbanTasks.length} leaf task{kanbanTasks.length !== 1 ? 's' : ''}</span>
+              <button className={SUBTREE_CLEAR_CLS} onClick={() => setSubtreeRootId(null)}>
+                {'✕'} Show all
               </button>
             </div>
           )}
@@ -626,21 +672,21 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           onSubtreeKanban={handleSubtreeKanban}
         />
       ) : (
-        <div className="tasks-table-container">
+        <div className={TABLE_CONTAINER_CLS}>
           {groupBy === 'agent' ? (
             <>
               {Array.from(groupTasksByAgent(displayTasks)).map(([agent, agentTasks]) => (
-                <div key={agent} className="task-group-section">
-                  <div className="task-group-header">{agent} <span className="task-group-count">({agentTasks.length})</span></div>
-                  <table className="tasks-table">
+                <div key={agent} className={GROUP_SECTION_CLS}>
+                  <div className={GROUP_HEADER_CLS}>{agent} <span className={GROUP_COUNT_CLS}>({agentTasks.length})</span></div>
+                  <table className={TABLE_CLS}>
                     <thead>
                       <tr>
-                        <th className="tasks-th" style={{ width: 28 }}></th>
-                        <th className="tasks-th tasks-th--sortable" style={{ width: 64 }} onClick={() => handleSort('ref')}>Ref <SortArrow column="ref" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                        <th className="tasks-th tasks-th--sortable" onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                        <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                        <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('priority')}>Priority <SortArrow column="priority" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                        <th className="tasks-th tasks-th--sortable" style={{ width: 140 }} onClick={() => handleSort('state')}>State <SortArrow column="state" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                        <th className={TH_CLS} style={{ width: 28 }}></th>
+                        <th className={cn(TH_CLS, TH_SORTABLE_CLS)} style={{ width: 64 }} onClick={() => handleSort('ref')}>Ref <SortArrow column="ref" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                        <th className={cn(TH_CLS, TH_SORTABLE_CLS)} onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                        <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_TYPE_HIDE_CLS)} style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                        <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_PRIORITY_HIDE_CLS)} style={{ width: 80 }} onClick={() => handleSort('priority')}>Priority <SortArrow column="priority" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                        <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_STATE_HIDE_CLS)} style={{ width: 140 }} onClick={() => handleSort('state')}>State <SortArrow column="state" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -653,15 +699,15 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               ))}
             </>
           ) : (
-            <table className="tasks-table">
+            <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className="tasks-th" style={{ width: 28 }}></th>
-                  <th className="tasks-th tasks-th--sortable" style={{ width: 64 }} onClick={() => handleSort('ref')}>Ref <SortArrow column="ref" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                  <th className="tasks-th tasks-th--sortable" onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                  <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                  <th className="tasks-th tasks-th--sortable" style={{ width: 80 }} onClick={() => handleSort('priority')}>Priority <SortArrow column="priority" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
-                  <th className="tasks-th tasks-th--sortable" style={{ width: 140 }} onClick={() => handleSort('state')}>State <SortArrow column="state" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                  <th className={TH_CLS} style={{ width: 28 }}></th>
+                  <th className={cn(TH_CLS, TH_SORTABLE_CLS)} style={{ width: 64 }} onClick={() => handleSort('ref')}>Ref <SortArrow column="ref" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                  <th className={cn(TH_CLS, TH_SORTABLE_CLS)} onClick={() => handleSort('title')}>Title <SortArrow column="title" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                  <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_TYPE_HIDE_CLS)} style={{ width: 80 }} onClick={() => handleSort('type')}>Type <SortArrow column="type" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                  <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_PRIORITY_HIDE_CLS)} style={{ width: 80 }} onClick={() => handleSort('priority')}>Priority <SortArrow column="priority" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
+                  <th className={cn(TH_CLS, TH_SORTABLE_CLS, CELL_STATE_HIDE_CLS)} style={{ width: 140 }} onClick={() => handleSort('state')}>State <SortArrow column="state" sortColumn={sortColumn} sortDirection={sortDirection} /></th>
                 </tr>
               </thead>
               <tbody>
@@ -672,10 +718,10 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
             </table>
           )}
           {hasMore && groupBy !== 'agent' && (
-            <div className="tasks-load-more">
+            <div className={LOAD_MORE_WRAP_CLS}>
               <button
                 type="button"
-                className="tasks-load-more-btn"
+                className={LOAD_MORE_BTN_CLS}
                 onClick={() => { void loadMore() }}
                 disabled={isLoadingMore}
               >

@@ -11,6 +11,7 @@ import {
   TASK_BUCKET_ORDER,
   type TaskBucket,
 } from '../../lib/taskState'
+import { cn } from '../../lib/utils'
 
 // =============================================================================
 // Color maps
@@ -44,6 +45,13 @@ const TYPE_STYLES: Record<string, { bg: string; color: string }> = {
   chore: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
 };
 
+const TASK_BADGE_CLS =
+  'inline-flex items-center justify-center h-5 px-1.5 rounded-full text-[length:var(--text-2xs)] font-semibold leading-none whitespace-nowrap'
+const TASK_BADGE_DOT_CLS = 'inline-block w-[7px] h-[7px] rounded-full shrink-0'
+const TASK_BADGE_DOT_STANDALONE_CLS = 'inline-block w-2 h-2 rounded-full shrink-0'
+const TASK_BADGE_BLOCKED_CLS =
+  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--text-2xs)] font-medium text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]'
+
 function chipToken(value: string | number): string {
   return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
 }
@@ -54,7 +62,7 @@ function chipToken(value: string | number): string {
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`task-badge chip chip--state-${chipToken(status)}`}>
+    <span className={cn(TASK_BADGE_CLS, `chip chip--state-${chipToken(status)}`)}>
       {status.replace(/_/g, " ")}
     </span>
   );
@@ -78,7 +86,7 @@ export function StatusDot({ status, task }: { status?: string; task?: TaskStateL
       : (status ?? 'unknown').replace(/_/g, ' ')
   return (
     <span
-      className="task-badge-dot task-badge-dot--standalone"
+      className={TASK_BADGE_DOT_STANDALONE_CLS}
       style={{ backgroundColor: TASK_BUCKET_COLORS[bucket] || "var(--text-muted)" }}
       title={label}
       aria-label={`Status: ${label}`}
@@ -98,7 +106,7 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
       {tokens.map(token => (
         <span
           key={token.key}
-          className={`task-badge chip chip--state-${chipToken(token.key)}`}
+          className={cn(TASK_BADGE_CLS, `chip chip--state-${chipToken(token.key)}`)}
         >
           {token.label}
         </span>
@@ -115,7 +123,7 @@ export function PriorityBadge({ priority }: { priority: number }) {
   const normalizedPriority = priority in PRIORITY_STYLES ? priority : 2;
   const style = PRIORITY_STYLES[normalizedPriority];
   return (
-    <span className={`task-badge chip chip--priority-${chipToken(normalizedPriority)}`}>
+    <span className={cn(TASK_BADGE_CLS, `chip chip--priority-${chipToken(normalizedPriority)}`)}>
       {style.label}
     </span>
   );
@@ -127,7 +135,7 @@ export function PriorityBadge({ priority }: { priority: number }) {
 
 export function TypeBadge({ type }: { type: string }) {
   return (
-    <span className={`task-badge chip chip--type-${chipToken(type)}`}>
+    <span className={cn(TASK_BADGE_CLS, `chip chip--type-${chipToken(type)}`)}>
       {type}
     </span>
   );
@@ -158,7 +166,7 @@ function LockIcon() {
 export function BlockedIndicator({ count }: { count?: number }) {
   return (
     <span
-      className="task-badge task-badge--blocked"
+      className={TASK_BADGE_BLOCKED_CLS}
       title={`Blocked by ${count ?? "?"} task(s)`}
       aria-label={`Blocked by ${count ?? "unknown"} task(s)`}
     >
@@ -172,4 +180,4 @@ export function BlockedIndicator({ count }: { count?: number }) {
 // Re-export color constants for use in other components
 // =============================================================================
 
-export { STATUS_COLORS, PRIORITY_STYLES, TYPE_STYLES };
+export { STATUS_COLORS, PRIORITY_STYLES, TYPE_STYLES, TASK_BADGE_CLS, TASK_BADGE_DOT_CLS, TASK_BADGE_DOT_STANDALONE_CLS };
