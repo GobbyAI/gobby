@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks._stage_states import (
     IllegalManifestMutationError,
     StageManifestSpec,
+    StageState,
 )
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.utils.session_context import get_current_session_id
@@ -72,6 +74,32 @@ def _read_artifact(ctx: RegistryContext, task_id: str, field: str) -> Any:
     return row[field] if row is not None else None
 
 
+def _operation_response(task_id: str, stage: StageState) -> dict[str, Any]:
+    return {"ok": True, "task_id": task_id, "stage": stage_state_operation_view(stage)}
+
+
+def _input_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {"type": "object", "properties": properties, "required": required}
+
+
+def _register_stage_tool(
+    registry: InternalToolRegistry,
+    *,
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str],
+    func: Callable[..., dict[str, Any]],
+) -> None:
+    registry.register(
+        name=name,
+        description=description,
+        input_schema=_input_schema(properties, required),
+        output_schema={"type": "object"},
+        func=func,
+    )
+
+
 def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     """Create mutating task stage manifest tools for gobby-tasks-ops."""
 
@@ -89,21 +117,18 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             by_session_id=_session_id(ctx),
             notes=notes,
         )
-        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+        return _operation_response(resolved_id, stage)
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="start_stage",
         description="Transition a ready stage to in_progress.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "stage_name": {"type": "string"},
-                "notes": {"type": ["string", "null"]},
-            },
-            "required": ["task_id", "stage_name"],
+        properties={
+            "task_id": {"type": "string"},
+            "stage_name": {"type": "string"},
+            "notes": {"type": ["string", "null"]},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "stage_name"],
         func=start_stage,
     )
 
@@ -124,23 +149,20 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             artifact_updates=artifact_updates,
             validation_override_reason=validation_override_reason,
         )
-        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+        return _operation_response(resolved_id, stage)
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="complete_stage",
         description="Complete a stage according to its review policy.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "stage_name": {"type": "string"},
-                "commit_sha": {"type": ["string", "null"]},
-                "artifact_updates": {"type": ["object", "null"]},
-                "validation_override_reason": {"type": ["string", "null"]},
-            },
-            "required": ["task_id", "stage_name"],
+        properties={
+            "task_id": {"type": "string"},
+            "stage_name": {"type": "string"},
+            "commit_sha": {"type": ["string", "null"]},
+            "artifact_updates": {"type": ["object", "null"]},
+            "validation_override_reason": {"type": ["string", "null"]},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "stage_name"],
         func=complete_stage,
     )
 
@@ -159,22 +181,19 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             needs_human=needs_human,
             by_session_id=_session_id(ctx),
         )
-        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+        return _operation_response(resolved_id, stage)
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="fail_stage",
         description="Return a failed in-progress stage to ready or escalate after caps.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "stage_name": {"type": "string"},
-                "reason": {"type": "string"},
-                "needs_human": {"type": "boolean"},
-            },
-            "required": ["task_id", "stage_name", "reason"],
+        properties={
+            "task_id": {"type": "string"},
+            "stage_name": {"type": "string"},
+            "reason": {"type": "string"},
+            "needs_human": {"type": "boolean"},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "stage_name", "reason"],
         func=fail_stage,
     )
 
@@ -198,21 +217,18 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
         except IllegalManifestMutationError as error:
             return _manifest_error(error)
-        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+        return _operation_response(resolved_id, stage)
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="add_stage",
         description="Insert a future ready stage into a task manifest.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "stage_name": {"type": "string"},
-                "position": {"type": "integer"},
-            },
-            "required": ["task_id", "stage_name", "position"],
+        properties={
+            "task_id": {"type": "string"},
+            "stage_name": {"type": "string"},
+            "position": {"type": "integer"},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "stage_name", "position"],
         func=add_stage,
     )
 
@@ -229,18 +245,15 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return _manifest_error(error)
         return {"ok": True, "task_id": resolved_id, "removed_stage": stage_name}
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="remove_stage",
         description="Remove a future ready stage from a task manifest.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "stage_name": {"type": "string"},
-            },
-            "required": ["task_id", "stage_name"],
+        properties={
+            "task_id": {"type": "string"},
+            "stage_name": {"type": "string"},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "stage_name"],
         func=remove_stage,
     )
 
@@ -276,22 +289,19 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 by_session_id=_session_id(ctx),
                 notes=findings,
             )
-        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+        return _operation_response(resolved_id, stage)
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="record_pr_verdict",
         description="Persist PR verdict artifacts and advance the pr review state.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "verdict": {"type": "string", "enum": ["approved", "rejected", "needs_changes"]},
-                "findings": {"type": "string"},
-                "report_ref": {"type": ["string", "null"]},
-            },
-            "required": ["task_id", "verdict", "findings"],
+        properties={
+            "task_id": {"type": "string"},
+            "verdict": {"type": "string", "enum": ["approved", "rejected", "needs_changes"]},
+            "findings": {"type": "string"},
+            "report_ref": {"type": ["string", "null"]},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "verdict", "findings"],
         func=record_pr_verdict,
     )
 
@@ -317,19 +327,16 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "idempotent": existing_url == pr_url,
         }
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="record_pr_opened",
         description="Persist PR metadata without changing pr stage state.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "pr_url": {"type": "string"},
-                "github_pr_number": {"type": ["integer", "null"]},
-            },
-            "required": ["task_id", "pr_url"],
+        properties={
+            "task_id": {"type": "string"},
+            "pr_url": {"type": "string"},
+            "github_pr_number": {"type": ["integer", "null"]},
         },
-        output_schema={"type": "object"},
+        required=["task_id", "pr_url"],
         func=record_pr_opened,
     )
 
@@ -356,7 +363,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 needs_human=False,
                 by_session_id=_session_id(ctx),
             )
-            return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+            return _operation_response(resolved_id, stage)
 
         if not merge_sha:
             raise ValueError("merge_sha is required when recording a successful merge")
@@ -374,22 +381,19 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
             by_session_id=_session_id(ctx),
             commit_sha=merge_sha,
         )
-        return {"ok": True, "task_id": resolved_id, "stage": stage_state_operation_view(stage)}
+        return _operation_response(resolved_id, stage)
 
-    registry.register(
+    _register_stage_tool(
+        registry,
         name="record_merge_result",
         description="Persist merge outcome and advance/fail merge stage.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "merge_sha": {"type": ["string", "null"]},
-                "report_ref": {"type": ["string", "null"]},
-                "failure_reason": {"type": ["string", "null"]},
-            },
-            "required": ["task_id"],
+        properties={
+            "task_id": {"type": "string"},
+            "merge_sha": {"type": ["string", "null"]},
+            "report_ref": {"type": ["string", "null"]},
+            "failure_reason": {"type": ["string", "null"]},
         },
-        output_schema={"type": "object"},
+        required=["task_id"],
         func=record_merge_result,
     )
 

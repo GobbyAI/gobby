@@ -241,12 +241,15 @@ def holistic_qa_advance_rule(task: object, context: object) -> Action | None:
 
 
 def pr_work_rule(task: object, context: object) -> Action | None:
-    stage = _matching_current_stage(task, context, "pr", "in_progress")
-    if stage is None:
-        return None
-    if not _has_pr_agent(context):
-        return EscalateAction(task_id=_task_id(task), reason="pr_no_agent")
-    return _spawn_stage_agent(task, stage, context, "pr-agent")
+    return _spawn_required_stage_agent(
+        task,
+        context,
+        "pr",
+        "in_progress",
+        agent_slug="pr-agent",
+        has_agent=_has_pr_agent,
+        missing_agent_reason="pr_no_agent",
+    )
 
 
 def pr_review_rule(task: object, context: object) -> Action | None:
@@ -260,12 +263,15 @@ def pr_advance_rule(task: object, context: object) -> Action | None:
 
 
 def merge_rule(task: object, context: object) -> Action | None:
-    stage = _matching_current_stage(task, context, "merge", "in_progress")
-    if stage is None:
-        return None
-    if not _has_merge_agent(context):
-        return EscalateAction(task_id=_task_id(task), reason="merge_no_agent")
-    return _spawn_stage_agent(task, stage, context, "merge-orchestrator")
+    return _spawn_required_stage_agent(
+        task,
+        context,
+        "merge",
+        "in_progress",
+        agent_slug="merge-orchestrator",
+        has_agent=_has_merge_agent,
+        missing_agent_reason="merge_no_agent",
+    )
 
 
 def task_has_stage(task: object, stage_name: str) -> bool:
@@ -375,6 +381,24 @@ def _spawn_configured_stage_agent(
     return _spawn_on_stage(
         task, context, stage_name, state, _STAGE_AGENT_SLUGS[(stage_name, state)]
     )
+
+
+def _spawn_required_stage_agent(
+    task: object,
+    context: object,
+    stage_name: str,
+    state: str,
+    *,
+    agent_slug: str,
+    has_agent: Callable[[object], bool],
+    missing_agent_reason: str,
+) -> Action | None:
+    stage = _matching_current_stage(task, context, stage_name, state)
+    if stage is None:
+        return None
+    if not has_agent(context):
+        return EscalateAction(task_id=_task_id(task), reason=missing_agent_reason)
+    return _spawn_stage_agent(task, stage, context, agent_slug)
 
 
 def _complete_stage_on_state(
