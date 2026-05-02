@@ -488,9 +488,9 @@ Per-row coverage (one acceptance per data row of the §1.3 Stage|Agent-slug tabl
 
 `kind: deliverable`
 
-Target: `src/gobby/storage/tasks/_stage_registry.py`, `src/gobby/storage/tasks/_stage_states.py` (both new)
+Target: `src/gobby/storage/tasks/_stage_registry.py` (new), `src/gobby/storage/tasks/_stage_states.py` (new), `src/gobby/storage/tasks/_lifecycle.py` (existing — `close_task` at lines 22–67), `src/gobby/storage/tasks/_transitions.py` (existing — `close_task` at lines 716–756, `_cascade_merged_close` at lines 145–176), `src/gobby/storage/tasks/_manager.py` (existing — `LocalTaskManager.close_task` at lines 491–523)
 
-Two new manager modules under the same package as `_artifacts.py`, `_lifecycle_events.py`, `_dispatch_mutex.py`. Wire both into `LocalTaskManager` (`src/gobby/storage/tasks/_manager.py`) as composed sub-managers, mirroring how `TaskArtifactManager` is exposed.
+Two new manager modules under the same package as `_artifacts.py`, `_lifecycle_events.py`, `_dispatch_mutex.py`. Wire both into `LocalTaskManager` (`src/gobby/storage/tasks/_manager.py`) as composed sub-managers, mirroring how `TaskArtifactManager` is exposed. The existing close-path files are in scope because invariant 8 (acceptance 2.1.10) requires extracting `_close_task_in_txn` from `_lifecycle.close_task` and rewiring `_transitions.close_task`, `_transitions._cascade_merged_close`, and `LocalTaskManager.close_task` to delegate through the shared helper.
 
 `_stage_registry.py`:
 
@@ -2168,6 +2168,36 @@ export type ReviewPolicy = 'none' | 'required' | 'optional'
 
 export type StageAdvanceAction = 'start' | 'submit_for_review' | 'approve_review' | 'complete'
 
+// Per-stage manifest row as the web layer consumes it. Authored here (§6.1)
+// rather than in §6.2 so §6.1's components typecheck self-contained without a
+// forward dependency on §6.2's GobbyTask extension. §6.2 re-imports this type
+// when extending GobbyTask with `stages?: StageStateView[]`.
+export interface StageStateView {
+  stage_name: string
+  position: number
+  state: StageState5
+  review_policy: ReviewPolicy
+  reviewer_agent: string | null
+  work_attempt_count: number
+  review_round_count: number
+  max_work_attempts: number | null
+  max_review_rounds: number | null
+  artifact_refs: Record<string, string> | null
+}
+
+// Minimal task row shape required by §6.1's components (LifecycleBoard,
+// StageColumn, StageCard) and §6.1's helpers (taskAtStage, taskStateAt,
+// currentStage). Authored here so §6.1 typechecks without GobbyTask. §6.2's
+// extended GobbyTask is structurally compatible: GobbyTask extends LifecycleTask
+// by being a superset, so passing `GobbyTask[]` where `LifecycleTask[]` is
+// expected is valid TypeScript without an explicit `extends` clause.
+export interface LifecycleTask {
+  id: string
+  task_type: string
+  state?: { is_blocked?: boolean }
+  stages?: StageStateView[]
+}
+
 // Resolver: derives the legal next-step action from the current row state and
 // its review policy. Mirrors §2.1's transition matrix on the web side so the
 // drag handler asks the backend for exactly one legal step at a time.
@@ -2186,10 +2216,14 @@ export function resolveAdvanceAction(
 
 ```typescript
 // LifecycleBoard.tsx
-import { resolveAdvanceAction, type StageAdvanceAction } from '../../lib/stageActions'  // shared helper; see also §6.2 useTasks contract
+import {
+  resolveAdvanceAction,
+  type StageAdvanceAction,
+  type LifecycleTask,
+} from '../../lib/stageActions'  // shared helper authored in this deliverable; see also §6.2 useTasks contract
 
 interface LifecycleBoardProps {
-  tasks: GobbyTask[]
+  tasks: LifecycleTask[]  // GobbyTask is structurally compatible: §6.2 extends GobbyTask with `stages?: StageStateView[]`, making it a superset of LifecycleTask. §6.1 typechecks without §6.2.
   registry: StageRegistryEntry[]
   onSelectTask: (id: string) => void
   // The drag handler in StageCard reads (currentState, reviewPolicy) from
@@ -2278,19 +2312,25 @@ Blocked-task default visibility: blocked tasks are **shown by default** in their
 
 Stage state and blocked-ness are orthogonal projections (see Constraints): a task can be `(stage='development', state='ready', is_blocked=true)` or `(stage='development', state='in_progress', is_blocked=true)`, and these mean meaningfully different things. The card's column position tells you the pipeline stage; the tri-state group within the column tells you work progress; the blocked badge tells you about external blockers. None of these axes collapses into the others.
 
-Helpers (in `web/src/lib/taskState.ts` — extending it; Phase 6.3 retires the legacy parts):
+Helpers (in `web/src/lib/stageActions.ts` — co-located with the types they consume so §6.1 owns the full helper surface; §6.2 imports these alongside `LifecycleTask` and `StageStateView`):
 
 ```typescript
-export function taskAtStage(task: GobbyTask, stageName: string): boolean {
+// web/src/lib/stageActions.ts (continued — same module as the types/resolver above)
+
+export function taskAtStage(task: LifecycleTask, stageName: string): boolean {
   return task.stages?.some(r => r.stage_name === stageName) ?? false
 }
 
-export function taskStateAt(task: GobbyTask, stageName: string): StageRowState | undefined {
+export function taskStateAt(task: LifecycleTask, stageName: string): StageRowState | undefined {
   return task.stages?.find(r => r.stage_name === stageName)?.state
 }
 
-export function currentStage(task: GobbyTask): { name: string; state: StageRowState } | null {
+export function currentStage(task: LifecycleTask): { name: string; state: StageRowState } | null {
   // Leftmost row by position whose state != 'done'.
+  if (!task.stages) return null
+  const sorted = [...task.stages].sort((a, b) => a.position - b.position)
+  const next = sorted.find(r => r.state !== 'done')
+  return next ? { name: next.stage_name, state: next.state } : null
 }
 ```
 
@@ -2307,7 +2347,7 @@ The `done` group within each column collapses by default to one summary row show
 - 6.1.4a — A "Hide blocked" toolbar toggle removes blocked tasks from the rendered set; toggle state persists in `localStorage['lifecycle-board:hide-blocked']`. test: `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_hide_blocked_toggle_persists`.
 - 6.1.4b — Drag-to-advance is disabled on blocked cards; attempting to drag surfaces the badge tooltip. test: `web/src/components/tasks/__tests__/StageCard.test.tsx::test_blocked_drag_disabled`.
 - 6.1.5 — Drag right on a card resolves the next legal action via `resolveAdvanceAction(currentState, stage.review_policy)` (shared helper from `web/src/lib/stageActions.ts`, authored in this deliverable per 6.1.5a) and calls `onAdvanceStage(task.id, stageName, action)`. The resolver returns: `ready → 'start'`; `in_progress → 'submit_for_review'` for `policy=required`, `'complete'` for `policy=none`/`policy=optional`; `needs_review → 'approve_review'`; `review_approved → 'complete'`; `done → null`. A null return drag-disables the card. The signature is `(taskId: string, stageName: string, action: StageAdvanceAction) => void` — matches `LifecycleBoardProps.onAdvanceStage` and §6.2's `advanceStage(taskId, stageName, action)` exactly. test: `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_drag_advance_calls_three_arg_signature`, `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_drag_advance_resolves_action_per_policy`, `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_drag_advance_disabled_when_resolver_returns_null`, `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_drag_advance_action_arg_matches_resolver_output`.
-- 6.1.5a — `web/src/lib/stageActions.ts` is created in this deliverable and exports `StageState5`, `StageRowState` (alias of `StageState5`), `ReviewPolicy`, `StageAdvanceAction`, and `resolveAdvanceAction` exactly as documented in the "Shared drag-action helper" block above. The resolver returns `'start'` for `ready`, `'submit_for_review'` for `in_progress` on `policy=required` and `'complete'` for `in_progress` on `policy=none`/`policy=optional`, `'approve_review'` for `needs_review`, `'complete'` for `review_approved`, and `null` for `done`. §6.1's components (`LifecycleBoard.tsx`, `StageColumn.tsx`, `StageCard.tsx`) import from this module; §6.2's `useTasks.ts` re-imports the same module without redefining any of the exports. file: `web/src/lib/stageActions.ts`. symbol: `StageState5`, `StageRowState`, `ReviewPolicy`, `StageAdvanceAction`, `resolveAdvanceAction`. test: `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_required_chain`, `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_none_chain`, `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_optional_chain`, `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_returns_null_on_done`, `web/src/lib/__tests__/stageActions.test.ts::test_stage_row_state_aliases_stage_state5`, `web/src/lib/__tests__/stageActions.test.ts::test_module_is_only_authoring_site` (negative — greps `web/src/hooks/useTasks.ts` and other §6.2 targets to assert no duplicate `export function resolveAdvanceAction` or `export type StageAdvanceAction` declarations exist outside `web/src/lib/stageActions.ts`).
+- 6.1.5a — `web/src/lib/stageActions.ts` is created in this deliverable and exports `StageState5`, `StageRowState` (alias of `StageState5`), `ReviewPolicy`, `StageAdvanceAction`, `StageStateView`, `LifecycleTask`, `resolveAdvanceAction`, `taskAtStage`, `taskStateAt`, and `currentStage` exactly as documented in the "Shared drag-action helper" block above. The resolver returns `'start'` for `ready`, `'submit_for_review'` for `in_progress` on `policy=required` and `'complete'` for `in_progress` on `policy=none`/`policy=optional`, `'approve_review'` for `needs_review`, `'complete'` for `review_approved`, and `null` for `done`. `StageStateView` and `LifecycleTask` are authored here (not in §6.2) so §6.1's components typecheck self-contained against `LifecycleTask[]` without §6.2's `GobbyTask.stages` extension; §6.2 re-imports both types when extending `GobbyTask`. §6.1's components (`LifecycleBoard.tsx`, `StageColumn.tsx`, `StageCard.tsx`) import the types and helpers from this module; §6.2's `useTasks.ts` re-imports the same module without redefining any of the exports. file: `web/src/lib/stageActions.ts`. symbol: `StageState5`, `StageRowState`, `ReviewPolicy`, `StageAdvanceAction`, `StageStateView`, `LifecycleTask`, `resolveAdvanceAction`, `taskAtStage`, `taskStateAt`, `currentStage`. test: `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_required_chain`, `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_none_chain`, `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_optional_chain`, `web/src/lib/__tests__/stageActions.test.ts::test_resolve_advance_returns_null_on_done`, `web/src/lib/__tests__/stageActions.test.ts::test_stage_row_state_aliases_stage_state5`, `web/src/lib/__tests__/stageActions.test.ts::test_stage_state_view_shape`, `web/src/lib/__tests__/stageActions.test.ts::test_lifecycle_task_minimal_shape`, `web/src/lib/__tests__/stageActions.test.ts::test_task_helpers_consume_lifecycle_task`, `web/src/lib/__tests__/stageActions.test.ts::test_module_is_only_authoring_site` (negative — greps `web/src/hooks/useTasks.ts` and other §6.2 targets to assert no duplicate `export function resolveAdvanceAction`, `export type StageAdvanceAction`, `export interface StageStateView`, or `export interface LifecycleTask` declarations exist outside `web/src/lib/stageActions.ts`).
 - 6.1.6 — Swimlanes by `task_type` render with empty lanes hidden. test: `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_swimlanes`.
 - 6.1.7 — Category filter (toolbar control) hides columns whose `task_stages_registry.category` is not in the active selection; deselecting all categories renders no columns. behavior: "category filter drives column visibility" verified in `web/src/components/tasks/__tests__/LifecycleBoard.test.tsx::test_category_filter_hides_columns`.
 - 6.1.8 — Visual surfaces (column header chrome, tri-state palette, badge ramp, blocked overlay, swimlane dividers, drag-preview shadow) conform to the `impeccable` skill's tokens; `.impeccable.md` was consulted before authoring CSS/JSX. behavior: "design tokens consumed from impeccable" verified by code review notes in PR description and `web/src/styles/lifecycle-board.css` referencing only token variables (no raw hex values).
@@ -2319,29 +2359,21 @@ The `done` group within each column collapses by default to one summary row show
 
 Target: `web/src/hooks/useTasks.ts`, `web/src/hooks/useStagesRegistry.ts` (new)
 
-Extend `GobbyTask` (`web/src/hooks/useTasks.ts:10-45` area) with:
+Extend `GobbyTask` (`web/src/hooks/useTasks.ts:10-39` area) with:
 
 ```typescript
-import type { StageState5, ReviewPolicy } from '../lib/stageActions'  // shared helper authored in §6.1
+import type {
+  StageState5,
+  ReviewPolicy,
+  StageStateView,
+  LifecycleTask,
+} from '../lib/stageActions'  // all shared types authored in §6.1's stageActions.ts; do NOT redefine here
 
-export type { StageState5, ReviewPolicy }  // re-export for legacy import paths
-
-export interface StageStateView {
-  stage_name: string
-  position: number
-  state: StageState5
-  review_policy: ReviewPolicy
-  reviewer_agent: string | null
-  work_attempt_count: number
-  review_round_count: number
-  max_work_attempts: number | null
-  max_review_rounds: number | null
-  artifact_refs: Record<string, string> | null
-}
+export type { StageState5, ReviewPolicy, StageStateView, LifecycleTask }  // re-export for legacy import paths
 
 export interface GobbyTask {
   // existing fields...
-  stages?: StageStateView[]  // populated by GET /api/tasks?include_stages=1
+  stages?: StageStateView[]  // populated by GET /api/tasks?include_stages=1; type imported from §6.1's stageActions.ts. GobbyTask is structurally a superset of LifecycleTask, so consumers typed `LifecycleTask[]` accept `GobbyTask[]` without an explicit `extends` clause.
 }
 ```
 
@@ -2374,7 +2406,7 @@ The drag handler in `LifecycleBoard` reads `(task.stages[stageName].state, stage
 
 New hook `useStagesRegistry` fetches `GET /api/stages/registry` once on mount, caches in module-level state, and returns `{registry, isLoading, error}`.
 
-WebSocket `task_event` handler (`useTasks` line ~280-295 area) re-fetches on `stage_changed` events as well as existing `task_event` types. Backend already broadcasts these per 2.4.5.
+WebSocket `task_event` handler (`useTasks` line ~506 area, `useWebSocketEvent('task_event', ...)`) re-fetches on `stage_changed` events as well as existing `task_event` types. Backend already broadcasts these per 2.4.5.
 
 **Acceptance:**
 
@@ -2408,17 +2440,17 @@ Replace the `viewMode === 'kanban'` branch in `TasksPage.tsx` (around line 601 �
 Delete from `web/src/lib/taskState.ts`:
 
 - `TaskLifecycleStage` (line ~1)
-- `TaskBucket` (lines ~28-34)
-- `TASK_BUCKET_LABELS` (lines ~48-55)
-- `TASK_BUCKET_ORDER` (lines ~36-46)
-- `getTaskBucket` (lines ~163-173)
-- `_resolveLifecycleStage` and any other lifecycle helpers
+- `TaskBucket` (lines ~39-45)
+- `TASK_BUCKET_LABELS` (lines ~63-70)
+- `TASK_BUCKET_ORDER` (lines ~54-61)
+- `getTaskBucket` (lines ~136-144)
+- `normalizeLifecycleStage` (lines ~90-96) and any other lifecycle helpers
 
 Keep `CanonicalTaskState` minus the `lifecycle_stage` field; rename to make the omission obvious if useful (`TaskState` works). Keep `getCanonicalTaskState` for reading task state for badges.
 
 Delete `web/src/components/tasks/KanbanBoard.tsx` and its test file `KanbanBoard.test.tsx`. The new `LifecycleBoard` test file from 6.1 replaces them.
 
-The `moveTaskToBucket` function in `TasksPage.tsx` (around line 372 — search the literal `function moveTaskToBucket`) is replaced by inline `advanceStage` / `failStage` calls bound to drag handlers in `LifecycleBoard`. Existing per-bucket transition functions (`reopenTask`, `deEscalateTask`, `claimTask`, `markTaskNeedsReview`, `markTaskReviewApproved`, `escalateTask`, `closeTask`) are no longer wired to drag — their other callers stay (sidebar buttons, modals, etc.).
+The `moveTaskToBucket` function in `TasksPage.tsx` (around line 372 — search the literal `const moveTaskToBucket = useCallback`) is replaced by inline `advanceStage` / `failStage` calls bound to drag handlers in `LifecycleBoard`. Existing per-bucket transition functions (`reopenTask`, `deEscalateTask`, `claimTask`, `markTaskNeedsReview`, `markTaskReviewApproved`, `escalateTask`, `closeTask`) are no longer wired to drag — their other callers stay (sidebar buttons, modals, etc.).
 
 **Acceptance:**
 
