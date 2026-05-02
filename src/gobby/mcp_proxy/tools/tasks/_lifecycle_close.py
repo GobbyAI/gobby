@@ -17,7 +17,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
     validate_leaf_task_with_llm,
     validate_parent_task,
 )
-from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
+from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.session_models import Session
@@ -308,7 +308,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 except Exception as e:
                     logger.debug(f"Best-effort session linking failed: {e}")
 
-            notify_parent_on_status_change(
+            notify_parent_on_task_state_change(
                 ctx.task_manager.db,
                 resolved_id,
                 "escalated",
@@ -346,7 +346,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 db=ctx.task_manager.db,
             )
 
-        notify_parent_on_status_change(
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
             "closed",

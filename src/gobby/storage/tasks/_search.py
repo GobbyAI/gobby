@@ -11,7 +11,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.search.fts5 import FTS5SearchBackend, sanitize_fts_query
-from gobby.storage.tasks._state_sql import status_filter_sql
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
@@ -20,6 +19,33 @@ logger = logging.getLogger(__name__)
 
 # bm25 weights: title(10), description(5), labels(2), task_type(1), category(2)
 _TASK_BM25_WEIGHTS = (10.0, 5.0, 2.0, 1.0, 2.0)
+
+
+def search_tasks(
+    db: DatabaseProtocol,
+    query: str,
+    *,
+    top_k: int = 20,
+    project_id: str | None = None,
+    current_stage_state: str | list[str] | None = None,
+    task_type: str | None = None,
+    priority: int | None = None,
+    parent_task_id: str | None = None,
+    category: str | None = None,
+    min_score: float = 0.0,
+) -> list[tuple[str, float]]:
+    """Search tasks through the stage-native FTS5 searcher."""
+    return TaskFTS5Searcher(db).search(
+        query,
+        top_k=top_k,
+        project_id=project_id,
+        current_stage_state=current_stage_state,
+        task_type=task_type,
+        priority=priority,
+        parent_task_id=parent_task_id,
+        category=category,
+        min_score=min_score,
+    )
 
 
 class TaskFTS5Searcher:
@@ -44,7 +70,7 @@ class TaskFTS5Searcher:
         query: str,
         top_k: int = 20,
         project_id: str | None = None,
-        status: str | list[str] | None = None,
+        current_stage_state: str | list[str] | None = None,
         task_type: str | None = None,
         priority: int | None = None,
         parent_task_id: str | None = None,
@@ -57,7 +83,7 @@ class TaskFTS5Searcher:
             query: Search query text
             top_k: Maximum number of results
             project_id: Filter by project
-            status: Filter by status (string or list)
+            current_stage_state: Filter by current stage state (string or list)
             task_type: Filter by task type
             priority: Filter by priority
             parent_task_id: Filter by parent task ID (UUID)
@@ -81,11 +107,37 @@ class TaskFTS5Searcher:
             conditions.append("t.project_id = ?")
             params.append(project_id)
 
-        if status:
-            clause, clause_params = status_filter_sql(status, alias="t")
-            if clause:
-                conditions.append(clause)
-                params.extend(clause_params)
+        if current_stage_state:
+            raw_states = (
+                [current_stage_state]
+                if isinstance(current_stage_state, str)
+                else list(current_stage_state)
+            )
+            states = [
+                str(state).strip().lower().replace("-", "_")
+                for state in raw_states
+                if str(state).strip()
+            ]
+            if states:
+                placeholders = ", ".join("?" for _ in states)
+                conditions.append(
+                    f"""
+                    EXISTS (
+                        SELECT 1
+                          FROM task_stage_states current_stage
+                         WHERE current_stage.task_id = t.id
+                           AND current_stage.state != 'done'
+                           AND current_stage.position = (
+                               SELECT MIN(stage_scan.position)
+                                 FROM task_stage_states stage_scan
+                                WHERE stage_scan.task_id = t.id
+                                  AND stage_scan.state != 'done'
+                           )
+                           AND current_stage.state IN ({placeholders})
+                    )
+                    """
+                )
+                params.extend(states)
 
         if task_type:
             conditions.append("t.task_type = ?")

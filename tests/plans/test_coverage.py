@@ -111,7 +111,7 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
             {
                 "ref": "#200",
                 "path_cache": "1.200",
-                "status": "open",
+                "state": "ready",
                 "labels": ["deferred-from:plan:A2"],
                 "validation_criteria": "Follow-up task owns src/deferred.py.",
             },

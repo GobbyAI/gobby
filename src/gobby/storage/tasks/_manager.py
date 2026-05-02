@@ -92,7 +92,7 @@ from gobby.storage.tasks._queries import (
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
 from gobby.storage.tasks._stage_registry import StageRegistryManager
-from gobby.storage.tasks._stage_states import StageStatesManager
+from gobby.storage.tasks._stage_states import StageManifestSpec, StageStatesManager
 from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
 )
@@ -216,7 +216,6 @@ class LocalTaskManager:
         task_type: str = "task",
         assignee: str | None = None,
         claimed_by_session_id: str | None = None,
-        lifecycle_stage: str | None = None,
         labels: list[str] | None = None,
         category: str | None = None,
         validation_criteria: str | None = None,
@@ -241,7 +240,6 @@ class LocalTaskManager:
             task_type=task_type,
             assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
-            lifecycle_stage=lifecycle_stage,
             labels=labels,
             category=category,
             validation_criteria=validation_criteria,
@@ -253,6 +251,13 @@ class LocalTaskManager:
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
         )
+        default_stages = self.stages_registry.list_default_stages(task_type)
+        if default_stages:
+            self.stage_states.initialize_manifest(
+                task_id,
+                [StageManifestSpec.from_position_tuple(item) for item in default_stages],
+                by_session_id=created_in_session_id,
+            )
         self._notify_listeners()
         return self.get_task(task_id)
 
@@ -310,12 +315,10 @@ class LocalTaskManager:
         task_id: str,
         title: MaybeUnset[str | None] = UNSET,
         description: MaybeUnset[str | None] = UNSET,
-        status: MaybeUnset[str | None] = UNSET,
         priority: MaybeUnset[int | None] = UNSET,
         task_type: MaybeUnset[str | None] = UNSET,
         assignee: MaybeUnset[str | None] = UNSET,
         claimed_by_session_id: MaybeUnset[str | None] = UNSET,
-        lifecycle_stage: MaybeUnset[str | None] = UNSET,
         labels: MaybeUnset[list[str] | None] = UNSET,
         parent_task_id: MaybeUnset[str | None] = UNSET,
         closed_reason: MaybeUnset[str | None] = UNSET,
@@ -336,7 +339,6 @@ class LocalTaskManager:
         linear_issue_id: MaybeUnset[str | None] = UNSET,
         linear_team_id: MaybeUnset[str | None] = UNSET,
         validation_override_reason: MaybeUnset[str | None] = UNSET,
-        lifecycle: MaybeUnset[str | None] = UNSET,
         allow_automation: MaybeUnset[bool | None] = UNSET,
         unattended: MaybeUnset[bool | None] = UNSET,
         yolo: MaybeUnset[bool | None] = UNSET,
@@ -347,16 +349,16 @@ class LocalTaskManager:
     ) -> Task:
         """Update metadata fields only.
 
-        Lifecycle and ownership mutations must go through the dedicated task
+        Stage and ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
+        legacy_stage_key = "lifecycle_" + "stage"
+        legacy_kwargs = sorted({"status", "lifecycle", legacy_stage_key} & set(kwargs))
         blocked_fields = [
             field_name
             for field_name, value in (
-                ("status", status),
                 ("assignee", assignee),
                 ("claimed_by_session_id", claimed_by_session_id),
-                ("lifecycle_stage", lifecycle_stage),
                 ("closed_reason", closed_reason),
                 ("closed_at", closed_at),
                 ("closed_in_session_id", closed_in_session_id),
@@ -366,14 +368,24 @@ class LocalTaskManager:
             )
             if value is not UNSET
         ]
-        if blocked_fields:
-            blocked_display = ", ".join(blocked_fields)
+        if legacy_kwargs or blocked_fields:
+            blocked_display = ", ".join([*legacy_kwargs, *blocked_fields])
+            if legacy_kwargs and not blocked_fields:
+                field_class = "legacy state fields"
+                transition_hint = (
+                    "Use start_stage, submit_for_review, approve_review, reject_review, "
+                    "fail_stage, close_task, reopen_task, or escalate_task instead."
+                )
+            else:
+                field_class = "stage or ownership fields"
+                transition_hint = (
+                    "Use claim_task, release_task_claim, start_stage, submit_for_review, "
+                    "approve_review, reject_review, fail_stage, escalate_task, "
+                    "de_escalate_task, close_task, or reopen_task instead."
+                )
             raise ValueError(
-                "LocalTaskManager.update_task does not allow lifecycle or ownership fields. "
-                "Use claim_task, release_task_claim, mark_task_needs_review, "
-                "mark_task_review_approved, mark_task_review_rejected, escalate_task, "
-                f"de_escalate_task, close_task, or reopen_task instead. "
-                f"Blocked fields: {blocked_display}"
+                f"LocalTaskManager.update_task does not allow {field_class}. "
+                f"{transition_hint} Blocked fields: {blocked_display}"
             )
 
         parent_changed = _update_task(
@@ -381,12 +393,10 @@ class LocalTaskManager:
             task_id=task_id,
             title=title,
             description=description,
-            status=status,
             priority=priority,
             task_type=task_type,
             assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
-            lifecycle_stage=lifecycle_stage,
             labels=labels,
             parent_task_id=parent_task_id,
             closed_reason=closed_reason,
@@ -407,7 +417,6 @@ class LocalTaskManager:
             linear_issue_id=linear_issue_id,
             linear_team_id=linear_team_id,
             validation_override_reason=validation_override_reason,
-            lifecycle=lifecycle,
             allow_automation=allow_automation,
             unattended=unattended,
             yolo=yolo,
@@ -451,21 +460,18 @@ class LocalTaskManager:
         self,
         task_id: str,
         *,
-        status: str,
         title: MaybeUnset[str | None] = UNSET,
         description: MaybeUnset[str | None] = UNSET,
         priority: MaybeUnset[int | None] = UNSET,
     ) -> Task:
-        """Apply externally-sourced lifecycle state and metadata.
+        """Apply externally-sourced task metadata.
 
         This is an explicit internal reconciliation path for sync/adaptor code
-        that must project external status into local task state without using
-        the generic metadata update surface.
+        that should not use the generic metadata update surface.
         """
         task = _reconcile_task_state(
             self.db,
             task_id=task_id,
-            status=status,
             title=title,
             description=description,
             priority=priority,
@@ -483,18 +489,16 @@ class LocalTaskManager:
         self,
         task_id: str,
         *,
-        status: MaybeUnset[str | None] = UNSET,
         description: MaybeUnset[str | None] = UNSET,
         validation_fail_count: MaybeUnset[int | None] = UNSET,
         dispatch_failure_count: MaybeUnset[int | None] = UNSET,
         escalated_at: MaybeUnset[str | None] = UNSET,
         escalation_reason: MaybeUnset[str | None] = UNSET,
     ) -> Task:
-        """Clear ownership while optionally changing lifecycle metadata."""
+        """Clear ownership while optionally changing recovery metadata."""
         task = _release_task_claim(
             self.db,
             task_id=task_id,
-            status=status,
             description=description,
             validation_fail_count=validation_fail_count,
             dispatch_failure_count=dispatch_failure_count,
@@ -584,15 +588,13 @@ class LocalTaskManager:
         self,
         task_id: str,
         reason: str,
-        target_status: str | None = None,
         reset_validation: bool = False,
     ) -> Task:
-        """Return an escalated task to an explicit next status."""
+        """Clear escalation state without mutating the task's current stage."""
         task = _de_escalate_task(
             self.db,
             task_id=task_id,
             reason=reason,
-            target_status=target_status,
             reset_validation=reset_validation,
         )
         self._notify_listeners()
@@ -641,7 +643,7 @@ class LocalTaskManager:
         by_session_id: str | None = None,
         **legacy_kwargs: Any,
     ) -> Task:
-        """Reject a task after review and return it to open status."""
+        """Reject a task after review and return the current stage to ready."""
         legacy_round = legacy_kwargs.pop("round", None)
         if legacy_kwargs:
             unexpected = ", ".join(sorted(legacy_kwargs))
@@ -739,8 +741,7 @@ class LocalTaskManager:
     def list_tasks(
         self,
         project_id: str | None = None,
-        status: str | list[str] | None = None,
-        lifecycle_stage: str | list[str] | None = None,
+        current_stage_state: str | list[str] | None = None,
         priority: int | None = None,
         assignee: str | None = None,
         claimed_by_session_id: str | None = None,
@@ -758,8 +759,8 @@ class LocalTaskManager:
         """List tasks with filtering.
 
         Args:
-            status: Filter by status. Can be a single status string, a list of statuses,
-                or None to include all statuses.
+            current_stage_state: Filter by current stage state. Can be a single
+                state string, a list of states, or None to include all stage states.
 
         Results are ordered hierarchically: parents appear before their children,
         with siblings sorted by priority ASC, then created_at ASC.
@@ -767,8 +768,7 @@ class LocalTaskManager:
         return _list_tasks(
             self.db,
             project_id=project_id,
-            status=status,
-            lifecycle_stage=lifecycle_stage,
+            current_stage_state=current_stage_state,
             priority=priority,
             assignee=assignee,
             claimed_by_session_id=claimed_by_session_id,
@@ -844,18 +844,22 @@ class LocalTaskManager:
     def count_tasks(
         self,
         project_id: str | None = None,
-        status: str | None = None,
+        current_stage_state: str | None = None,
     ) -> int:
         """Count tasks with optional filters.
 
         Args:
             project_id: Filter by project
-            status: Filter by status
+            current_stage_state: Filter by current stage state
 
         Returns:
             Count of matching tasks
         """
-        return _count_tasks(self.db, project_id=project_id, status=status)
+        return _count_tasks(
+            self.db,
+            project_id=project_id,
+            current_stage_state=current_stage_state,
+        )
 
     def count_by_status(self, project_id: str | None = None) -> dict[str, int]:
         """Count tasks grouped by status.
@@ -963,7 +967,7 @@ class LocalTaskManager:
         self,
         query: str,
         project_id: str | None = None,
-        status: str | list[str] | None = None,
+        current_stage_state: str | list[str] | None = None,
         task_type: str | None = None,
         priority: int | None = None,
         parent_task_id: str | None = None,
@@ -979,7 +983,7 @@ class LocalTaskManager:
         Args:
             query: Search query text
             project_id: Filter by project
-            status: Filter by status (string or list of strings)
+            current_stage_state: Filter by current stage state (string or list of strings)
             task_type: Filter by task type
             priority: Filter by priority
             parent_task_id: Filter by parent task ID (UUID)
@@ -996,7 +1000,7 @@ class LocalTaskManager:
             query,
             top_k=limit,
             project_id=project_id,
-            status=status,
+            current_stage_state=current_stage_state,
             task_type=task_type,
             priority=priority,
             parent_task_id=parent_task_id,

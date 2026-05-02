@@ -17,7 +17,7 @@ from pydantic import BaseModel, field_validator
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.storage.task_dependencies import TaskDependencyManager
-from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -281,9 +281,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             conversation_id = conversation.id
             task_updated = False
 
-            # Update task ownership/status conservatively.
+            # Update task ownership conservatively.
             try:
-                if is_active_claim_status(task.status):
+                if is_task_actionable(task):
                     current_owner = get_claimed_session_id(task)
                     if current_owner and current_owner != conversation_id:
                         logger.info(
@@ -296,12 +296,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                         task_updated = True
                 else:
                     logger.info(
-                        "Skipping web chat auto-claim for task %s; status=%s is not active work",
+                        "Skipping web chat auto-claim for task %s; task is not actionable",
                         req.task_id,
-                        task.status,
                     )
             except Exception as e:
-                logger.warning(f"Failed to update task status: {e}")
+                logger.warning(f"Failed to update task ownership: {e}")
 
             # Broadcast task update
             if task_updated:

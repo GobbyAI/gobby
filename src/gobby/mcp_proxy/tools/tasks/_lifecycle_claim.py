@@ -10,10 +10,9 @@ from typing import Any
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
-from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskAlreadyClaimedError, TaskClosedError, TaskNotFoundError
-from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +61,8 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
     ) -> dict[str, Any]:
         """Claim a task for the current session.
 
-        Combines setting the assignee and marking as in_progress in a single
-        atomic operation. Detects conflicts when another session has already
-        claimed the task.
+        Sets the canonical owner and detects conflicts when another session
+        has already claimed the task.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -113,7 +111,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             }
 
         # Check if already claimed by another session
-        if task.status == "closed":
+        if is_task_closed(task):
             return task_error(
                 f"Cannot claim task {resolved_id}: task is closed",
                 TaskToolErrorCode.TASK_CLOSED,
@@ -169,15 +167,6 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         if not updated:
             return {"error": f"Failed to claim task {task_id}"}
 
-        new_status = updated.status
-        if new_status != task.status:
-            notify_parent_on_status_change(
-                ctx.task_manager.db,
-                resolved_id,
-                new_status,
-                task_ref=f"#{task.seq_num}" if task.seq_num else None,
-            )
-
         # Link task to session (best-effort, don't fail the claim if this fails)
         try:
             ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "claimed")
@@ -200,7 +189,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
     registry.register(
         name="claim_task",
-        description="Claim a task for your session. Sets assignee to session_id and status to in_progress. Detects conflicts if already claimed by another session.",
+        description="Claim a task for your session. Sets canonical ownership and detects conflicts if already claimed by another session.",
         input_schema={
             "type": "object",
             "properties": {

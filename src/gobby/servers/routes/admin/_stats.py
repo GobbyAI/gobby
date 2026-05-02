@@ -5,12 +5,45 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query
 
-from gobby.storage.tasks._state_sql import canonical_status_case, is_ready_sql
-
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+
+def _current_stage_join_sql(task_alias: str = "task") -> str:
+    return f"""
+    LEFT JOIN task_stage_states current_stage
+      ON current_stage.task_id = {task_alias}.id
+     AND current_stage.state != 'done'
+     AND current_stage.position = (
+         SELECT MIN(stage_scan.position)
+           FROM task_stage_states stage_scan
+          WHERE stage_scan.task_id = {task_alias}.id
+            AND stage_scan.state != 'done'
+     )
+    """
+
+
+def _task_state_bucket_sql(task_alias: str = "task") -> str:
+    return (
+        "CASE "
+        f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
+        f"WHEN {task_alias}.escalated_at IS NOT NULL "
+        f"OR COALESCE({task_alias}.is_escalated, 0) = 1 THEN 'escalated' "
+        "WHEN current_stage.state = 'ready' THEN 'open' "
+        "WHEN current_stage.state IN ('in_progress', 'needs_review', 'review_approved') "
+        "THEN current_stage.state "
+        "ELSE 'open' END"
+    )
+
+
+def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
+    return (
+        f"{task_alias}.closed_at IS NULL "
+        f"AND {task_alias}.escalated_at IS NULL "
+        f"AND COALESCE({task_alias}.is_escalated, 0) = 0"
+    )
 
 
 def _build_filters(
@@ -71,9 +104,10 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             "closed_24h": 0,
         }
         try:
-            projected_status = canonical_status_case()
+            state_bucket = _task_state_bucket_sql("task")
             rows = db.fetchall(
-                f"SELECT {projected_status} as status, COUNT(*) as cnt FROM tasks "
+                f"SELECT {state_bucket} as status, COUNT(*) as cnt FROM tasks task "
+                f"{_current_stage_join_sql('task')} "
                 f"WHERE 1=1 {time_filter} GROUP BY status",
                 tuple(params),
             )
@@ -92,7 +126,9 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
             )
             ready_rows = db.fetchall(
                 "SELECT COUNT(*) as cnt FROM tasks t "
-                f"WHERE {is_ready_sql('t')} "
+                f"{_current_stage_join_sql('t')} "
+                f"WHERE {_not_closed_or_escalated_sql('t')} "
+                "AND current_stage.state IN ('ready', 'in_progress') "
                 f"{tf_aliased} "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM task_dependencies td "

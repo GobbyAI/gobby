@@ -9,7 +9,8 @@ Tests use Click's CliRunner and mock external dependencies.
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -17,6 +18,22 @@ from click.testing import CliRunner
 from gobby.cli import cli
 
 pytestmark = pytest.mark.unit
+
+
+def _stage_row(state: str = "ready", name: str = "development") -> SimpleNamespace:
+    return SimpleNamespace(stage_name=name, name=name, position=1, state=state)
+
+
+def _set_task_state(task: MagicMock, state: str = "ready") -> None:
+    task.current_stage = None
+    task.stages = (
+        _stage_row(state if state not in {"closed", "escalated", "blocked"} else "ready"),
+    )
+    task.closed_at = "2026-01-01T00:00:00Z" if state == "closed" else None
+    task.escalated_at = "2026-01-01T00:00:00Z" if state == "escalated" else None
+    task.is_escalated = state == "escalated"
+    task.active_blocked_by = {"blocker"} if state == "blocked" else set()
+
 
 # ==============================================================================
 # Fixtures
@@ -37,7 +54,6 @@ def mock_task():
     task.seq_num = 1
     task.title = "Test Task"
     task.description = "A test task description"
-    task.status = "open"
     task.priority = 2
     task.task_type = "task"
     task.created_at = "2024-01-01T00:00:00Z"
@@ -46,13 +62,19 @@ def mock_task():
     task.parent_task_id = None
     task.assignee = None
     task.claimed_by_session_id = None
-    task.lifecycle_stage = None
+    task.current_stage = None
+    task.stages = (
+        SimpleNamespace(stage_name="development", name="development", position=1, state="ready"),
+        SimpleNamespace(stage_name="pr", name="pr", position=2, state="ready"),
+        SimpleNamespace(stage_name="merge", name="merge", position=3, state="ready"),
+    )
     task.closed_at = None
     task.closed_reason = None
     task.closed_in_session_id = None
     task.closed_commit_sha = None
     task.escalated_at = None
     task.escalation_reason = None
+    task.is_escalated = False
     task.blocked_by = set()
     task.active_blocked_by = set()
     task.labels = None
@@ -63,7 +85,6 @@ def mock_task():
         "id": "gt-abc123",
         "title": "Test Task",
         "description": "A test task description",
-        "status": "open",
         "priority": 2,
         "task_type": "task",
         "created_at": "2024-01-01T00:00:00Z",
@@ -71,7 +92,7 @@ def mock_task():
         "project_id": "proj-123",
         "state": {
             "owner_session_id": None,
-            "lifecycle_stage": None,
+            "current_stage": {"name": "development", "state": "ready"},
             "is_claimed": False,
             "is_closed": False,
             "is_escalated": False,
@@ -146,8 +167,8 @@ class TestListTasksCommand:
 
         assert result.exit_code == 0
         assert "Found 1 tasks" in result.output
-        # New compact layout: lifecycle letter "O" (open), priority emoji,
-        # task ref, and title. No more LIFECYCLE/OWNER column headers.
+        # New compact layout: stage-state letter, priority emoji, task ref,
+        # and title. No more LIFECYCLE/OWNER column headers.
         assert "#1" in result.output
         assert "Test Task" in result.output
         assert "🟡" in result.output  # priority 2 → yellow
@@ -175,49 +196,46 @@ class TestListTasksCommand:
         assert len(data) == 1
         assert data[0]["id"] == "gt-abc123"
 
+    @patch("gobby.cli.tasks.crud.filter_tasks_by_stage")
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
-    def test_list_with_status_filter(
+    def test_list_with_stage_and_state_filter(
         self,
         mock_project_ctx: MagicMock,
         mock_get_manager: MagicMock,
+        mock_filter: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test list with status filter."""
+        """Test list with exact stage and state filters."""
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [mock_task]
         mock_get_manager.return_value = mock_manager
+        mock_filter.return_value = [mock_task]
 
-        result = runner.invoke(cli, ["tasks", "list", "--status", "open"])
-
-        assert result.exit_code == 0
-        mock_manager.list_tasks.assert_called_once()
-        call_kwargs = mock_manager.list_tasks.call_args.kwargs
-        assert call_kwargs["status"] == "open"
-
-    @patch("gobby.cli.tasks.crud.get_task_manager")
-    @patch("gobby.cli.tasks.crud.get_project_context")
-    def test_list_with_comma_separated_statuses(
-        self,
-        mock_project_ctx: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test list with comma-separated status filters."""
-        mock_project_ctx.return_value = {"id": "proj-123"}
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = [mock_task]
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "list", "--status", "open,in_progress"])
+        result = runner.invoke(
+            cli,
+            ["tasks", "list", "--stage", "development", "--state", "ready", "--json"],
+        )
 
         assert result.exit_code == 0
         mock_manager.list_tasks.assert_called_once()
-        call_kwargs = mock_manager.list_tasks.call_args.kwargs
-        assert call_kwargs["status"] == ["open", "in_progress"]
+        assert mock_manager.list_tasks.call_args.kwargs["limit"] == 10000
+        mock_filter.assert_called_once_with(
+            mock_manager,
+            [mock_task],
+            stage_name="development",
+            state="ready",
+            project_id=ANY,
+        )
+
+    def test_list_state_requires_stage(self, runner: CliRunner) -> None:
+        """Test --state is only accepted with an explicit --stage."""
+        result = runner.invoke(cli, ["tasks", "list", "--state", "ready"])
+
+        assert result.exit_code == 0
+        assert "--state requires --stage" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -241,26 +259,34 @@ class TestListTasksCommand:
         call_kwargs = mock_manager.list_tasks.call_args.kwargs
         assert call_kwargs["closed"] is False
 
+    @patch("gobby.cli.tasks.crud.filter_tasks_by_stage")
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
-    def test_list_with_lifecycle_filter(
+    def test_list_with_stage_filter(
         self,
         mock_project_ctx: MagicMock,
         mock_get_manager: MagicMock,
+        mock_filter: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test list with canonical lifecycle filter."""
+        """Test list with canonical stage filter."""
         mock_project_ctx.return_value = {"id": "proj-123"}
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [mock_task]
         mock_get_manager.return_value = mock_manager
+        mock_filter.return_value = [mock_task]
 
-        result = runner.invoke(cli, ["tasks", "list", "--lifecycle", "needs-review"])
+        result = runner.invoke(cli, ["tasks", "list", "--stage", "development", "--json"])
 
         assert result.exit_code == 0
-        call_kwargs = mock_manager.list_tasks.call_args.kwargs
-        assert call_kwargs["lifecycle_stage"] == "needs_review"
+        mock_filter.assert_called_once_with(
+            mock_manager,
+            [mock_task],
+            stage_name="development",
+            state=None,
+            project_id=ANY,
+        )
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.get_project_context")
@@ -311,19 +337,19 @@ class TestListTasksCommand:
         assert result.exit_code == 0
         assert "--ready and --blocked are mutually exclusive" in result.output
 
-    def test_list_active_and_status_mutually_exclusive(self, runner: CliRunner) -> None:
-        """Test that --active and --status are mutually exclusive."""
-        result = runner.invoke(cli, ["tasks", "list", "--active", "--status", "open"])
+    def test_list_active_and_closed_mutually_exclusive(self, runner: CliRunner) -> None:
+        """Test that --active and --closed are mutually exclusive."""
+        result = runner.invoke(cli, ["tasks", "list", "--active", "--closed"])
 
         assert result.exit_code == 0
-        assert "--active and --status are mutually exclusive" in result.output
+        assert "--active and --closed are mutually exclusive" in result.output
 
-    def test_list_status_and_lifecycle_mutually_exclusive(self, runner: CliRunner) -> None:
-        """Test that --status and --lifecycle are mutually exclusive."""
-        result = runner.invoke(cli, ["tasks", "list", "--status", "open", "--lifecycle", "open"])
+    def test_list_ready_and_active_mutually_exclusive(self, runner: CliRunner) -> None:
+        """Test that --ready is not combined with broader filters."""
+        result = runner.invoke(cli, ["tasks", "list", "--ready", "--active"])
 
         assert result.exit_code == 0
-        assert "--status and --lifecycle are mutually exclusive" in result.output
+        assert "--ready/--blocked cannot be combined" in result.output
 
     def test_list_claimed_and_unclaimed_mutually_exclusive(self, runner: CliRunner) -> None:
         """Test that --claimed and --unclaimed are mutually exclusive."""
@@ -530,7 +556,7 @@ class TestBlockedTasksCommand:
         mock_dep_cls.return_value = mock_dep_manager
 
         blocker_task = MagicMock()
-        blocker_task.status = "open"
+        _set_task_state(blocker_task, "ready")
         blocker_task.title = "Blocker Task"
         mock_manager.get_task.return_value = blocker_task
 
@@ -579,9 +605,11 @@ class TestTaskStatsCommand:
     ) -> None:
         """Test stats command."""
         mock_task = MagicMock()
-        mock_task.status = "open"
+        _set_task_state(mock_task, "ready")
         mock_task.priority = 2
         mock_task.task_type = "feature"
+        mock_task.claimed_by_session_id = None
+        mock_task.assignee = None
 
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = [mock_task]
@@ -594,7 +622,7 @@ class TestTaskStatsCommand:
         assert result.exit_code == 0
         assert "Task Statistics" in result.output
         assert "Total: 1" in result.output
-        assert "Open: 1" in result.output
+        assert "development:ready: 1" in result.output
         assert "Claimed: 0" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
@@ -615,9 +643,9 @@ class TestTaskStatsCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "total" in data
-        assert "by_lifecycle" in data
+        assert "by_stage_state" in data
         assert "by_priority" in data
-        assert "compat_by_status" in data
+        assert "closed" in data
 
 
 # ==============================================================================
@@ -738,8 +766,8 @@ class TestShowTaskCommand:
         assert result.exit_code == 0
         assert "Test Task" in result.output
         assert "gt-abc123" in result.output
-        assert "Lifecycle: open" in result.output
-        assert "Legacy Status: open" in result.output
+        assert "Current Stage: development:ready" in result.output
+        assert "Legacy Status" not in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -957,7 +985,7 @@ class TestCloseTaskCommand:
         child_task = MagicMock()
         child_task.id = "gt-child1"
         child_task.title = "Child task"
-        child_task.status = "open"
+        _set_task_state(child_task, "ready")
 
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
@@ -982,7 +1010,7 @@ class TestCloseTaskCommand:
         """Test closing a task with --force bypasses child check."""
         child_task = MagicMock()
         child_task.id = "gt-child1"
-        child_task.status = "open"
+        _set_task_state(child_task, "ready")
 
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
@@ -1009,7 +1037,7 @@ class TestReopenTaskCommand:
         mock_task: MagicMock,
     ) -> None:
         """Test reopening a task."""
-        mock_task.status = "closed"
+        _set_task_state(mock_task, "closed")
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.reopen_task.return_value = mock_task
@@ -1030,7 +1058,7 @@ class TestReopenTaskCommand:
         mock_task: MagicMock,
     ) -> None:
         """Test reopening a task with a reason."""
-        mock_task.status = "closed"
+        _set_task_state(mock_task, "closed")
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.reopen_task.return_value = mock_task
@@ -1052,14 +1080,14 @@ class TestReopenTaskCommand:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test reopening an already open task fails."""
-        mock_task.status = "open"
+        """Test reopening an already active task fails."""
+        _set_task_state(mock_task, "ready")
         mock_resolve.return_value = mock_task
         mock_get_manager.return_value = MagicMock()
 
         result = runner.invoke(cli, ["tasks", "reopen", "gt-abc123"])
 
-        assert "already open" in result.output
+        assert "already active" in result.output
 
 
 class TestDeleteTaskCommand:
@@ -1199,7 +1227,7 @@ class TestSuggestCommand:
         leaf_task.id = "gt-leaf"
         leaf_task.title = "Leaf Task"
         leaf_task.priority = 2
-        leaf_task.status = "open"
+        _set_task_state(leaf_task, "ready")
         leaf_task.complexity_score = 3
         leaf_task.category = None
         leaf_task.description = "A leaf task"
@@ -1209,7 +1237,7 @@ class TestSuggestCommand:
         parent_task.id = "gt-parent"
         parent_task.title = "Parent Task"
         parent_task.priority = 1  # Higher priority
-        parent_task.status = "open"
+        _set_task_state(parent_task, "ready")
         parent_task.complexity_score = 5
         parent_task.category = None
         parent_task.description = "A parent task"
@@ -1245,7 +1273,7 @@ class TestSuggestCommand:
         task.id = "gt-abc123"
         task.title = "High Priority Task"
         task.priority = 1
-        task.status = "open"
+        _set_task_state(task, "ready")
         task.complexity_score = 3
         task.category = None
         task.description = "High priority"
@@ -1280,7 +1308,7 @@ class TestValidateCommand:
 
         child_task = MagicMock()
         child_task.id = "gt-child1"
-        child_task.status = "closed"
+        _set_task_state(child_task, "closed")
         mock_manager.list_tasks.return_value = [child_task]
         mock_get_manager.return_value = mock_manager
 
@@ -1306,7 +1334,7 @@ class TestValidateCommand:
         child_task = MagicMock()
         child_task.id = "gt-child1"
         child_task.title = "Open child"
-        child_task.status = "open"
+        _set_task_state(child_task, "ready")
         mock_manager.list_tasks.return_value = [child_task]
         mock_get_manager.return_value = mock_manager
 
@@ -1465,7 +1493,7 @@ class TestFormatTaskRow:
 
         assert "#1" in result
         assert "Test Task" in result
-        # Open/claimed tasks keep the "O" lifecycle letter — claim state
+        # Ready/claimed tasks keep the "O" stage letter — claim state
         # surfaces as a session column in format_task_list instead.
         assert "O" in result
 
@@ -1513,7 +1541,7 @@ class TestValidateCommandExtended:
             child = MagicMock()
             child.id = f"gt-child{i}"
             child.title = f"Child task {i}"
-            child.status = "open"
+            _set_task_state(child, "ready")
             children.append(child)
 
         mock_manager.list_tasks.return_value = children
@@ -1710,7 +1738,7 @@ class TestSuggestCommandExtended:
         task_with_strategy.id = "gt-strat"
         task_with_strategy.title = "Task with strategy"
         task_with_strategy.priority = 2
-        task_with_strategy.status = "open"
+        _set_task_state(task_with_strategy, "ready")
         task_with_strategy.complexity_score = 3
         task_with_strategy.category = "Unit tests for all methods"
         task_with_strategy.description = "Has test strategy"
@@ -1741,7 +1769,7 @@ class TestSuggestCommandExtended:
         high_priority_task.id = "gt-high"
         high_priority_task.title = "High Priority"
         high_priority_task.priority = 1
-        high_priority_task.status = "open"
+        _set_task_state(high_priority_task, "ready")
         high_priority_task.complexity_score = None
         high_priority_task.category = None
         high_priority_task.description = "Urgent task"
@@ -1765,31 +1793,31 @@ class TestSuggestCommandExtended:
 class TestUtilsHelpers:
     """Additional tests for _utils.py helpers."""
 
-    def test_format_task_row_different_statuses(self, mock_task: MagicMock) -> None:
-        """Test format_task_row with different task statuses.
+    def test_format_task_row_different_states(self, mock_task: MagicMock) -> None:
+        """Test format_task_row with different task states.
 
-        Under the compact layout each lifecycle/flag condition maps to a
-        single letter — O/P/R/A/C for lifecycle, B/E/M for flags.
+        Under the compact layout each stage/flag condition maps to a
+        single letter: O/P/R/A/C for stage states, B/E/M for flags.
         """
         from gobby.cli.tasks._utils import format_task_row
 
-        # Test in_progress status → "P"
-        mock_task.status = "in_progress"
+        # Test in_progress stage state -> "P"
+        _set_task_state(mock_task, "in_progress")
         result = format_task_row(mock_task)
         assert "P" in result
 
-        # Test closed status → "C" (rendered dim)
-        mock_task.status = "closed"
+        # Test closed task -> "C" (rendered dim)
+        _set_task_state(mock_task, "closed")
         result = format_task_row(mock_task)
         assert "C" in result
 
-        # Test blocked status → "B" flag letter
-        mock_task.status = "blocked"
+        # Test blocked predicate -> "B" flag letter
+        _set_task_state(mock_task, "blocked")
         result = format_task_row(mock_task)
         assert "B" in result
 
-        # Test escalated status → "E" flag letter
-        mock_task.status = "escalated"
+        # Test escalated predicate -> "E" flag letter
+        _set_task_state(mock_task, "escalated")
         result = format_task_row(mock_task)
         assert "E" in result
 
@@ -1797,7 +1825,7 @@ class TestUtilsHelpers:
         """Test format_task_row with different priorities."""
         from gobby.cli.tasks._utils import format_task_row
 
-        mock_task.status = "open"
+        _set_task_state(mock_task, "ready")
 
         # High priority
         mock_task.priority = 1
@@ -1836,7 +1864,7 @@ class TestFormatTaskList:
         *,
         seq_num: int,
         title: str,
-        status: str = "open",
+        state: str = "ready",
         priority: int = 2,
         owner: str | None = None,
         escalated: bool = False,
@@ -1847,22 +1875,30 @@ class TestFormatTaskList:
         task.id = f"gt-{seq_num:05d}"
         task.seq_num = seq_num
         task.title = title
-        task.status = status
         task.priority = priority
         task.task_type = "task"
         task.project_id = project_id
         task.parent_task_id = None
         task.assignee = owner
         task.claimed_by_session_id = owner
-        task.lifecycle_stage = None
-        task.closed_at = None
+        task.current_stage = None
+        task.stages = (
+            SimpleNamespace(
+                stage_name="development",
+                name="development",
+                position=1,
+                state="ready" if state in {"blocked", "escalated", "closed"} else state,
+            ),
+        )
+        task.closed_at = "2026-01-01T00:00:00Z" if state == "closed" else None
         task.closed_reason = None
         task.closed_in_session_id = None
         task.closed_commit_sha = None
-        task.escalated_at = "2026-01-01T00:00:00Z" if escalated else None
-        task.escalation_reason = "stuck" if escalated else None
+        task.escalated_at = "2026-01-01T00:00:00Z" if escalated or state == "escalated" else None
+        task.escalation_reason = "stuck" if escalated or state == "escalated" else None
+        task.is_escalated = escalated or state == "escalated"
         task.blocked_by = set()
-        task.active_blocked_by = {"other"} if status == "blocked" else set()
+        task.active_blocked_by = {"other"} if state == "blocked" else set()
         task.labels = None
         task.validation_criteria = None
         task.validation_fail_count = 0
@@ -1903,7 +1939,7 @@ class TestFormatTaskList:
         assert "first task" in plain
         assert "#2" in plain
         assert "second task" in plain
-        # Single-letter lifecycle — every row is open
+        # Single-letter stage state: every row is ready
         assert "O" in plain
         # No session refs should appear
         assert "#100" not in plain
@@ -1911,7 +1947,7 @@ class TestFormatTaskList:
     def test_blocked_flag_renders_letter(self) -> None:
         from gobby.cli.tasks._utils import format_task_list
 
-        task = self._make_task(seq_num=42, title="blocked work", status="blocked")
+        task = self._make_task(seq_num=42, title="blocked work", state="blocked")
         mock_db = MagicMock()
         mock_db.fetchall.return_value = []
 
@@ -1974,24 +2010,24 @@ class TestFormatTaskList:
         # And the full original title must NOT be there in one piece
         assert "truncated" not in plain
 
-    def test_group_by_lifecycle_emits_headers(self) -> None:
+    def test_group_by_stage_emits_headers(self) -> None:
         from gobby.cli.tasks._utils import format_task_list
 
-        open_task = self._make_task(seq_num=1, title="new work", status="open")
-        progress_task = self._make_task(seq_num=2, title="active work", status="in_progress")
+        open_task = self._make_task(seq_num=1, title="new work", state="ready")
+        progress_task = self._make_task(seq_num=2, title="active work", state="in_progress")
         mock_db = MagicMock()
         mock_db.fetchall.return_value = []
 
         rendered = format_task_list(
             [open_task, progress_task],
             db=mock_db,
-            group_by="lifecycle",
+            group_by="stage",
             term_width=120,
         )
         plain = self._strip_ansi(rendered)
 
-        assert "open (1)" in plain
-        assert "in_progress (1)" in plain
+        assert "development:ready (1)" in plain
+        assert "development:in_progress (1)" in plain
         assert "#1" in plain
         assert "#2" in plain
 
@@ -2549,13 +2585,13 @@ class TestTaskUtilsFunctions:
             # Should not raise, fail open
             check_tasks_enabled()
 
-    def test_normalize_status(self) -> None:
-        """Test status normalization."""
-        from gobby.cli.tasks._utils import normalize_status
+    def test_stage_state_choices(self) -> None:
+        """Test stage-state CLI choices."""
+        from gobby.cli.tasks._stage_filters import STAGE_STATES
 
-        assert normalize_status("in-progress") == "in_progress"
-        assert normalize_status("needs-review") == "needs_review"
-        assert normalize_status("open") == "open"
+        assert "ready" in STAGE_STATES
+        assert "in_progress" in STAGE_STATES
+        assert "needs_review" in STAGE_STATES
 
     def test_pad_to_width(self) -> None:
         """Test pad_to_width function."""

@@ -10,7 +10,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
-from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES, is_task_actively_claimed
+from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES, is_task_actively_claimed
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -513,7 +513,7 @@ def reconcile_claimed_tasks(
         try:
             db_tasks = task_manager.list_tasks(
                 claimed_by_session_id=session_id,
-                status=list(ACTIVE_CLAIM_STATUSES),
+                current_stage_state=list(ACTIVE_STAGE_STATES),
             )
         except Exception as e:
             logger.warning(f"Session {session_id}: failed to list claimed tasks: {e}")

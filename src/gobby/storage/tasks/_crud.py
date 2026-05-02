@@ -17,7 +17,6 @@ from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._models import (
     UNSET,
     Isolation,
-    Lifecycle,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -25,22 +24,9 @@ from gobby.storage.tasks._models import (
     TaskNotFoundError,
     validate_task_type,
 )
-from gobby.tasks.state_semantics import (
-    lifecycle_stage_from_status,
-    normalize_lifecycle_stage,
-    project_legacy_status,
-)
+from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
 logger = logging.getLogger(__name__)
-
-_LEGACY_TASK_STATUSES = {
-    "open",
-    "in_progress",
-    "needs_review",
-    "review_approved",
-    "closed",
-    "escalated",
-}
 
 
 def _normalize_skip_stage_labels(skip_stage_labels: Iterable[str]) -> list[str]:
@@ -117,15 +103,6 @@ def _derive_claimed_by_session_id(
     return UNSET
 
 
-def _normalize_legacy_status(status: Any) -> str:
-    """Validate and normalize a projected legacy status."""
-    normalized = str(status).strip().lower().replace("-", "_")
-    if normalized not in _LEGACY_TASK_STATUSES:
-        allowed = ", ".join(sorted(_LEGACY_TASK_STATUSES))
-        raise ValueError(f"Invalid task status '{status}'. Expected one of: {allowed}.")
-    return normalized
-
-
 def create_task(
     db: DatabaseProtocol,
     project_id: str,
@@ -137,7 +114,6 @@ def create_task(
     task_type: str = "task",
     assignee: str | None = None,
     claimed_by_session_id: str | None = None,
-    lifecycle_stage: str | None = None,
     labels: list[str] | None = None,
     category: str | None = None,
     validation_criteria: str | None = None,
@@ -171,8 +147,6 @@ def create_task(
         assignee=assignee,
         claimed_by_session_id=claimed_by_session_id,
     )
-    canonical_lifecycle_stage = normalize_lifecycle_stage(lifecycle_stage)
-    projected_status = project_legacy_status(lifecycle_stage=canonical_lifecycle_stage)
     if canonical_owner is UNSET:
         canonical_owner = None
 
@@ -192,15 +166,15 @@ def create_task(
                     """
                     INSERT INTO tasks (
                         id, project_id, title, description, parent_task_id,
-                        created_in_session_id, claimed_by_session_id, lifecycle_stage,
+                        created_in_session_id, claimed_by_session_id,
                         priority, task_type, assignee,
-                        labels, status, created_at, updated_at,
+                        labels, created_at, updated_at,
                         validation_status, category,
                         validation_criteria, validation_fail_count,
                         assigned_agent, additional_skills,
                         github_issue_number, github_pr_number, github_repo,
                         linear_issue_id, linear_team_id, seq_num
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -210,12 +184,10 @@ def create_task(
                         parent_task_id,
                         created_in_session_id,
                         canonical_owner,
-                        canonical_lifecycle_stage,
                         priority,
                         task_type,
                         assignee,
                         labels_json,
-                        projected_status,
                         now,
                         now,
                         validation_status,
@@ -318,6 +290,7 @@ def get_task(db: DatabaseProtocol, task_id: str, project_id: str | None = None) 
     if not row:
         raise ValueError(f"Task {task_id} not found")
     task = Task.from_row(row)
+    hydrate_task_stage_state(db, [task])
     hydrate_task_blocking_state(db, [task])
     return task
 
@@ -360,7 +333,6 @@ def list_automation_candidates(
         LEFT JOIN task_dispatch_mutex mutex ON mutex.task_id = tasks.id
         WHERE tasks.allow_automation = 1
           AND tasks.claimed_by_session_id IS NULL
-          AND tasks.lifecycle != 'merged'
           AND tasks.closed_at IS NULL
           AND tasks.escalated_at IS NULL
           AND COALESCE(tasks.is_escalated, 0) = 0
@@ -376,6 +348,7 @@ def list_automation_candidates(
         tuple(params),
     )
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
     return [task for task in tasks if not is_blocked_by_deps(task)]
 
@@ -386,6 +359,7 @@ def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     row = db.fetchone("SELECT * FROM tasks WHERE id = ?", (prefix,))
     if row:
         task = Task.from_row(row)
+        hydrate_task_stage_state(db, [task])
         hydrate_task_blocking_state(db, [task])
         return task
 
@@ -393,6 +367,7 @@ def find_task_by_prefix(db: DatabaseProtocol, prefix: str) -> Task | None:
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
     if len(rows) == 1:
         task = Task.from_row(rows[0])
+        hydrate_task_stage_state(db, [task])
         hydrate_task_blocking_state(db, [task])
         return task
     return None
@@ -402,6 +377,7 @@ def find_tasks_by_prefix(db: DatabaseProtocol, prefix: str) -> list[Task]:
     """Find all tasks matching an ID prefix."""
     rows = db.fetchall("SELECT * FROM tasks WHERE id LIKE ?", (f"{prefix}%",))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
     return tasks
 
@@ -492,12 +468,10 @@ def update_task(
     task_id: str,
     title: MaybeUnset[str | None] = UNSET,
     description: MaybeUnset[str | None] = UNSET,
-    status: MaybeUnset[str | None] = UNSET,
     priority: MaybeUnset[int | None] = UNSET,
     task_type: MaybeUnset[str | None] = UNSET,
     assignee: MaybeUnset[str | None] = UNSET,
     claimed_by_session_id: MaybeUnset[str | None] = UNSET,
-    lifecycle_stage: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
     parent_task_id: MaybeUnset[str | None] = UNSET,
     closed_reason: MaybeUnset[str | None] = UNSET,
@@ -518,7 +492,6 @@ def update_task(
     linear_issue_id: MaybeUnset[str | None] = UNSET,
     linear_team_id: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
-    lifecycle: MaybeUnset[str | None] = UNSET,
     allow_automation: MaybeUnset[bool | None] = UNSET,
     unattended: MaybeUnset[bool | None] = UNSET,
     yolo: MaybeUnset[bool | None] = UNSET,
@@ -609,11 +582,6 @@ def update_task(
     if validation_override_reason is not UNSET:
         updates.append("validation_override_reason = ?")
         params.append(validation_override_reason)
-    if lifecycle is not UNSET:
-        if lifecycle is None:
-            raise ValueError("lifecycle cannot be None")
-        updates.append("lifecycle = ?")
-        params.append(Lifecycle(cast(str, lifecycle)).value)
     if allow_automation is not UNSET:
         updates.append("allow_automation = ?")
         params.append(int(bool(allow_automation)))
@@ -633,46 +601,17 @@ def update_task(
     if additional_skills is not UNSET:
         updates.append("additional_skills = ?")
         params.append(json.dumps(additional_skills) if additional_skills is not None else None)
-    normalized_status = _normalize_legacy_status(status) if status is not UNSET else None
-    next_lifecycle_stage = current_task.lifecycle_stage
-    if lifecycle_stage is not UNSET:
-        next_lifecycle_stage = normalize_lifecycle_stage(cast(str | None, lifecycle_stage))
-    if normalized_status in {"open", "in_progress", "needs_review", "review_approved"}:
-        next_lifecycle_stage = lifecycle_stage_from_status(normalized_status)
-
     next_closed_at = current_task.closed_at if closed_at is UNSET else cast(str | None, closed_at)
     next_escalated_at = (
         current_task.escalated_at if escalated_at is UNSET else cast(str | None, escalated_at)
     )
 
-    if normalized_status == "closed" and next_closed_at is None:
-        next_closed_at = now
-    elif normalized_status and normalized_status != "closed" and closed_at is UNSET:
-        next_closed_at = None
-
-    if normalized_status == "escalated" and next_escalated_at is None:
-        next_escalated_at = now
-    elif normalized_status and normalized_status != "escalated" and escalated_at is UNSET:
-        next_escalated_at = None
-
-    state_inputs_touched = any(
-        value is not UNSET for value in (status, lifecycle_stage, closed_at, escalated_at)
-    )
-    if state_inputs_touched:
-        updates.append("lifecycle_stage = ?")
-        params.append(next_lifecycle_stage)
+    if closed_at is not UNSET:
         updates.append("closed_at = ?")
         params.append(next_closed_at)
+    if escalated_at is not UNSET:
         updates.append("escalated_at = ?")
         params.append(next_escalated_at)
-        updates.append("status = ?")
-        params.append(
-            project_legacy_status(
-                lifecycle_stage=next_lifecycle_stage,
-                closed_at=next_closed_at,
-                escalated_at=next_escalated_at,
-            )
-        )
         if "is_escalated" in task_columns:
             updates.append("is_escalated = ?")
             params.append(1 if next_escalated_at else 0)

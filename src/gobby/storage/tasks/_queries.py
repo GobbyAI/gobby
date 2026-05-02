@@ -13,40 +13,44 @@ from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
-from gobby.storage.tasks._state_sql import status_filter_sql
-from gobby.tasks.state_semantics import normalize_lifecycle_stage
+from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
 
-def _lifecycle_stage_filter_sql(
-    lifecycle_stage: str | list[str] | None,
+def _current_stage_state_filter_sql(
+    current_stage_state: str | list[str] | None,
 ) -> tuple[str | None, list[Any]]:
-    """Build a canonical lifecycle-stage filter clause and params."""
-    if not lifecycle_stage:
+    """Build a current-stage-state filter clause and params."""
+    if not current_stage_state:
         return None, []
 
-    raw_values = [lifecycle_stage] if isinstance(lifecycle_stage, str) else list(lifecycle_stage)
-    include_open = False
-    normalized_values: list[str] = []
-
-    for raw_value in raw_values:
-        normalized = normalize_lifecycle_stage(raw_value)
-        if normalized is None:
-            include_open = True
-        elif normalized not in normalized_values:
-            normalized_values.append(normalized)
-
-    clauses: list[str] = []
-    params: list[Any] = []
-    if normalized_values:
-        placeholders = ", ".join("?" for _ in normalized_values)
-        clauses.append(f"lifecycle_stage IN ({placeholders})")
-        params.extend(normalized_values)
-    if include_open:
-        clauses.append("lifecycle_stage IS NULL")
-
-    if not clauses:
+    raw_values = (
+        [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
+    )
+    normalized_values = [
+        str(value).strip().lower().replace("-", "_") for value in raw_values if str(value).strip()
+    ]
+    if not normalized_values:
         return None, []
-    return "(" + " OR ".join(clauses) + ")", params
+
+    placeholders = ", ".join("?" for _ in normalized_values)
+    return (
+        f"""
+        EXISTS (
+            SELECT 1
+              FROM task_stage_states current_stage_filter
+             WHERE current_stage_filter.task_id = tasks.id
+               AND current_stage_filter.state != 'done'
+               AND current_stage_filter.position = (
+                   SELECT MIN(stage_scan.position)
+                     FROM task_stage_states stage_scan
+                    WHERE stage_scan.task_id = tasks.id
+                      AND stage_scan.state != 'done'
+               )
+               AND current_stage_filter.state IN ({placeholders})
+        )
+        """,
+        normalized_values,
+    )
 
 
 def _current_stage_join_sql(task_alias: str = "t") -> str:
@@ -101,8 +105,7 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 def list_tasks(
     db: DatabaseProtocol,
     project_id: str | None = None,
-    status: str | list[str] | None = None,
-    lifecycle_stage: str | list[str] | None = None,
+    current_stage_state: str | list[str] | None = None,
     priority: int | None = None,
     assignee: str | None = None,
     claimed_by_session_id: str | None = None,
@@ -122,10 +125,7 @@ def list_tasks(
     Args:
         db: Database protocol instance
         project_id: Filter by project
-        status: Filter by status. Can be a single status string, a list of statuses,
-            or None to include all statuses.
-        lifecycle_stage: Filter by canonical lifecycle stage (`open`, `in_progress`,
-            `needs_review`, `review_approved`) independent of closed/escalated state.
+        current_stage_state: Filter by the task's current stage state.
         priority: Filter by priority
         assignee: Filter by assignee
         claimed_by_session_id: Filter by canonical owning session
@@ -151,13 +151,8 @@ def list_tasks(
     if project_id:
         query += " AND project_id = ?"
         params.append(project_id)
-    if status:
-        clause, clause_params = status_filter_sql(status)
-        if clause:
-            query += f" AND {clause}"
-            params.extend(clause_params)
-    if lifecycle_stage:
-        clause, clause_params = _lifecycle_stage_filter_sql(lifecycle_stage)
+    if current_stage_state:
+        clause, clause_params = _current_stage_state_filter_sql(current_stage_state)
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
@@ -210,6 +205,7 @@ def list_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
 
     if sort_by == "hierarchy":
@@ -294,6 +290,7 @@ def list_ready_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
 
     # Order hierarchically, then apply user's limit/offset
@@ -344,6 +341,7 @@ def list_blocked_tasks(
 
     rows = db.fetchall(query, tuple(params))
     tasks = [Task.from_row(row) for row in rows]
+    hydrate_task_stage_state(db, tasks)
     hydrate_task_blocking_state(db, tasks)
 
     # Order hierarchically, then apply user's limit/offset

@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookResponse
-from gobby.tasks.state_semantics import ACTIVE_CLAIM_STATUSES
+from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES, serialize_task_state
 
 if TYPE_CHECKING:
     from gobby.hooks.event_handlers._base import EventHandlersBase
@@ -18,6 +18,16 @@ if TYPE_CHECKING:
     from gobby.storage.session_models import Session
 
 _logger = logging.getLogger(__name__)
+
+
+def _task_state_label(task: Any) -> str:
+    state = serialize_task_state(task)
+    if state["is_closed"]:
+        return "closed"
+    if state["is_escalated"]:
+        return "escalated"
+    current = state["current_stage"]
+    return current["state"] if current else "ready"
 
 
 def get_claimed_task_info(
@@ -52,7 +62,7 @@ def get_claimed_task_info(
         try:
             db_tasks = handler._task_manager.list_tasks(
                 claimed_by_session_id=session_id,
-                status=list(ACTIVE_CLAIM_STATUSES),
+                current_stage_state=list(ACTIVE_STAGE_STATES),
                 project_id=project_id,
             )
             if db_tasks:
@@ -61,7 +71,7 @@ def get_claimed_task_info(
                 for task in db_tasks:
                     ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
                     reconciled[task.id] = ref
-                    db_result.append((ref, task.status, task.title))
+                    db_result.append((ref, _task_state_label(task), task.title))
                 # Reconcile session variables with DB state
                 sv_mgr.set_variable(session_id, "task_claimed", True)
                 sv_mgr.set_variable(session_id, "claimed_tasks", reconciled)
@@ -79,7 +89,7 @@ def get_claimed_task_info(
         try:
             task = handler._task_manager.get_task(task_uuid, project_id=project_id)
             ref = f"#{task.seq_num}" if task.seq_num else task_uuid[:8]
-            result.append((ref, task.status, task.title))
+            result.append((ref, _task_state_label(task), task.title))
         except Exception as e:
             _logger.debug(f"Failed to fetch task {task_uuid[:8]}: {e}")
             result.append((task_uuid[:8], "unknown", "(deleted)"))

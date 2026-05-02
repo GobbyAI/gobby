@@ -1,11 +1,4 @@
-"""Task aggregate operations.
-
-This module provides aggregate operations for task counts and statistics:
-- count_tasks: Count tasks with optional filters
-- count_by_status: Count tasks grouped by status
-- count_ready_tasks: Count tasks ready to work on
-- count_blocked_tasks: Count tasks blocked by dependencies
-"""
+"""Task aggregate operations."""
 
 from typing import Any
 
@@ -26,7 +19,7 @@ def _current_stage_join_sql(task_alias: str = "t", *, join_type: str = "LEFT JOI
     """
 
 
-def _projected_status_sql(task_alias: str = "t") -> str:
+def _task_state_bucket_sql(task_alias: str = "t") -> str:
     return (
         "CASE "
         f"WHEN {task_alias}.closed_at IS NOT NULL THEN 'closed' "
@@ -39,12 +32,16 @@ def _projected_status_sql(task_alias: str = "t") -> str:
     )
 
 
-def _status_filter_sql(status: str | list[str] | None) -> tuple[str | None, list[Any]]:
-    if not status:
+def _stage_state_filter_clause(
+    current_stage_state: str | list[str] | None,
+) -> tuple[str | None, list[Any]]:
+    if not current_stage_state:
         return None, []
-    statuses = [status] if isinstance(status, str) else list(status)
-    placeholders = ", ".join("?" for _ in statuses)
-    return f"{_projected_status_sql()} IN ({placeholders})", statuses
+    states = (
+        [current_stage_state] if isinstance(current_stage_state, str) else list(current_stage_state)
+    )
+    placeholders = ", ".join("?" for _ in states)
+    return f"current_stage.state IN ({placeholders})", states
 
 
 def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
@@ -85,14 +82,14 @@ def _no_external_blocker_sql(task_alias: str = "t") -> str:
 def count_tasks(
     db: DatabaseProtocol,
     project_id: str | None = None,
-    status: str | None = None,
+    current_stage_state: str | None = None,
 ) -> int:
     """Count tasks with optional filters.
 
     Args:
         db: Database protocol instance
         project_id: Filter by project
-        status: Filter by status
+        current_stage_state: Filter by current stage state
 
     Returns:
         Count of matching tasks
@@ -108,8 +105,8 @@ def count_tasks(
     if project_id:
         query += " AND t.project_id = ?"
         params.append(project_id)
-    if status:
-        clause, clause_params = _status_filter_sql(status)
+    if current_stage_state:
+        clause, clause_params = _stage_state_filter_clause(current_stage_state)
         if clause:
             query += f" AND {clause}"
             params.extend(clause_params)
@@ -122,18 +119,18 @@ def count_by_status(
     db: DatabaseProtocol,
     project_id: str | None = None,
 ) -> dict[str, int]:
-    """Count tasks grouped by status.
+    """Count tasks grouped by externally reported state bucket.
 
     Args:
         db: Database protocol instance
         project_id: Optional project filter
 
     Returns:
-        Dictionary mapping status to count
+        Dictionary mapping state bucket to count
     """
-    projected_status = _projected_status_sql("t")
+    state_bucket = _task_state_bucket_sql("t")
     query = f"""
-    SELECT {projected_status} as status, COUNT(*) as count
+    SELECT {state_bucket} as state_bucket, COUNT(*) as count
       FROM tasks t
       {_current_stage_join_sql("t")}
     """
@@ -143,10 +140,10 @@ def count_by_status(
         query += " WHERE t.project_id = ?"
         params.append(project_id)
 
-    query += " GROUP BY status"
+    query += " GROUP BY state_bucket"
 
     rows = db.fetchall(query, tuple(params))
-    return {row["status"]: row["count"] for row in rows}
+    return {row["state_bucket"]: row["count"] for row in rows}
 
 
 def count_ready_tasks(

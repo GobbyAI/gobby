@@ -249,7 +249,7 @@ def _resolve_ready_tasks(
         # If no ready descendants, check if the parent task itself is ready
         if not ready_tasks:
             parent_task = task_manager.get_task(parent_task_id)
-            if parent_task and not is_task_closed(parent_task) and parent_task.status == "open":
+            if parent_task and not is_task_closed(parent_task) and not parent_task.is_escalated:
                 if task_type is None or parent_task.task_type == task_type:
                     ready_check = task_manager.list_ready_tasks(project_id=project_id, limit=200)
                     if any(t.id == parent_task_id for t in ready_check):
@@ -277,11 +277,8 @@ def _resolve_ready_tasks(
             }
         }
 
-    # Find current in-progress tasks for proximity scoring and file overlap checks.
-    # This remains status-based because the readiness tool is selecting the next
-    # implementation task, not routing review/merge-ready ownership.
     in_progress_tasks = task_manager.list_tasks(
-        status="in_progress",
+        current_stage_state="in_progress",
         limit=50,
         project_id=project_id,
     )
@@ -291,13 +288,7 @@ def _resolve_ready_tasks(
 
     # Filter out already-active work. A ready task should not be re-suggested if
     # it is already claimed or already projected as in_progress.
-    ready_tasks = [
-        task
-        for task in ready_tasks
-        if not get_claimed_session_id(task)
-        and getattr(task, "status", None) != "in_progress"
-        and getattr(task, "lifecycle_stage", None) != "in_progress"
-    ]
+    ready_tasks = [task for task in ready_tasks if not get_claimed_session_id(task)]
     if not ready_tasks:
         return {
             "early_return": {
@@ -363,7 +354,7 @@ def _score_tasks(
         score += (4 - task.priority) * 110
 
         # Check if it's a leaf task (no children)
-        children = task_manager.list_tasks(parent_task_id=task.id, status="open", limit=1)
+        children = task_manager.list_tasks(parent_task_id=task.id, closed=False, limit=1)
         is_leaf = len(children) == 0
 
         if prefer_subtasks and is_leaf:

@@ -6,20 +6,13 @@ import json
 
 import click
 
-from gobby.cli.tasks._utils import (
-    get_task_manager,
-    normalize_status,
-)
+from gobby.cli.tasks._utils import get_task_manager
 from gobby.cli.utils import resolve_project_ref
+from gobby.tasks.state_semantics import serialize_task_state
 
 
 @click.command("search")
 @click.argument("query")
-@click.option(
-    "--status",
-    "-s",
-    help="Filter by status (open, in_progress, needs_review, closed). Comma-separated for multiple.",
-)
 @click.option(
     "--type",
     "-t",
@@ -63,7 +56,6 @@ from gobby.cli.utils import resolve_project_ref
 )
 def search_tasks(
     query: str,
-    status: str | None,
     task_type: str | None,
     priority: int | None,
     project_ref: str | None,
@@ -80,21 +72,11 @@ def search_tasks(
 
         gobby tasks search "authentication"
 
-        gobby tasks search "database migration" --status open
-
         gobby tasks search "refactor" --type bug --limit 10
     """
     if not query.strip():
         click.echo("Error: Query cannot be empty.", err=True)
         return
-
-    # Parse comma-separated statuses
-    status_filter: str | list[str] | None = None
-    if status:
-        if "," in status:
-            status_filter = [normalize_status(s.strip()) for s in status.split(",")]
-        else:
-            status_filter = normalize_status(status)
 
     # Resolve project
     project_id = None
@@ -107,7 +89,6 @@ def search_tasks(
     results = manager.search_tasks(
         query=query.strip(),
         project_id=project_id,
-        status=status_filter,
         task_type=task_type,
         priority=priority,
         limit=limit,
@@ -136,18 +117,26 @@ def search_tasks(
     click.echo(f"Found {len(results)} task(s) matching '{query}':\n")
 
     # Print header
-    click.echo(f"{'#':<6} {'Score':<7} {'Status':<12} {'Pri':<4} {'Title'}")
+    click.echo(f"{'#':<6} {'Score':<7} {'Stage':<12} {'Pri':<4} {'Title'}")
     click.echo("-" * 70)
 
     for task, score in results:
         # Format similar to list_tasks but with score
         seq_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
-        status_display = task.status[:11] if task.status else ""
+        state = serialize_task_state(task)
+        if state["is_closed"]:
+            stage_display = "closed"
+        elif state["is_escalated"]:
+            stage_display = "escalated"
+        else:
+            current_stage = state["current_stage"]
+            stage_display = current_stage["state"] if current_stage else "ready"
+        stage_display = stage_display[:11]
         pri_display = str(task.priority) if task.priority else ""
         title_display = task.title[:45] if task.title else ""
 
         click.echo(
-            f"{seq_ref:<6} {score:<7.3f} {status_display:<12} {pri_display:<4} {title_display}"
+            f"{seq_ref:<6} {score:<7.3f} {stage_display:<12} {pri_display:<4} {title_display}"
         )
 
 

@@ -27,6 +27,16 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 
+def _task_columns(temp_db) -> set[str]:
+    return {row["name"] for row in temp_db.fetchall("PRAGMA table_info(tasks)")}
+
+
+def _assert_open_task(updated) -> None:
+    assert updated.closed_at is None
+    assert updated.escalated_at is None
+    assert not updated.is_escalated
+
+
 def _planning_task(temp_db, sample_project, *, state: str = "in_progress"):
     task = create_task(temp_db, sample_project, task_type="feature")
     initialize_manifest(temp_db, task.id, [spec("planning", 1), spec("development", 2)])
@@ -39,7 +49,7 @@ def test_needs_review_submits_for_review_on_same_row(temp_db, sample_project) ->
 
     updated = mark_task_needs_review(temp_db, task.id, review_notes="ready")
 
-    assert updated.status == "open"
+    _assert_open_task(updated)
     assert stage_row(temp_db, task.id, "planning")["state"] == "needs_review"
     assert stage_row(temp_db, task.id, "development")["state"] == "ready"
 
@@ -49,7 +59,7 @@ def test_approved_advances_to_review_approved_on_same_row(temp_db, sample_projec
 
     updated = mark_task_review_approved(temp_db, task.id, approval_notes="approved")
 
-    assert updated.status == "open"
+    _assert_open_task(updated)
     assert stage_row(temp_db, task.id, "planning")["state"] == "review_approved"
 
 
@@ -92,7 +102,8 @@ def test_rejected_over_cap_escalates(temp_db, sample_project) -> None:
 
     updated = mark_task_review_rejected(temp_db, task.id, rejection_notes="blocked")
 
-    assert updated.status == "escalated"
+    assert updated.is_escalated
+    assert updated.escalated_at is not None
     assert stage_row(temp_db, task.id, "planning")["state"] == "ready"
 
 
@@ -116,6 +127,10 @@ def test_approved_rejected_on_policy_none(temp_db, sample_project) -> None:
 
 def test_no_current_stage_errors(temp_db, sample_project) -> None:
     task = create_task(temp_db, sample_project, task_type="feature")
+    temp_db.execute(
+        "UPDATE task_stage_states SET state = 'done' WHERE task_id = ?",
+        (task.id,),
+    )
 
     for tool in (
         mark_task_needs_review,
@@ -151,7 +166,7 @@ def test_needs_review_calls_submit_for_review_no_legacy_writes(
     mark_task_needs_review(temp_db, task.id)
 
     assert calls == ["planning"]
-    assert temp_db.fetchone("SELECT status FROM tasks WHERE id = ?", (task.id,))["status"] == "open"
+    assert "status" not in _task_columns(temp_db)
 
 
 def test_approved_calls_approve_review_no_legacy_writes(
@@ -170,7 +185,7 @@ def test_approved_calls_approve_review_no_legacy_writes(
     mark_task_review_approved(temp_db, task.id)
 
     assert calls == ["planning"]
-    assert temp_db.fetchone("SELECT status FROM tasks WHERE id = ?", (task.id,))["status"] == "open"
+    assert "status" not in _task_columns(temp_db)
 
 
 def test_rejected_calls_reject_review_no_legacy_writes(
@@ -189,7 +204,8 @@ def test_rejected_calls_reject_review_no_legacy_writes(
     mark_task_review_rejected(temp_db, task.id, rejection_notes="redo")
 
     assert calls == ["planning"]
-    assert temp_db.fetchone("SELECT status FROM tasks WHERE id = ?", (task.id,))["status"] == "open"
+    assert "status" not in _task_columns(temp_db)
+
 
 register_contract_tests(
     globals(),

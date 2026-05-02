@@ -58,19 +58,6 @@ def get_sync_manager() -> TaskSyncManager:
     return TaskSyncManager(manager, export_path=".gobby/tasks.jsonl")
 
 
-def normalize_status(status: str) -> str:
-    """Normalize status values for user-friendly CLI input.
-
-    Converts hyphen-separated status names to underscore format:
-      in-progress -> in_progress
-      needs-review -> needs_review
-
-    Also handles common variations.
-    """
-    # Replace hyphens with underscores for user convenience
-    return status.replace("-", "_")
-
-
 def get_claimed_task_ids() -> set[str]:
     """Get task IDs that are claimed by active sessions via session_task variable.
 
@@ -315,17 +302,17 @@ def compute_tree_prefixes(
 
 # Column widths for compact task table
 COL_PRIORITY = 2  # Priority emoji (2 visual chars)
-COL_STATUS_LETTER = 1  # Single-letter lifecycle code
+COL_STAGE_LETTER = 1  # Single-letter current-stage code
 COL_FLAGS = 3  # Up to 3 flag letters (B/E/M)
 COL_ID_MIN = 6  # #N format minimum (e.g., #1234)
 COL_SESSION_MIN = 6  # #N format minimum for session refs
-PREFIX_W = COL_PRIORITY + COL_STATUS_LETTER + COL_FLAGS  # 6 visual cols before #id
+PREFIX_W = COL_PRIORITY + COL_STAGE_LETTER + COL_FLAGS  # 6 visual cols before #id
 _DIM_ANSI = "\033[2m"
 _RESET_ANSI = "\033[0m"
 
-# Lifecycle stage -> single-letter code (O/P/R/A/C)
-_LIFECYCLE_LETTER: dict[str, str] = {
-    "open": "O",
+# Current stage state -> single-letter code (O/P/R/A/C)
+_STAGE_STATE_LETTER: dict[str, str] = {
+    "ready": "O",
     "in_progress": "P",
     "needs_review": "R",
     "review_approved": "A",
@@ -347,7 +334,7 @@ class _RenderedRow:
     """A task row with all display fields resolved but not yet padded."""
 
     priority_icon: str
-    lifecycle_letter: str
+    stage_letter: str
     flags_letters: str
     task_ref: str
     title: str
@@ -409,23 +396,21 @@ def _build_rendered_row(
     owner_session_id = state["owner_session_id"] or (
         getattr(task, "assignee", None) if is_claimed else None
     )
-    lifecycle_display = state["lifecycle_stage"] or "open"
-    blocked = state["is_blocked"] or getattr(task, "status", None) == "blocked"
+    current_stage = state["current_stage"]
+    stage_state = current_stage["state"] if current_stage else "ready"
+    blocked = state["is_blocked"]
     escalated = state["is_escalated"]
     closed = state["is_closed"]
-    merge_ready = state["is_merge_ready"]
 
-    lifecycle_letter = _LIFECYCLE_LETTER.get(lifecycle_display, "?")
+    stage_letter = _STAGE_STATE_LETTER.get(stage_state, "?")
     if closed:
-        lifecycle_letter = "C"
+        stage_letter = "C"
 
     flags = ""
     if blocked:
         flags += "B"
     if escalated:
         flags += "E"
-    if merge_ready:
-        flags += "M"
 
     priority_icon = _PRIORITY_ICON.get(getattr(task, "priority", 4), "⚪")
     task_ref = f"#{task.seq_num}" if getattr(task, "seq_num", None) else task.id[:8]
@@ -443,7 +428,7 @@ def _build_rendered_row(
 
     return _RenderedRow(
         priority_icon=priority_icon,
-        lifecycle_letter=lifecycle_letter,
+        stage_letter=stage_letter,
         flags_letters=flags,
         task_ref=task_ref,
         title=task.title,
@@ -467,7 +452,7 @@ def _render_row(
     instead of a trailing suffix.
     """
     pri = pad_to_width(row.priority_icon, COL_PRIORITY)
-    stat = pad_to_width(row.lifecycle_letter, COL_STATUS_LETTER)
+    stat = pad_to_width(row.stage_letter, COL_STAGE_LETTER)
     flags = pad_to_width(row.flags_letters, COL_FLAGS)
     id_col = pad_to_width(row.task_ref, id_w)
 
@@ -589,7 +574,7 @@ def format_task_header() -> str:
     :func:`format_task_list` renderer does not emit a header in compact mode.
     """
     pri = pad_to_width("", COL_PRIORITY)
-    stat = pad_to_width("", COL_STATUS_LETTER)
+    stat = pad_to_width("", COL_STAGE_LETTER)
     flags = pad_to_width("", COL_FLAGS)
     id_col = pad_to_width("#", COL_ID_MIN)
     return f"{pri}{stat}{flags} {id_col}  TITLE"
@@ -608,7 +593,7 @@ def format_task_list(
     """Render a list of tasks as one compact block.
 
     Columns:
-        ``[pri][status][flags] #id  title  #session``
+        ``[pri][stage][flags] #id  title  #session``
 
     The session column is present iff at least one row has an owner. Column
     widths are computed once across all rows so the session column is a true
@@ -621,7 +606,7 @@ def format_task_list(
             ancestors. If omitted, every task is primary.
         tree_prefixes: Precomputed ``task_id -> (prefix, is_primary)`` from
             :func:`compute_tree_prefixes`. When omitted, no tree prefix is used.
-        group_by: ``"project"``, ``"lifecycle"``, or ``None``.
+        group_by: ``"project"``, ``"stage"``, or ``None``.
         term_width: Terminal width override (for tests). Defaults to the live
             terminal size.
         db: Optional database handle for batch lookups. A fresh
@@ -699,11 +684,14 @@ def format_task_list(
     def _project_key(t: Task, _r: _RenderedRow) -> str:
         return project_name_map.get(getattr(t, "project_id", "") or "", "(no project)")
 
-    def _lifecycle_key(t: Task, _r: _RenderedRow) -> str:
+    def _stage_key(t: Task, _r: _RenderedRow) -> str:
         state = serialize_task_state(t)
         if state["is_closed"]:
             return "closed"
-        return str(state["lifecycle_stage"] or "open")
+        current_stage = state["current_stage"]
+        if not current_stage:
+            return "ready"
+        return f"{current_stage['name']}:{current_stage['state']}"
 
     def _null_key(_t: Task, _r: _RenderedRow) -> str:
         return ""
@@ -711,8 +699,8 @@ def format_task_list(
     group_key: Callable[[Task, _RenderedRow], str]
     if group_by == "project":
         group_key = _project_key
-    elif group_by == "lifecycle":
-        group_key = _lifecycle_key
+    elif group_by == "stage":
+        group_key = _stage_key
     else:
         group_key = _null_key
 

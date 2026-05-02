@@ -17,7 +17,7 @@ from gobby.hooks.event_handlers._session_responses import (
     get_claimed_task_info,
 )
 from gobby.hooks.events import HookEvent, HookResponse
-from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
@@ -458,7 +458,7 @@ class SessionStartMixin(EventHandlersBase):
                                             continue
 
                                     if task_obj is not None:
-                                        if not is_active_claim_status(task_obj.status):
+                                        if not is_task_actionable(task_obj):
                                             continue
                                         current_owner = get_claimed_session_id(task_obj)
                                         if current_owner not in (None, parent_session_id):

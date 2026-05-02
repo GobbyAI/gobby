@@ -1,4 +1,4 @@
-"""Plan lifecycle event handlers."""
+"""Plan event handlers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Any
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 
 _TERMINAL_CLOSURE_REASONS = {"completed", "obsolete"}
-_TERMINAL_LIFECYCLE_STAGES = {"closed-completed", "closed-obsolete"}
 
 
 def on_epic_terminal(event: object, *, db: Any) -> PlanRecord | None:
@@ -34,20 +33,12 @@ def on_epic_terminal(event: object, *, db: Any) -> PlanRecord | None:
 
 
 def _is_terminal_epic_event(event: object) -> bool:
-    lifecycle_stage = _event_value(event, "lifecycle_stage")
-    if lifecycle_stage in _TERMINAL_LIFECYCLE_STAGES:
-        return True
-
-    status = _event_value(event, "status")
+    event_type = _event_value(event, "event_type") or _event_value(event, "type")
     closure_reason = _event_value(event, "closure_reason") or _event_value(event, "closed_reason")
-    return status == "closed" and closure_reason in _TERMINAL_CLOSURE_REASONS
+    return event_type == "task_closed" and closure_reason in _TERMINAL_CLOSURE_REASONS
 
 
 def _archive_reason(event: object) -> str:
-    lifecycle_stage = _event_value(event, "lifecycle_stage")
-    if isinstance(lifecycle_stage, str) and lifecycle_stage:
-        return lifecycle_stage
-
     closure_reason = _event_value(event, "closure_reason") or _event_value(event, "closed_reason")
     if isinstance(closure_reason, str) and closure_reason:
         return f"closed-{closure_reason}"

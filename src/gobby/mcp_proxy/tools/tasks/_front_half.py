@@ -31,7 +31,12 @@ from gobby.mcp_proxy.tools.tasks._front_half_artifacts import (
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.tasks import Task, TaskNotFoundError
-from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.state_semantics import (
+    current_stage_state,
+    get_claimed_session_id,
+    is_task_closed,
+    is_task_escalated,
+)
 
 FRONT_HALF_LABEL = "conductor:front-half"
 FRONT_HALF_COMPLETE_LABEL = "conductor:front-half-complete"
@@ -89,11 +94,12 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             description=_requirements_stage_description(parent_task),
         )
 
-        if requirements_task.status not in ("review_approved", "closed"):
+        requirements_state = _task_state_label(requirements_task)
+        if requirements_state not in ("review_approved", "closed"):
             stage_tasks = _stage_task_payload(requirements_task=requirements_task)
             if (
                 auto_dispatch_requirements
-                and requirements_task.status in ("open", "in_progress")
+                and requirements_state in ("ready", "in_progress")
                 and not get_claimed_session_id(requirements_task)
             ):
                 return _response(
@@ -136,7 +142,8 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
         planning_round = _planning_round(planning_task)
 
-        if planning_task.status == "escalated":
+        planning_state = _task_state_label(planning_task)
+        if planning_state == "escalated":
             escalation_reason = planning_task.escalation_reason or ""
             if escalation_reason.startswith(NEEDS_REQUIREMENTS_PREFIX):
                 stage_tasks = _stage_task_payload(
@@ -190,8 +197,8 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 max_planning_rounds=max_planning_rounds,
                 front_half_complete=False,
             )
-        if planning_task.status in ("open", "in_progress"):
-            if planning_task.status == "open" and planning_round >= max_planning_rounds:
+        if planning_state in ("ready", "in_progress"):
+            if planning_state == "ready" and planning_round >= max_planning_rounds:
                 return _response(
                     parent_task,
                     current_stage="planning",
@@ -240,7 +247,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 front_half_complete=False,
             )
 
-        if planning_task.status == "needs_review":
+        if planning_state == "needs_review":
             if get_claimed_session_id(planning_task):
                 return _response(
                     parent_task,
@@ -275,7 +282,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 front_half_complete=False,
             )
 
-        if planning_task.status == "review_approved":
+        if planning_state == "review_approved":
             planning_task = _close_stage_task(
                 ctx,
                 planning_task,
@@ -328,7 +335,8 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
         )
         stage_tasks["test_architecture"] = _task_payload(test_architecture_task)
 
-        if test_architecture_task.status == "escalated":
+        test_architecture_state = _task_state_label(test_architecture_task)
+        if test_architecture_state == "escalated":
             return _response(
                 parent_task,
                 current_stage="test_architecture",
@@ -341,7 +349,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 front_half_complete=False,
             )
 
-        if test_architecture_task.status in ("open", "in_progress"):
+        if test_architecture_state in ("ready", "in_progress"):
             if get_claimed_session_id(test_architecture_task):
                 return _response(
                     parent_task,
@@ -376,7 +384,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 front_half_complete=False,
             )
 
-        if test_architecture_task.status == "needs_review":
+        if test_architecture_state == "needs_review":
             return _response(
                 parent_task,
                 current_stage="test_architecture",
@@ -389,7 +397,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 front_half_complete=False,
             )
 
-        if test_architecture_task.status == "review_approved":
+        if test_architecture_state == "review_approved":
             test_architecture_task = _close_stage_task(
                 ctx,
                 test_architecture_task,
@@ -434,7 +442,7 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "boolean",
                     "description": (
                         "When true, return a requirements-analyst dispatch action while "
-                        "requirements are still open."
+                        "requirements are still ready."
                     ),
                     "default": False,
                 },
@@ -525,12 +533,20 @@ def _task_ref(task: Task) -> str:
     return f"#{task.seq_num}" if task.seq_num is not None else task.id
 
 
+def _task_state_label(task: Task) -> str:
+    if is_task_closed(task):
+        return "closed"
+    if is_task_escalated(task):
+        return "escalated"
+    return current_stage_state(task) or "ready"
+
+
 def _task_payload(task: Task) -> dict[str, Any]:
     return {
         "id": task.id,
         "ref": _task_ref(task),
         "title": task.title,
-        "status": task.status,
+        "state": _task_state_label(task),
         "claimed": bool(get_claimed_session_id(task)),
         "labels": list(task.labels or []),
         "escalation_reason": task.escalation_reason,
@@ -557,7 +573,7 @@ def _ensure_label(ctx: RegistryContext, task: Task, label: str) -> Task:
 
 
 def _close_stage_task(ctx: RegistryContext, task: Task, *, reason: str) -> Task:
-    if task.status == "closed":
+    if is_task_closed(task):
         return task
     return ctx.task_manager.close_task(task.id, reason=reason)
 
@@ -619,7 +635,7 @@ def _find_stage_task(ctx: RegistryContext, parent_task_id: str, *, stage: str) -
     if not tasks:
         return None
     for task in tasks:
-        if task.status != "closed":
+        if not is_task_closed(task):
             return task
     return tasks[0]
 
@@ -651,7 +667,7 @@ def _planning_stage_description(parent_task: Task, plan_file: str | None) -> str
         f"'{NEEDS_REQUIREMENTS_PREFIX}'.\n"
         "If adversarial review requests changes, the review agent calls "
         "`mark_task_review_rejected` with the next planning round and returns "
-        "the task to open."
+        "the task's current stage to ready."
     )
 
 
@@ -687,14 +703,15 @@ async def _advance_expansion_stage(
     provider: str | None,
     model: str | None,
 ) -> dict[str, Any] | None:
-    if expansion_task.status == "closed":
+    expansion_state = _task_state_label(expansion_task)
+    if expansion_state == "closed":
         return {
             "next_action": "expansion_complete",
             "message": "",
             "expansion_task": expansion_task,
         }
 
-    if expansion_task.status == "escalated":
+    if expansion_state == "escalated":
         return {
             "next_action": "front_half_failed",
             "message": "Expansion stage is escalated and requires human intervention.",

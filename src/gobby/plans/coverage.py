@@ -17,6 +17,7 @@ import yaml
 from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans.evidence import EvidenceKind, EvidenceRow
 from gobby.plans.parser import AcceptanceItem, PlanDocument, PlanSection, parse_plan
+from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
     from gobby.storage.database import DatabaseProtocol
@@ -126,7 +127,7 @@ class _TaskRecord:
     ref: str
     labels: tuple[str, ...]
     validation_criteria: str
-    status: str
+    state: str
     parent_ref: str | None = None
     path_cache: str | None = None
     dependencies: tuple[str, ...] = ()
@@ -141,7 +142,7 @@ class _TaskRecordStore:
         if record is None:
             return None
         return {
-            "status": record.status,
+            "state": record.state,
             "validation_criteria": record.validation_criteria,
             "labels": list(record.labels),
             "dependencies": list(record.dependencies),
@@ -653,11 +654,25 @@ def _live_task_record(task: Any, task_ref_by_id: Mapping[str, str]) -> _TaskReco
         ref=_live_task_ref(task),
         labels=tuple(str(label) for label in labels),
         validation_criteria=task.validation_criteria or task.description or "",
-        status=str(task.status),
+        state=_live_task_state(task),
         parent_ref=parent_ref,
         path_cache=task.path_cache,
         dependencies=dependencies,
     )
+
+
+def _live_task_state(task: Any) -> str:
+    state = serialize_task_state(task)
+    if state["is_closed"]:
+        return "closed"
+    if state["is_escalated"]:
+        return "escalated"
+    current_stage = state["current_stage"]
+    if isinstance(current_stage, dict):
+        stage_state = current_stage.get("state")
+        if isinstance(stage_state, str) and stage_state:
+            return stage_state
+    return "ready"
 
 
 def _live_task_ref(task: Any) -> str:
@@ -673,7 +688,7 @@ def _coerce_task_record(raw: Mapping[str, object]) -> _TaskRecord:
         ref=ref,
         labels=_labels(raw.get("labels")),
         validation_criteria=_first_string(raw, "validation_criteria", "validation", "description"),
-        status=_first_string(raw, "status", "lifecycle_stage", default="open"),
+        state=_first_string(raw, "state", default="ready"),
         parent_ref=_optional_ref(
             _first_string(raw, "parent_ref", "parent_task_ref", "parent", default="")
         ),
@@ -787,7 +802,7 @@ def _records_hash(records: Sequence[_TaskRecord]) -> str:
             "ref": record.ref,
             "labels": record.labels,
             "validation_criteria": record.validation_criteria,
-            "status": record.status,
+            "state": record.state,
             "parent_ref": record.parent_ref,
             "path_cache": record.path_cache,
             "dependencies": record.dependencies,

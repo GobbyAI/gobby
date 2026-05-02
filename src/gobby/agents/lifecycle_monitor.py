@@ -146,7 +146,8 @@ class AgentLifecycleMonitor:
         outcome: Literal["failed", "cancelled"],
     ) -> None:
         """Recover task ownership after a failed or cancelled agent run."""
-        if not self._task_manager:
+        task_manager = self._task_manager
+        if not task_manager:
             return
         try:
             resolved = await self._resolve_claimed_task_for_run(db_run)
@@ -155,29 +156,29 @@ class AgentLifecycleMonitor:
 
             task_id, task = resolved
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
-            raw_stage = getattr(task, "lifecycle_stage", None)
-            raw_status = getattr(task, "status", None)
-            lifecycle_stage = raw_stage if isinstance(raw_stage, str) and raw_stage else None
-            if lifecycle_stage is None and isinstance(raw_status, str) and raw_status:
-                lifecycle_stage = raw_status
+            current_stage = await asyncio.to_thread(
+                task_manager.stage_states.current_stage,
+                task_id,
+            )
+            current_stage_state = current_stage.state if current_stage else None
 
             if outcome == "cancelled":
-                if lifecycle_stage == "in_progress":
+                if current_stage and current_stage_state == "in_progress":
                     await asyncio.to_thread(
-                        self._task_manager.release_task_claim,
-                        task_id,
-                        status="open",
+                        lambda: task_manager.stage_states.fail_stage(
+                            task_id,
+                            current_stage.stage_name,
+                            reason="agent_cancelled",
+                            by_session_id=None,
+                        )
                     )
+                    await asyncio.to_thread(lambda: task_manager.release_task_claim(task_id))
                 else:
-                    await asyncio.to_thread(
-                        self._task_manager.release_task_claim,
-                        task_id,
-                    )
+                    await asyncio.to_thread(lambda: task_manager.release_task_claim(task_id))
                 logger.info(
-                    "Recovered task %s after agent %s cancelled (status=%s)",
+                    "Recovered task %s after agent %s cancelled",
                     task_ref,
                     db_run.id,
-                    task.status,
                 )
                 return
 
@@ -190,13 +191,20 @@ class AgentLifecycleMonitor:
                     db_run.error,
                 )
 
-            if lifecycle_stage != "in_progress":
-                await asyncio.to_thread(self._task_manager.release_task_claim, task_id)
+            if current_stage_state in {"needs_review", "review_approved"}:
+                await asyncio.to_thread(lambda: task_manager.release_task_claim(task_id))
                 logger.info(
-                    "Released stale ownership on task %s after agent %s failed (status=%s)",
+                    "Released stale ownership on task %s after agent %s failed",
                     task_ref,
                     db_run.id,
-                    task.status,
+                )
+                return
+            if current_stage is None or current_stage_state != "in_progress":
+                await asyncio.to_thread(lambda: task_manager.release_task_claim(task_id))
+                logger.info(
+                    "Released stale ownership on task %s after agent %s failed",
+                    task_ref,
+                    db_run.id,
                 )
                 return
 
@@ -206,11 +214,10 @@ class AgentLifecycleMonitor:
 
             if not is_provider and failure_count >= 3:
                 await asyncio.to_thread(
-                    self._task_manager.release_task_claim,
-                    task_id,
-                    status="escalated",
-                    dispatch_failure_count=0,
-                    escalation_reason=f"Failed {failure_count} times across different agents",
+                    lambda: task_manager.escalate_task(
+                        task_id,
+                        reason=f"Failed {failure_count} times across different agents",
+                    )
                 )
                 logger.warning(
                     "Task %s escalated: %s failures across different agents",
@@ -220,12 +227,20 @@ class AgentLifecycleMonitor:
                 return
 
             await asyncio.to_thread(
-                self._task_manager.release_task_claim,
-                task_id,
-                status="open",
-                dispatch_failure_count=failure_count,
+                lambda: task_manager.stage_states.fail_stage(
+                    task_id,
+                    current_stage.stage_name,
+                    reason="agent_failed",
+                    by_session_id=None,
+                )
             )
-            logger.info(f"Recovered task {task_ref} to open after agent {db_run.id} failed")
+            await asyncio.to_thread(
+                lambda: task_manager.release_task_claim(
+                    task_id,
+                    dispatch_failure_count=failure_count,
+                )
+            )
+            logger.info(f"Recovered task {task_ref} after agent {db_run.id} failed")
         except Exception as e:
             logger.warning(f"Failed to recover task for agent {db_run.id}: {e}")
 

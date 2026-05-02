@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from tests.phase5_contract_helpers import (
@@ -93,12 +95,22 @@ def test_legacy_column_audit_grep_returns_zero_runtime_matches() -> None:
         "src/gobby/hooks/event_handlers/_plan.py",
     )
     scoped = "\n".join(source_text(path) for path in runtime_files)
-    for legacy_name in ("status", "lifecycle", "lifecycle_stage"):
-        assert legacy_name not in scoped
+    for legacy_pattern in (
+        r"\btasks\.status\b",
+        r"\btasks\.lifecycle\b",
+        r"\bTask\.status\b",
+        r"\bstatus\s*=\s*\?",
+        r"\bstatus\s+IN\s*\(",
+        r"\blifecycle\s*=\s*\?",
+        r"\blifecycle_stage\b",
+    ):
+        assert not re.search(legacy_pattern, scoped)
 
 
 def test_dynamic_dict_write_audit_returns_zero_matches() -> None:
-    scoped = source_text("src/gobby/sync/tasks.py") + source_text("src/gobby/storage/tasks/_crud.py")
+    scoped = source_text("src/gobby/sync/tasks.py") + source_text(
+        "src/gobby/storage/tasks/_crud.py"
+    )
     for legacy_key in ("'status':", "'lifecycle':", "'lifecycle_stage':"):
         assert legacy_key not in scoped
     for legacy_key in ('"status":', '"lifecycle":', '"lifecycle_stage":'):

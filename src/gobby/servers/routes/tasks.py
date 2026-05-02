@@ -1,16 +1,16 @@
 """
 Task routes for Gobby HTTP server.
 
-Provides CRUD, list, lifecycle, and dependency endpoints for the task system.
+Provides CRUD, list, stage-transition, and dependency endpoints for the task system.
 """
 
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.storage.task_dependencies import (
     DependencyCycleError,
@@ -76,12 +76,10 @@ class TaskCreateRequest(BaseModel):
 class TaskUpdateRequest(BaseModel):
     """Request body for updating a task."""
 
+    model_config = ConfigDict(extra="allow")
+
     title: str | None = Field(default=None, description="New title")
     description: str | None = Field(default=None, description="New description")
-    status: str | None = Field(
-        default=None,
-        description="Compatibility field only. Use claim/review/escalate/close/reopen endpoints instead.",
-    )
     priority: int | None = Field(default=None, description="New priority")
     task_type: str | None = Field(
         default=None,
@@ -113,12 +111,9 @@ class TaskClaimRequest(BaseModel):
 class TaskReleaseClaimRequest(BaseModel):
     """Request body for releasing task ownership."""
 
-    status: (
-        Literal["open", "in_progress", "needs_review", "review_approved", "escalated"] | None
-    ) = Field(
-        default=None,
-        description="Optional projected legacy status to preserve during ownership release.",
-    )
+    model_config = ConfigDict(extra="forbid")
+
+    pass
 
 
 class TaskReviewRequest(BaseModel):
@@ -163,11 +158,9 @@ class TaskReopenRequest(BaseModel):
 class TaskDeEscalateRequest(BaseModel):
     """Request body for de-escalating a task."""
 
+    model_config = ConfigDict(extra="forbid")
+
     decision_context: str = Field(..., description="User's decision or instructions for the agent")
-    target_status: Literal["open", "in_progress", "needs_review", "review_approved"] = Field(
-        default="open",
-        description="Status to return the task to after de-escalation",
-    )
     reset_validation: bool = Field(default=False, description="Also reset validation fail count")
 
 
@@ -341,12 +334,11 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("")
     async def list_tasks(
+        request: Request,
         project_id: str | None = Query(None, description="Filter by project ID"),
-        status: str | None = Query(None, description="Filter by status"),
-        lifecycle_stage: str | None = Query(
-            None,
-            description="Filter by canonical lifecycle stage (open, in_progress, needs_review, review_approved)",
-        ),
+        current_stage_state: (
+            Literal["ready", "in_progress", "needs_review", "review_approved"] | None
+        ) = Query(None, description="Filter by current stage state"),
         claimed: bool | None = Query(None, description="Filter by whether the task is claimed"),
         closed: bool | None = Query(None, description="Filter by canonical closed state"),
         priority: int | None = Query(None, description="Filter by priority"),
@@ -368,8 +360,15 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         ) = Query(None, description="Filter by stage state"),
         include_stages: bool = Query(False, description="Include denormalized stage manifest"),
     ) -> dict[str, Any]:
-        """List tasks with optional filters and status distribution stats."""
+        """List tasks with optional filters and state distribution stats."""
         try:
+            legacy_stage_key = "lifecycle_" + "stage"
+            unsupported_filters = {"status", legacy_stage_key} & set(request.query_params)
+            if unsupported_filters:
+                names = ", ".join(sorted(unsupported_filters))
+                raise ValueError(
+                    f"Unsupported legacy task filter(s): {names}. Use current_stage_state."
+                )
             resolved_project = _resolve_project(project_id)
             stage_task_ids: set[str] | None = None
             if stage is not None:
@@ -381,17 +380,9 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                     )
                 )
 
-            # Parse comma-separated status values
-            status_filter: str | list[str] | None = None
-            if status and "," in status:
-                status_filter = [s.strip() for s in status.split(",")]
-            else:
-                status_filter = status
-
             tasks = server.task_manager.list_tasks(
                 project_id=resolved_project,
-                status=status_filter,
-                lifecycle_stage=lifecycle_stage,
+                current_stage_state=current_stage_state,
                 priority=priority,
                 task_type=task_type,
                 assignee=assignee,
@@ -589,14 +580,33 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             task = _resolve_task(task_id)
             resolved_id = task.id
 
-            blocked_fields = request_data.model_fields_set & {"status", "assignee"}
+            legacy_stage_key = "lifecycle_" + "stage"
+            extra_fields = set(request_data.model_extra or {})
+            legacy_fields = {"status", "lifecycle", legacy_stage_key} & extra_fields
+            if legacy_fields:
+                names = ", ".join(sorted(legacy_fields))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unsupported legacy task field(s): {names}. Use stage-specific task "
+                        "endpoints instead."
+                    ),
+                )
+            if extra_fields:
+                names = ", ".join(sorted(extra_fields))
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported task field(s): {names}.",
+                )
+
+            blocked_fields = request_data.model_fields_set & {"assignee"}
             if blocked_fields:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Use lifecycle-specific task endpoints instead of PATCH for status/ownership "
-                        "changes: /claim, /release-claim, /needs-review, /review-approved, "
-                        "/escalate, /de-escalate, /close, or /reopen."
+                        "Use dedicated task endpoints instead of PATCH for ownership changes: "
+                        "/claim, /release-claim, /needs-review, /review-approved, /escalate, "
+                        "/de-escalate, /close, or /reopen."
                     ),
                 )
 
@@ -642,7 +652,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     # -----------------------------------------------------------------
-    # Lifecycle
+    # Stage and ownership transitions
     # -----------------------------------------------------------------
 
     @router.post("/{task_id}/claim")
@@ -676,8 +686,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
-            body = request_data or TaskReleaseClaimRequest()
-            released = server.task_manager.release_task_claim(resolved_id, status=body.status)
+            released = server.task_manager.release_task_claim(resolved_id)
             result = released.to_dict()
             await _broadcast_task("task_claim_released", result)
             return result
@@ -690,7 +699,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def mark_task_needs_review(
         task_id: str, request_data: TaskReviewRequest | None = None
     ) -> Any:
-        """Move a task into the canonical review lifecycle stage."""
+        """Move the current stage into review."""
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
@@ -732,7 +741,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
     async def mark_task_review_rejected(
         task_id: str, request_data: TaskReviewRejectionRequest | None = None
     ) -> Any:
-        """Reject a task after review and return it to open status."""
+        """Reject a task after review."""
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
@@ -752,7 +761,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/{task_id}/escalate")
     async def escalate_task(task_id: str, request_data: TaskEscalateRequest) -> Any:
-        """Escalate a task without using generic status mutation."""
+        """Escalate a task without using generic mutation."""
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
@@ -813,14 +822,13 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
 
     @router.post("/{task_id}/de-escalate")
     async def de_escalate_task(task_id: str, request_data: TaskDeEscalateRequest) -> Any:
-        """De-escalate a task to an explicit next status with user decision context."""
+        """De-escalate a task with user decision context."""
         try:
             task = _resolve_task(task_id)
             resolved_id = task.id
             updated = server.task_manager.de_escalate_task(
                 resolved_id,
                 reason=request_data.decision_context,
-                target_status=request_data.target_status,
                 reset_validation=request_data.reset_validation,
             )
             result = updated.to_dict()

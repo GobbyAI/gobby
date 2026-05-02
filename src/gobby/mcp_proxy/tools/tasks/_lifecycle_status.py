@@ -1,56 +1,50 @@
-"""Status transition handlers for task lifecycle.
+"""Stage transition handlers for task lifecycle.
 
 Handles reopen, escalate, de_escalate, review approval/rejection, and
 needs_review tool registrations.
 """
 
 import logging
-import re
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
-from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_status_change
+from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
-from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.state_semantics import (
+    current_stage_state,
+    get_claimed_session_id,
+    is_task_closed,
+    is_task_escalated,
+)
 
 logger = logging.getLogger(__name__)
 
-_TASK_STATUSES = "open|in_progress|needs_review|review_approved|closed|escalated"
-_STATUS_PATTERNS = (
-    re.compile(rf"\bstatus\s+'(?P<status>{_TASK_STATUSES})'\b"),
-    re.compile(rf"\bcurrent status:\s*(?P<status>{_TASK_STATUSES})\b"),
-    re.compile(rf"\btask status\s+'(?P<status>{_TASK_STATUSES})'\b"),
-)
-_LIFECYCLE_PATTERN = re.compile(r"\blifecycle\s+'[^']+'\b")
 
-
-def _status_error(message: str, status: str | None) -> dict[str, Any]:
+def _state_error(message: str, state: str | None) -> dict[str, Any]:
     code = (
         TaskToolErrorCode.TASK_CLOSED
-        if status == "closed"
+        if state == "closed"
         else TaskToolErrorCode.TASK_INVALID_STATUS
     )
     return task_error(message, code)
 
 
-def _extract_status(message: str) -> str | None:
-    for pattern in _STATUS_PATTERNS:
-        match = pattern.search(message.lower())
-        if match:
-            return match.group("status")
-    return None
-
-
 def _lifecycle_value_error(message: str) -> dict[str, Any]:
-    status = _extract_status(message)
-    if status is not None:
-        return _status_error(message, status)
-    if _LIFECYCLE_PATTERN.search(message.lower()):
-        return task_error(message, TaskToolErrorCode.TASK_INVALID_STATUS)
+    if "closed" in message.lower():
+        return _state_error(message, "closed")
     return {"error": message}
+
+
+def _projected_task_state(task: Any) -> str:
+    """Return a human-facing state label from stage-native task fields."""
+    if is_task_closed(task):
+        return "closed"
+    if is_task_escalated(task):
+        return "escalated"
+    return current_stage_state(task) or "ready"
 
 
 def _clear_prior_claim_session_variables(
@@ -84,10 +78,9 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
     """Register the reopen_task tool on the given registry."""
 
     def reopen_task(task_id: str, reason: str | None = None) -> dict[str, Any]:
-        """Reopen a task to open status.
+        """Reopen a closed or escalated task.
 
-        Works on any non-open status. Clears assignee, closed fields,
-        and resets validation_fail_count.
+        Clears ownership, closure/escalation fields, and resets validation_fail_count.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -125,7 +118,7 @@ def register_reopen_task(registry: InternalToolRegistry, ctx: RegistryContext) -
 
     registry.register(
         name="reopen_task",
-        description="Reopen a task to open status. Works on any non-open status. Clears assignee, closed fields, and resets validation. Optionally appends a reopen reason to the description.",
+        description="Reopen a closed or escalated task. Clears ownership, closure/escalation fields, and resets validation. Optionally appends a reopen reason to the description.",
         input_schema={
             "type": "object",
             "properties": {
@@ -154,8 +147,8 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
     ) -> dict[str, Any]:
         """Escalate a task for human intervention.
 
-        Sets status to 'escalated' with a reason and timestamp. Use when
-        the task cannot be completed by the agent and needs human attention.
+        Sets escalation metadata with a reason and timestamp. Use when the
+        task cannot be completed by the agent and needs human attention.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
@@ -185,8 +178,12 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_assignee = get_claimed_session_id(task)
 
-        if task.status in ("escalated", "closed"):
-            return _status_error(f"Cannot escalate task with status '{task.status}'.", task.status)
+        projected_state = _projected_task_state(task)
+        if projected_state in {"escalated", "closed"}:
+            return _state_error(
+                f"Cannot escalate task in state '{projected_state}'.",
+                projected_state,
+            )
 
         try:
             ctx.task_manager.escalate_task(resolved_id, reason=reason)
@@ -200,7 +197,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
             action="escalate",
         )
 
-        notify_parent_on_status_change(
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
             "escalated",
@@ -223,7 +220,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
 
     registry.register(
         name="escalate_task",
-        description="Escalate a task for human intervention. Sets status to 'escalated'. Use when the task cannot be completed and needs human attention.",
+        description="Escalate a task for human intervention. Sets escalation metadata and releases ownership.",
         input_schema={
             "type": "object",
             "properties": {
@@ -328,7 +325,7 @@ def register_mark_task_review_approved(
             action="review approval",
         )
 
-        notify_parent_on_status_change(
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
             "review_approved",
@@ -398,7 +395,7 @@ def register_mark_task_review_rejected(
         signoff_summary: str | None = None,
         **legacy_kwargs: Any,
     ) -> dict[str, Any]:
-        """Reject a task after review and return it to open status.
+        """Reject review on the current task stage.
 
         ``signoff_summary`` is an optional one-line tldr surfaced to the parent
         session as the agent run's completion P2P content. If omitted, a stock
@@ -460,10 +457,10 @@ def register_mark_task_review_rejected(
             action="review rejection",
         )
 
-        notify_parent_on_status_change(
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
-            "open",
+            "ready",
             task_ref=f"#{task.seq_num}" if task.seq_num else None,
         )
 
@@ -609,7 +606,7 @@ def register_mark_task_needs_review(registry: InternalToolRegistry, ctx: Registr
             action="needs_review",
         )
 
-        notify_parent_on_status_change(
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
             "needs_review",
@@ -655,18 +652,16 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
     def de_escalate_task(
         task_id: str,
         reason: str,
-        target_status: str | None = None,
         reset_validation: bool = False,
     ) -> dict[str, Any]:
-        """De-escalate a task to an explicit next status.
+        """De-escalate a task while preserving its current stage.
 
-        Returns an escalated task to the requested next state after human intervention resolves
-        the issue. Optionally resets the validation failure count.
+        Clears escalation metadata after human intervention resolves the issue.
+        Optionally resets the validation failure count.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
             reason: Reason for de-escalation (required)
-            target_status: Where the task should return (default: open)
             reset_validation: Also reset validation fail count (default: False)
 
         Returns:
@@ -695,17 +690,17 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
 
-        if task.status != "escalated":
-            return _status_error(
-                f"Task {task_id} is not escalated (current status: {task.status})",
-                task.status,
+        projected_state = _projected_task_state(task)
+        if projected_state != "escalated":
+            return _state_error(
+                f"Task {task_id} is not escalated (current state: {projected_state})",
+                projected_state,
             )
 
         try:
             updated = ctx.task_manager.de_escalate_task(
                 resolved_id,
                 reason=reason,
-                target_status=target_status,
                 reset_validation=reset_validation,
             )
         except ValueError as e:
@@ -715,10 +710,10 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
             return {"error": f"Failed to de-escalate task {task_id}"}
         logger.info("Task %s de-escalated: %s", resolved_id, reason)
 
-        notify_parent_on_status_change(
+        notify_parent_on_task_state_change(
             ctx.task_manager.db,
             resolved_id,
-            updated.status,
+            _projected_task_state(updated),
             task_ref=f"#{task.seq_num}" if task.seq_num else None,
         )
 
@@ -738,7 +733,7 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
 
     registry.register(
         name="de_escalate_task",
-        description="Return an escalated task to an explicit next status after human intervention resolves the issue. Optionally resets validation failure count.",
+        description="Return an escalated task to its preserved current stage after human intervention resolves the issue. Optionally resets validation failure count.",
         input_schema={
             "type": "object",
             "properties": {
@@ -749,12 +744,6 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 "reason": {
                     "type": "string",
                     "description": "Why the task is being de-escalated (e.g., 'dependency resolved', 'workaround applied')",
-                },
-                "target_status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "needs_review", "review_approved"],
-                    "description": "Status to return the task to after de-escalation (default: open)",
-                    "default": "open",
                 },
                 "reset_validation": {
                     "type": "boolean",

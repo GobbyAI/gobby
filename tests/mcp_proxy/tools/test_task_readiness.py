@@ -264,6 +264,8 @@ class TestSuggestNextTask:
         parent_task.priority = 1
         parent_task.complexity_score = None
         parent_task.category = None
+        parent_task.closed_at = None
+        parent_task.is_escalated = False
         parent_task.to_brief.return_value = {"ref": "#1", "id": "parent-1", "title": "Parent task"}
 
         # Leaf task (no children) - same priority as parent
@@ -272,12 +274,20 @@ class TestSuggestNextTask:
         leaf_task.priority = 1  # Same priority as parent
         leaf_task.complexity_score = 3
         leaf_task.category = "Unit tests"
+        leaf_task.closed_at = None
+        leaf_task.is_escalated = False
         leaf_task.to_brief.return_value = {"ref": "#2", "id": "leaf-1", "title": "Leaf task"}
 
         task_manager.list_ready_tasks.return_value = [parent_task, leaf_task]
 
         # Mock list_tasks to indicate parent has children, leaf doesn't
-        def mock_list_tasks(parent_task_id=None, status=None, limit=None, project_id=None):
+        def mock_list_tasks(
+            parent_task_id=None,
+            current_stage_state=None,
+            closed=None,
+            limit=None,
+            project_id=None,
+        ):
             if parent_task_id == "parent-1":
                 return [MagicMock()]  # Has children
             return []  # No children
@@ -562,7 +572,8 @@ class TestSuggestNextTaskWithParentTaskId:
         # Create the parent task as a ready leaf task
         parent_task = MagicMock()
         parent_task.id = "epic-1"
-        parent_task.status = "open"
+        parent_task.closed_at = None
+        parent_task.is_escalated = False
         parent_task.type = "task"
         parent_task.priority = 2
         parent_task.configure_mock(complexity_score=None, category=None)
@@ -717,7 +728,8 @@ class TestSuggestNextTaskWithSessionId:
         # The epic is closed — no ready descendants
         closed_epic = MagicMock()
         closed_epic.id = "epic-1"
-        closed_epic.status = "closed"
+        closed_epic.closed_at = "2026-05-02T00:00:00+00:00"
+        closed_epic.is_escalated = False
 
         task_manager.list_ready_tasks.return_value = []
         task_manager.list_tasks.return_value = []  # No descendants

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.integrations.linear import LinearIntegration
+from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_task_escalated
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -170,16 +171,12 @@ class LinearSyncService:
 
             title = issue.get("title", "Untitled Issue")
             description = issue.get("description", "")
-            linear_state = issue.get("state", {})
-            state_name = linear_state.get("name", "") if isinstance(linear_state, dict) else ""
             priority_val = issue.get("priority", 2)
 
             if existing:
                 # Update existing task
-                gobby_status = self.map_linear_status_to_gobby(state_name)
                 self.task_manager.reconcile_task_state(
                     existing["id"],
-                    status=gobby_status,
                     title=title,
                     description=description,
                     priority=priority_val,
@@ -221,7 +218,7 @@ class LinearSyncService:
                 f"Task {task_id} has no linked Linear issue. Set linear_issue_id to sync."
             )
 
-        linear_state = self.map_gobby_status_to_linear(task.status)
+        linear_state = self.map_gobby_status_to_linear(self._project_gobby_state_for_linear(task))
 
         update_args: dict[str, Any] = {
             "issueId": task.linear_issue_id,
@@ -348,14 +345,10 @@ class LinearSyncService:
                     continue
 
                 # Update task from Linear data
-                linear_state = issue.get("state", {})
-                state_name = linear_state.get("name", "") if isinstance(linear_state, dict) else ""
-                gobby_status = self.map_linear_status_to_gobby(state_name)
                 priority_val = issue.get("priority", 2)
 
                 self.task_manager.reconcile_task_state(
                     task_id,
-                    status=gobby_status,
                     title=issue.get("title", ""),
                     description=issue.get("description", ""),
                     priority=priority_val,
@@ -449,6 +442,13 @@ class LinearSyncService:
             "escalated": "Canceled",
         }
         return status_map.get(gobby_status, "Todo")
+
+    def _project_gobby_state_for_linear(self, task: Any) -> str:
+        if is_task_closed(task):
+            return "closed"
+        if is_task_escalated(task):
+            return "escalated"
+        return current_stage_state(task) or "open"
 
     def map_linear_status_to_gobby(self, linear_state: str) -> str:
         """Map Linear issue state to gobby task status."""

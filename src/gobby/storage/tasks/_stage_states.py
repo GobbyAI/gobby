@@ -184,8 +184,7 @@ def _close_task_in_txn(
     conn.execute(
         """
         UPDATE tasks
-           SET status = 'closed',
-               closed_at = ?,
+           SET closed_at = ?,
                closed_reason = ?,
                closed_in_session_id = ?,
                closed_commit_sha = ?,
@@ -241,10 +240,7 @@ def _cascade_close_descendants(
         conn.execute(
             """
             UPDATE tasks
-               SET status = 'closed',
-                   lifecycle = 'merged',
-                   lifecycle_stage = NULL,
-                   closed_at = ?,
+               SET closed_at = ?,
                    closed_reason = 'merged',
                    closed_in_session_id = ?,
                    closed_commit_sha = ?,
@@ -355,10 +351,25 @@ class StageStatesManager:
                     for spec in sorted(specs, key=lambda item: item.position)
                 ]:
                     return existing
-                raise ManifestAlreadyInitializedError(task_id)
+                if not all(
+                    row.state == "ready"
+                    and row.entered_at is None
+                    and row.completed_at is None
+                    and row.work_attempt_count == 0
+                    and row.review_round_count == 0
+                    and row.artifact_refs is None
+                    and row.notes is None
+                    for row in existing
+                ):
+                    raise ManifestAlreadyInitializedError(task_id)
 
             now = _now()
             with self.db.transaction() as conn:
+                if existing:
+                    conn.execute(
+                        "DELETE FROM task_stage_states WHERE task_id = ?",
+                        (task_id,),
+                    )
                 for spec in sorted(specs, key=lambda item: item.position):
                     registry = self._registry_entry(spec.stage_name)
                     conn.execute(

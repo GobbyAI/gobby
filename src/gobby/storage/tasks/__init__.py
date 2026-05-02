@@ -50,7 +50,6 @@ from gobby.storage.tasks._models import (
     VALID_CATEGORIES,
     VALID_TASK_TYPES,
     Isolation,
-    Lifecycle,
     MaybeUnset,
     SeqNumCollisionError,
     Task,
@@ -82,7 +81,6 @@ __all__ = [
     # Core classes
     "Task",
     "LocalTaskManager",
-    "Lifecycle",
     "Isolation",
     "DispatchMutex",
     "TaskDispatchMutexManager",

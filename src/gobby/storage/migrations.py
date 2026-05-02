@@ -913,6 +913,41 @@ def _seed_new_task_type_defaults(db: LocalDatabase) -> None:
             )
 
 
+def _drop_legacy_task_state_columns(db: LocalDatabase) -> None:
+    task_columns = {"lifecycle", "lifecycle_stage", "status"}
+    artifact_columns = {
+        "max_expansion_attempts",
+        "max_qa_rounds",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+        "max_review_rounds",
+    }
+
+    with db.transaction() as conn:
+        conn.execute("DROP INDEX IF EXISTS idx_tasks_status")
+        conn.execute("DROP INDEX IF EXISTS idx_tasks_lifecycle_stage")
+        conn.execute("DROP INDEX IF EXISTS idx_tasks_dispatch_scan")
+
+        existing_task_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        for column in sorted(task_columns & existing_task_columns):
+            conn.execute(f"ALTER TABLE tasks DROP COLUMN {column}")  # nosec B608
+
+        existing_artifact_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(task_artifacts)").fetchall()
+        }
+        for column in sorted(artifact_columns & existing_artifact_columns):
+            conn.execute(f"ALTER TABLE task_artifacts DROP COLUMN {column}")  # nosec B608
+
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_tasks_dispatch_scan
+                ON tasks(allow_automation, closed_at, is_escalated)
+            """
+        )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     *_REGISTRY_MIGRATIONS,
     (
@@ -987,6 +1022,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         235,
         "Seed Phase 5 task type default stage manifests",
         _seed_new_task_type_defaults,
+    ),
+    (
+        236,
+        "Drop legacy task lifecycle and artifact cap columns",
+        _drop_legacy_task_state_columns,
     ),
 ]
 

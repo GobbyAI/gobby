@@ -21,7 +21,7 @@ from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import SpawnRequest, execute_spawn
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-from gobby.tasks.state_semantics import get_claimed_session_id, is_active_claim_status
+from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -632,17 +632,14 @@ async def spawn_agent_impl(
         except Exception as e:
             logger.debug(f"Failed to fire agent_started event for {run_id}: {e}")
 
-        # 12a. Auto-claim task if task_id was provided
-        # Always set assignee (orchestrator tracking), but only transition
-        # status to in_progress for open tasks (don't regress needs_review etc.)
+        # 12a. Auto-claim task if task_id was provided.
         if resolved_task_id and task_manager:
             try:
                 task_obj = task_manager.get_task(resolved_task_id)
-                if not task_obj or not is_active_claim_status(task_obj.status):
+                if not task_obj or not is_task_actionable(task_obj):
                     logger.info(
-                        "Skipping auto-claim for task %s; status=%s is not active work",
+                        "Skipping auto-claim for task %s; task is not actionable",
                         f"#{task_seq_num}" if task_seq_num else resolved_task_id,
-                        getattr(task_obj, "status", None),
                     )
                 elif (
                     current_owner := get_claimed_session_id(task_obj)

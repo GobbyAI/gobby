@@ -8,56 +8,8 @@ from typing import Any, cast
 from gobby.dispatch.actions import Action, EscalateAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.database import DatabaseProtocol
-from gobby.storage.tasks import TaskDispatchMutexManager
-from gobby.storage.tasks._transitions import advance_lifecycle as _advance_lifecycle
-
-
-class PreserveExpansionRunId(dict[str, Any]):
-    """Side effects for successful expansion application."""
-
-    def __init__(self, expansion_run_id: str) -> None:
-        super().__init__(
-            {
-                "artifact_updates": {"expansion_run_id": expansion_run_id},
-                "reason": "expansion_run_completed",
-                "by_actor": "dispatcher",
-            }
-        )
-
-
-class ClearExpansionRunIdAndIncrementAttempts(dict[str, Any]):
-    """Side effects for retryable expansion failure."""
-
-    def __init__(self, expansion_run_id: str, reason: str) -> None:
-        super().__init__(
-            {
-                "clear_artifacts": ("expansion_run_id",),
-                "increment_counters": ("expansion_attempts",),
-                "reason": f"expansion_run_failed:{reason}",
-                "by_actor": "dispatcher",
-                "failed_expansion_run_id": expansion_run_id,
-            }
-        )
-
-
-def advance_lifecycle(
-    task_id: str,
-    *,
-    to_lifecycle: str,
-    to_status: str,
-    side_effects: Mapping[str, Any] | None = None,
-    db: DatabaseProtocol | None = None,
-) -> object | None:
-    """Adapter around storage lifecycle transitions for event-handler callers."""
-    if db is None:
-        return None
-    return _advance_lifecycle(
-        db,
-        task_id,
-        to_lifecycle,
-        to_status,
-        dict(side_effects or {}),
-    )
+from gobby.storage.tasks import TaskDispatchMutexManager, TaskLifecycleEventManager
+from gobby.storage.tasks._stage_states import StageStatesManager
 
 
 def on_agent_terminal(event: object, storage: TaskDispatchMutexManager | None = None) -> int:
@@ -98,11 +50,9 @@ def on_expansion_run_completed(
     resolved_storage = _storage_from_db(db, storage)
     try:
         if apply_created_children:
-            result = _advance_task_lifecycle(
+            result = _complete_stage(
                 task_id,
-                to_lifecycle="in_development",
-                to_status="open",
-                side_effects=PreserveExpansionRunId(expansion_run_id),
+                stage_name="expansion",
                 db=db,
             )
         return result
@@ -127,20 +77,17 @@ def on_expansion_run_failed(
         attempts = expansion_attempts or 0
         if max_expansion_attempts is not None and attempts >= max_expansion_attempts:
             if unattended:
-                return _advance_task_lifecycle(
+                return _complete_stage(
                     task_id,
-                    to_lifecycle="in_development",
-                    to_status="open",
-                    side_effects={"reason": "expansion_run_exhausted_unattended_fallback"},
+                    stage_name="expansion",
                     db=db,
                 )
             return EscalateAction(task_id=task_id, reason=f"expansion_run_failed:{reason}")
 
-        return _advance_task_lifecycle(
+        return _fail_stage(
             task_id,
-            to_lifecycle="expanding",
-            to_status="open",
-            side_effects=ClearExpansionRunIdAndIncrementAttempts(expansion_run_id, reason),
+            stage_name="expansion",
+            reason=f"expansion_run_failed:{reason}",
             db=db,
         )
     finally:
@@ -193,22 +140,35 @@ def _storage_from_db(
     return TaskDispatchMutexManager(db)
 
 
-def _advance_task_lifecycle(
+def _stage_states(db: DatabaseProtocol | None) -> StageStatesManager | None:
+    if db is None:
+        return None
+    return StageStatesManager(db, TaskLifecycleEventManager(db))
+
+
+def _complete_stage(
     task_id: str,
     *,
-    to_lifecycle: str,
-    to_status: str,
-    side_effects: Mapping[str, Any] | None,
+    stage_name: str,
     db: DatabaseProtocol | None,
 ) -> object | None:
-    kwargs: dict[str, Any] = {
-        "to_lifecycle": to_lifecycle,
-        "to_status": to_status,
-        "side_effects": side_effects,
-    }
-    if db is not None:
-        kwargs["db"] = db
-    return advance_lifecycle(task_id, **kwargs)
+    manager = _stage_states(db)
+    if manager is None:
+        return None
+    return manager.complete_stage(task_id, stage_name, by_session_id=None)
+
+
+def _fail_stage(
+    task_id: str,
+    *,
+    stage_name: str,
+    reason: str,
+    db: DatabaseProtocol | None,
+) -> object | None:
+    manager = _stage_states(db)
+    if manager is None:
+        return None
+    return manager.fail_stage(task_id, stage_name, reason=reason, by_session_id=None)
 
 
 def _release_run_mutex(run_id: str, *, storage: TaskDispatchMutexManager | None) -> int:
@@ -232,10 +192,7 @@ def _event_value(event: object, key: str) -> object | None:
 
 
 __all__ = [
-    "ClearExpansionRunIdAndIncrementAttempts",
-    "PreserveExpansionRunId",
     "RuntimeDispatchMutex",
-    "advance_lifecycle",
     "on_agent_crashed",
     "on_agent_end_normal",
     "on_agent_terminal",

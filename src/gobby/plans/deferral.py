@@ -18,7 +18,9 @@ type DeferralStatus = Literal[
     "missing_dependency_or_cited_parent",
 ]
 
-_OPEN_STATUSES = frozenset({"open", "in_progress", "needs_review", "review_approved", "escalated"})
+_ACTIVE_TASK_STATES = frozenset(
+    {"ready", "in_progress", "needs_review", "review_approved", "escalated"}
+)
 
 
 @dataclass(frozen=True)
@@ -48,14 +50,14 @@ def validate_deferral(
     if task is None:
         return _result(deferral, section_id, plan_id, "task_missing", "task is missing")
 
-    status = _task_status(task)
-    if status not in _OPEN_STATUSES:
+    state = _task_state(task)
+    if state not in _ACTIVE_TASK_STATES:
         return _result(
             deferral,
             section_id,
             plan_id,
             "task_closed",
-            f"task has non-open status {status!r}",
+            f"task has non-active state {state!r}",
         )
 
     labels = task_store.get_task_labels(deferral.task_ref)
@@ -123,8 +125,8 @@ def _result(
     )
 
 
-def _task_status(task: dict[str, Any]) -> str:
-    return str(task.get("status", "")).strip()
+def _task_state(task: dict[str, Any]) -> str:
+    return str(task.get("state", "")).strip()
 
 
 def _task_validation_criteria(task: dict[str, Any]) -> str:
@@ -166,7 +168,7 @@ def _has_valid_cited_parent(
         if not parent_ref or parent_ref in dependency_closure:
             continue
         parent_task = task_store.get_task(parent_ref)
-        if parent_task is None or _task_status(parent_task) not in _OPEN_STATUSES:
+        if parent_task is None or _task_state(parent_task) not in _ACTIVE_TASK_STATES:
             continue
         if out_of_scope_label in task_store.get_task_labels(parent_ref):
             return True

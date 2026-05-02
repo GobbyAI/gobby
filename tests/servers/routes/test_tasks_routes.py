@@ -93,6 +93,14 @@ def sample_task(task_manager, project_id) -> dict:
     return t.to_dict()
 
 
+def _start_current_stage(
+    task_manager: LocalTaskManager, task_id: str, session_id: str | None = None
+) -> None:
+    current = task_manager.stage_states.current_stage(task_id)
+    assert current is not None
+    task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=session_id)
+
+
 @pytest.fixture
 def two_tasks(task_manager, project_id) -> tuple[dict, dict]:
     """Create two tasks for dependency tests."""
@@ -123,14 +131,16 @@ class TestListTasks:
         task = next(t for t in data["tasks"] if t["id"] == sample_task["id"])
         assert "state" in task
 
-    def test_list_with_status_filter(self, client: TestClient, sample_task: dict) -> None:
+    def test_list_rejects_legacy_status_filter(self, client: TestClient, sample_task: dict) -> None:
         response = client.get("/api/tasks?status=open")
-        assert response.status_code == 200
-        assert len(response.json()["tasks"]) >= 1
+        assert response.status_code == 400
+        assert "Unsupported legacy task filter" in response.json()["detail"]
 
-    def test_list_with_comma_separated_status(self, client: TestClient, sample_task: dict) -> None:
+    def test_list_rejects_comma_separated_legacy_status(
+        self, client: TestClient, sample_task: dict
+    ) -> None:
         response = client.get("/api/tasks?status=open,in_progress")
-        assert response.status_code == 200
+        assert response.status_code == 400
 
     def test_list_with_priority_filter(self, client: TestClient, sample_task: dict) -> None:
         # sample_task has priority=1
@@ -146,8 +156,9 @@ class TestListTasks:
         session_id: str,
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
         task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
-        response = client.get("/api/tasks?lifecycle_stage=needs_review")
+        response = client.get("/api/tasks?current_stage_state=needs_review")
         assert response.status_code == 200
         ids = [t["id"] for t in response.json()["tasks"]]
         assert sample_task["id"] in ids
@@ -237,7 +248,7 @@ class TestCreateTask:
         assert response.status_code == 201
         data = response.json()
         assert data["title"] == "New task"
-        assert data["status"] == "open"
+        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
         assert "state" in data
         assert "id" in data
 
@@ -361,7 +372,7 @@ class TestUpdateTask:
             json={"status": "in_progress"},
         )
         assert response.status_code == 400
-        assert "Use lifecycle-specific task endpoints" in response.json()["detail"]
+        assert "Unsupported legacy task field" in response.json()["detail"]
 
     def test_update_assignee_rejected(self, client: TestClient, sample_task: dict) -> None:
         response = client.patch(
@@ -369,7 +380,7 @@ class TestUpdateTask:
             json={"assignee": "session-123"},
         )
         assert response.status_code == 400
-        assert "Use lifecycle-specific task endpoints" in response.json()["detail"]
+        assert "Use dedicated task endpoints instead of PATCH" in response.json()["detail"]
 
     def test_update_no_fields_returns_existing(self, client: TestClient, sample_task: dict) -> None:
         """Empty update returns the existing task unchanged."""
@@ -492,7 +503,7 @@ class TestLifecycleMutations:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
         response = client.post(
             f"/api/tasks/{sample_task['id']}/release-claim",
-            json={"status": "open"},
+            json={},
         )
         assert response.status_code == 200
         data = response.json()
@@ -507,14 +518,17 @@ class TestLifecycleMutations:
         session_id: str,
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
         response = client.post(
             f"/api/tasks/{sample_task['id']}/needs-review",
             json={"notes": "Ready for QA"},
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "needs_review"
-        assert data["state"]["lifecycle_stage"] == "needs_review"
+        assert data["state"]["current_stage"] == {
+            "name": "development",
+            "state": "needs_review",
+        }
 
     def test_mark_task_review_approved(
         self,
@@ -524,6 +538,7 @@ class TestLifecycleMutations:
         session_id: str,
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
         task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
         response = client.post(
             f"/api/tasks/{sample_task['id']}/review-approved",
@@ -531,8 +546,10 @@ class TestLifecycleMutations:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "review_approved"
-        assert data["state"]["lifecycle_stage"] == "review_approved"
+        assert data["state"]["current_stage"] == {
+            "name": "development",
+            "state": "review_approved",
+        }
         assert data["state"]["is_merge_ready"] is True
 
     def test_mark_task_review_rejected(
@@ -543,6 +560,7 @@ class TestLifecycleMutations:
         session_id: str,
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
         task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready")
         response = client.post(
             f"/api/tasks/{sample_task['id']}/review-rejected",
@@ -550,7 +568,7 @@ class TestLifecycleMutations:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "open"
+        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
         assert "## Adversary Findings — Round 1" in (data["description"] or "")
         assert "planning-round:1" in (data["labels"] or [])
 
@@ -561,7 +579,6 @@ class TestLifecycleMutations:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "escalated"
         assert data["state"]["is_escalated"] is True
         assert data["escalation_reason"] == "Blocked on external input"
 
@@ -576,7 +593,7 @@ class TestCloseTask:
         response = client.post(f"/api/tasks/{sample_task['id']}/close")
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "closed"
+        assert data["state"]["is_closed"] is True
 
     def test_close_with_reason(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(
@@ -587,7 +604,7 @@ class TestCloseTask:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "closed"
+        assert data["state"]["is_closed"] is True
 
     def test_close_with_session_ref(
         self,
@@ -602,7 +619,7 @@ class TestCloseTask:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "closed"
+        assert data["state"]["is_closed"] is True
         assert data["closed_in_session_id"] == session_id
 
     def test_close_with_invalid_commit_sha_returns_400(
@@ -625,7 +642,7 @@ class TestCloseTask:
         client.post(f"/api/tasks/{sample_task['id']}/close")
         response = client.post(f"/api/tasks/{sample_task['id']}/close")
         assert response.status_code == 200
-        assert response.json()["status"] == "closed"
+        assert response.json()["state"]["is_closed"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -644,7 +661,8 @@ class TestReopenTask:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "open"
+        assert data["state"]["is_closed"] is False
+        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
 
     def test_reopen_already_open(self, client: TestClient, sample_task: dict) -> None:
         """Reopening an already-open task returns 400."""
@@ -660,7 +678,7 @@ class TestReopenTask:
         client.post(f"/api/tasks/{sample_task['id']}/close")
         response = client.post(f"/api/tasks/{sample_task['id']}/reopen")
         assert response.status_code == 200
-        assert response.json()["status"] == "open"
+        assert response.json()["state"]["is_closed"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +687,7 @@ class TestReopenTask:
 
 
 class TestDeEscalateTask:
-    def test_get_task_detail_exposes_pre_escalation_status(
+    def test_get_task_detail_preserves_current_stage_when_escalated(
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
@@ -677,18 +695,23 @@ class TestDeEscalateTask:
         session_id: str,
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
         task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
         task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
 
         response = client.get(f"/api/tasks/{sample_task['id']}")
 
         assert response.status_code == 200
-        assert response.json()["pre_escalation_status"] == "needs_review"
+        data = response.json()
+        assert data["state"]["is_escalated"] is True
+        assert data["state"]["current_stage"] == {
+            "name": "development",
+            "state": "needs_review",
+        }
 
     def test_de_escalate_task(
         self, client: TestClient, task_manager: LocalTaskManager, sample_task: dict
     ) -> None:
-        # First set status to escalated
         task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
         response = client.post(
             f"/api/tasks/{sample_task['id']}/de-escalate",
@@ -699,10 +722,11 @@ class TestDeEscalateTask:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "open"
+        assert data["state"]["is_escalated"] is False
+        assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
         assert "User approved the approach" in data["description"]
 
-    def test_de_escalate_task_with_explicit_target_status(
+    def test_de_escalate_task_rejects_legacy_target_status(
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
@@ -710,19 +734,18 @@ class TestDeEscalateTask:
         session_id: str,
     ) -> None:
         task_manager.claim_task(sample_task["id"], session_id=session_id)
+        _start_current_stage(task_manager, sample_task["id"], session_id)
         task_manager.mark_task_needs_review(sample_task["id"], review_notes="Ready for QA")
         task_manager.escalate_task(sample_task["id"], reason="Blocked on user input")
-        detail = client.get(f"/api/tasks/{sample_task['id']}").json()
 
         response = client.post(
             f"/api/tasks/{sample_task['id']}/de-escalate",
             json={
                 "decision_context": "Resume review",
-                "target_status": detail["pre_escalation_status"],
+                "target_status": "ready",
             },
         )
-        assert response.status_code == 200
-        assert response.json()["status"] == "needs_review"
+        assert response.status_code == 422
 
     def test_de_escalate_not_escalated(self, client: TestClient, sample_task: dict) -> None:
         """De-escalating a task that's not escalated returns 400."""
@@ -752,7 +775,7 @@ class TestDeEscalateTask:
             },
         )
         assert response.status_code == 200
-        assert response.json()["status"] == "open"
+        assert response.json()["state"]["is_escalated"] is False
 
 
 # ---------------------------------------------------------------------------

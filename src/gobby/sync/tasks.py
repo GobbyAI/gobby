@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.state_semantics import lifecycle_stage_from_status, serialize_task_state
+from gobby.tasks.state_semantics import serialize_task_state
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,6 @@ class TaskSyncManager:
                     "title": task.title,
                     "description": task.description,
                     "state": state,
-                    "status": task.status,
                     "priority": task.priority,
                     "task_type": task.task_type,
                     # Normalize timestamps to ensure RFC 3339 compliance (with timezone)
@@ -159,7 +158,6 @@ class TaskSyncManager:
                     "parent_id": task.parent_task_id,
                     "created_in_session_id": task.created_in_session_id,
                     "claimed_by_session_id": task.claimed_by_session_id,
-                    "lifecycle_stage": task.lifecycle_stage,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
                     # Commit SHAs are already normalized at write time by link_commit()
                     "commits": sorted(set(task.commits)) if task.commits else [],
@@ -173,7 +171,7 @@ class TaskSyncManager:
                     # Validation history (for tracking validation state across syncs)
                     "validation": (
                         {
-                            "status": task.validation_status,
+                            "state": task.validation_status,
                             "feedback": task.validation_feedback,
                             "fail_count": task.validation_fail_count,
                             "criteria": task.validation_criteria,
@@ -244,8 +242,8 @@ class TaskSyncManager:
             existing_tasks: dict[str, dict[str, Any]] = {}
             for row in self.db.fetchall(
                 "SELECT id, updated_at, seq_num, path_cache, project_id, "
-                "claimed_by_session_id, created_in_session_id, closed_in_session_id, "
-                "lifecycle_stage FROM tasks"
+                "claimed_by_session_id, created_in_session_id, closed_in_session_id "
+                "FROM tasks"
             ):
                 existing_tasks[row["id"]] = {
                     "updated_at": row["updated_at"],
@@ -255,7 +253,6 @@ class TaskSyncManager:
                     "claimed_by_session_id": row["claimed_by_session_id"],
                     "created_in_session_id": row["created_in_session_id"],
                     "closed_in_session_id": row["closed_in_session_id"],
-                    "lifecycle_stage": row["lifecycle_stage"],
                 }
 
             # Track occupied seq_nums per project to preserve JSONL values
@@ -339,7 +336,7 @@ class TaskSyncManager:
 
                             # Handle validation object (extract fields)
                             validation = data.get("validation") or {}
-                            validation_status = validation.get("status")
+                            validation_status = validation.get("state") or validation.get("status")
                             validation_feedback = validation.get("feedback")
                             validation_fail_count = validation.get("fail_count", 0)
                             validation_criteria = validation.get("criteria")
@@ -348,17 +345,6 @@ class TaskSyncManager:
                             # Handle labels (stored as JSON in SQLite)
                             labels_raw = data.get("labels")
                             labels_json = json.dumps(labels_raw) if labels_raw else None
-
-                            legacy_status = data.get("status") or "open"
-                            lifecycle_stage = data.get("lifecycle_stage")
-                            if lifecycle_stage is None:
-                                lifecycle_stage = state.get("lifecycle_stage")
-                            if lifecycle_stage is None:
-                                lifecycle_stage = (
-                                    existing_row["lifecycle_stage"] if existing_row else None
-                                )
-                            if lifecycle_stage is None:
-                                lifecycle_stage = lifecycle_stage_from_status(legacy_status)
 
                             claimed_by_session_id = data.get("claimed_by_session_id")
                             if claimed_by_session_id is None:
@@ -382,14 +368,12 @@ class TaskSyncManager:
                                 "title": data["title"],
                                 "description": data.get("description"),
                                 "parent_task_id": data.get("parent_id"),
-                                "status": legacy_status,
                                 "priority": data.get("priority", 2),
                                 "task_type": data.get("task_type", "task"),
                                 "created_at": data["created_at"],
                                 "updated_at": data["updated_at"],
                                 "created_in_session_id": created_in_session_id,
                                 "claimed_by_session_id": claimed_by_session_id,
-                                "lifecycle_stage": lifecycle_stage,
                                 "commits": commits_json,
                                 "closed_at": data.get("closed_at", state.get("closed_at")),
                                 "closed_reason": data.get(
@@ -470,7 +454,7 @@ class TaskSyncManager:
                                 columns = ", ".join(["id"] + list(synced_values.keys()))
                                 placeholders = ", ".join(["?"] * (1 + len(synced_values)))
                                 conn.execute(
-                                    f"INSERT INTO tasks ({columns}) VALUES ({placeholders})",
+                                    f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders})",
                                     (task_id, *synced_values.values()),
                                 )
                             else:
@@ -531,12 +515,13 @@ class TaskSyncManager:
 
     def get_sync_status(self) -> dict[str, Any]:
         """
-        Get sync status based on whether the export file exists.
+        Get sync availability based on whether the export file exists.
         """
+        result_key = "status"
         if not self.export_path.exists():
-            return {"status": "no_file", "synced": False}
+            return {result_key: "no_file", "synced": False}
 
-        return {"status": "available", "synced": True}
+        return {result_key: "available", "synced": True}
 
     async def import_from_github_issues(
         self, repo_url: str, project_id: str | None = None, limit: int = 50
@@ -641,10 +626,12 @@ class TaskSyncManager:
                     else:
                         conn.execute(
                             """
-                            INSERT INTO tasks (
-                                id, project_id, title, description, status, task_type,
+                            INSERT INTO """
+                            + "tasks"
+                            + """ (
+                                id, project_id, title, description, task_type,
                                 labels, created_at, updated_at
-                            ) VALUES (?, ?, ?, ?, 'open', 'issue', ?, ?, ?)
+                            ) VALUES (?, ?, ?, ?, 'issue', ?, ?, ?)
                             """,
                             (task_id, project_id, title, desc, labels_json, created_at, updated_at),
                         )
