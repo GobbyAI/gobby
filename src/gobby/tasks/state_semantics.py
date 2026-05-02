@@ -68,12 +68,13 @@ def project_legacy_status(
     lifecycle_stage: str | None,
     closed_at: str | None = None,
     escalated_at: str | None = None,
+    is_escalated: bool = False,
     legacy_status: str | None = None,
 ) -> LegacyTaskStatus:
     """Project canonical lifecycle fields back to the temporary legacy status surface."""
     if closed_at or legacy_status == "closed":
         return "closed"
-    if escalated_at or legacy_status == "escalated":
+    if is_escalated or escalated_at or legacy_status in {"escalated"}:
         return "escalated"
 
     normalized_stage = normalize_lifecycle_stage(lifecycle_stage)
@@ -95,19 +96,19 @@ def is_task_closed(task: Any) -> bool:
     return getattr(task, "status", None) == "closed"
 
 
-def is_task_escalated(task: Any) -> bool:
+def _task_is_escalated(task: Any) -> bool:
     """Return whether escalation metadata marks the task as escalated."""
-    if task is None or is_task_closed(task):
+    if task is None:
         return False
-    escalated_at = getattr(task, "escalated_at", None)
-    if isinstance(escalated_at, str) and bool(escalated_at):
-        return True
-    return getattr(task, "status", None) == "escalated"
+    return bool(getattr(task, "is_escalated", False))
+
+
+is_task_escalated = _task_is_escalated
 
 
 def is_task_merge_ready(task: Any) -> bool:
     """Return whether the task has passed review and is ready for merge/close."""
-    if task is None or is_task_closed(task) or is_task_escalated(task):
+    if task is None or is_task_closed(task) or _task_is_escalated(task):
         return False
     lifecycle_stage = _coerce_task_lifecycle_stage(task)
     return lifecycle_stage == "review_approved"
@@ -159,9 +160,9 @@ def normalize_de_escalation_target_status(
     return normalized
 
 
-def get_pre_escalation_status(task: Any) -> TaskDeEscalationTargetStatus | None:
+def _pre_escalation_status_for_task(task: Any) -> TaskDeEscalationTargetStatus | None:
     """Return the status an escalated task should resume to."""
-    if not is_task_escalated(task):
+    if not _task_is_escalated(task):
         return None
 
     projected = project_legacy_status(
@@ -170,6 +171,9 @@ def get_pre_escalation_status(task: Any) -> TaskDeEscalationTargetStatus | None:
         escalated_at=None,
     )
     return cast(TaskDeEscalationTargetStatus, projected)
+
+
+get_pre_escalation_status = _pre_escalation_status_for_task
 
 
 def _coerce_task_lifecycle_stage(task: Any) -> TaskLifecycleStage | None:
@@ -196,16 +200,17 @@ def serialize_task_state(task: Any, *, is_blocked: bool | None = None) -> dict[s
     """Build the canonical task-state projection for external callers."""
     owner_session_id = get_claimed_session_id(task)
     lifecycle_stage = _coerce_task_lifecycle_stage(task)
+    is_escalated = _task_is_escalated(task)
     if is_blocked is None:
         active_blocked_by = getattr(task, "active_blocked_by", None)
-        is_blocked = bool(active_blocked_by) or is_task_escalated(task)
+        is_blocked = bool(active_blocked_by) or is_escalated
 
     return {
         "owner_session_id": owner_session_id,
         "lifecycle_stage": lifecycle_stage,
         "is_claimed": bool(owner_session_id),
         "is_closed": is_task_closed(task),
-        "is_escalated": is_task_escalated(task),
+        "is_escalated": is_escalated,
         "is_blocked": bool(is_blocked),
         "is_merge_ready": is_task_merge_ready(task),
         "closed_at": getattr(task, "closed_at", None),

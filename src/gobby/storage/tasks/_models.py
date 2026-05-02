@@ -231,6 +231,7 @@ class Task:
         keys = row.keys()
         closed_at = row["closed_at"] if "closed_at" in keys else None
         escalated_at = row["escalated_at"] if "escalated_at" in keys else None
+        is_escalated = bool(row["is_escalated"]) if "is_escalated" in keys else bool(escalated_at)
         lifecycle_stage = (
             row["lifecycle_stage"]
             if "lifecycle_stage" in keys
@@ -240,6 +241,7 @@ class Task:
             lifecycle_stage=lifecycle_stage,
             closed_at=closed_at,
             escalated_at=escalated_at,
+            is_escalated=is_escalated,
             legacy_status=row["status"],
         )
 
@@ -293,9 +295,7 @@ class Task:
             commits=json.loads(row["commits"]) if "commits" in keys and row["commits"] else None,
             escalated_at=escalated_at,
             escalation_reason=row["escalation_reason"] if "escalation_reason" in keys else None,
-            is_escalated=(
-                bool(row["is_escalated"]) if "is_escalated" in keys else bool(escalated_at)
-            ),
+            is_escalated=is_escalated,
             github_issue_number=(
                 row["github_issue_number"] if "github_issue_number" in keys else None
             ),

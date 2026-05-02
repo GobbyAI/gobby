@@ -420,7 +420,7 @@ def escalate_task(
     call that could fail after the escalation has already landed.
     """
     task = get_task(db, task_id)
-    if task.status == "escalated" or is_task_closed(task):
+    if task.is_escalated or is_task_closed(task):
         raise ValueError(f"Cannot escalate task with status '{task.status}'.")
 
     return release_task_claim(
@@ -446,7 +446,7 @@ def de_escalate_task(
 ) -> Task:
     """Return an escalated task to an explicit next status."""
     task = get_task(db, task_id)
-    if task.status != "escalated":
+    if not task.is_escalated:
         raise ValueError(f"Task {task_id} is not escalated (current status: {task.status})")
 
     normalized_target = normalize_de_escalation_target_status(target_status)
