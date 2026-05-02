@@ -68,6 +68,46 @@ MigrationAction = str | Callable[[LocalDatabase], None]
 BASELINE_VERSION = 220
 _MIN_MIGRATION_VERSION = 219
 BASELINE_SCHEMA = (Path(__file__).parent / "baseline_schema.sql").read_text()
+_STAGES_REGISTRY_PATH = Path(__file__).parent.parent / "install/shared/registry/stages.yaml"
+_ARTIFACT_REPORT_COLUMNS = (
+    "pr_review_report",
+    "structured_pr_verdict",
+    "merge_campaign_report",
+)
+_DEFAULT_STAGE_MANIFESTS = {
+    "epic": (
+        "ideation",
+        "research",
+        "architecture",
+        "prd",
+        "planning",
+        "adversarial_review",
+        "test_arch",
+        "expansion",
+        "expansion_qa",
+        "development",
+        "code_review_qa",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ),
+    "feature": (
+        "planning",
+        "adversarial_review",
+        "test_arch",
+        "expansion",
+        "expansion_qa",
+        "development",
+        "code_review_qa",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ),
+    "bug": ("development", "code_review_qa", "pr", "merge"),
+    "refactor": ("planning", "development", "code_review_qa", "pr", "merge"),
+    "chore": ("development", "pr", "merge"),
+    "task": ("development", "pr", "merge"),
+}
 
 
 def _table_columns(db: LocalDatabase, table_name: str) -> set[str]:
@@ -96,6 +136,9 @@ def _task_artifacts_create_sql(table_name: str) -> str:
             max_review_rounds INTEGER,
             pr_url TEXT,
             merge_commit_sha TEXT,
+            pr_review_report TEXT,
+            structured_pr_verdict TEXT,
+            merge_campaign_report TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
@@ -119,9 +162,8 @@ def _add_task_artifact_evidence_columns(db: LocalDatabase) -> None:
 
     existing_columns = _table_columns(db, "task_artifacts")
     table_sql = str(row["sql"] or "")
-    if {"base_commit_sha", "plan_file_hash"}.issubset(
-        existing_columns
-    ) and "base_commit_sha IS NULL" in table_sql:
+    required_columns = {"base_commit_sha", "plan_file_hash", *_ARTIFACT_REPORT_COLUMNS}
+    if required_columns.issubset(existing_columns) and "base_commit_sha IS NULL" in table_sql:
         return
 
     columns = [
@@ -143,6 +185,9 @@ def _add_task_artifact_evidence_columns(db: LocalDatabase) -> None:
         "max_review_rounds",
         "pr_url",
         "merge_commit_sha",
+        "pr_review_report",
+        "structured_pr_verdict",
+        "merge_campaign_report",
         "updated_at",
     ]
     select_columns = [
@@ -183,6 +228,139 @@ def _default_task_artifact_column(column: str) -> str:
     if column == "updated_at":
         return "datetime('now') AS updated_at"
     return f"NULL AS {column}"
+
+
+def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
+    with db.transaction():
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_stages_registry (
+                name TEXT PRIMARY KEY,
+                display_label TEXT NOT NULL,
+                description TEXT NOT NULL,
+                category TEXT NOT NULL
+                    CHECK (category IN ('discovery','design','verification','implementation','delivery')),
+                default_agent TEXT,
+                position_hint INTEGER NOT NULL,
+                requires_human INTEGER NOT NULL DEFAULT 0,
+                is_terminal INTEGER NOT NULL DEFAULT 0,
+                bundled_hash TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_type_default_stages (
+                task_type TEXT NOT NULL,
+                stage_name TEXT NOT NULL
+                    REFERENCES task_stages_registry(name) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (task_type, stage_name)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_task_type_default_stages_position
+                ON task_type_default_stages (task_type, position)
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_stage_states (
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                stage_name TEXT NOT NULL
+                    REFERENCES task_stages_registry(name) ON DELETE RESTRICT,
+                position INTEGER NOT NULL,
+                state TEXT NOT NULL DEFAULT 'ready'
+                    CHECK (state IN ('ready','in_progress','done')),
+                entered_at TEXT,
+                entered_by_session_id TEXT,
+                completed_at TEXT,
+                completed_by_session_id TEXT,
+                completed_commit_sha TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                artifact_refs TEXT,
+                notes TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (task_id, stage_name)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_task_stage_states_position
+                ON task_stage_states (task_id, position)
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_task_stage_states_state
+                ON task_stage_states (stage_name, state)
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_task_stage_states_open
+                ON task_stage_states (task_id, position) WHERE state != 'done'
+            """
+        )
+
+        _add_task_artifact_evidence_columns(db)
+        if "is_escalated" not in _table_columns(db, "tasks"):
+            db.execute(
+                """
+                ALTER TABLE tasks
+                ADD COLUMN is_escalated INTEGER NOT NULL DEFAULT 0
+                    CHECK(is_escalated IN (0, 1))
+                """
+            )
+
+        from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+
+        stages, bundled_hash = StageRegistryLoader(path=_STAGES_REGISTRY_PATH).load_with_hash()
+        for stage in stages:
+            db.execute(
+                """
+                INSERT INTO task_stages_registry (
+                    name, display_label, description, category, default_agent,
+                    position_hint, requires_human, is_terminal, bundled_hash, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(name) DO UPDATE SET
+                    display_label = excluded.display_label,
+                    description = excluded.description,
+                    category = excluded.category,
+                    default_agent = excluded.default_agent,
+                    position_hint = excluded.position_hint,
+                    requires_human = excluded.requires_human,
+                    is_terminal = excluded.is_terminal,
+                    bundled_hash = excluded.bundled_hash,
+                    updated_at = datetime('now')
+                """,
+                (
+                    stage.name,
+                    stage.display_label,
+                    stage.description,
+                    stage.category,
+                    stage.default_agent,
+                    stage.position_hint,
+                    1 if stage.requires_human else 0,
+                    1 if stage.is_terminal else 0,
+                    bundled_hash,
+                ),
+            )
+
+        for task_type, stages_for_type in _DEFAULT_STAGE_MANIFESTS.items():
+            db.execute("DELETE FROM task_type_default_stages WHERE task_type = ?", (task_type,))
+            for position, stage_name in enumerate(stages_for_type, start=1):
+                db.execute(
+                    """
+                    INSERT INTO task_type_default_stages (task_type, stage_name, position)
+                    VALUES (?, ?, ?)
+                    """,
+                    (task_type, stage_name, position),
+                )
 
 
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
@@ -249,6 +427,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         233,
         "Clear failed provider output from session summaries",
         clear_session_summary_sentinels,
+    ),
+    (
+        234,
+        "Add task stage registry, manifests, and lifecycle report fields",
+        _add_task_stage_registry_schema,
     ),
 ]
 

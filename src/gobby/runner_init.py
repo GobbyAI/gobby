@@ -261,6 +261,12 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         if total > 0:
             logger.info(f"Dev mode: synced {total} bundled items on startup")
 
+    from gobby.storage.tasks._stage_registry_loader import StageRegistryLoader
+
+    stage_sync = StageRegistryLoader().sync(runner.database)
+    if stage_sync.upserted > 0:
+        logger.info(f"Synced {stage_sync.upserted} bundled stage registry rows")
+
     # Initialize Prompt Manager
     from gobby.storage.prompts import LocalPromptManager
 

@@ -1,0 +1,32 @@
+# PLACEHOLDER - disabled stub for the `prd` stage. Replace with a real
+# implementation before enabling. Tracked by the agent-followup task created
+# by the stage-manifest-cutover plan; see `agent-followup:product-manager`.
+
+name: product-manager
+description: |
+  PLACEHOLDER - Disabled stub for the `prd` stage of the task-stage
+  manifest model. This file exists so `task_stages_registry.default_agent`
+  resolves to a real bundled row. The real agent must be authored in a
+  follow-up plan; see `agent-followup:product-manager` task for tracking.
+
+  When this YAML is replaced with a real agent, set `enabled: true`, fill in
+  `instructions`, and remove the PLACEHOLDER banners.
+
+version: "0.1"
+enabled: false
+priority: 1
+surfaces: [spawn]
+provider: claude
+model: haiku
+isolation: none
+
+instructions: |
+  PLACEHOLDER AGENT - PRD STAGE
+
+  You are a placeholder stub. The real `product-manager` agent has not been
+  implemented yet. If a dispatcher accidentally enabled this YAML and spawned
+  you, your job is to immediately escalate the task with a clear reason so
+  the operator can investigate.
+
+  Action: call escalate_task(task_id=<your task>, reason="placeholder_agent:product-manager:not_implemented")
+  and exit. Do not attempt to do PRD work.
