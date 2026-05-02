@@ -56,6 +56,7 @@ const TRANSPORT_BADGE_BG: Record<string, string> = {
   stdio: 'bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]',
   websocket: 'bg-[var(--color-agent-soft)] text-[var(--color-agent)]',
   sse: 'bg-[var(--color-error-soft)] text-[var(--color-error)]',
+  unknown: 'bg-[color-mix(in_srgb,var(--text-muted)_12%,transparent)] text-[var(--text-muted)]',
 }
 const BADGE_BASE_CLS = 'rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium uppercase tracking-[0.3px]'
 
@@ -271,7 +272,7 @@ export function McpPage() {
                   >
                     <span className={cn(HEALTH_DOT_CLS, HEALTH_DOT_BG[healthClass] ?? HEALTH_DOT_BG.unknown)} />
                     <span className={SERVER_NAME_CLS}>{server.name}</span>
-                    <span className={cn(BADGE_BASE_CLS, TRANSPORT_BADGE_BG[server.transport] ?? '')}>
+                    <span className={cn(BADGE_BASE_CLS, TRANSPORT_BADGE_BG[server.transport] ?? TRANSPORT_BADGE_BG.unknown)}>
                       {server.transport}
                     </span>
                     <span className={cn(STATE_BADGE_BASE_CLS, STATE_BADGE_BG[server.state] ?? STATE_BADGE_BG.unknown)}>

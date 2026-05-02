@@ -6,6 +6,7 @@ integration, and helper function construction.
 
 import json
 import logging
+import sqlite3
 from collections.abc import Callable
 from typing import Any
 
@@ -106,8 +107,10 @@ class TemplatingMixin:
                                 "path": proj.repo_path or project_info.get("path", ""),
                             }
                         )
-            except Exception as e:
-                logger.debug(f"Failed to resolve project info for template context: {e}")
+            except (OSError, sqlite3.Error) as e:
+                logger.warning("Storage failure resolving project info for template context: %s", e)
+            except (AttributeError, KeyError, TypeError, ValueError) as e:
+                logger.debug("Failed to resolve project info for template context: %s", e)
 
             if not project_info.get("path"):
                 cwd = event.cwd or event.data.get("cwd")

@@ -2,14 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import type { Channel, CommsMessage, MessageFilters } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
 import type { ChannelType } from '../../hooks/useIntegrations'
-import { FORM_CANCEL_CLS } from './styles'
+import { FILTER_SELECT_CLS, FORM_CANCEL_CLS, MESSAGE_FILTER_BAR_CLS } from './styles'
 import { cn } from '../../lib/utils'
 
 const CONTAINER_CLS = 'flex flex-1 flex-col overflow-hidden'
-
-const FILTER_BAR_CLS = 'flex gap-2 pb-3'
-const SELECT_CLS =
-  'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
 
 const LIST_CLS = 'flex-1 overflow-y-auto'
 const EMPTY_CLS = 'flex flex-1 items-center justify-center p-10 text-[length:var(--text-sm)] text-[var(--text-secondary)]'
@@ -91,9 +87,9 @@ export function MessageList({ channels, messages, filters, onFiltersChange, onFe
   return (
     <div className={CONTAINER_CLS}>
       {/* Filter bar */}
-      <div className={FILTER_BAR_CLS}>
+      <div className={MESSAGE_FILTER_BAR_CLS}>
         <select
-          className={SELECT_CLS}
+          className={FILTER_SELECT_CLS}
           value={filters.channelId || ''}
           onChange={e => handleFilterChange({ channelId: e.target.value || null })}
         >
@@ -103,7 +99,7 @@ export function MessageList({ channels, messages, filters, onFiltersChange, onFe
           ))}
         </select>
         <select
-          className={SELECT_CLS}
+          className={FILTER_SELECT_CLS}
           value={filters.direction || ''}
           onChange={e => handleFilterChange({ direction: (e.target.value || null) as MessageFilters['direction'] })}
         >

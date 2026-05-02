@@ -39,7 +39,7 @@ const ENTRIES_CLS = 'flex-1 overflow-y-auto py-1'
 const EMPTY_CLS =
   'p-8 text-center text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
 const ENTRY_CLS =
-  'flex w-full cursor-pointer items-center gap-[0.4rem] border-none border-b border-[var(--border)] bg-transparent px-3 py-[0.35rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+  'flex w-full cursor-pointer items-center gap-[0.4rem] border-0 border-b border-[var(--border)] bg-transparent px-3 py-[0.35rem] text-left font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 const ENTRY_FAILURE_CLS =
   'bg-[color-mix(in_srgb,var(--color-error)_4%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)]'
 const ENTRY_TIME_CLS =

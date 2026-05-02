@@ -342,6 +342,44 @@ class TestGenerateSessionSummaries:
         assert context["transcript_summary"].endswith("...")
 
     @pytest.mark.asyncio
+    async def test_invalid_provider_summary_returns_generic_error(self) -> None:
+        session = _make_session(
+            session_id="sess-invalid",
+            transcript_path="/tmp/transcript.jsonl",
+            digest_markdown="### Turn 1\nDigest source.",
+        )
+        handoff_ctx = MagicMock()
+        handoff_ctx.git_status = ""
+        session_manager = MagicMock()
+        session_manager.db = None
+        provider = AsyncMock()
+        provider.generate_summary.return_value = "Session summary generation failed: provider down"
+
+        with (
+            patch("gobby.sessions.summarize._resolve_provider", return_value=provider),
+            patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
+            patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+            patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+            patch(
+                "gobby.workflows.summary_actions._format_structured_context",
+                return_value="structured",
+            ),
+        ):
+            MockPromptLoader.return_value.load.return_value.content = "prompt"
+
+            full_markdown, full_error = await _generate_full_summary(
+                session=session,
+                turns=[],
+                handoff_ctx=handoff_ctx,
+                llm_service=None,
+                db=None,
+                session_manager=session_manager,
+            )
+
+        assert full_markdown is None
+        assert full_error == "Generated session summary was invalid"
+
+    @pytest.mark.asyncio
     async def test_provider_failure_string_is_not_persisted(self, tmp_path: Path) -> None:
         transcript_path = _write_transcript(tmp_path)
         sm = MagicMock()

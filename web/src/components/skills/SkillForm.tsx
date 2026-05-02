@@ -95,7 +95,15 @@ export function SkillForm({ skill, onSave, onCancel }: SkillFormProps) {
       <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
           <h3 className={HEADER_TITLE_CLS}>{skill ? 'Edit Skill' : 'New Skill'}</h3>
-          <button className={CLOSE_CLS} onClick={onCancel}>&times;</button>
+          <button
+            type="button"
+            className={CLOSE_CLS}
+            onClick={onCancel}
+            aria-label="Close skill form"
+            title="Close"
+          >
+            &times;
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className={BODY_CLS}>

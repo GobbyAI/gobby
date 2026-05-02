@@ -218,3 +218,54 @@ def test_schema_reference_table_does_not_false_positive(tmp_path: Path) -> None:
     )
 
     assert errors == []
+
+
+def test_line_anchored_file_refs_match_targets(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Update `src/app.py:10-12` for the new behavior.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py:10`.
+        """,
+    )
+
+    assert errors == []
+
+
+def test_wire_verbs_count_as_change_intent(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Wire `src/wiring.py` into the app startup path.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert any("src/wiring.py" in error for error in errors)
+
+
+def test_file_header_table_counts_as_work_table(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        | File | Change |
+        | --- | --- |
+        | src/app.py | parser |
+        | src/cli.py | command |
+
+        **Acceptance:**
+        - 1.1.1 - Parser exists. file: `src/app.py`.
+        """,
+    )
+
+    assert any("table-row-decomposition" in error for error in errors)

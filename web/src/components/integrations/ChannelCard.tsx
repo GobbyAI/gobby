@@ -1,7 +1,12 @@
 import type { Channel } from '../../hooks/useIntegrations'
 import { PlatformIcon } from './IntegrationsPage'
 import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
-import { TYPE_BADGE_CLS, STATUS_DOT_CLS } from './styles'
+import {
+  STATUS_DOT_ACTIVE_COLOR,
+  STATUS_DOT_CLS,
+  STATUS_DOT_INACTIVE_COLOR,
+  TYPE_BADGE_CLS,
+} from './styles'
 import { cn } from '../../lib/utils'
 
 const CARD_CLS =
@@ -55,7 +60,7 @@ export function ChannelCard({ channel, onSelect, onEdit, onToggleEnabled, onRemo
       <div className={CARD_STATUS_CLS}>
         <span
           className={STATUS_DOT_CLS}
-          style={{ background: channel.enabled ? '#22c55e' : 'var(--text-secondary)' }}
+          style={{ background: channel.enabled ? STATUS_DOT_ACTIVE_COLOR : STATUS_DOT_INACTIVE_COLOR }}
         />
         <span className={STATUS_TEXT_CLS}>
           {channel.enabled ? 'Enabled' : 'Disabled'}

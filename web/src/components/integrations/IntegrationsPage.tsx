@@ -7,7 +7,17 @@ import { CHANNEL_DISPLAY_NAMES } from './channelMetadata'
 import { ChannelDetail } from './ChannelDetail'
 import { ChannelForm } from './ChannelForm'
 import { MessageList } from './MessageList'
-import { EMPTY_CARD_CLS } from './styles'
+import {
+  EMPTY_CARD_CLS,
+  FILTER_BAR_CLS,
+  FILTER_CHIPS_CLS,
+  FILTER_CHIP_ACTIVE_CLS,
+  FILTER_CHIP_CLS,
+  LOADING_CLS,
+  TAB_ACTIVE_CLS,
+  TAB_CLS,
+  TABS_CLS,
+} from './styles'
 import { cn } from '../../lib/utils'
 
 const CHANNEL_TYPES: ChannelType[] = ['slack', 'telegram', 'discord', 'teams', 'email', 'sms', 'gobby_chat']
@@ -25,18 +35,6 @@ const SEARCH_CLS =
 const NEW_BTN_CLS =
   'cursor-pointer rounded-md border-0 bg-[var(--accent)] px-3 py-1.5 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 pointer-coarse:min-h-11'
 
-const TABS_CLS = 'mb-3 flex border-b border-[var(--border)]'
-const TAB_CLS =
-  'cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
-const TAB_ACTIVE_CLS = 'border-[var(--accent)] text-[var(--accent)]'
-
-const FILTER_BAR_CLS = 'pb-3'
-const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
-const FILTER_CHIP_CLS =
-  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11 pointer-coarse:px-3'
-const FILTER_CHIP_ACTIVE_CLS =
-  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)]'
-
 const CHANNEL_GRID_CLS =
   'grid flex-1 gap-3 overflow-y-auto pb-5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))] max-md:grid-cols-1'
 
@@ -48,8 +46,6 @@ const EMPTY_CARDS_CLS =
   'grid w-full max-w-[640px] gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(140px,1fr))] max-md:grid-cols-2'
 
 const CONTENT_CLS = 'flex flex-1 flex-col overflow-hidden'
-const LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:var(--text-sm)] text-[var(--text-secondary)]'
-
 export function IntegrationsPage() {
   const {
     channels,

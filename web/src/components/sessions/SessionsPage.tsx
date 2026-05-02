@@ -207,7 +207,7 @@ export function SessionsPage({
                               {session.model.split('-').slice(-1)[0]}
                             </span>
                           )}
-                          <span className={META_COUNT_CLS}>{session.message_count}msg</span>
+                          <span className={META_COUNT_CLS}>{session.message_count} msg</span>
                           <span className="session-pid">
                             {formatRelativeTime(session.updated_at)}
                           </span>

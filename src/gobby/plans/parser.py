@@ -120,6 +120,7 @@ class PlanDocument:
     source_hash: str
     sections: tuple[PlanSection, ...]
     framing_headings: tuple[tuple[int, str, int], ...]
+    source_lines: tuple[str, ...] = ()
     manifest_entries: tuple[ManifestEntry, ...] = ()
 
 
@@ -262,6 +263,7 @@ def parse_plan(
         source_hash=source_hash,
         sections=tuple(sections),
         framing_headings=tuple(framing_headings),
+        source_lines=tuple(lines),
         manifest_entries=manifest_entries,
     )
 

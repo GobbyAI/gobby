@@ -124,6 +124,9 @@ export function SessionViewer({ sessionId }: SessionViewerProps) {
   const statusColor = STATUS_COLORS[session.status] || 'var(--text-muted)'
   const sourceLabel = SOURCE_LABELS[session.source] || session.source
   const dur = duration(session.created_at, session.updated_at)
+  const previewMessages = messages.filter(m => m.content || m.tool_name)
+  const visibleMessages = previewMessages.slice(0, 8)
+  const hiddenMessageCount = previewMessages.length - visibleMessages.length
 
   return (
     <div className={ROOT_CLS}>
@@ -147,28 +150,25 @@ export function SessionViewer({ sessionId }: SessionViewerProps) {
         {showTranscript ? 'Hide transcript' : 'Show transcript preview'}
       </button>
 
-      {showTranscript && messages.length > 0 && (
+      {showTranscript && previewMessages.length > 0 && (
         <div className={TRANSCRIPT_CLS}>
-          {messages
-            .filter(m => m.content || m.tool_name)
-            .slice(0, 8)
-            .map((m, i) => (
-              <div
-                key={`${m.timestamp}-${i}`}
-                className={`${MSG_CLS} ${MSG_ROLE_COLOR[m.role] || ''}`}
-              >
-                <span className={MSG_ROLE_CLS}>
-                  {m.tool_name ? m.tool_name : m.role}
-                </span>
-                <span className={MSG_CONTENT_CLS}>
-                  {(m.content || '').slice(0, 200)}
-                  {(m.content || '').length > 200 ? '...' : ''}
-                </span>
-              </div>
-            ))}
-          {messages.length > 8 && (
+          {visibleMessages.map((m, i) => (
+            <div
+              key={`${m.timestamp}-${i}`}
+              className={`${MSG_CLS} ${MSG_ROLE_COLOR[m.role] || ''}`}
+            >
+              <span className={MSG_ROLE_CLS}>
+                {m.tool_name ? m.tool_name : m.role}
+              </span>
+              <span className={MSG_CONTENT_CLS}>
+                {(m.content || '').slice(0, 200)}
+                {(m.content || '').length > 200 ? '...' : ''}
+              </span>
+            </div>
+          ))}
+          {hiddenMessageCount > 0 && (
             <div className={MORE_CLS}>
-              + {messages.length - 8} more messages
+              + {hiddenMessageCount} more messages
             </div>
           )}
         </div>

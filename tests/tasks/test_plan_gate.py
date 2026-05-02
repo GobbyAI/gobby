@@ -8,6 +8,7 @@ artifact is recorded.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -272,3 +273,36 @@ def test_plan_adversary_spawn_excludes_test_consumers(tmp_path: Path) -> None:
     )
 
     assert result is None
+
+
+def test_draft_parse_failure_logs_and_skips_consumer_sweep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.plans.parser import PlanParseError
+
+    plan = _write_clean_plan(tmp_path / "clean.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+    monkeypatch.setattr(
+        "gobby.tasks.expansion._compile.validate_plan_file",
+        lambda *_args, **_kwargs: {"valid": True},
+    )
+    monkeypatch.setattr(
+        "gobby.plans.parser.parse_plan",
+        lambda path, **_kwargs: (_ for _ in ()).throw(
+            PlanParseError([(1, "bad draft")], Path(path))
+        ),
+    )
+
+    caplog.set_level(logging.WARNING)
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="planner",
+        task_id="t1",
+        task_manager=manager,
+        code_index=object(),
+    )
+
+    assert result is None
+    assert "draft plan parse failed" in caplog.text

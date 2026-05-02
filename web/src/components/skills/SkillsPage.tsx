@@ -252,7 +252,7 @@ export function SkillsPage() {
           <span className="workflows-toolbar-count">{stats?.total ?? 0}</span>
         </div>
         <div className="workflows-toolbar-right">
-          <div className={VIEW_TOGGLE_CLS} style={{ marginRight: activeTab === 'installed' ? '8px' : '0' }}>
+          <div className={cn(VIEW_TOGGLE_CLS, activeTab === 'installed' && 'mr-2')}>
             <button
               className={cn(VIEW_BTN_CLS, activeTab === 'installed' && VIEW_BTN_ACTIVE_CLS)}
               onClick={() => setActiveTab('installed')}
@@ -313,7 +313,10 @@ export function SkillsPage() {
                       <button
                         key={opt.value}
                         type="button"
-                        className={`workflows-filter-chip ${sourceFilter === opt.value ? 'workflows-filter-chip--active' : ''}`}
+                        className={cn(
+                          'workflows-filter-chip',
+                          sourceFilter === opt.value && 'workflows-filter-chip--active',
+                        )}
                         onClick={() => handleSourceFilter(opt.value)}
                       >
                         {opt.label}

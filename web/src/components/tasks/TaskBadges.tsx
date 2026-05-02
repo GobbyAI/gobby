@@ -180,4 +180,12 @@ export function BlockedIndicator({ count }: { count?: number }) {
 // Re-export color constants for use in other components
 // =============================================================================
 
-export { STATUS_COLORS, PRIORITY_STYLES, TYPE_STYLES, TASK_BADGE_CLS, TASK_BADGE_DOT_CLS, TASK_BADGE_DOT_STANDALONE_CLS };
+export {
+  STATUS_COLORS,
+  PRIORITY_STYLES,
+  TYPE_STYLES,
+  TASK_BADGE_BLOCKED_CLS,
+  TASK_BADGE_CLS,
+  TASK_BADGE_DOT_CLS,
+  TASK_BADGE_DOT_STANDALONE_CLS,
+};

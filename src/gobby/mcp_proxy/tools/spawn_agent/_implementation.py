@@ -60,7 +60,7 @@ def _transition_condition_met(condition: str | None, variables: dict[str, Any]) 
             },
         )
         return evaluator.evaluate(condition)
-    except Exception as exc:
+    except ValueError as exc:
         logger.warning("Failed to evaluate initial step transition %r: %s", condition, exc)
         return False
 

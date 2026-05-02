@@ -25,7 +25,8 @@ const ITEM_CONFIRMING_CLS =
 
 const HEADER_CLS = 'flex items-center gap-[0.3rem] text-[length:calc(var(--font-size-base)*0.65)]'
 const ICON_CLS = 'text-[length:calc(var(--font-size-base)*0.75)]'
-const PIN_BADGE_CLS = 'text-[length:calc(var(--font-size-base)*0.6)]'
+const PIN_BADGE_CLS =
+  'rounded-sm bg-[var(--color-warning-soft)] px-1 text-[length:calc(var(--font-size-base)*0.55)] font-semibold uppercase text-[var(--color-warning-foreground)]'
 const TYPE_CLS = 'font-[inherit] font-semibold capitalize text-[var(--text-secondary)]'
 const IMPORTANCE_CLS = 'ml-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.6)]'
 const DATE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.55)] text-[var(--text-muted)]'
@@ -82,12 +83,12 @@ function isPinned(mem: MemoryEntry): boolean {
 }
 
 const TYPE_ICONS: Record<string, string> = {
-  fact: 'ℹ',
-  pattern: '⚙',
-  preference: '★',
-  decision: '✔',
-  lesson: '✨',
-  insight: '\u{1F4A1}',
+  fact: 'i',
+  pattern: 'P',
+  preference: '*',
+  decision: 'D',
+  lesson: 'L',
+  insight: 'I',
 }
 
 interface TaskMemoriesProps {
@@ -138,6 +139,18 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
       return next
     })
   }, [])
+
+  const handleItemKeyDown = useCallback((
+    e: React.KeyboardEvent,
+    id: string,
+    disabled: boolean,
+  ) => {
+    if (disabled) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      toggle(id)
+    }
+  }, [toggle])
 
   const updateMemory = useCallback(async (memoryId: string, params: { content?: string; importance?: number }) => {
     setError(null)
@@ -219,33 +232,41 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
           return (
             <div
               key={mem.id}
+              role="button"
+              tabIndex={isEditing || isConfirming ? -1 : 0}
+              aria-expanded={isExpanded}
               className={cn(ITEM_CLS, pinned && ITEM_PINNED_CLS, isConfirming && ITEM_CONFIRMING_CLS)}
               onClick={() => { if (!isEditing && !isConfirming) toggle(mem.id) }}
+              onKeyDown={(e) => handleItemKeyDown(e, mem.id, isEditing || isConfirming)}
             >
               <div className={HEADER_CLS}>
                 <span className={ICON_CLS}>{icon}</span>
-                {pinned && <span className={PIN_BADGE_CLS} title="Pinned">{'\u{1F4CC}'}</span>}
+                {pinned && <span className={PIN_BADGE_CLS} title="Pinned">Pinned</span>}
                 <span className={TYPE_CLS}>{mem.memory_type}</span>
                 <span
                   className={IMPORTANCE_CLS}
                   style={{ color: importanceColor(mem.importance) }}
                   title={`Importance: ${(mem.importance * 100).toFixed(0)}%`}
                 >
-                  ● {(mem.importance * 100).toFixed(0)}%
+                  {(mem.importance * 100).toFixed(0)}%
                 </span>
                 <span className={DATE_CLS}>{formatDate(mem.created_at)}</span>
                 <div className={ACTIONS_CLS}>
                   <button
+                    type="button"
                     className={cn(ACTION_BTN_CLS, pinned && ACTION_BTN_ACTIVE_CLS)}
                     onClick={(e) => handlePin(e, mem)}
                     title={pinned ? 'Unpin' : 'Pin'}
+                    aria-label={pinned ? 'Unpin memory' : 'Pin memory'}
                   >
-                    {'\u{1F4CC}'}
+                    Pin
                   </button>
                   <button
+                    type="button"
                     className={ACTION_BTN_CLS}
                     onClick={(e) => startEdit(e, mem)}
                     title="Edit"
+                    aria-label="Edit memory"
                   >
                     ✎
                   </button>
@@ -265,12 +286,13 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
                       }
                       if (e.key === 'Escape') cancelEdit()
                     }}
+                    aria-label="Memory content"
                     rows={3}
                     autoFocus
                   />
                   <div className={EDIT_BUTTONS_CLS}>
-                    <button className={EDIT_SAVE_CLS} onClick={() => saveEdit(mem.id)}>Review</button>
-                    <button className={EDIT_CANCEL_CLS} onClick={cancelEdit}>Cancel</button>
+                    <button type="button" className={EDIT_SAVE_CLS} onClick={() => saveEdit(mem.id)}>Review</button>
+                    <button type="button" className={EDIT_CANCEL_CLS} onClick={cancelEdit}>Cancel</button>
                     <span className={EDIT_HINT_CLS}>{navigator.platform?.includes('Mac') ? 'Cmd' : 'Ctrl'}+Enter to review</span>
                   </div>
                 </div>
@@ -284,9 +306,9 @@ export function TaskMemories({ sessionId }: TaskMemoriesProps) {
                     </div>
                   )}
                   <div className={EDIT_BUTTONS_CLS}>
-                    <button className={EDIT_SAVE_CLS} onClick={() => confirmSave(mem.id)}>Confirm</button>
-                    <button className={EDIT_CANCEL_CLS} onClick={() => { setConfirmingId(null); setEditingId(mem.id) }}>Edit Again</button>
-                    <button className={EDIT_CANCEL_CLS} onClick={cancelEdit}>Discard</button>
+                    <button type="button" className={EDIT_SAVE_CLS} onClick={() => confirmSave(mem.id)}>Confirm</button>
+                    <button type="button" className={EDIT_CANCEL_CLS} onClick={() => { setConfirmingId(null); setEditingId(mem.id) }}>Edit Again</button>
+                    <button type="button" className={EDIT_CANCEL_CLS} onClick={cancelEdit}>Discard</button>
                   </div>
                 </div>
               ) : (

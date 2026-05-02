@@ -41,7 +41,7 @@ const INPUT_CLS =
   'rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent,var(--color-agent))] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent,var(--color-agent))_20%,transparent)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
 const TEXTAREA_CLS =
   'min-h-[60px] resize-y rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--accent,var(--color-agent))] focus:[box-shadow:0_0_0_2px_color-mix(in_srgb,var(--accent,var(--color-agent))_20%,transparent)]'
-const MONO_CLS = 'text-[length:var(--text-sm)]'
+const MONO_CLS = 'font-mono text-[length:var(--text-sm)]'
 
 const CHIPS_WRAP_CLS = 'flex flex-wrap items-center gap-1.5'
 const CHIP_CLS =

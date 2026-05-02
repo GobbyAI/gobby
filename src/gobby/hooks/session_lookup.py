@@ -8,7 +8,7 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.session_types import HookSessionManager
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from gobby.hooks.session_coordinator import SessionCoordinator
+    from gobby.storage.session_models import Session
     from gobby.storage.session_tasks import SessionTaskManager
 
 
@@ -101,7 +102,7 @@ class SessionLookupService:
     def _resolve_metadata_platform_session(
         self,
         event: HookEvent,
-    ) -> tuple[str | None, Any | None]:
+    ) -> tuple[str | None, Session | None]:
         """Return valid platform session metadata already supplied by hook ingress."""
         platform_session_id = event.metadata.get("_platform_session_id")
         if not isinstance(platform_session_id, str) or not platform_session_id:

@@ -4,6 +4,26 @@ export const TYPE_BADGE_CLS =
   'whitespace-nowrap rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium'
 
 export const STATUS_DOT_CLS = 'inline-block h-2 w-2 shrink-0 rounded-full'
+export const STATUS_DOT_ACTIVE_COLOR = 'var(--color-success-foreground)'
+export const STATUS_DOT_INACTIVE_COLOR = 'var(--text-secondary)'
+export const STATUS_DOT_ERROR_COLOR = 'var(--color-error)'
+
+export const TABS_CLS = 'mb-3 flex border-b border-[var(--border)]'
+export const TAB_CLS =
+  'cursor-pointer border-0 border-b-2 border-transparent bg-transparent px-4 py-2 text-[length:var(--text-sm)] font-medium text-[var(--text-secondary)] transition-colors duration-150 hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+export const TAB_ACTIVE_CLS = 'border-[var(--accent)] text-[var(--accent)]'
+
+export const FILTER_BAR_CLS = 'pb-3'
+export const FILTER_CHIPS_CLS = 'flex flex-wrap gap-1.5'
+export const FILTER_CHIP_CLS =
+  'cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1 text-[length:var(--text-2xs)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[rgba(255,255,255,0.05)] pointer-coarse:min-h-11 pointer-coarse:px-3'
+export const FILTER_CHIP_ACTIVE_CLS =
+  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)]'
+export const MESSAGE_FILTER_BAR_CLS = 'flex gap-2 pb-3'
+export const FILTER_SELECT_CLS =
+  'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] outline-none focus:border-[var(--accent)] pointer-coarse:min-h-11'
+export const LOADING_CLS =
+  'flex flex-1 items-center justify-center text-[length:var(--text-sm)] text-[var(--text-secondary)]'
 
 export const MODAL_OVERLAY_CLS =
   'fixed inset-0 z-[900] flex items-center justify-center bg-[var(--surface-scrim)]'

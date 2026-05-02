@@ -277,8 +277,7 @@ def test_destructive_file_intent_excludes_test_consumers(tmp_path: Path) -> None
             tmp_path,
             "Remove obsolete service code.",
             target_line=(
-                "Target: `src/service.py` "
-                "(DELETIONS ONLY - remove obsolete file-level surface)"
+                "Target: `src/service.py` (DELETIONS ONLY - remove obsolete file-level surface)"
             ),
         ),
         parse_mode="draft",
@@ -323,6 +322,49 @@ def test_depth_two_only_consumer_does_not_fail_v1(tmp_path: Path) -> None:
     storage = _Storage()
     storage.callers = {"sym-do-work": ()}
     plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(storage),
+    )
+
+    assert result.valid is True
+
+
+class _StorageWithoutStats:
+    pass
+
+
+def test_storage_without_supported_stats_api_skips(tmp_path: Path) -> None:
+    plan = parse_plan(_write_plan(tmp_path, "- `src/service.py`"), parse_mode="draft")
+
+    result = run_consumer_sweep(
+        plan,
+        project_id="project-1",
+        code_index=_CodeIndex(_StorageWithoutStats()),
+    )
+
+    assert result.valid is True
+    assert result.skipped is True
+    assert result.skip_reason == "project is not indexed"
+
+
+def test_repeated_target_path_does_not_bleed_destructive_annotation(
+    tmp_path: Path,
+) -> None:
+    storage = _Storage()
+    storage.file_consumers = {"src/helper.py": ("src/helper_consumer.py",)}
+    plan = parse_plan(
+        _write_file_plan(
+            tmp_path,
+            "Remove obsolete service code.",
+            target_line=(
+                "Targets: `src/service.py` `src/helper.py` `src/service.py` (DELETIONS ONLY)"
+            ),
+        ),
+        parse_mode="draft",
+    )
 
     result = run_consumer_sweep(
         plan,

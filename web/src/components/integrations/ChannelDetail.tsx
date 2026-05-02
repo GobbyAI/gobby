@@ -5,6 +5,9 @@ import { CHANNEL_DISPLAY_NAMES, PLATFORM_COLORS } from './channelMetadata'
 import {
   TYPE_BADGE_CLS,
   STATUS_DOT_CLS,
+  STATUS_DOT_ACTIVE_COLOR,
+  STATUS_DOT_ERROR_COLOR,
+  STATUS_DOT_INACTIVE_COLOR,
   MODAL_CLOSE_CLS,
   FORM_CHANGE_BTN_CLS,
   FORM_CANCEL_CLS,
@@ -143,7 +146,7 @@ export function ChannelDetail({
               <span>
                 <span
                   className={STATUS_DOT_CLS}
-                  style={{ background: status.active ? '#22c55e' : '#ef4444' }}
+                  style={{ background: status.active ? STATUS_DOT_ACTIVE_COLOR : STATUS_DOT_ERROR_COLOR }}
                 />
                 {' '}{status.active ? 'Active' : 'Inactive'}
               </span>
@@ -170,7 +173,7 @@ export function ChannelDetail({
               <span>
                 <span
                   className={STATUS_DOT_CLS}
-                  style={{ background: channel.enabled ? '#22c55e' : 'var(--text-secondary)' }}
+                  style={{ background: channel.enabled ? STATUS_DOT_ACTIVE_COLOR : STATUS_DOT_INACTIVE_COLOR }}
                 />
                 {' '}{channel.enabled ? 'Yes' : 'No'}
               </span>

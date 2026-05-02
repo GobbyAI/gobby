@@ -48,7 +48,7 @@ const GRID_LINE_CLS = '[stroke:var(--border)] [stroke-width:0.5]'
 const GRID_LINE_TODAY_CLS = '[stroke:var(--color-info)] [stroke-width:1.5]'
 const HEADER_BG_CLS = '[fill:var(--bg-secondary)]'
 const TODAY_BG_CLS = '[fill:color-mix(in_srgb,var(--color-info)_4%,transparent)]'
-const ROW_STRIPE_CLS = '[fill:rgba(255,255,255,0.02)]'
+const ROW_STRIPE_CLS = '[fill:color-mix(in_srgb,var(--bg-secondary)_45%,transparent)]'
 
 function daysBetween(a: Date, b: Date): number {
   return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))

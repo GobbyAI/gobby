@@ -4,6 +4,7 @@ import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatDateTime } from '../workflows/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun } from '../../hooks/useCronJobs'
+import { cronRunStatusKind } from './cronRunStatus'
 
 interface CronTabProps {
   projectId?: string | null
@@ -218,13 +219,14 @@ function CronStatusDot({ enabled }: { enabled: boolean }) {
 }
 
 function RunStatusGlyph({ status }: { status: string }) {
-  if (status === 'success' || status === 'completed') {
+  const kind = cronRunStatusKind(status)
+  if (kind === 'success') {
     return <span className="text-success-foreground text-xs shrink-0">{'✓'}</span>
   }
-  if (status === 'failed' || status === 'error') {
+  if (kind === 'failure') {
     return <span className="text-error text-xs shrink-0">{'✗'}</span>
   }
-  if (status === 'running') {
+  if (kind === 'running') {
     return <span className="pipeline-running-dot" />
   }
   return <span className="text-muted-foreground text-xs shrink-0">{'○'}</span>

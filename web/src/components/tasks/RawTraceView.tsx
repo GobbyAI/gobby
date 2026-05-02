@@ -55,7 +55,7 @@ const COPY_BTN_CLS =
 const JSON_CLS =
   'm-0 max-h-80 overflow-x-auto overflow-y-auto whitespace-pre rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2 py-[0.4rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] leading-[1.5] text-[var(--text-secondary)]'
 const JSON_STRING_CLS = 'text-[var(--color-info)]'
-const JSON_NUMBER_CLS = 'text-[var(--color-info)]'
+const JSON_NUMBER_CLS = 'text-[var(--color-warning-foreground)]'
 const JSON_KEYWORD_CLS = 'text-[var(--color-error)]'
 const SEARCH_HIT_CLS =
   'rounded-sm bg-[color-mix(in_srgb,var(--color-warning-foreground)_30%,transparent)] px-px text-[var(--color-warning-foreground)]'

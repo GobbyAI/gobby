@@ -85,7 +85,7 @@ async def generate_session_summaries(
     digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
     transcript_path = getattr(session, "transcript_path", None)
     path = Path(transcript_path) if transcript_path else None
-    source = getattr(session, "source", "claude") or "claude"
+    source = getattr(session, "source", None) or "claude"
     turns: list[dict[str, Any]] = []
 
     if not digest_markdown:
@@ -378,6 +378,7 @@ async def _generate_full_summary(
         )
 
         digest_markdown = _summary_source_text(getattr(session, "digest_markdown", None))
+        source = getattr(session, "source", None) or "claude"
         first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
         if digest_markdown:
             transcript_summary = _truncate_markdown(
@@ -388,15 +389,15 @@ async def _generate_full_summary(
         else:
             # Get transcript parser — use the right one for this session's source
             parser: Any
-            if getattr(session, "source", None) == "gemini":
+            if source == "gemini":
                 from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
                 parser = GeminiTranscriptParser()
-            elif getattr(session, "source", None) == "codex":
+            elif source == "codex":
                 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 
                 parser = CodexTranscriptParser()
-            elif getattr(session, "source", None) == "droid":
+            elif source == "droid":
                 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 
                 parser = DroidTranscriptParser(
@@ -445,12 +446,14 @@ async def _generate_full_summary(
             "recent_digest_turns": recent_digest_turns,
             "external_id": session.id[:12],
             "session_id": session.id,
-            "session_source": session.source,
+            "session_source": source,
         }
 
         full_markdown = await provider.generate_summary(context, prompt_template=prompt_template)
         if not is_summary_markdown_valid(full_markdown):
-            return None, full_markdown or "Empty session summary"
+            if full_markdown and full_markdown.strip():
+                return None, "Generated session summary was invalid"
+            return None, "Generated session summary was empty"
         return full_markdown, None
 
     except Exception as e:

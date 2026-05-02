@@ -17,13 +17,50 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+
+def _find_repo_root(start: Path) -> Path:
+    for path in (start, *start.parents):
+        if (path / "pyproject.toml").is_file():
+            return path
+    raise RuntimeError(f"Could not find repo root from {start}")
+
+
+REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 
 
 def _bundled_agent_body(name: str) -> AgentDefinitionBody:
     data = yaml.safe_load((AGENTS_DIR / f"{name}.yaml").read_text())
     return AgentDefinitionBody.model_validate(data)
+
+
+def test_initial_transition_condition_value_error_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _implementation
+
+    monkeypatch.setattr(
+        _implementation.SafeExpressionEvaluator,
+        "evaluate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad condition")),
+    )
+
+    assert _implementation._transition_condition_met("bad()", {}) is False
+
+
+def test_initial_transition_condition_unexpected_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent import _implementation
+
+    monkeypatch.setattr(
+        _implementation.SafeExpressionEvaluator,
+        "evaluate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _implementation._transition_condition_met("boom()", {})
 
 
 class TestSpawnAgentPipelineInjection:

@@ -108,6 +108,26 @@ describe('TracesTab', () => {
     expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
   })
 
+  it('resets pagination when the status filter changes', async () => {
+    tracesMock.traces = Array.from({ length: 25 }, (_, i) =>
+      makeTrace({
+        trace_id: `ok-${i}`,
+        root_span_name: `ok-span-${i}`,
+        status: 'OK',
+        timestamp: new Date(2026, 0, 25 - i).toISOString(),
+      }),
+    )
+    render(<TracesTab projectId="p" />)
+
+    await userEvent.click(screen.getByRole('button', { name: /load more/i }))
+    expect(screen.getByText('ok-span-20')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'OK' }))
+
+    expect(screen.queryByText('ok-span-20')).toBeNull()
+    expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument()
+  })
+
   it('renders the spans list inside the detail pane when a trace is selected', () => {
     const trace = makeTrace({ trace_id: 'sel', root_span_name: 'selected-trace' })
     tracesMock.traces = [trace]

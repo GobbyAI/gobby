@@ -1,4 +1,5 @@
 import { RISK_DEFS, type RiskLevel } from './riskUtils'
+import { cn } from '../../lib/utils'
 
 const BADGE_CLS =
   'inline-flex items-center gap-[0.2rem] rounded-[0.2rem] border px-[0.35rem] py-[0.1rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] font-semibold leading-none'
@@ -19,7 +20,7 @@ export function RiskBadge({ level, compact }: RiskBadgeProps) {
 
   return (
     <span
-      className={compact ? `${BADGE_CLS} ${BADGE_COMPACT_CLS}` : BADGE_CLS}
+      className={cn(BADGE_CLS, compact && BADGE_COMPACT_CLS)}
       style={{ color: def.color, background: def.bg, borderColor: def.color }}
       title={`${def.label} risk`}
     >

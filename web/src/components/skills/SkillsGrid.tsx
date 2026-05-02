@@ -83,7 +83,7 @@ function SkillCard({ skill, projectId, onSelect, onToggle, onEdit, onDelete, onE
 
   return (
     <div
-      className={`workflows-card${isDeleted ? ' workflows-card--deleted' : ''}`}
+      className={cn('workflows-card', isDeleted && 'workflows-card--deleted')}
       onClick={onSelect}
     >
       <div className="workflows-card-header">

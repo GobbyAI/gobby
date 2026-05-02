@@ -3,6 +3,10 @@ import { cn } from '../../lib/utils'
 
 type HandoffTarget = 'agent' | 'human'
 
+const AGENT_ICON = '\u2699'
+const HUMAN_ICON = '\u{1F464}'
+const CLOSE_ICON = '\u2715'
+
 interface HandoffContext {
   target: HandoffTarget
   assignee: string
@@ -142,14 +146,14 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
           onClick={() => { setTarget('agent'); setIsOpen(true) }}
           title="Transfer this task to an agent"
         >
-          {'⚙'} Hand to Agent
+          {AGENT_ICON} Hand to Agent
         </button>
         <button
           className={cn(TRIGGER_CLS, TRIGGER_HUMAN_CLS)}
           onClick={() => { setTarget('human'); setIsOpen(true) }}
           title="Transfer this task to a human"
         >
-          {'\u{1F464}'} Hand to Human
+          {HUMAN_ICON} Hand to Human
         </button>
       </div>
     )
@@ -167,7 +171,7 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
           aria-label="Close handoff form"
           type="button"
         >
-          {'✕'}
+          {CLOSE_ICON}
         </button>
       </div>
 
@@ -176,13 +180,13 @@ export function TaskHandoff({ taskId, currentAssignee, onHandoff }: TaskHandoffP
           className={cn(TARGET_BTN_CLS, target === 'agent' && TARGET_BTN_ACTIVE_CLS)}
           onClick={() => setTarget('agent')}
         >
-          {'⚙'} Agent
+          {AGENT_ICON} Agent
         </button>
         <button
           className={cn(TARGET_BTN_CLS, target === 'human' && TARGET_BTN_ACTIVE_CLS)}
           onClick={() => setTarget('human')}
         >
-          {'\u{1F464}'} Human
+          {HUMAN_ICON} Human
         </button>
       </div>
 

@@ -71,7 +71,15 @@ def validate_plan_for_agent_spawn(
         project_id = _task_project_id(task)
         try:
             plan_doc = parse_plan(plan_path, parse_mode="draft")
-        except (OSError, PlanParseError):
+        except (OSError, PlanParseError) as exc:
+            logger.warning(
+                "Skipping consumer sweep for %s spawn on task %s because draft plan parse "
+                "failed for %s: %s",
+                agent_name,
+                task_id,
+                plan_path,
+                exc,
+            )
             return None
         sweep = run_consumer_sweep(
             plan_doc,

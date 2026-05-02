@@ -69,6 +69,14 @@ describe("SessionsFilterDropdown", () => {
     expect([...next.providers]).toEqual(["claude", "gemini"]);
   });
 
+  it("toggling a default Provider uses the sorted provider option order", () => {
+    const { onChange } = renderDropdown({ providerOptions: ["gemini", "claude", "codex"] });
+    fireEvent.click(screen.getByLabelText("codex"));
+
+    const next: SessionsFilters = onChange.mock.calls[0][0];
+    expect([...next.providers]).toEqual(["claude", "gemini"]);
+  });
+
   it("typing a session ref bound emits onChange with the parsed integer", () => {
     const { onChange } = renderDropdown();
     fireEvent.change(screen.getByLabelText("Session ref minimum", { selector: "input" })!, {

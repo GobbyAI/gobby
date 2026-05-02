@@ -14,6 +14,7 @@ pytestmark = pytest.mark.unit
 def test_sentinel_summaries_are_cleared(
     session_manager: SessionManager,
     sample_project: dict,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     migration = importlib.import_module("gobby.storage.migrations.clear_session_summary_sentinels")
 
@@ -49,6 +50,16 @@ def test_sentinel_summaries_are_cleared(
         ("# Normal Summary\n\nWork completed.", normal.id),
     )
 
+    update_calls: list[tuple[str, tuple[object, ...] | None]] = []
+    original_execute = session_manager.db.execute
+
+    def capture_execute(sql: str, params: tuple[object, ...] | None = None) -> object:
+        if "UPDATE sessions" in sql:
+            update_calls.append((sql, params))
+        return original_execute(sql, params)
+
+    monkeypatch.setattr(session_manager.db, "execute", capture_execute)
+
     migration.up(session_manager.db)
 
     rows = {
@@ -61,3 +72,5 @@ def test_sentinel_summaries_are_cleared(
     assert rows[failed.id] is None
     assert rows[unavailable.id] is None
     assert rows[normal.id] == "# Normal Summary\n\nWork completed."
+    assert len(update_calls) == 1
+    assert update_calls[0][1] == (failed.id, unavailable.id)

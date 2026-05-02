@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { SegmentedControl } from "../ui/SegmentedControl";
 import {
@@ -78,8 +78,12 @@ export function SessionsFilterDropdown({
 }: SessionsFilterDropdownProps) {
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
   const panelRef = useRef<HTMLDivElement>(null);
-  const sortedProviderOptions = [...providerOptions].sort((left, right) =>
-    left.localeCompare(right, undefined, { sensitivity: "base" }),
+  const sortedProviderOptions = useMemo(
+    () =>
+      [...providerOptions].sort((left, right) =>
+        left.localeCompare(right, undefined, { sensitivity: "base" }),
+      ),
+    [providerOptions],
   );
 
   // Escape closes the dropdown — small a11y improvement over the Tasks-tab

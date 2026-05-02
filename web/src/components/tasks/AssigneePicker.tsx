@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { formatAssigneeDisplay, getBaseUrl, shortId, agentIcon } from './assigneeUtils'
+import {
+  agentIcon,
+  formatAssigneeDisplay,
+  getBaseUrl,
+  inferAssigneeType,
+  shortId,
+  type KnownAgent,
+} from './assigneeUtils'
 import { cn } from '../../lib/utils'
 
 const ROOT_CLS = 'relative'
@@ -24,12 +31,6 @@ const OPTION_ID_CLS = 'font-[inherit] text-[length:var(--text-2xs)] text-[var(--
 const CUSTOM_ROW_CLS = 'flex gap-1 px-2 py-1'
 const CUSTOM_INPUT_CLS = 'flex-1 rounded-sm border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-[3px] font-[inherit] text-[length:var(--text-xs)] text-[var(--text-primary)] pointer-coarse:min-h-11'
 const CUSTOM_BTN_CLS = 'cursor-pointer rounded-sm border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[var(--color-info-soft)] px-2 py-[3px] font-[inherit] text-[length:var(--text-xs)] text-[var(--color-info)] disabled:cursor-default disabled:opacity-40 pointer-coarse:min-h-11'
-
-interface KnownAgent {
-  id: string
-  label: string
-  type: 'agent' | 'human' | 'session'
-}
 
 type OwnershipMode = 'single' | 'joint'
 
@@ -127,10 +128,12 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
   const displayAssignee = currentAssignee
     ? formatAssigneeDisplay(currentAssignee, currentAgentName)
     : 'Unassigned'
+  const currentAssigneeType = inferAssigneeType(currentAssignee, currentAgentName)
 
   return (
     <div className={ROOT_CLS} ref={dropdownRef}>
       <button
+        type="button"
         className={TRIGGER_CLS}
         onClick={() => setIsOpen(!isOpen)}
         aria-haspopup="listbox"
@@ -138,7 +141,7 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
         aria-controls={isOpen ? 'assignee-picker-dropdown' : undefined}
       >
         <span className={ICON_CLS}>
-          {currentAssignee ? agentIcon(currentAgentName ? 'agent' : 'session') : '○'}
+          {currentAssignee ? agentIcon(currentAssigneeType) : '○'}
         </span>
         <span className={VALUE_CLS}>{displayAssignee}</span>
         <span className={CHEVRON_CLS}>{isOpen ? '▾' : '▸'}</span>
@@ -148,12 +151,14 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
         <div className={DROPDOWN_CLS} id="assignee-picker-dropdown" role="listbox">
           <div className={MODE_CLS}>
             <button
+              type="button"
               className={cn(MODE_BTN_CLS, mode === 'single' && MODE_BTN_ACTIVE_CLS)}
               onClick={() => setMode('single')}
             >
               Single
             </button>
             <button
+              type="button"
               className={cn(MODE_BTN_CLS, mode === 'joint' && MODE_BTN_ACTIVE_CLS)}
               onClick={() => setMode('joint')}
             >
@@ -172,6 +177,9 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
           )}
 
           <button
+            type="button"
+            role="option"
+            aria-selected={!currentAssignee}
             className={cn(OPTION_CLS, !currentAssignee && OPTION_ACTIVE_CLS)}
             onClick={() => handleSelect(null)}
           >
@@ -182,6 +190,9 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
           {agents.map(agent => (
             <button
               key={agent.id}
+              type="button"
+              role="option"
+              aria-selected={currentAssignee?.split('+')[0] === agent.id}
               className={cn(OPTION_CLS, currentAssignee?.split('+')[0] === agent.id && OPTION_ACTIVE_CLS)}
               onClick={() => handleSelect(agent)}
             >
@@ -192,6 +203,9 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
           ))}
 
           <button
+            type="button"
+            role="option"
+            aria-selected={showCustom}
             className={cn(OPTION_CLS, showCustom && OPTION_ACTIVE_CLS)}
             onClick={() => setShowCustom(!showCustom)}
           >
@@ -210,6 +224,7 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
                 autoFocus
               />
               <button
+                type="button"
                 className={CUSTOM_BTN_CLS}
                 onClick={handleCustomSubmit}
                 disabled={!customValue.trim()}

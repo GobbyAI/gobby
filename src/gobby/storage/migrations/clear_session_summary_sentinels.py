@@ -22,17 +22,22 @@ def up(db: LocalDatabase) -> None:
         WHERE summary_markdown IS NOT NULL
         """
     )
-    for row in rows:
-        if is_summary_failure_sentinel(row["summary_markdown"]):
-            db.execute(
-                """
-                UPDATE sessions
-                SET summary_markdown = NULL,
-                    updated_at = datetime('now')
-                WHERE id = ?
-                """,
-                (row["id"],),
-            )
+    sentinel_ids = [
+        row["id"] for row in rows if is_summary_failure_sentinel(row["summary_markdown"])
+    ]
+    if not sentinel_ids:
+        return
+
+    placeholders = ", ".join("?" for _ in sentinel_ids)
+    db.execute(
+        f"""
+        UPDATE sessions
+        SET summary_markdown = NULL,
+            updated_at = datetime('now')
+        WHERE id IN ({placeholders})
+        """,
+        tuple(sentinel_ids),
+    )
 
 
 def down(db: LocalDatabase) -> None:

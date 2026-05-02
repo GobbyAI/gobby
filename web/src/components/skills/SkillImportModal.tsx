@@ -62,7 +62,15 @@ export function SkillImportModal({ onImport, onClose }: SkillImportModalProps) {
       <div className={MODAL_CLS} onClick={e => e.stopPropagation()}>
         <div className={HEADER_CLS}>
           <h3 className={HEADER_TITLE_CLS}>Import Skill</h3>
-          <button className={CLOSE_CLS} onClick={onClose}>&times;</button>
+          <button
+            type="button"
+            className={CLOSE_CLS}
+            onClick={onClose}
+            aria-label="Close import modal"
+            title="Close"
+          >
+            &times;
+          </button>
         </div>
 
         <div className={BODY_CLS}>

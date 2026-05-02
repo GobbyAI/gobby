@@ -38,7 +38,7 @@ const METADATA_PANEL_CLS = 'px-6 py-4'
 const METADATA_TOGGLE_CLS =
   'flex cursor-pointer select-none list-none items-center gap-1.5 py-1.5 text-[length:var(--text-base)] font-semibold uppercase tracking-[0.03em] text-[var(--text-secondary)] [&::-webkit-details-marker]:hidden'
 const METADATA_CHEVRON_CLS =
-  'shrink-0 transition-transform duration-150 [details:not([open])>summary>&]:-rotate-90'
+  'shrink-0 -rotate-90 transition-transform duration-150 group-open:rotate-0'
 const METADATA_CONTENT_CLS = 'py-2'
 
 const GENERATE_BTN_CLS =
@@ -205,7 +205,7 @@ export function SessionDetail({
       </div>
 
       <div className={METADATA_PANEL_CLS}>
-        <details open className="mb-3">
+        <details open className="group mb-3">
           <summary className={METADATA_TOGGLE_CLS}>
             <ChevronIcon /> Summary
             {!session.summary_markdown && !isGeneratingSummary && (

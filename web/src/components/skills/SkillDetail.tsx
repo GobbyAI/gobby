@@ -66,7 +66,15 @@ export function SkillDetail({ skill, onClose, onEdit, onExport, onScan }: SkillD
     <div className={DETAIL_CLS}>
       <div className={HEADER_CLS}>
         <h3 className={TITLE_CLS}>{skill.name}</h3>
-        <button className={CLOSE_CLS} onClick={onClose} title="Close">&times;</button>
+        <button
+          type="button"
+          className={CLOSE_CLS}
+          onClick={onClose}
+          title="Close"
+          aria-label="Close skill details"
+        >
+          &times;
+        </button>
       </div>
 
       <div className={META_CLS}>

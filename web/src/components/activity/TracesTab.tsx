@@ -53,6 +53,11 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
     [filteredTraces, selectedTraceId],
   )
 
+  function handleStatusFilterChange(nextStatusFilter: StatusFilter): void {
+    setStatusFilter(nextStatusFilter)
+    setDisplayLimitState({ filter: nextStatusFilter, limit: PAGE_SIZE })
+  }
+
   if (isLoading && traces.length === 0) {
     return (
       <div className="activity-tab-empty">
@@ -66,7 +71,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
         <SegmentedControl<StatusFilter>
           value={statusFilter}
-          onChange={setStatusFilter}
+          onChange={handleStatusFilterChange}
           options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
           ariaLabel="Trace status filter"
         />

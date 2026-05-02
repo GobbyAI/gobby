@@ -16,4 +16,4 @@ export const FORM_CANCEL_BTN_CLS =
   'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-1.5 text-[length:var(--text-base)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
 
 export const FORM_SAVE_BTN_CLS =
-  'cursor-pointer rounded border-0 bg-[var(--accent)] px-3.5 py-1.5 text-[length:var(--text-base)] font-medium text-[var(--bg-primary)] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+  'cursor-pointer rounded border-0 bg-[var(--accent)] px-3.5 py-1.5 text-[length:var(--text-base)] font-medium text-[var(--accent-foreground)] hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'

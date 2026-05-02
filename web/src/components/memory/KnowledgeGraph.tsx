@@ -8,7 +8,8 @@ import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from 
 
 const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const EMPTY_CLS = 'flex h-full min-h-[300px] flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
-const INFO_CLS = 'absolute left-2 top-2 z-10 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)]'
+const OVERLAY_STACK_CLS = 'absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5'
+const INFO_CLS = 'rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 text-[length:var(--text-xs)] text-[var(--text-muted)]'
 const LEGEND_CLS = 'absolute bottom-2 left-2 z-10 flex items-center gap-2.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[length:var(--text-xs)] text-[var(--text-muted)]'
 const CONTROLS_CLS = 'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-[3px]'
 const CTRL_BTN_CLS = 'flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[length:var(--text-base)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
@@ -483,20 +484,15 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         {...(IS_MOBILE ? { rendererConfig: { antialias: false, powerPreference: 'low-power' as const } } : {})}
       />
 
-      {/* Expanding indicator */}
-      {expandingNode && (
-        <div className={cn(INFO_CLS, 'top-9 text-[var(--accent)]')}>
-          Expanding {expandingNode}...
+      <div className={OVERLAY_STACK_CLS}>
+        <div className={INFO_CLS}>
+          {forceData.nodes.length} entities &middot; {forceData.links.length} relationships
         </div>
-      )}
-
-      {/* Info overlay (top-left) */}
-      <div className={INFO_CLS}>
-        {forceData.nodes.length} entities &middot; {forceData.links.length} relationships
-      </div>
-
-      {/* Search overlay */}
-      <div className="absolute left-2 top-9 z-10">
+        {expandingNode && (
+          <div className={cn(INFO_CLS, 'text-[var(--accent)]')}>
+            Expanding {expandingNode}...
+          </div>
+        )}
         <input
           type="text"
           placeholder="Filter entities..."

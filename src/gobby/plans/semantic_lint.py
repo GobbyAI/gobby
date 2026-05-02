@@ -24,7 +24,8 @@ _ARTIFACT_REF_RE = re.compile(
     re.IGNORECASE,
 )
 _BODY_PATH_INTENT_RE = re.compile(
-    r"\b(add|create|delete|edit|extract|implement|modify|move|refactor|remove|rename|replace|split|touch|update)\b",
+    r"\b(add|create|delete|edit|expose|extract|implement|modify|move|refactor|register|"
+    r"remove|rename|replace|split|touch|update|wire)\b",
     re.IGNORECASE,
 )
 _TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
@@ -40,6 +41,21 @@ _WORK_TABLE_HEADERS = frozenset(
         "deliverable",
         "deliverables",
         "implementation",
+        "area",
+        "component",
+        "components",
+        "file",
+        "files",
+        "module",
+        "modules",
+        "notes",
+        "owner",
+        "scope",
+        "status",
+        "step",
+        "steps",
+        "target",
+        "targets",
     }
 )
 _KNOWN_FILE_SUFFIXES = frozenset(
@@ -174,7 +190,10 @@ def section_body_lines(
     skip_fenced: bool = True,
 ) -> list[str]:
     """Return source lines for a section body, excluding the heading and kind marker."""
-    lines = plan_doc.source_path.read_text(encoding="utf-8").splitlines()
+    if plan_doc.source_lines:
+        lines = list(plan_doc.source_lines)
+    else:
+        lines = plan_doc.source_path.read_text(encoding="utf-8").splitlines()
     start_line, end_line = section.source_span
     raw_lines = lines[start_line:end_line]
     body_lines: list[str] = []
@@ -214,6 +233,7 @@ def normalize_file_path(value: str) -> str | None:
     """Normalize a prose artifact ref to a comparable file path."""
     candidate = value.strip().strip("`'").strip('"')
     candidate = candidate.rstrip(".,;:)")
+    candidate = re.sub(r":\d+(?:-\d+)?$", "", candidate)
     if not candidate or "://" in candidate or " " in candidate:
         return None
     if candidate.startswith("#"):

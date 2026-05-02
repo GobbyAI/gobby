@@ -260,7 +260,7 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
   task: GobbyTask
   onSelect: (id: string) => void
   isSelected?: boolean
-  onToggleSelect?: (id: string, e: React.MouseEvent) => void
+  onToggleSelect?: (id: string) => void
 }) {
   return (
     <tr className={ROW_CLS} onClick={() => onSelect(task.id)}>
@@ -270,8 +270,8 @@ function TaskRow({ task, onSelect, isSelected, onToggleSelect }: {
             type="checkbox"
             className={SELECT_CHECKBOX_CLS}
             checked={isSelected || false}
-            onChange={() => {}}
-            onClick={e => { e.stopPropagation(); onToggleSelect(task.id, e as unknown as React.MouseEvent) }}
+            onChange={e => { e.stopPropagation(); onToggleSelect(task.id) }}
+            onClick={e => e.stopPropagation()}
           />
         ) : (
           <StatusDot task={task} />
@@ -343,7 +343,7 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
   const [subtreeRootId, setSubtreeRootId] = useState<string | null>(null)
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
 
-  const toggleTaskSelection = useCallback((taskId: string, _event?: React.MouseEvent) => {
+  const toggleTaskSelection = useCallback((taskId: string) => {
     setSelectedTaskIds(prev => {
       const next = new Set(prev)
       if (next.has(taskId)) next.delete(taskId)

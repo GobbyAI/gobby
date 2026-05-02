@@ -14,6 +14,10 @@ import { TaskComments } from './TaskComments'
 import { PermissionOverrides } from './PermissionOverrides'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { cn } from '../../lib/utils'
+import {
+  TASK_MODAL_BACKDROP_BASE_CLS,
+  TASK_MODAL_CLOSE_BTN_CLS,
+} from './taskModalStyles'
 
 interface TaskActions {
   claimTask: (id: string, sessionId: string, force?: boolean) => Promise<GobbyTaskDetail | null>
@@ -41,7 +45,7 @@ interface TaskDetailProps {
   onClose: () => void
 }
 
-const BACKDROP_CLS = 'fixed inset-0 z-[90] bg-[var(--surface-scrim)]'
+const BACKDROP_CLS = cn(TASK_MODAL_BACKDROP_BASE_CLS, 'z-[90]')
 const PANEL_CLS =
   'fixed right-0 top-0 z-[100] flex h-full w-[420px] max-w-[90vw] translate-x-full flex-col overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-secondary)] transition-transform duration-[250ms] ease-in-out'
 const PANEL_OPEN_CLS = 'translate-x-0'
@@ -50,8 +54,6 @@ const LOADING_CLS = 'flex flex-1 items-center justify-center text-[length:calc(v
 const HEADER_CLS = 'border-b border-[var(--border)] px-5 py-4'
 const HEADER_TOP_CLS = 'mb-2 flex items-center justify-between'
 const REF_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]'
-const CLOSE_BTN_CLS =
-  'flex h-8 w-8 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 const PARENT_LINK_CLS =
   'mb-[0.3rem] inline-block cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--accent)] hover:underline'
 const TITLE_CLS = 'mb-[0.6rem] text-[length:calc(var(--font-size-base)*1.05)] font-semibold leading-[1.4]'
@@ -196,7 +198,7 @@ export function TaskDetail({ taskId, getTask, getDependencies, getSubtasks, acti
             <div className={HEADER_CLS}>
               <div className={HEADER_TOP_CLS}>
                 <span className={REF_CLS}>{task.ref}</span>
-                <button className={CLOSE_BTN_CLS} onClick={onClose} title="Close">
+                <button className={TASK_MODAL_CLOSE_BTN_CLS} onClick={onClose} title="Close">
                   <CloseIcon />
                 </button>
               </div>

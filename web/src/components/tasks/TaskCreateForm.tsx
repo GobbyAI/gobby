@@ -1,5 +1,11 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { GobbyTask } from '../../hooks/useTasks'
+import { cn } from '../../lib/utils'
+import {
+  TASK_MODAL_BACKDROP_BASE_CLS,
+  TASK_MODAL_CLOSE_BTN_CLS,
+  TASK_MODAL_HEADER_CLS,
+} from './taskModalStyles'
 
 export interface TaskCreateDefaults {
   taskType?: string
@@ -39,13 +45,10 @@ const PRIORITY_OPTIONS = [
   { value: 4, label: 'Backlog' },
 ]
 
-const BACKDROP_CLS = 'fixed inset-0 z-[200] bg-[var(--surface-scrim)]'
+const BACKDROP_CLS = cn(TASK_MODAL_BACKDROP_BASE_CLS, 'z-[200]')
 const MODAL_CLS =
   'fixed left-1/2 top-1/2 z-[210] max-h-[85vh] w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
-const HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-5 py-4'
 const TITLE_CLS = 'text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
-const CLOSE_BTN_CLS =
-  'flex h-8 w-8 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
 const FORM_CLS = 'flex flex-col gap-3 px-5 py-4'
 const FIELD_CLS = 'flex flex-col gap-1'
@@ -136,9 +139,9 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
     <>
       <div className={BACKDROP_CLS} onClick={handleClose} />
       <div className={MODAL_CLS}>
-        <div className={HEADER_CLS}>
+        <div className={TASK_MODAL_HEADER_CLS}>
           <h3 className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</h3>
-          <button className={CLOSE_BTN_CLS} onClick={handleClose} title="Close">
+          <button className={TASK_MODAL_CLOSE_BTN_CLS} onClick={handleClose} title="Close">
             <CloseIcon />
           </button>
         </div>

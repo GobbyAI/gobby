@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { cn } from '../../lib/utils'
 
 interface SessionUsage {
   sessionId: string
@@ -6,25 +7,25 @@ interface SessionUsage {
   outputTokens: number
 }
 
-const ROOT_CLS = 'flex flex-col gap-[0.4rem]'
-const STATE_TEXT_CLS = 'text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const ROOT_CLS = 'flex flex-col gap-1.5'
+const STATE_TEXT_CLS = 'text-xs text-muted-foreground'
 
-const TOTAL_CLS = 'flex items-baseline gap-[0.4rem]'
-const TOTAL_VALUE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*1.1)] font-bold text-[var(--text-primary)]'
-const TOTAL_LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
+const TOTAL_CLS = 'flex items-baseline gap-1.5'
+const TOTAL_VALUE_CLS = 'text-lg font-bold text-foreground'
+const TOTAL_LABEL_CLS = 'text-2xs text-muted-foreground'
 
-const BAR_CONTAINER_CLS = 'py-[0.1rem]'
-const BAR_CLS = 'flex h-1.5 overflow-hidden rounded-[3px] bg-[var(--bg-tertiary)]'
-const BAR_INPUT_CLS = 'rounded-l-[3px] bg-[var(--accent)]'
-const BAR_OUTPUT_CLS = 'rounded-r-[3px] bg-[var(--color-agent)]'
+const BAR_CONTAINER_CLS = 'py-0.5'
+const BAR_CLS = 'flex h-1.5 overflow-hidden rounded bg-muted'
+const BAR_INPUT_CLS = 'rounded-l bg-accent'
+const BAR_OUTPUT_CLS = 'rounded-r bg-agent'
 
-const STATS_CLS = 'flex gap-[0.8rem]'
+const STATS_CLS = 'flex gap-3'
 const STAT_CLS = 'flex items-center gap-1'
 const STAT_DOT_CLS = 'h-1.5 w-1.5 shrink-0 rounded-full'
-const STAT_DOT_INPUT_CLS = 'bg-[var(--accent)]'
-const STAT_DOT_OUTPUT_CLS = 'bg-[var(--color-agent)]'
-const STAT_LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)]'
-const STAT_VALUE_CLS = 'font-[inherit] text-[length:calc(var(--font-size-base)*0.65)] font-semibold text-[var(--text-secondary)]'
+const STAT_DOT_INPUT_CLS = 'bg-accent'
+const STAT_DOT_OUTPUT_CLS = 'bg-agent'
+const STAT_LABEL_CLS = 'text-2xs text-muted-foreground'
+const STAT_VALUE_CLS = 'text-xs font-semibold text-muted-foreground'
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
@@ -116,12 +117,12 @@ export function TokenTracker({ sessionId }: TokenTrackerProps) {
 
       <div className={STATS_CLS}>
         <div className={STAT_CLS}>
-          <span className={`${STAT_DOT_CLS} ${STAT_DOT_INPUT_CLS}`} />
+          <span className={cn(STAT_DOT_CLS, STAT_DOT_INPUT_CLS)} />
           <span className={STAT_LABEL_CLS}>Input</span>
           <span className={STAT_VALUE_CLS}>{formatTokens(usage.inputTokens)}</span>
         </div>
         <div className={STAT_CLS}>
-          <span className={`${STAT_DOT_CLS} ${STAT_DOT_OUTPUT_CLS}`} />
+          <span className={cn(STAT_DOT_CLS, STAT_DOT_OUTPUT_CLS)} />
           <span className={STAT_LABEL_CLS}>Output</span>
           <span className={STAT_VALUE_CLS}>{formatTokens(usage.outputTokens)}</span>
         </div>

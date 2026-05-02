@@ -587,9 +587,9 @@
   gap: 0.75rem;
   margin-bottom: 0.5rem;
   flex-wrap: wrap;
-  /* Align right edge with the textarea's right edge below — offsets the
-     primary button (2.25rem) plus the input row gap (0.5rem) on the right. */
-  padding-right: 2.75rem;
+  /* Align right edge with the textarea after accounting for the primary
+     send/stop button width and input row gap. */
+  padding-right: 3.25rem;
 }
 
 .chat-input-toolbar__left,

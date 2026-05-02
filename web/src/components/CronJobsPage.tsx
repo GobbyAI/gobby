@@ -3,9 +3,11 @@ import { useCronJobs } from '../hooks/useCronJobs'
 import type { CronJob, CronRun, CreateCronJobRequest, UpdateCronJobRequest } from '../hooks/useCronJobs'
 import { SidebarPanel } from './shared/SidebarPanel'
 import { cn } from '../lib/utils'
+import { cronRunStatusKind, type CronRunStatusKind } from './activity/cronRunStatus'
 
 type ScheduleType = CronJob['schedule_type']
 type ActionType = CronJob['action_type']
+type ActionConfig = Record<string, unknown>
 
 interface JobFormValues {
   name: string
@@ -98,11 +100,11 @@ const RUNS_OUTPUT_CLS = 'max-w-[200px] overflow-hidden text-ellipsis whitespace-
 
 const RUN_STATUS_CLS =
   'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[length:var(--text-xs)] font-medium'
-const RUN_STATUS_BG: Record<string, string> = {
-  completed:
+const RUN_STATUS_BG: Record<CronRunStatusKind, string> = {
+  success:
     'bg-[color-mix(in_srgb,var(--color-success-foreground)_15%,transparent)] text-[var(--color-success-foreground)]',
   running: 'bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] text-[var(--color-info)]',
-  failed: 'bg-[color-mix(in_srgb,var(--color-error)_15%,transparent)] text-[var(--color-error)]',
+  failure: 'bg-[color-mix(in_srgb,var(--color-error)_15%,transparent)] text-[var(--color-error)]',
   pending:
     'bg-[color-mix(in_srgb,var(--color-warning-foreground)_15%,transparent)] text-[var(--color-warning-foreground)]',
 }
@@ -203,16 +205,22 @@ function jobToFormValues(job: CronJob): JobFormValues {
   }
 }
 
-function parseActionConfig(actionConfigStr: string): Record<string, unknown> {
+function parseActionConfig(actionConfigStr: string): ActionConfig | null {
   try {
-    return JSON.parse(actionConfigStr) as Record<string, unknown>
+    const parsed = JSON.parse(actionConfigStr)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as ActionConfig
+    }
+    return null
   } catch {
-    throw new Error('Invalid actionConfig JSON')
+    return null
   }
 }
 
-function formValuesToCreateRequest(v: JobFormValues): CreateCronJobRequest {
-  const actionConfig = parseActionConfig(v.actionConfigStr)
+function formValuesToCreateRequest(
+  v: JobFormValues,
+  actionConfig: ActionConfig,
+): CreateCronJobRequest {
   const req: CreateCronJobRequest = {
     name: v.name.trim(),
     action_type: v.actionType,
@@ -226,8 +234,10 @@ function formValuesToCreateRequest(v: JobFormValues): CreateCronJobRequest {
   return req
 }
 
-function formValuesToUpdateRequest(v: JobFormValues): UpdateCronJobRequest {
-  const actionConfig = parseActionConfig(v.actionConfigStr)
+function formValuesToUpdateRequest(
+  v: JobFormValues,
+  actionConfig: ActionConfig,
+): UpdateCronJobRequest {
   const req: UpdateCronJobRequest = {
     name: v.name.trim(),
     description: v.description.trim() || undefined,
@@ -245,23 +255,27 @@ interface JobFormProps {
   initialValues?: JobFormValues
   submitLabel: string
   isSubmitting?: boolean
-  onSubmit: (values: JobFormValues) => void | Promise<void>
+  onSubmit: (values: JobFormValues, actionConfig: ActionConfig) => void | Promise<void>
   onCancel: () => void
 }
 
 function JobForm({ initialValues, submitLabel, isSubmitting, onSubmit, onCancel }: JobFormProps) {
   const [values, setValues] = useState<JobFormValues>(initialValues || DEFAULT_FORM_VALUES)
+  const parsedActionConfig = useMemo(
+    () => parseActionConfig(values.actionConfigStr),
+    [values.actionConfigStr],
+  )
 
   const isFormValid = useMemo(() => {
     if (!values.name.trim()) return false
-    try { JSON.parse(values.actionConfigStr) } catch { return false }
+    if (!parsedActionConfig) return false
     if (values.scheduleType === 'cron' && !values.cronExpr.trim()) return false
     if (values.scheduleType === 'interval') {
       const parsed = parseInt(values.intervalSeconds, 10)
       if (isNaN(parsed) || parsed < 10) return false
     }
     return true
-  }, [values])
+  }, [values, parsedActionConfig])
 
   const update = <K extends keyof JobFormValues>(key: K, value: JobFormValues[K]) => {
     setValues(prev => ({ ...prev, [key]: value }))
@@ -276,8 +290,8 @@ function JobForm({ initialValues, submitLabel, isSubmitting, onSubmit, onCancel 
   }
 
   const handleSubmit = () => {
-    if (!isFormValid || isSubmitting) return
-    onSubmit(values)
+    if (!isFormValid || isSubmitting || !parsedActionConfig) return
+    onSubmit(values, parsedActionConfig)
   }
 
   return (
@@ -425,7 +439,7 @@ function RunHistoryTable({ runs, isLoading }: { runs: CronRun[]; isLoading: bool
                 {formatRelativeTime(run.triggered_at)}
               </td>
               <td className={RUNS_TD_CLS} data-label="Status">
-                <span className={cn(RUN_STATUS_CLS, RUN_STATUS_BG[run.status] ?? '')}>
+                <span className={cn(RUN_STATUS_CLS, RUN_STATUS_BG[cronRunStatusKind(run.status)])}>
                   {run.status}
                 </span>
               </td>
@@ -573,10 +587,10 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
     }
   }, [])
 
-  const handleCreate = useCallback(async (values: JobFormValues) => {
+  const handleCreate = useCallback(async (values: JobFormValues, actionConfig: ActionConfig) => {
     setIsSubmittingCreate(true)
     try {
-      const req = formValuesToCreateRequest(values)
+      const req = formValuesToCreateRequest(values, actionConfig)
       const job = await createJob(req)
       if (job) {
         setShowCreateDialog(false)
@@ -593,11 +607,11 @@ export function CronJobsPage({ projectId }: { projectId?: string | null }) {
     }
   }, [createJob, selectJob, showToast])
 
-  const handleEditSave = useCallback(async (values: JobFormValues) => {
+  const handleEditSave = useCallback(async (values: JobFormValues, actionConfig: ActionConfig) => {
     if (!editingJob) return
     setIsSubmittingEdit(true)
     try {
-      const req = formValuesToUpdateRequest(values)
+      const req = formValuesToUpdateRequest(values, actionConfig)
       const updated = await updateJob(editingJob.id, req)
       if (updated) {
         setEditingJob(null)

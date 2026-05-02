@@ -250,9 +250,8 @@ def _destructive_target_paths(line: str) -> set[str]:
 def _path_occurrences(line: str) -> list[tuple[str, int, int]]:
     occurrences: list[tuple[str, int, int]] = []
     for path in find_file_paths_in_text(line):
-        start = line.find(path)
-        if start >= 0:
-            occurrences.append((path, start, start + len(path)))
+        for match in re.finditer(re.escape(path), line):
+            occurrences.append((path, match.start(), match.end()))
     return sorted(occurrences, key=lambda item: item[1])
 
 
@@ -372,7 +371,7 @@ def _project_is_indexed(storage: Any, project_id: str) -> bool:
     count_files = getattr(storage, "count_files", None)
     if callable(count_files):
         return bool(count_files(project_id))
-    return True
+    return False
 
 
 def _row_paths(rows: Any) -> set[str]:

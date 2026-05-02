@@ -136,8 +136,13 @@ def validate_plan_command(plan_file: Path, project_ref: str | None, include_test
         raise click.ClickException("Plan validation failed")
 
     click.echo(f"Plan: {result['path']}")
-    click.echo(f"Phases: {result['phase_count']}")
-    for phase_num, title in result["phases"].items():
+    phases = result.get("phases")
+    phase_items = phases.items() if isinstance(phases, dict) else ()
+    phase_count = result.get("phase_count", len(phases) if isinstance(phases, dict) else 0)
+    click.echo(f"Phases: {phase_count}")
+    if not isinstance(phases, dict):
+        click.echo("  No phase metadata available")
+    for phase_num, title in phase_items:
         click.echo(f"  {phase_num}: {title}")
 
     sweep = result.get("consumer_sweep")
@@ -213,12 +218,19 @@ def _validate_plan_for_cli(
         code_index = _CliCodeIndexContext(CodeIndexStorage(db))
 
     try:
-        sweep = run_consumer_sweep(
-            plan_doc,
-            project_id=project_id,
-            code_index=code_index,
-            include_tests=include_tests,
-        )
+        try:
+            sweep = run_consumer_sweep(
+                plan_doc,
+                project_id=project_id,
+                code_index=code_index,
+                include_tests=include_tests,
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            return {
+                **result,
+                "valid": False,
+                "errors": [*result.get("errors", []), f"Consumer sweep failed: {exc}"],
+            }
     finally:
         if db is not None:
             db.close()

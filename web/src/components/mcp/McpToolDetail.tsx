@@ -16,7 +16,7 @@ const DETAIL_HEADER_TITLE_CLS = 'm-0 break-all text-[length:var(--font-size-base
 const DETAIL_CLOSE_CLS =
   'shrink-0 cursor-pointer border-0 bg-transparent px-2 py-1 text-[length:var(--text-2xl)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
-const LOADING_CLS = 'flex items-center justify-center p-10 text-[length:var(--text-base)] text-[var(--text-secondary)]'
+const STATUS_MESSAGE_CLS = 'flex items-center justify-center p-10 text-[length:var(--text-base)] text-[var(--text-secondary)]'
 
 const DETAIL_GRID_CLS =
   'mb-5 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[length:var(--text-sm)]'
@@ -102,7 +102,7 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
             </div>
 
             {isLoading ? (
-              <div className={LOADING_CLS}>Loading schema...</div>
+              <div className={STATUS_MESSAGE_CLS}>Loading schema...</div>
             ) : schema ? (
               <>
                 <div className={DETAIL_GRID_CLS}>
@@ -147,7 +147,7 @@ export function McpToolDetail({ serverName, toolName, schema, isLoading, onClose
                 </div>
               </>
             ) : (
-              <div className={LOADING_CLS}>Failed to load schema</div>
+              <div className={STATUS_MESSAGE_CLS}>Failed to load schema</div>
             )}
           </div>
         )}

@@ -309,10 +309,7 @@ export const SessionsTab = memo(function SessionsTab({
     () =>
       providerCatalog
         .filter((p) => p.available)
-        .map((p) => p.provider)
-        .sort((left, right) =>
-          left.localeCompare(right, undefined, { sensitivity: "base" }),
-        ),
+        .map((p) => p.provider),
     [providerCatalog],
   );
 

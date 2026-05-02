@@ -219,3 +219,43 @@ def test_validate_command_excludes_test_consumers_by_default(
     assert result.exit_code == 0
     assert "Consumer sweep: passed" in result.output
     assert "tests/test_api.py" not in result.output
+
+
+def test_validate_command_handles_missing_phase_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    monkeypatch.setattr(
+        plans_module,
+        "_validate_plan_for_cli",
+        lambda *_args, **_kwargs: {
+            "valid": True,
+            "path": str(plan),
+            "consumer_sweep": {"valid": True, "skipped": True, "skip_reason": "missing project_id"},
+        },
+    )
+
+    result = CliRunner().invoke(plans, ["validate", str(plan)])
+
+    assert result.exit_code == 0
+    assert "Phases: 0" in result.output
+    assert "No phase metadata available" in result.output
+
+
+def test_validate_cli_reports_consumer_sweep_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _write_contract_plan(tmp_path)
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: _FakeCodeIndexStorage())
+    monkeypatch.setattr(
+        plans_module,
+        "run_consumer_sweep",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("index unavailable")),
+    )
+
+    result = plans_module._validate_plan_for_cli(plan, "gobby", include_tests=False)
+
+    assert result["valid"] is False
+    assert result["errors"] == ["Consumer sweep failed: index unavailable"]
