@@ -28,6 +28,7 @@ from gobby.servers.routes.rules import create_rules_router
 from gobby.servers.routes.sessions import create_sessions_router
 from gobby.servers.routes.skills import create_skills_router
 from gobby.servers.routes.source_control import create_source_control_router
+from gobby.servers.routes.stages import create_stages_router
 from gobby.servers.routes.tasks import create_tasks_router
 from gobby.servers.routes.traces import create_traces_router
 from gobby.servers.routes.voice import create_voice_router
@@ -55,6 +56,7 @@ __all__ = [
     "create_sessions_router",
     "create_skills_router",
     "create_source_control_router",
+    "create_stages_router",
     "create_tasks_router",
     "create_traces_router",
     "create_voice_router",

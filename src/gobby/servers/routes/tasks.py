@@ -9,6 +9,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from gobby.storage.task_dependencies import (
@@ -16,6 +17,12 @@ from gobby.storage.task_dependencies import (
     TaskDependencyManager,
 )
 from gobby.storage.tasks._models import VALID_CATEGORIES, TaskNotFoundError
+from gobby.storage.tasks._stage_states import (
+    IllegalManifestMutationError,
+    IllegalStageTransitionError,
+    StageManifestSpec,
+    StageState,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -162,6 +169,62 @@ class DependencyAddRequest(BaseModel):
     )
 
 
+class StagePatchRequest(BaseModel):
+    """Request body for mutating a task stage row."""
+
+    action: Literal[
+        "start",
+        "submit_for_review",
+        "approve_review",
+        "reject_review",
+        "complete",
+        "fail",
+        "add",
+        "remove",
+    ]
+    notes: str | None = None
+    reason: str | None = None
+    needs_human: bool = False
+    commit_sha: str | None = None
+    artifact_updates: dict[str, str] | None = None
+    validation_override_reason: str | None = None
+    position: int | None = None
+
+
+class StageStateView(BaseModel):
+    """HTTP projection for a task stage row."""
+
+    task_id: str
+    stage_name: str
+    position: int
+    state: Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
+    review_policy: Literal["none", "required", "optional"]
+    reviewer_agent: str | None
+    entered_at: str | None
+    entered_by_session_id: str | None
+    completed_at: str | None
+    completed_by_session_id: str | None
+    completed_commit_sha: str | None
+    work_attempt_count: int
+    review_round_count: int
+    max_work_attempts: int | None
+    max_review_rounds: int | None
+    artifact_refs: dict[str, str] | None
+    notes: str | None
+    updated_at: str
+
+
+class TaskStagesResponse(BaseModel):
+    task_id: str
+    stages: list[StageStateView]
+
+
+class TaskStageResponse(BaseModel):
+    task_id: str
+    stage: StageStateView | None = None
+    stages: list[StageStateView] | None = None
+
+
 # =============================================================================
 # Router
 # =============================================================================
@@ -207,6 +270,68 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             return session_ref
         return str(server.session_manager.resolve_session_reference(session_ref, project_id))
 
+    def _stage_view(stage: StageState) -> dict[str, Any]:
+        return {
+            "task_id": stage.task_id,
+            "stage_name": stage.stage_name,
+            "position": stage.position,
+            "state": stage.state,
+            "review_policy": stage.review_policy,
+            "reviewer_agent": stage.reviewer_agent,
+            "entered_at": stage.entered_at,
+            "entered_by_session_id": stage.entered_by_session_id,
+            "completed_at": stage.completed_at,
+            "completed_by_session_id": stage.completed_by_session_id,
+            "completed_commit_sha": stage.completed_commit_sha,
+            "work_attempt_count": stage.work_attempt_count,
+            "review_round_count": stage.review_round_count,
+            "max_work_attempts": stage.max_work_attempts,
+            "max_review_rounds": stage.max_review_rounds,
+            "artifact_refs": stage.artifact_refs,
+            "notes": stage.notes,
+            "updated_at": stage.updated_at,
+        }
+
+    def _stage_views_for_tasks(task_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        if not task_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in task_ids)
+        rows = server.task_manager.db.fetchall(
+            f"""
+            SELECT *
+              FROM task_stage_states
+             WHERE task_id IN ({placeholders})
+             ORDER BY task_id, position, stage_name
+            """,  # nosec B608 - placeholders are generated from task_ids length only.
+            tuple(task_ids),
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
+        for row in rows:
+            stage = server.task_manager.stage_states._state_from_row(row)
+            grouped.setdefault(stage.task_id, []).append(_stage_view(stage))
+        return grouped
+
+    def _transition_error_payload(error: IllegalStageTransitionError) -> dict[str, Any]:
+        return {
+            "error": "illegal_stage_transition",
+            "stage_name": error.stage_name,
+            "current_state": error.current_state,
+            "attempted_transition": error.attempted_transition,
+            "review_policy": error.review_policy,
+        }
+
+    def _mutation_error_payload(error: IllegalManifestMutationError) -> dict[str, Any]:
+        return {
+            "error": "illegal_manifest_mutation",
+            "task_id": error.task_id,
+            "target_stage_name": error.target_stage_name,
+            "target_position": error.target_position,
+            "current_stage_name": error.current_stage_name,
+            "current_stage_state": error.current_stage_state,
+            "mutation": error.mutation,
+            "reason": error.reason,
+        }
+
     # -----------------------------------------------------------------
     # List / Stats
     # -----------------------------------------------------------------
@@ -234,10 +359,24 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
             description="Sort order: hierarchy, updated_at, created_at, or priority",
         ),
         sort_order: str = Query("asc", description="Sort direction: asc or desc"),
+        stage: str | None = Query(None, description="Filter by stage name"),
+        stage_state: (
+            Literal["ready", "in_progress", "needs_review", "review_approved", "done"] | None
+        ) = Query(None, description="Filter by stage state"),
+        include_stages: bool = Query(False, description="Include denormalized stage manifest"),
     ) -> dict[str, Any]:
         """List tasks with optional filters and status distribution stats."""
         try:
             resolved_project = _resolve_project(project_id)
+            stage_task_ids: set[str] | None = None
+            if stage is not None:
+                stage_task_ids = set(
+                    server.task_manager.stage_states.list_tasks_at_stage(
+                        stage_name=stage,
+                        state=stage_state,
+                        project_id=resolved_project,
+                    )
+                )
 
             # Parse comma-separated status values
             status_filter: str | list[str] | None = None
@@ -258,20 +397,145 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 label=label,
                 parent_task_id=parent_task_id,
                 title_like=search,
-                limit=limit,
-                offset=offset,
+                limit=10000 if stage_task_ids is not None else limit,
+                offset=0 if stage_task_ids is not None else offset,
                 sort_by=sort_by,
                 sort_order=sort_order,
             )
+            if stage_task_ids is not None:
+                tasks = [task for task in tasks if task.id in stage_task_ids]
+                total = len(tasks)
+                tasks = tasks[offset : offset + limit]
+            else:
+                total = server.task_manager.count_tasks(project_id=resolved_project)
+
+            task_dicts = [t.to_brief() for t in tasks]
+            if include_stages or stage is not None or stage_state is not None:
+                stages_by_task = _stage_views_for_tasks([task.id for task in tasks])
+                for item in task_dicts:
+                    item["stages"] = stages_by_task.get(item["id"], [])
+
             status_counts = server.task_manager.count_by_status(project_id=resolved_project)
-            total = server.task_manager.count_tasks(project_id=resolved_project)
             return {
-                "tasks": [t.to_brief() for t in tasks],
+                "tasks": task_dicts,
                 "total": total,
                 "stats": status_counts,
                 "limit": limit,
                 "offset": offset,
             }
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/{task_id}/stages", response_model=TaskStagesResponse)
+    async def get_task_stages(task_id: str) -> dict[str, Any]:
+        """Get the denormalized stage manifest for a task."""
+        try:
+            task = _resolve_task(task_id)
+            return {
+                "task_id": task.id,
+                "stages": [
+                    _stage_view(row)
+                    for row in server.task_manager.stage_states.list_for_task(task.id)
+                ],
+            }
+        except (ValueError, TaskNotFoundError) as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @router.patch("/{task_id}/stages/{stage_name}", response_model=TaskStageResponse)
+    async def patch_task_stage(
+        task_id: str,
+        stage_name: str,
+        request_data: StagePatchRequest,
+    ) -> Any:
+        """Apply a stage transition or structural manifest mutation."""
+        try:
+            task = _resolve_task(task_id)
+            manager = server.task_manager.stage_states
+            if request_data.action == "start":
+                stage_row = manager.start_stage(
+                    task.id, stage_name, by_session_id=None, notes=request_data.notes
+                )
+                event = "stage_changed"
+            elif request_data.action == "submit_for_review":
+                stage_row = manager.submit_for_review(
+                    task.id, stage_name, by_session_id=None, notes=request_data.notes
+                )
+                event = "stage_changed"
+            elif request_data.action == "approve_review":
+                stage_row = manager.approve_review(
+                    task.id, stage_name, by_session_id=None, notes=request_data.notes
+                )
+                event = "stage_changed"
+            elif request_data.action == "reject_review":
+                if request_data.reason is None:
+                    raise ValueError("reason is required for reject_review")
+                stage_row = manager.reject_review(
+                    task.id,
+                    stage_name,
+                    reason=request_data.reason,
+                    by_session_id=None,
+                    notes=request_data.notes,
+                )
+                event = "stage_changed"
+            elif request_data.action == "complete":
+                stage_row = manager.complete_stage(
+                    task.id,
+                    stage_name,
+                    by_session_id=None,
+                    commit_sha=request_data.commit_sha,
+                    artifact_updates=request_data.artifact_updates,
+                    validation_override_reason=request_data.validation_override_reason,
+                )
+                event = "stage_changed"
+            elif request_data.action == "fail":
+                if request_data.reason is None:
+                    raise ValueError("reason is required for fail")
+                stage_row = manager.fail_stage(
+                    task.id,
+                    stage_name,
+                    reason=request_data.reason,
+                    needs_human=request_data.needs_human,
+                    by_session_id=None,
+                )
+                event = "stage_changed"
+            elif request_data.action == "add":
+                if request_data.position is None:
+                    raise ValueError("position is required for add")
+                stage_row = manager.add_stage(
+                    task.id,
+                    StageManifestSpec(stage_name=stage_name, position=request_data.position),
+                    by_session_id=None,
+                )
+                event = "stage_manifest_changed"
+            else:
+                manager.remove_stage(task.id, stage_name, by_session_id=None)
+                stage_row = None
+                event = "stage_manifest_changed"
+
+            response = {
+                "task_id": task.id,
+                "stage": _stage_view(stage_row) if stage_row else None,
+                "stages": [
+                    _stage_view(row)
+                    for row in server.task_manager.stage_states.list_for_task(task.id)
+                ],
+            }
+            await _broadcast_task(
+                event,
+                {
+                    "id": task.id,
+                    "stage_name": stage_name,
+                    "state": stage_row.state if stage_row else None,
+                    "stages": response["stages"],
+                },
+            )
+            return response
+        except IllegalStageTransitionError as e:
+            return JSONResponse(status_code=422, content=_transition_error_payload(e))
+        except IllegalManifestMutationError as e:
+            return JSONResponse(status_code=422, content=_mutation_error_payload(e))
+        except TaskNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
