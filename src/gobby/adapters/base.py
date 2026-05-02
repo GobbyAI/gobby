@@ -119,6 +119,17 @@ class BaseAdapter(ABC):
 
     source: SessionSource
 
+    def _copy_platform_session_metadata(
+        self,
+        native_event: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Copy HTTP hook ingress platform session metadata into HookEvent metadata."""
+        platform_session_id = native_event.get("_platform_session_id")
+        if isinstance(platform_session_id, str) and platform_session_id:
+            metadata["_platform_session_id"] = platform_session_id
+        return metadata
+
     @abstractmethod
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent | None:
         """Convert native CLI event to unified HookEvent.

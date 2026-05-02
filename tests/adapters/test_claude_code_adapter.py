@@ -123,6 +123,23 @@ class TestTranslateToHookEvent:
         assert event.timestamp is not None
         assert event.metadata == {}
 
+    def test_top_level_platform_session_id_copied_to_metadata(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        native = {
+            "hook_type": "pre-tool-use",
+            "_platform_session_id": "platform-session-123",
+            "input_data": {
+                "session_id": "claude-external-456",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/project/.gobby/plans/task.md"},
+            },
+        }
+
+        event = adapter.translate_to_hook_event(native)
+
+        assert event.session_id == "claude-external-456"
+        assert event.metadata["_platform_session_id"] == "platform-session-123"
+
     def test_pre_tool_use(self) -> None:
         adapter = ClaudeCodeAdapter()
         native = {

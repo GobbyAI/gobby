@@ -71,26 +71,48 @@ class TemplatingMixin:
             "source": event.source.value if event.source else None,
         }
 
-        # Safely inject project context if not in variables
-        if "project" not in variables:
-            project_info = {"name": "Unknown", "id": "unknown", "path": ""}
-            try:
-                session_id = event.metadata.get("_platform_session_id")
-                if session_id:
-                    from gobby.storage.projects import LocalProjectManager
-                    from gobby.storage.sessions import SessionManager
+        project_from_vars = variables.get("project")
+        if isinstance(project_from_vars, dict) and project_from_vars.get("path"):
+            ctx["project"] = project_from_vars
+        else:
+            project_info = (
+                dict(project_from_vars)
+                if isinstance(project_from_vars, dict)
+                else {"name": "Unknown", "id": "unknown", "path": ""}
+            )
+            project_info.setdefault("name", "Unknown")
+            project_info.setdefault("id", "unknown")
+            project_info.setdefault("path", "")
 
+            try:
+                from gobby.storage.projects import LocalProjectManager
+                from gobby.storage.sessions import SessionManager
+
+                project_manager = LocalProjectManager(self.db)
+                project_id = event.project_id
+                session_id = event.metadata.get("_platform_session_id")
+                if isinstance(session_id, str) and session_id:
                     session_db = SessionManager(self.db).get(session_id)
                     if session_db and session_db.project_id:
-                        proj = LocalProjectManager(self.db).get(session_db.project_id)
-                        if proj:
-                            project_info = {
+                        project_id = session_db.project_id
+
+                if project_id:
+                    proj = project_manager.get(project_id)
+                    if proj:
+                        project_info.update(
+                            {
                                 "name": proj.name,
                                 "id": proj.id,
-                                "path": proj.repo_path or "",
+                                "path": proj.repo_path or project_info.get("path", ""),
                             }
+                        )
             except Exception as e:
                 logger.debug(f"Failed to resolve project info for template context: {e}")
+
+            if not project_info.get("path"):
+                cwd = event.cwd or event.data.get("cwd")
+                if cwd:
+                    project_info["path"] = cwd
             ctx["project"] = project_info
 
         # Flatten variables at top level for convenience

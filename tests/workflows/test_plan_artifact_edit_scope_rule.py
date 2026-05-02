@@ -8,6 +8,8 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.database import LocalDatabase
 from gobby.storage.migrations import run_migrations
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
@@ -49,14 +51,14 @@ def _sync_bundled(db: LocalDatabase) -> RuleDefinitionBody:
     return RuleDefinitionBody.model_validate_json(row.definition_json)
 
 
-def _make_write_event(file_path: str) -> HookEvent:
+def _make_write_event(file_path: str, metadata: dict[str, object] | None = None) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id="test-session",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={"tool_name": "Write", "tool_input": {"file_path": file_path}},
-        metadata={},
+        metadata=metadata or {},
     )
 
 
@@ -66,8 +68,9 @@ def _evaluate_when(
     *,
     file_path: str,
     variables: dict[str, object],
+    metadata: dict[str, object] | None = None,
 ) -> bool:
-    event = _make_write_event(file_path)
+    event = _make_write_event(file_path, metadata)
     ctx = engine._build_eval_context(event, variables)
     funcs = engine._build_allowed_funcs(ctx)
     return SafeExpressionEvaluator(ctx, funcs).evaluate(when)
@@ -155,4 +158,37 @@ def test_missing_artifact_path_fails_closed_for_delegated_mode(db: LocalDatabase
             variables=variables,
         )
         is True
+    )
+
+
+def test_absolute_artifact_write_uses_platform_session_project_path(
+    db: LocalDatabase,
+    tmp_path,
+) -> None:
+    body = _sync_bundled(db)
+    project = LocalProjectManager(db).create(name="test-project", repo_path=str(tmp_path))
+    platform_session_id = SessionManager(db).register_session(
+        external_id="claude-external",
+        machine_id="machine-1",
+        source="claude",
+        project_id=project.id,
+        project_path=str(tmp_path),
+    )
+    task_manager = FakeTaskManager({"task-1": FakeTask(id="task-1", status="open")})
+    engine = RuleEngine(db, task_manager=task_manager)
+    variables: dict[str, object] = {
+        "_agent_type": "planner",
+        "assigned_task_id": "task-1",
+        "artifact_path": ".gobby/plans/task-42-plan.md",
+    }
+
+    assert (
+        _evaluate_when(
+            engine,
+            body.when or "",
+            file_path=str(tmp_path / ".gobby" / "plans" / "task-42-plan.md"),
+            variables=variables,
+            metadata={"_platform_session_id": platform_session_id},
+        )
+        is False
     )

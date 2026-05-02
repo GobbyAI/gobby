@@ -159,6 +159,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Check for failure: explicit hook type OR inferred from tool output
         is_failure = hook_type == "post-tool-use-failure" or normalized_data.get("is_error", False)
         metadata = {"is_failure": is_failure} if is_failure else {}
+        self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
             event_type=event_type,

@@ -282,6 +282,7 @@ class GeminiAdapter(BaseAdapter):
             }
         else:
             metadata = {}
+        self._copy_platform_session_metadata(native_event, metadata)
 
         # Normalize event data for CLI-agnostic processing
         # This allows downstream code to use consistent field names

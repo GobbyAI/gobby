@@ -56,6 +56,8 @@ class DroidAdapter(BaseAdapter):
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
         normalized_data = self._normalize_event_data(input_data)
         is_failure = bool(normalized_data.get("is_error", False))
+        metadata = {"is_failure": is_failure} if is_failure else {}
+        self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
             event_type=event_type,
@@ -65,7 +67,7 @@ class DroidAdapter(BaseAdapter):
             machine_id=input_data.get("machine_id"),
             cwd=input_data.get("cwd"),
             data=normalized_data,
-            metadata={"is_failure": is_failure} if is_failure else {},
+            metadata=metadata,
         )
 
     def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:

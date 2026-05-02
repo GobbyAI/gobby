@@ -8,7 +8,7 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.session_types import HookSessionManager
@@ -64,11 +64,23 @@ class SessionLookupService:
         Returns:
             Platform session ID or None if no external_id
         """
+        explicit_platform_session_id, explicit_session = self._resolve_metadata_platform_session(
+            event
+        )
+        if explicit_session:
+            event.project_id = explicit_session.project_id
+
         # Always resolve project_id, even if no session_id — downstream
         # code (_resolve_session_refs_in_tool_input) needs it for #N lookups.
         if not event.project_id:
             cwd = event.cwd or event.data.get("cwd")
             event.project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
+
+        if explicit_platform_session_id:
+            self._backfill_terminal_context(explicit_platform_session_id, event)
+            self._enrich_task_context(explicit_platform_session_id, event)
+            event.metadata["_platform_session_id"] = explicit_platform_session_id
+            return explicit_platform_session_id
 
         external_id = event.session_id
         if not external_id:
@@ -85,6 +97,33 @@ class SessionLookupService:
         event.metadata["_platform_session_id"] = platform_session_id
 
         return platform_session_id
+
+    def _resolve_metadata_platform_session(
+        self,
+        event: HookEvent,
+    ) -> tuple[str | None, Any | None]:
+        """Return valid platform session metadata already supplied by hook ingress."""
+        platform_session_id = event.metadata.get("_platform_session_id")
+        if not isinstance(platform_session_id, str) or not platform_session_id:
+            return None, None
+
+        try:
+            session = self._session_manager.get(platform_session_id)
+        except Exception as exc:
+            self._logger.debug(
+                "Failed to validate platform session metadata %s: %s",
+                platform_session_id,
+                exc,
+            )
+            event.metadata.pop("_platform_session_id", None)
+            return None, None
+
+        if session is None:
+            self._logger.debug("Ignoring unknown platform session metadata %s", platform_session_id)
+            event.metadata.pop("_platform_session_id", None)
+            return None, None
+
+        return platform_session_id, session
 
     def _backfill_terminal_context(self, platform_session_id: str, event: HookEvent) -> None:
         """Merge terminal metadata discovered after the original registration."""

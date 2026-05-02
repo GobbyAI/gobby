@@ -380,6 +380,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 return {"continue": True, "decision": "approve"}
 
             payload, request_metadata = _normalize_hook_request(raw_payload)
+            platform_session_id = request.headers.get("X-Gobby-Session-Id", "").strip()
+            if platform_session_id:
+                payload["_platform_session_id"] = platform_session_id
+
             hook_type = payload.get("hook_type")
             source = payload.get("source")
 

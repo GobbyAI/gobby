@@ -89,6 +89,7 @@ class CodexHooksAdapter(BaseAdapter):
         if original_tool_name:
             metadata["original_tool_name"] = original_tool_name
             metadata["normalized_tool_name"] = normalized_data.get("tool_name")
+        self._copy_platform_session_metadata(native_event, metadata)
 
         return HookEvent(
             event_type=event_type,
