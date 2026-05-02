@@ -7,6 +7,7 @@ import inspect
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
+from tests.phase2_stage_contract_helpers import register_contract_tests
 from tests.storage.tasks._stage_test_helpers import (
     lifecycle_events,
     make_task_with_manifest,
@@ -130,3 +131,96 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
     assert err.current_state == "in_progress"
     assert err.attempted_transition == "complete_stage"
     assert err.review_policy == "required"
+
+
+register_contract_tests(
+    globals(),
+    {
+        "test_cap_predicate_is_gte_with_inheritance": (
+            "effective cap checks use >= and inherit registry defaults at evaluation time"
+        ),
+        "test_close_failure_escalates_idempotently_on_already_escalated": (
+            "terminal close failure escalation is a no-op when the task is already escalated"
+        ),
+        "test_close_failure_escalates_with_terminal_close_failed_reason": (
+            "terminal close failures escalate with terminal_close_failed stage and error reason"
+        ),
+        "test_close_failure_rolls_back_stage_transition": (
+            "terminal close helper failure rolls back the stage transition and task close"
+        ),
+        "test_close_failure_rolls_back_to_in_progress_for_policy_none_terminal": (
+            "policy-none terminal close failure restores in_progress and leaves closed_at null"
+        ),
+        "test_close_failure_rolls_back_to_in_progress_for_required_policy_terminal_via_validation_override": (
+            "required-policy override terminal close failure restores in_progress"
+        ),
+        "test_close_failure_rolls_back_to_review_approved_for_required_policy_terminal_via_review_path": (
+            "required-policy reviewed terminal close failure restores review_approved"
+        ),
+        "test_close_task_public_api_and_complete_stage_share_helper": (
+            "public close_task and terminal complete_stage share _close_task_in_txn"
+        ),
+        "test_complete_non_terminal_row_does_not_close": (
+            "completing a non-terminal manifest row does not close the task"
+        ),
+        "test_complete_stage_required_policy_rejects_without_override": (
+            "complete_stage rejects required-policy in_progress rows without override"
+        ),
+        "test_complete_terminal_row_closes_task": (
+            "completing the highest-position manifest row closes the task atomically"
+        ),
+        "test_escalated_task_not_re_attempted_by_heartbeat": (
+            "terminal-close-failed escalations exclude tasks from automation candidate retries"
+        ),
+        "test_escalation_helper_db_write_failure_logs_and_reraises": (
+            "terminal close escalation helper logs and re-raises DB write failures"
+        ),
+        "test_escalation_helper_uses_supported_signature_only": (
+            "terminal close escalation helper calls escalate_task with the supported signature"
+        ),
+        "test_fail_does_not_change_either_counter": (
+            "fail_stage never increments work_attempt_count or review_round_count"
+        ),
+        "test_illegal_transition_error_carries_full_payload": (
+            "IllegalStageTransitionError exposes stage_name, current_state, attempted_transition, "
+            "and review_policy payload fields"
+        ),
+        "test_invalid_transitions_raise": (
+            "every illegal transition matrix row raises IllegalStageTransitionError"
+        ),
+        "test_merge_terminal_close_via_record_merge_result_uses_same_path": (
+            "record_merge_result success delegates terminal close through the same helper"
+        ),
+        "test_position_uniqueness_enforced": (
+            "task_stage_states enforces dense, unique positions per task manifest"
+        ),
+        "test_reject_review_increments_review_rounds_only": (
+            "reject_review increments review_round_count and never work_attempt_count"
+        ),
+        "test_research_spike_closes_at_prd_done": (
+            "research_spike manifests close at the prd terminal row"
+        ),
+        "test_review_policy_mirrored_at_init_not_retroactive": (
+            "registry review_policy edits do not retroactively mutate existing manifest rows"
+        ),
+        "test_reviewer_agent_mirrored_at_init": (
+            "reviewer_agent is mirrored from registry to manifest rows at init time"
+        ),
+        "test_same_state_cycle_bumps_updated_at": (
+            "ready -> in_progress -> ready cycles produce strictly newer updated_at values"
+        ),
+        "test_start_stage_increments_work_attempts_only": (
+            "start_stage is the sole work_attempt_count increment site"
+        ),
+        "test_transitions_emit_events": (
+            "every stage mutator emits task_lifecycle_events with stage:state transitions"
+        ),
+        "test_updated_at_bumped_on_every_mutator": (
+            "every stage mutator bumps StageState.updated_at"
+        ),
+        "test_validation_override_reason_logged_on_event_row": (
+            "validation overrides are logged as validation_override:<reason> lifecycle events"
+        ),
+    },
+    required_symbols=("gobby.storage.tasks._stage_states:StageStatesManager",),
+)
