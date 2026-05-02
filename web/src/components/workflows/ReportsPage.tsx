@@ -30,6 +30,197 @@ type AgentSortColumn =
 type SortDirection = "asc" | "desc";
 type GroupBy = "none" | "name" | "provider";
 
+// =============================================================================
+// Class constants — Tailwind migration of reports-page.css
+// =============================================================================
+
+const PAGE_CLS = "reports-page flex flex-1 flex-col overflow-hidden px-6 py-4 max-md:p-3";
+
+const TOOLBAR_CLS =
+  "flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] pb-3 mb-2 max-md:flex-col max-md:items-stretch max-md:gap-2";
+
+const TOOLBAR_LEFT_CLS =
+  "flex flex-wrap items-center gap-2 max-md:justify-between max-sm:flex-col max-sm:items-stretch";
+
+const TOOLBAR_RIGHT_CLS = "flex items-center gap-2 max-md:flex-col max-md:gap-2";
+
+const TITLE_CLS = "text-[length:calc(var(--font-size-base)*1.1)] font-semibold mr-1";
+
+const SEARCH_CLS =
+  "w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none max-md:w-full";
+
+const FILTER_BAR_CLS =
+  "flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] py-2 mb-2 max-md:flex-col max-md:items-stretch";
+
+const FILTER_CHIPS_CLS =
+  "flex flex-wrap gap-1.5 max-md:flex-nowrap max-md:overflow-x-auto max-md:pb-0.5";
+
+const STAT_CHIP_BASE_CLS =
+  "inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-transparent px-2.5 py-0.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11";
+
+const STAT_CHIP_ACTIVE_CLS =
+  "bg-[var(--bg-tertiary)] border-[var(--accent)] text-[var(--text-primary)]";
+
+const TABLE_CONTAINER_CLS = "flex-1 overflow-y-auto max-sm:overflow-x-visible";
+
+const TABLE_CLS =
+  "reports-table w-full border-collapse text-[length:calc(var(--font-size-base)*0.85)]";
+
+const TH_BASE_CLS =
+  "reports-th sticky top-0 z-[1] border-b border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-2 text-left text-[length:calc(var(--font-size-base)*0.7)] font-medium uppercase tracking-[0.05em] text-[var(--text-muted)]";
+
+const TH_SORTABLE_CLS =
+  "cursor-pointer select-none whitespace-nowrap hover:text-[var(--text-primary)]";
+
+const TH_ID_CLS = "whitespace-nowrap max-md:hidden";
+
+const ROW_BASE_CLS =
+  "cursor-pointer transition-colors duration-100 hover:bg-[var(--bg-tertiary)]";
+
+const ROW_SELECTED_CLS =
+  "bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_8%,transparent)]";
+
+const CELL_BASE_CLS =
+  "reports-cell border-b border-[var(--border)] px-2.5 py-2 whitespace-nowrap";
+
+const CELL_NAME_CLS = "whitespace-normal break-words";
+
+const CELL_ID_CLS =
+  "reports-cell--id font-[inherit] text-[length:var(--text-sm)] text-[var(--text-muted)] max-md:hidden";
+
+const CELL_STATUS_CLS =
+  "capitalize text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)]";
+
+const CELL_DURATION_CLS =
+  "reports-cell--duration font-[inherit] text-[length:var(--text-sm)] text-[var(--text-muted)] max-md:hidden";
+
+const CELL_TIME_CLS =
+  "text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] max-md:text-[length:calc(var(--font-size-base)*0.7)]";
+
+const STATUS_TEXT_CLS = CELL_STATUS_CLS;
+
+const LOADING_EMPTY_CLS =
+  "flex flex-1 items-center justify-center text-[length:calc(var(--font-size-base)*0.9)] text-[var(--text-muted)]";
+
+const TYPE_BADGE_BASE_CLS =
+  "reports-type-badge inline-block rounded px-1.5 py-0.5 text-[length:calc(var(--font-size-base)*0.7)] font-medium";
+
+const TYPE_BADGE_AGENT_CLS =
+  "reports-type-badge--agent bg-[var(--color-agent-soft)] text-[var(--color-agent)]";
+
+const DETAIL_BACKDROP_CLS =
+  "fixed inset-0 z-[90] bg-[var(--surface-scrim)]";
+
+const DETAIL_PANEL_BASE_CLS =
+  "fixed top-0 right-0 z-[100] flex h-full max-w-[90vw] translate-x-full flex-col overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-secondary)] transition-transform duration-[0.25s] ease max-md:!w-screen max-md:!max-w-screen";
+
+const DETAIL_PANEL_OPEN_CLS = "!translate-x-0";
+
+const DETAIL_RESIZE_HANDLE_CLS =
+  "absolute top-0 left-[-3px] z-[101] h-full w-[6px] cursor-col-resize transition-colors duration-150 hover:bg-[var(--accent)] hover:opacity-50 active:bg-[var(--accent)] active:opacity-50 max-md:hidden";
+
+const DETAIL_HEADER_CLS = "border-b border-[var(--border)] px-5 py-4";
+
+const DETAIL_HEADER_TOP_CLS = "mb-2 flex items-center justify-between";
+
+const DETAIL_ID_CLS =
+  "font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-muted)]";
+
+const DETAIL_CLOSE_CLS =
+  "flex h-8 w-8 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+
+const DETAIL_TITLE_CLS =
+  "my-1 text-[length:calc(var(--font-size-base)*1.05)] font-semibold";
+
+const DETAIL_STATUS_CLS = "mt-1 inline-flex items-center gap-1.5";
+
+const DETAIL_TRIGGER_CLS =
+  "flex items-center gap-1.5 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-secondary)]";
+
+const DETAIL_BODY_CLS = "flex flex-1 flex-col gap-4 px-5 py-4";
+
+const DETAIL_SECTION_CLS = "flex flex-col gap-1.5";
+
+const DETAIL_LABEL_CLS =
+  "text-[length:calc(var(--font-size-base)*0.7)] font-medium uppercase tracking-[0.05em] text-[var(--text-muted)]";
+
+const DETAIL_VALUE_CLS =
+  "text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)]";
+
+const DETAIL_MONO_CLS = "font-[inherit] text-[length:calc(var(--font-size-base)*0.8)]";
+
+const DETAIL_CODE_CLS =
+  "reports-detail-code max-h-[300px] overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] p-3 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-secondary)]";
+
+const DETAIL_TOGGLE_CLS =
+  "flex cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]";
+
+const DETAIL_STATS_CLS =
+  "grid grid-cols-3 gap-2 max-md:grid-cols-2 max-sm:grid-cols-1";
+
+const DETAIL_STAT_CLS =
+  "reports-detail-stat flex flex-col gap-0.5 rounded-md bg-[var(--bg-tertiary)] p-2";
+
+const DETAIL_STAT_LABEL_CLS =
+  "text-[length:calc(var(--font-size-base)*0.65)] uppercase tracking-[0.03em] text-[var(--text-muted)]";
+
+const DETAIL_STAT_VALUE_CLS =
+  "font-[inherit] text-[length:calc(var(--font-size-base)*0.9)] font-semibold text-[var(--text-primary)]";
+
+const DETAIL_TAG_CLS =
+  "reports-detail-tag inline-flex items-center rounded px-2 py-0.5 text-[length:calc(var(--font-size-base)*0.7)] font-medium bg-[var(--bg-tertiary)] text-[var(--text-secondary)]";
+
+const DETAIL_TAGS_CLS = "flex flex-wrap gap-1.5";
+
+const DETAIL_STEPS_CLS = "flex flex-col gap-1";
+
+const APPROVAL_CLS =
+  "flex items-center justify-between gap-3 rounded-md border border-[color-mix(in_srgb,var(--color-warning-foreground)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,transparent)] p-3";
+
+const APPROVAL_MESSAGE_CLS =
+  "flex items-center gap-1.5 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--color-warning-foreground)]";
+
+const APPROVAL_ACTIONS_CLS = "flex gap-2";
+
+const BTN_BASE_CLS =
+  "cursor-pointer rounded-md border-0 px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium transition-opacity duration-150 disabled:cursor-default disabled:opacity-50 pointer-coarse:min-h-11";
+
+const BTN_APPROVE_CLS = "bg-[var(--color-success-foreground)] text-[var(--text-on-success)]";
+
+const BTN_REJECT_CLS = "bg-[var(--color-error)] text-[var(--text-on-error)]";
+
+const DETAIL_ERROR_CLS =
+  "rounded-md border border-[color-mix(in_srgb,var(--color-error)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-error)_8%,transparent)] p-3 text-[length:calc(var(--font-size-base)*0.85)] text-[var(--color-error)]";
+
+const DETAIL_COMMANDS_CLS = "flex flex-col gap-1";
+
+const DETAIL_COMMAND_CLS =
+  "flex items-center gap-2 rounded bg-[var(--bg-tertiary)] px-2 py-1.5 text-[length:calc(var(--font-size-base)*0.8)]";
+
+const DETAIL_COMMAND_TYPE_CLS = "font-medium text-[var(--text-primary)]";
+
+const DETAIL_COMMAND_TIME_CLS =
+  "text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]";
+
+const DETAIL_COMMAND_PAYLOAD_CLS =
+  "max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]";
+
+const GROUP_TOGGLE_CLS = "flex items-center gap-1.5";
+
+const GROUP_LABEL_CLS =
+  "whitespace-nowrap text-[length:var(--text-sm)] text-[var(--text-muted)]";
+
+const GROUP_SELECT_CLS =
+  "cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none";
+
+const GROUP_CLS = "mb-3";
+
+const GROUP_HEADER_CLS =
+  "sticky top-0 z-[2] border-b border-[var(--border)] bg-[var(--bg-primary)] px-2.5 pt-2 pb-1 text-[length:calc(var(--font-size-base)*0.8)] font-semibold text-[var(--text-secondary)]";
+
+const GROUP_COUNT_CLS =
+  "font-normal text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]";
+
 function statusMatchesFilter(status: string, filter: StatusFilter): boolean {
   if (filter === "all") return true;
   if (filter === "running") return status === "running" || status === "pending";
@@ -154,10 +345,10 @@ function SortArrow<T extends string>({
   sortDirection: SortDirection;
 }) {
   if (column !== sortColumn)
-    return <span className="sort-arrow muted">{"\u2195"}</span>;
+    return <span className="text-[var(--text-muted)] opacity-50">{"↕"}</span>;
   return (
-    <span className="sort-arrow active">
-      {sortDirection === "asc" ? "\u2191" : "\u2193"}
+    <span className="text-[var(--accent)]">
+      {sortDirection === "asc" ? "↑" : "↓"}
     </span>
   );
 }
@@ -188,7 +379,6 @@ function useResizablePanel(
   const startWidth = useRef(0);
   const cleanupRef = useRef<(() => void) | null>(null);
 
-  // Clean up any active listeners on unmount
   useEffect(() => {
     return () => {
       cleanupRef.current?.();
@@ -260,12 +450,7 @@ function useResizablePanel(
 }
 
 // =============================================================================
-// Status dot
-// =============================================================================
-
-
-// =============================================================================
-// Close icon
+// Icons
 // =============================================================================
 
 function CloseIcon() {
@@ -323,18 +508,15 @@ export function ReportsPage({
   >({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Sorting state
   const [pipelineSortCol, setPipelineSortCol] =
     useState<PipelineSortColumn>("time");
   const [pipelineSortDir, setPipelineSortDir] = useState<SortDirection>("desc");
   const [agentSortCol, setAgentSortCol] = useState<AgentSortColumn>("time");
   const [agentSortDir, setAgentSortDir] = useState<SortDirection>("desc");
 
-  // Group-by state
   const [pipelineGroupBy, setPipelineGroupBy] = useState<GroupBy>("none");
   const [agentGroupBy, setAgentGroupBy] = useState<GroupBy>("none");
 
-  // Resizable sidebar
   const {
     width: panelWidth,
     handleMouseDown: onResizeMouseDown,
@@ -377,7 +559,6 @@ export function ReportsPage({
     fetchRunDetail,
   } = useAgentRuns(projectId);
 
-  // Compute counts
   const pipelineCounts = useMemo(() => {
     const statuses = pipelineExecutions.map((pe) => pe.status);
     return {
@@ -408,7 +589,6 @@ export function ReportsPage({
 
   const counts = subTab === "pipelines" ? pipelineCounts : agentCounts;
 
-  // Filtered + sorted lists
   const filteredPipelines = useMemo(() => {
     let items = pipelineExecutions.filter((pe) =>
       statusMatchesFilter(pe.status, statusFilter),
@@ -450,7 +630,6 @@ export function ReportsPage({
     );
   }, [agentRuns, statusFilter, searchText, agentSortCol, agentSortDir]);
 
-  // Grouped data
   const pipelineGroups = useMemo(() => {
     if (pipelineGroupBy === "none") return null;
     return groupBy(filteredPipelines, (pe) => pe.pipeline_name);
@@ -463,12 +642,10 @@ export function ReportsPage({
     return groupBy(filteredAgents, (ar) => ar.workflow_name || "Ad-hoc");
   }, [filteredAgents, agentGroupBy]);
 
-  // Clear selection on tab switch
   useEffect(() => {
     setSelectedId(null);
   }, [subTab]);
 
-  // Fetch agent detail when selected
   const handleSelectAgent = useCallback(
     async (id: string) => {
       setSelectedId(id);
@@ -527,11 +704,10 @@ export function ReportsPage({
     subTab === "agents" ? agentRuns.find((ar) => ar.id === selectedId) : null;
 
   return (
-    <main className="reports-page">
-      {/* Toolbar */}
-      <div className="reports-toolbar">
-        <div className="reports-toolbar-left">
-          <h2 className="reports-title">Reports</h2>
+    <main className={PAGE_CLS}>
+      <div className={TOOLBAR_CLS}>
+        <div className={TOOLBAR_LEFT_CLS}>
+          <h2 className={TITLE_CLS}>Reports</h2>
           <SegmentedControl<SubTab>
             value={subTab}
             onChange={setSubTab}
@@ -541,14 +717,13 @@ export function ReportsPage({
             ]}
             ariaLabel="Report type"
           />
-
         </div>
-        <div className="reports-toolbar-right">
-          <div className="reports-group-toggle">
-            <span className="reports-group-label">Group:</span>
+        <div className={TOOLBAR_RIGHT_CLS}>
+          <div className={GROUP_TOGGLE_CLS}>
+            <span className={GROUP_LABEL_CLS}>Group:</span>
             {subTab === "pipelines" ? (
               <select
-                className="reports-group-select"
+                className={GROUP_SELECT_CLS}
                 value={pipelineGroupBy}
                 onChange={(e) => setPipelineGroupBy(e.target.value as GroupBy)}
               >
@@ -557,7 +732,7 @@ export function ReportsPage({
               </select>
             ) : (
               <select
-                className="reports-group-select"
+                className={GROUP_SELECT_CLS}
                 value={agentGroupBy}
                 onChange={(e) => setAgentGroupBy(e.target.value as GroupBy)}
               >
@@ -569,7 +744,7 @@ export function ReportsPage({
           </div>
           <input
             type="text"
-            className="reports-search"
+            className={SEARCH_CLS}
             placeholder={
               subTab === "pipelines"
                 ? "Search pipelines..."
@@ -581,16 +756,15 @@ export function ReportsPage({
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="reports-filter-bar">
-        <div className="reports-filter-chips">
+      <div className={FILTER_BAR_CLS}>
+        <div className={FILTER_CHIPS_CLS}>
           {STATUS_OPTIONS.filter((opt) => {
             if (opt.value === "all") return true;
             return counts[opt.value] > 0;
           }).map((opt) => (
             <button
               key={opt.value}
-              className={`reports-stat-chip ${statusFilter === opt.value ? "active" : ""}`}
+              className={`${STAT_CHIP_BASE_CLS} ${statusFilter === opt.value ? STAT_CHIP_ACTIVE_CLS : ""}`}
               onClick={() =>
                 setStatusFilter(
                   statusFilter === opt.value && opt.value !== "all"
@@ -618,27 +792,26 @@ export function ReportsPage({
         </div>
       </div>
 
-      {/* Content */}
       {isLoading ? (
-        <div className="reports-loading">Loading...</div>
+        <div className={LOADING_EMPTY_CLS}>Loading...</div>
       ) : isEmpty ? (
-        <div className="reports-empty">
+        <div className={LOADING_EMPTY_CLS}>
           No {subTab === "pipelines" ? "pipeline executions" : "agent runs"}{" "}
           found
         </div>
       ) : subTab === "pipelines" ? (
-        <div className="reports-table-container">
+        <div className={TABLE_CONTAINER_CLS}>
           {pipelineGroups ? (
             Array.from(pipelineGroups).map(([group, items]) => (
-              <div key={group} className="reports-group">
-                <div className="reports-group-header">
+              <div key={group} className={GROUP_CLS}>
+                <div className={GROUP_HEADER_CLS}>
                   {group}{" "}
-                  <span className="reports-group-count">({items.length})</span>
+                  <span className={GROUP_COUNT_CLS}>({items.length})</span>
                 </div>
-                <table className="reports-table">
+                <table className={TABLE_CLS}>
                   <thead>
                     <tr>
-                      <th className="reports-th" style={{ width: 28 }}></th>
+                      <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                       <PipelineHeaders
                         onSort={handlePipelineSort}
                         sortCol={pipelineSortCol}
@@ -660,10 +833,10 @@ export function ReportsPage({
               </div>
             ))
           ) : (
-            <table className="reports-table">
+            <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className="reports-th" style={{ width: 28 }}></th>
+                  <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                   <PipelineHeaders
                     onSort={handlePipelineSort}
                     sortCol={pipelineSortCol}
@@ -685,18 +858,18 @@ export function ReportsPage({
           )}
         </div>
       ) : (
-        <div className="reports-table-container">
+        <div className={TABLE_CONTAINER_CLS}>
           {agentGroups ? (
             Array.from(agentGroups).map(([group, items]) => (
-              <div key={group} className="reports-group">
-                <div className="reports-group-header">
+              <div key={group} className={GROUP_CLS}>
+                <div className={GROUP_HEADER_CLS}>
                   {group}{" "}
-                  <span className="reports-group-count">({items.length})</span>
+                  <span className={GROUP_COUNT_CLS}>({items.length})</span>
                 </div>
-                <table className="reports-table">
+                <table className={TABLE_CLS}>
                   <thead>
                     <tr>
-                      <th className="reports-th" style={{ width: 28 }}></th>
+                      <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                       <AgentHeaders
                         onSort={handleAgentSort}
                         sortCol={agentSortCol}
@@ -718,10 +891,10 @@ export function ReportsPage({
               </div>
             ))
           ) : (
-            <table className="reports-table">
+            <table className={TABLE_CLS}>
               <thead>
                 <tr>
-                  <th className="reports-th" style={{ width: 28 }}></th>
+                  <th className={TH_BASE_CLS} style={{ width: 28 }}></th>
                   <AgentHeaders
                     onSort={handleAgentSort}
                     sortCol={agentSortCol}
@@ -744,19 +917,18 @@ export function ReportsPage({
         </div>
       )}
 
-      {/* Detail sidebar */}
       {selectedId && (selectedPipeline || selectedAgent) && (
         <>
           <div
-            className="reports-detail-backdrop"
+            className={DETAIL_BACKDROP_CLS}
             onClick={() => setSelectedId(null)}
           />
           <div
-            className={`reports-detail-panel ${selectedId ? "open" : ""}`}
+            className={`${DETAIL_PANEL_BASE_CLS} ${selectedId ? DETAIL_PANEL_OPEN_CLS : ""}`}
             style={{ width: panelWidth }}
           >
             <div
-              className="reports-detail-resize-handle"
+              className={DETAIL_RESIZE_HANDLE_CLS}
               onMouseDown={onResizeMouseDown}
               onTouchStart={onResizeTouchStart}
             />
@@ -802,17 +974,17 @@ function PipelineHeaders({
   return (
     <>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         onClick={() => onSort("name")}
       >
         Name{" "}
         <SortArrow column="name" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
-      <th className="reports-th reports-th--id" style={{ width: 120 }}>
+      <th className={`${TH_BASE_CLS} ${TH_ID_CLS}`} style={{ width: 120 }}>
         ID
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         style={{ width: 140 }}
         onClick={() => onSort("time")}
       >
@@ -820,7 +992,7 @@ function PipelineHeaders({
         <SortArrow column="time" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS} max-md:hidden`}
         style={{ width: 80 }}
         onClick={() => onSort("duration")}
       >
@@ -832,7 +1004,7 @@ function PipelineHeaders({
         />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         style={{ width: 100 }}
         onClick={() => onSort("status")}
       >
@@ -859,14 +1031,14 @@ function AgentHeaders({
   return (
     <>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         onClick={() => onSort("name")}
       >
         Name{" "}
         <SortArrow column="name" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         style={{ width: 80 }}
         onClick={() => onSort("provider")}
       >
@@ -877,11 +1049,11 @@ function AgentHeaders({
           sortDirection={sortDir}
         />
       </th>
-      <th className="reports-th reports-th--id" style={{ width: 120 }}>
+      <th className={`${TH_BASE_CLS} ${TH_ID_CLS}`} style={{ width: 120 }}>
         ID
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         style={{ width: 140 }}
         onClick={() => onSort("time")}
       >
@@ -889,7 +1061,7 @@ function AgentHeaders({
         <SortArrow column="time" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS} max-md:hidden`}
         style={{ width: 80 }}
         onClick={() => onSort("duration")}
       >
@@ -901,7 +1073,7 @@ function AgentHeaders({
         />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         style={{ width: 70 }}
         onClick={() => onSort("turns")}
       >
@@ -913,7 +1085,7 @@ function AgentHeaders({
         />
       </th>
       <th
-        className="reports-th reports-th--sortable"
+        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
         style={{ width: 100 }}
         onClick={() => onSort("status")}
       >
@@ -943,25 +1115,25 @@ function PipelineRow({
 }) {
   return (
     <tr
-      className={`reports-row ${selectedId === pe.id ? "reports-row--selected" : ""}`}
+      className={`reports-row ${ROW_BASE_CLS} ${selectedId === pe.id ? ROW_SELECTED_CLS : ""}`}
       onClick={() => onSelect(pe.id)}
     >
-      <td className="reports-cell" data-label="">
+      <td className={CELL_BASE_CLS} data-label="">
         <StatusDot status={pe.status} />
       </td>
-      <td className="reports-cell reports-cell--name" data-label="Name">{pe.pipeline_name}</td>
-      <td className="reports-cell reports-cell--id" data-label="ID">{pe.id.slice(0, 12)}</td>
-      <td className="reports-cell reports-cell--time" data-label="Time">
+      <td className={`${CELL_BASE_CLS} ${CELL_NAME_CLS}`} data-label="Name">{pe.pipeline_name}</td>
+      <td className={`${CELL_BASE_CLS} ${CELL_ID_CLS}`} data-label="ID">{pe.id.slice(0, 12)}</td>
+      <td className={`${CELL_BASE_CLS} ${CELL_TIME_CLS}`} data-label="Time">
         {formatDateTime(pe.created_at)}
       </td>
-      <td className="reports-cell reports-cell--duration" data-label="Duration">
+      <td className={`${CELL_BASE_CLS} ${CELL_DURATION_CLS}`} data-label="Duration">
         {pe.completed_at
           ? formatDuration(pe.created_at, pe.completed_at)
           : pe.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className="reports-cell reports-cell--status-text" data-label="Status">
+      <td className={`${CELL_BASE_CLS} ${CELL_STATUS_CLS}`} data-label="Status">
         {normalizeStatus(pe.status)}
       </td>
     </tr>
@@ -979,35 +1151,35 @@ function AgentRow({
 }) {
   return (
     <tr
-      className={`reports-row ${selectedId === ar.id ? "reports-row--selected" : ""}`}
+      className={`reports-row ${ROW_BASE_CLS} ${selectedId === ar.id ? ROW_SELECTED_CLS : ""}`}
       onClick={() => onSelect(ar.id)}
     >
-      <td className="reports-cell" data-label="">
+      <td className={CELL_BASE_CLS} data-label="">
         <StatusDot status={ar.status} />
       </td>
-      <td className="reports-cell reports-cell--name" data-label="Name">
+      <td className={`${CELL_BASE_CLS} ${CELL_NAME_CLS}`} data-label="Name">
         {ar.workflow_name || ar.prompt?.slice(0, 60) || "Agent Run"}
       </td>
-      <td className="reports-cell" data-label="Provider">
-        <span className="reports-type-badge reports-type-badge--agent">
+      <td className={CELL_BASE_CLS} data-label="Provider">
+        <span className={`${TYPE_BADGE_BASE_CLS} ${TYPE_BADGE_AGENT_CLS}`}>
           {ar.provider}
         </span>
       </td>
-      <td className="reports-cell reports-cell--id" data-label="ID">{ar.id.slice(0, 12)}</td>
-      <td className="reports-cell reports-cell--time" data-label="Time">
+      <td className={`${CELL_BASE_CLS} ${CELL_ID_CLS}`} data-label="ID">{ar.id.slice(0, 12)}</td>
+      <td className={`${CELL_BASE_CLS} ${CELL_TIME_CLS}`} data-label="Time">
         {formatDateTime(ar.created_at)}
       </td>
-      <td className="reports-cell reports-cell--duration" data-label="Duration">
+      <td className={`${CELL_BASE_CLS} ${CELL_DURATION_CLS}`} data-label="Duration">
         {ar.started_at && ar.completed_at
           ? formatDuration(ar.started_at, ar.completed_at)
           : ar.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className="reports-cell" data-label="Turns" style={{ textAlign: "center" }}>
+      <td className={CELL_BASE_CLS} data-label="Turns" style={{ textAlign: "center" }}>
         {ar.turns_used}
       </td>
-      <td className="reports-cell reports-cell--status-text" data-label="Status">
+      <td className={`${CELL_BASE_CLS} ${CELL_STATUS_CLS}`} data-label="Status">
         {normalizeStatus(ar.status)}
       </td>
     </tr>
@@ -1038,34 +1210,33 @@ function PipelineDetail({
   const [showOutputs, setShowOutputs] = useState(false);
   return (
     <>
-      <div className="reports-detail-header">
-        <div className="reports-detail-header-top">
-          <span className="reports-detail-id">{execution.id}</span>
-          <button className="reports-detail-close" onClick={onClose}>
+      <div className={DETAIL_HEADER_CLS}>
+        <div className={DETAIL_HEADER_TOP_CLS}>
+          <span className={DETAIL_ID_CLS}>{execution.id}</span>
+          <button className={DETAIL_CLOSE_CLS} onClick={onClose}>
             <CloseIcon />
           </button>
         </div>
-        <div className="reports-detail-title">{execution.pipeline_name}</div>
-        <div className="reports-detail-status">
+        <div className={DETAIL_TITLE_CLS}>{execution.pipeline_name}</div>
+        <div className={DETAIL_STATUS_CLS}>
           <StatusDot status={execution.status} />
-          <span className="reports-cell--status-text">
+          <span className={STATUS_TEXT_CLS}>
             {normalizeStatus(execution.status)}
           </span>
           {execution.cron_job_name && (
-            <span className="reports-detail-trigger">
+            <span className={DETAIL_TRIGGER_CLS}>
               <CronIcon /> {execution.cron_job_name}
             </span>
           )}
         </div>
       </div>
 
-      <div className="reports-detail-body">
-        {/* Trace link */}
+      <div className={DETAIL_BODY_CLS}>
         {(execution as any).trace_id && onNavigateToTrace && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-btn"
+              className={BTN_BASE_CLS}
               onClick={() => onNavigateToTrace((execution as any).trace_id)}
               title="View telemetry trace for this execution"
             >
@@ -1087,24 +1258,23 @@ function PipelineDetail({
           </div>
         )}
 
-        {/* Approval banner — actionable, goes first */}
         {execution.status === "waiting_approval" &&
           (() => {
             const waitingStep = execution.steps.find(
               (s) => s.status === "waiting_approval" && s.approval_token,
             );
             return waitingStep?.approval_token ? (
-              <div className="reports-approval">
-                <div className="reports-approval-message">
+              <div className={APPROVAL_CLS}>
+                <div className={APPROVAL_MESSAGE_CLS}>
                   <AlertIcon />
                   <span>
                     Step &ldquo;{waitingStep.step_id}&rdquo; requires approval
                   </span>
                 </div>
-                <div className="reports-approval-actions">
+                <div className={APPROVAL_ACTIONS_CLS}>
                   <button
                     type="button"
-                    className="reports-btn reports-btn--approve"
+                    className={`${BTN_BASE_CLS} ${BTN_APPROVE_CLS}`}
                     onClick={() => onApprove(waitingStep.approval_token!)}
                     disabled={actionLoading === waitingStep.approval_token}
                   >
@@ -1114,7 +1284,7 @@ function PipelineDetail({
                   </button>
                   <button
                     type="button"
-                    className="reports-btn reports-btn--reject"
+                    className={`${BTN_BASE_CLS} ${BTN_REJECT_CLS}`}
                     onClick={() => onReject(waitingStep.approval_token!)}
                     disabled={actionLoading === waitingStep.approval_token}
                   >
@@ -1127,11 +1297,10 @@ function PipelineDetail({
             ) : null;
           })()}
 
-        {/* Execution report — the main content */}
         {execution.steps.length > 0 && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Execution Report</span>
-            <div className="reports-detail-steps">
+          <div className={DETAIL_SECTION_CLS}>
+            <span className={DETAIL_LABEL_CLS}>Execution Report</span>
+            <div className={DETAIL_STEPS_CLS}>
               {execution.steps.map((step, index) => (
                 <StepDisplay key={step.id} step={step} index={index} />
               ))}
@@ -1139,14 +1308,13 @@ function PipelineDetail({
           </div>
         )}
 
-        {/* Error */}
         {execution.outputs_json &&
           (() => {
             try {
               const outputs = JSON.parse(execution.outputs_json);
               if (outputs.error) {
                 return (
-                  <div className="reports-detail-error">
+                  <div className={DETAIL_ERROR_CLS}>
                     Error: {outputs.error}
                   </div>
                 );
@@ -1157,18 +1325,17 @@ function PipelineDetail({
             return null;
           })()}
 
-        {/* Collapsible sections for config/inputs/outputs */}
         {execution.inputs_json && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-detail-toggle"
+              className={DETAIL_TOGGLE_CLS}
               onClick={() => setShowInputs(!showInputs)}
             >
               <ChevronIcon expanded={showInputs} /> Inputs
             </button>
             {showInputs && (
-              <div className="reports-detail-code">
+              <div className={DETAIL_CODE_CLS}>
                 {formatJson(execution.inputs_json)}
               </div>
             )}
@@ -1176,16 +1343,16 @@ function PipelineDetail({
         )}
 
         {execution.status === "completed" && execution.outputs_json && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-detail-toggle"
+              className={DETAIL_TOGGLE_CLS}
               onClick={() => setShowOutputs(!showOutputs)}
             >
               <ChevronIcon expanded={showOutputs} /> Outputs
             </button>
             {showOutputs && (
-              <div className="reports-detail-code">
+              <div className={DETAIL_CODE_CLS}>
                 {formatJson(execution.outputs_json)}
               </div>
             )}
@@ -1193,16 +1360,16 @@ function PipelineDetail({
         )}
 
         {execution.definition_json && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-detail-toggle"
+              className={DETAIL_TOGGLE_CLS}
               onClick={() => setShowConfig(!showConfig)}
             >
               <ChevronIcon expanded={showConfig} /> Pipeline Config
             </button>
             {showConfig && (
-              <div className="reports-detail-code">
+              <div className={DETAIL_CODE_CLS}>
                 {formatJson(execution.definition_json)}
               </div>
             )}
@@ -1210,9 +1377,9 @@ function PipelineDetail({
         )}
 
         {execution.parent_execution_id && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Parent</span>
-            <span className="reports-detail-value reports-detail-mono">
+          <div className={DETAIL_SECTION_CLS}>
+            <span className={DETAIL_LABEL_CLS}>Parent</span>
+            <span className={`${DETAIL_VALUE_CLS} ${DETAIL_MONO_CLS}`}>
               {execution.parent_execution_id}
             </span>
           </div>
@@ -1247,36 +1414,35 @@ function AgentDetail({
 
   return (
     <>
-      <div className="reports-detail-header">
-        <div className="reports-detail-header-top">
-          <span className="reports-detail-id">{run.id}</span>
-          <button className="reports-detail-close" onClick={onClose}>
+      <div className={DETAIL_HEADER_CLS}>
+        <div className={DETAIL_HEADER_TOP_CLS}>
+          <span className={DETAIL_ID_CLS}>{run.id}</span>
+          <button className={DETAIL_CLOSE_CLS} onClick={onClose}>
             <CloseIcon />
           </button>
         </div>
-        <div className="reports-detail-title">
+        <div className={DETAIL_TITLE_CLS}>
           {run.workflow_name || run.prompt?.slice(0, 80) || "Agent Run"}
         </div>
-        <div className="reports-detail-status">
+        <div className={DETAIL_STATUS_CLS}>
           <StatusDot status={run.status} />
-          <span className="reports-cell--status-text">
+          <span className={STATUS_TEXT_CLS}>
             {normalizeStatus(run.status)}
           </span>
         </div>
-        <div className="reports-detail-tags">
-          <span className="reports-detail-tag">{run.provider}</span>
-          {run.model && <span className="reports-detail-tag">{run.model}</span>}
-          <span className="reports-detail-tag">{run.mode}</span>
+        <div className={DETAIL_TAGS_CLS}>
+          <span className={DETAIL_TAG_CLS}>{run.provider}</span>
+          {run.model && <span className={DETAIL_TAG_CLS}>{run.model}</span>}
+          <span className={DETAIL_TAG_CLS}>{run.mode}</span>
         </div>
       </div>
 
-      <div className="reports-detail-body">
-        {/* Cancel — actionable, first */}
+      <div className={DETAIL_BODY_CLS}>
         {run.status === "running" && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-btn reports-btn--cancel"
+              className={`${BTN_BASE_CLS} ${BTN_REJECT_CLS}`}
               onClick={() => onCancel(run.id)}
               disabled={actionLoading === run.id}
             >
@@ -1285,52 +1451,48 @@ function AgentDetail({
           </div>
         )}
 
-        {/* Summary — the execution narrative */}
         {run.summary_markdown && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Summary</span>
-            <div className="reports-detail-code">{run.summary_markdown}</div>
+          <div className={DETAIL_SECTION_CLS}>
+            <span className={DETAIL_LABEL_CLS}>Summary</span>
+            <div className={DETAIL_CODE_CLS}>{run.summary_markdown}</div>
           </div>
         )}
 
-        {/* Error */}
         {(run.status === "error" || run.status === "timeout") && run.error && (
-          <div className="reports-detail-error">Error: {run.error}</div>
+          <div className={DETAIL_ERROR_CLS}>Error: {run.error}</div>
         )}
 
-        {/* Result */}
         {run.status === "success" && run.result && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-detail-toggle"
+              className={DETAIL_TOGGLE_CLS}
               onClick={() => setShowResult(!showResult)}
             >
               <ChevronIcon expanded={showResult} /> Result
             </button>
             {showResult && (
-              <div className="reports-detail-code">{run.result}</div>
+              <div className={DETAIL_CODE_CLS}>{run.result}</div>
             )}
           </div>
         )}
 
-        {/* Commands — what the agent actually did */}
         {detail?.commands && detail.commands.length > 0 && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">
+          <div className={DETAIL_SECTION_CLS}>
+            <span className={DETAIL_LABEL_CLS}>
               Commands ({detail.commands.length})
             </span>
-            <div className="reports-detail-commands">
+            <div className={DETAIL_COMMANDS_CLS}>
               {detail.commands.map((cmd) => (
-                <div key={cmd.id} className="reports-detail-command">
-                  <span className="reports-detail-command-type">
+                <div key={cmd.id} className={DETAIL_COMMAND_CLS}>
+                  <span className={DETAIL_COMMAND_TYPE_CLS}>
                     {cmd.command_text}
                   </span>
-                  <span className="reports-detail-command-time">
+                  <span className={DETAIL_COMMAND_TIME_CLS}>
                     {formatTime(cmd.created_at)}
                   </span>
                   {cmd.command_text && (
-                    <span className="reports-detail-command-payload">
+                    <span className={DETAIL_COMMAND_PAYLOAD_CLS}>
                       {cmd.command_text.slice(0, 80)}
                     </span>
                   )}
@@ -1340,34 +1502,33 @@ function AgentDetail({
           </div>
         )}
 
-        {/* Stats — compact, not rehashing row data */}
         {totalTokens > 0 && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Usage</span>
-            <div className="reports-detail-stats">
-              <div className="reports-detail-stat">
-                <span className="reports-detail-stat-label">Input</span>
-                <span className="reports-detail-stat-value">
+          <div className={DETAIL_SECTION_CLS}>
+            <span className={DETAIL_LABEL_CLS}>Usage</span>
+            <div className={DETAIL_STATS_CLS}>
+              <div className={DETAIL_STAT_CLS}>
+                <span className={DETAIL_STAT_LABEL_CLS}>Input</span>
+                <span className={DETAIL_STAT_VALUE_CLS}>
                   {(run.usage_input_tokens || 0).toLocaleString()}
                 </span>
               </div>
-              <div className="reports-detail-stat">
-                <span className="reports-detail-stat-label">Output</span>
-                <span className="reports-detail-stat-value">
+              <div className={DETAIL_STAT_CLS}>
+                <span className={DETAIL_STAT_LABEL_CLS}>Output</span>
+                <span className={DETAIL_STAT_VALUE_CLS}>
                   {(run.usage_output_tokens || 0).toLocaleString()}
                 </span>
               </div>
               {(run.usage_cache_read_tokens || 0) > 0 && (
-                <div className="reports-detail-stat">
-                  <span className="reports-detail-stat-label">Cache</span>
-                  <span className="reports-detail-stat-value">
+                <div className={DETAIL_STAT_CLS}>
+                  <span className={DETAIL_STAT_LABEL_CLS}>Cache</span>
+                  <span className={DETAIL_STAT_VALUE_CLS}>
                     {(run.usage_cache_read_tokens || 0).toLocaleString()}
                   </span>
                 </div>
               )}
-              <div className="reports-detail-stat">
-                <span className="reports-detail-stat-label">Tools</span>
-                <span className="reports-detail-stat-value">
+              <div className={DETAIL_STAT_CLS}>
+                <span className={DETAIL_STAT_LABEL_CLS}>Tools</span>
+                <span className={DETAIL_STAT_VALUE_CLS}>
                   {run.tool_calls_count}
                 </span>
               </div>
@@ -1375,38 +1536,36 @@ function AgentDetail({
           </div>
         )}
 
-        {/* Prompt — collapsible, not the main focus */}
         {run.prompt && (
-          <div className="reports-detail-section">
+          <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className="reports-detail-toggle"
+              className={DETAIL_TOGGLE_CLS}
               onClick={() => setShowPrompt(!showPrompt)}
             >
               <ChevronIcon expanded={showPrompt} /> Prompt
             </button>
             {showPrompt && (
-              <div className="reports-detail-code">{run.prompt}</div>
+              <div className={DETAIL_CODE_CLS}>{run.prompt}</div>
             )}
           </div>
         )}
 
-        {/* Context — task, isolation, branch */}
         {(run.task_id || run.worktree_id || run.clone_id || run.git_branch) && (
-          <div className="reports-detail-section">
-            <span className="reports-detail-label">Context</span>
+          <div className={DETAIL_SECTION_CLS}>
+            <span className={DETAIL_LABEL_CLS}>Context</span>
             {run.task_id && (
-              <span className="reports-detail-value reports-detail-mono">
+              <span className={`${DETAIL_VALUE_CLS} ${DETAIL_MONO_CLS}`}>
                 Task: {run.task_id}
               </span>
             )}
             {run.git_branch && (
-              <span className="reports-detail-value reports-detail-mono">
+              <span className={`${DETAIL_VALUE_CLS} ${DETAIL_MONO_CLS}`}>
                 Branch: {run.git_branch}
               </span>
             )}
             {(run.worktree_id || run.clone_id) && (
-              <span className="reports-detail-value">
+              <span className={DETAIL_VALUE_CLS}>
                 {run.worktree_id
                   ? `Worktree: ${run.worktree_id}`
                   : `Clone: ${run.clone_id}`}
