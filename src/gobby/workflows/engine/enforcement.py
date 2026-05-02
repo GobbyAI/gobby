@@ -351,10 +351,13 @@ class EnforcementMixin:
                         )
 
                 if mcp_tool_name == "set_variable":
-                    variable_name = self._is_reserved_variable_write(
-                        tool_name,
-                        tool_input,
-                        mcp_tool_name=mcp_tool_name,
+                    variable_name = (
+                        self._is_reserved_variable_write(
+                            tool_name,
+                            tool_input,
+                            mcp_tool_name=mcp_tool_name,
+                        )
+                        or ""
                     )
                     if variable_name:
                         reason = (

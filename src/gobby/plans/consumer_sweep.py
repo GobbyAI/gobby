@@ -273,7 +273,9 @@ def _resolve_symbols(storage: Any, project_id: str, symbol_ref: str) -> tuple[An
     return ()
 
 
-def _symbols_defined_in_targets(symbols: tuple[Any, ...], targets: frozenset[str]) -> tuple[Any, ...]:
+def _symbols_defined_in_targets(
+    symbols: tuple[Any, ...], targets: frozenset[str]
+) -> tuple[Any, ...]:
     return tuple(
         symbol
         for symbol in symbols
