@@ -526,6 +526,7 @@ def update_task(
     updates: list[str] = []
     params: list[Any] = []
     now = datetime.now(UTC).isoformat()
+    task_columns = {row["name"] for row in db.fetchall("PRAGMA table_info(tasks)")}
 
     if title is not UNSET:
         updates.append("title = ?")
@@ -659,6 +660,9 @@ def update_task(
                 escalated_at=next_escalated_at,
             )
         )
+        if "is_escalated" in task_columns:
+            updates.append("is_escalated = ?")
+            params.append(1 if next_escalated_at else 0)
 
     if closed_reason is not UNSET:
         updates.append("closed_reason = ?")

@@ -91,6 +91,8 @@ from gobby.storage.tasks._queries import (
     list_tasks as _list_tasks,
 )
 from gobby.storage.tasks._search import TaskFTS5Searcher
+from gobby.storage.tasks._stage_registry import StageRegistryManager
+from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
 )
@@ -144,6 +146,8 @@ class LocalTaskManager:
         self._searcher: TaskFTS5Searcher | None = None
         self._artifact_manager: TaskArtifactManager | None = None
         self._lifecycle_event_manager: TaskLifecycleEventManager | None = None
+        self._stage_registry_manager: StageRegistryManager | None = None
+        self._stage_states_manager: StageStatesManager | None = None
 
     @property
     def artifacts(self) -> TaskArtifactManager:
@@ -156,6 +160,18 @@ class LocalTaskManager:
         if self._lifecycle_event_manager is None:
             self._lifecycle_event_manager = TaskLifecycleEventManager(self.db)
         return self._lifecycle_event_manager
+
+    @property
+    def stages_registry(self) -> StageRegistryManager:
+        if self._stage_registry_manager is None:
+            self._stage_registry_manager = StageRegistryManager(self.db)
+        return self._stage_registry_manager
+
+    @property
+    def stage_states(self) -> StageStatesManager:
+        if self._stage_states_manager is None:
+            self._stage_states_manager = StageStatesManager(self.db, self.lifecycle_events)
+        return self._stage_states_manager
 
     def add_change_listener(self, listener: Callable[[], Any]) -> None:
         """Add a listener to be called when tasks change."""

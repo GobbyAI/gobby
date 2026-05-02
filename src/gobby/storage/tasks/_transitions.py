@@ -23,6 +23,7 @@ from gobby.storage.tasks._models import (
     TaskAlreadyClaimedError,
     TaskClosedError,
 )
+from gobby.storage.tasks._stage_states import _close_task_in_txn
 from gobby.tasks.state_semantics import is_task_closed, normalize_de_escalation_target_status
 
 logger = logging.getLogger(__name__)
@@ -724,35 +725,18 @@ def close_task(
     validation_override_reason: str | None = None,
 ) -> Task:
     """Close a task and clear active ownership metadata."""
-    if not force:
-        open_children = db.fetchall(
-            "SELECT id, title FROM tasks WHERE parent_task_id = ? AND closed_at IS NULL",
-            (task_id,),
+    with db.transaction() as conn:
+        if bootstrap_ledger_path_for_task(db, task_id) is not None:
+            verify_bootstrap_ledger(db, task_id)
+        _close_task_in_txn(
+            conn,
+            task_id,
+            reason=reason,
+            commit_sha=closed_commit_sha,
+            closed_in_session_id=closed_in_session_id,
+            force=force,
+            validation_override_reason=validation_override_reason,
         )
-        if open_children:
-            child_list = ", ".join(f"{c['id']} ({c['title']})" for c in open_children[:3])
-            if len(open_children) > 3:
-                child_list += f" and {len(open_children) - 3} more"
-            raise ValueError(
-                f"Cannot close task {task_id}: has {len(open_children)} open child task(s): {child_list}"
-            )
-
-    if bootstrap_ledger_path_for_task(db, task_id) is not None:
-        verify_bootstrap_ledger(db, task_id)
-
-    now = datetime.now(UTC).isoformat()
-    update_task(
-        db,
-        task_id,
-        status="closed",
-        assignee=None,
-        claimed_by_session_id=None,
-        closed_reason=reason,
-        closed_at=now,
-        closed_in_session_id=closed_in_session_id,
-        closed_commit_sha=closed_commit_sha,
-        validation_override_reason=validation_override_reason,
-    )
     return get_task(db, task_id)
 
 

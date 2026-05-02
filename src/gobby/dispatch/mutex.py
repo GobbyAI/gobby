@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from gobby.storage.tasks import TaskDispatchMutexManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 CandidateLoader = Callable[[str], object | None]
 

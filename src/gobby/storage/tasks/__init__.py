@@ -61,6 +61,19 @@ from gobby.storage.tasks._models import (
     validate_category,
 )
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
+from gobby.storage.tasks._stage_registry import (
+    ReviewPolicy,
+    StageRegistryEntry,
+    StageRegistryManager,
+)
+from gobby.storage.tasks._stage_states import (
+    IllegalManifestMutationError,
+    IllegalStageTransitionError,
+    ManifestAlreadyInitializedError,
+    StageManifestSpec,
+    StageState,
+    StageStatesManager,
+)
 
 __all__ = [
     # Core classes
@@ -74,6 +87,11 @@ __all__ = [
     "TaskArtifactManager",
     "TaskLifecycleEvent",
     "TaskLifecycleEventManager",
+    "StageRegistryEntry",
+    "StageRegistryManager",
+    "StageManifestSpec",
+    "StageState",
+    "StageStatesManager",
     # Exceptions
     "SeqNumCollisionError",
     "TaskIDCollisionError",
@@ -83,6 +101,9 @@ __all__ = [
     "TaskArtifactConstraintError",
     "ArtifactCheckConstraintError",
     "MissingIsolationBaseError",
+    "IllegalManifestMutationError",
+    "IllegalStageTransitionError",
+    "ManifestAlreadyInitializedError",
     # Functions
     "generate_task_id",
     "validate_category",
@@ -111,4 +132,5 @@ __all__ = [
     "MaybeUnset",
     "UNSET",
     "UnsetType",
+    "ReviewPolicy",
 ]

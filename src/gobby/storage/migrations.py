@@ -241,9 +241,14 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                 category TEXT NOT NULL
                     CHECK (category IN ('discovery','design','verification','implementation','delivery')),
                 default_agent TEXT,
+                reviewer_agent TEXT,
+                review_policy TEXT NOT NULL DEFAULT 'none'
+                    CHECK (review_policy IN ('none','required','optional')),
                 position_hint INTEGER NOT NULL,
                 requires_human INTEGER NOT NULL DEFAULT 0,
                 is_terminal INTEGER NOT NULL DEFAULT 0,
+                default_max_work_attempts INTEGER NOT NULL DEFAULT 3,
+                default_max_review_rounds INTEGER NOT NULL DEFAULT 5,
                 bundled_hash TEXT,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
@@ -274,13 +279,22 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                     REFERENCES task_stages_registry(name) ON DELETE RESTRICT,
                 position INTEGER NOT NULL,
                 state TEXT NOT NULL DEFAULT 'ready'
-                    CHECK (state IN ('ready','in_progress','done')),
+                    CHECK (
+                        state IN ('ready','in_progress','done')
+                        OR state IN ('needs_review','review_approved')
+                    ),
+                review_policy TEXT NOT NULL DEFAULT 'none'
+                    CHECK (review_policy IN ('none','required','optional')),
+                reviewer_agent TEXT,
                 entered_at TEXT,
                 entered_by_session_id TEXT,
                 completed_at TEXT,
                 completed_by_session_id TEXT,
                 completed_commit_sha TEXT,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
+                work_attempt_count INTEGER NOT NULL DEFAULT 0,
+                review_round_count INTEGER NOT NULL DEFAULT 0,
+                max_work_attempts INTEGER,
+                max_review_rounds INTEGER,
                 artifact_refs TEXT,
                 notes TEXT,
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),

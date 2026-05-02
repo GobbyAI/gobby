@@ -187,6 +187,7 @@ class Task:
     # Escalation fields
     escalated_at: str | None = None
     escalation_reason: str | None = None
+    is_escalated: bool = False
     # GitHub integration fields
     github_issue_number: int | None = None
     github_pr_number: int | None = None
@@ -217,6 +218,8 @@ class Task:
             self.lifecycle_stage = lifecycle_stage_from_status(self.status)
         self.lifecycle = Lifecycle(self.lifecycle)
         self.isolation = Isolation(self.isolation)
+        if self.escalated_at and not self.closed_at:
+            self.is_escalated = True
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
@@ -290,6 +293,9 @@ class Task:
             commits=json.loads(row["commits"]) if "commits" in keys and row["commits"] else None,
             escalated_at=escalated_at,
             escalation_reason=row["escalation_reason"] if "escalation_reason" in keys else None,
+            is_escalated=(
+                bool(row["is_escalated"]) if "is_escalated" in keys else bool(escalated_at)
+            ),
             github_issue_number=(
                 row["github_issue_number"] if "github_issue_number" in keys else None
             ),
@@ -355,6 +361,7 @@ class Task:
             "commits": self.commits,
             "escalated_at": self.escalated_at,
             "escalation_reason": self.escalation_reason,
+            "is_escalated": self.is_escalated,
             "pre_escalation_status": get_pre_escalation_status(self),
             "github_issue_number": self.github_issue_number,
             "github_pr_number": self.github_pr_number,
@@ -406,6 +413,7 @@ class Task:
             "validation_fail_count": self.validation_fail_count,
             "dispatch_failure_count": self.dispatch_failure_count,
             "escalated_at": self.escalated_at,
+            "is_escalated": self.is_escalated,
             "pre_escalation_status": get_pre_escalation_status(self),
             "start_date": self.start_date,
             "due_date": self.due_date,
