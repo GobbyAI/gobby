@@ -393,7 +393,9 @@ Then proceed to Step 7.
 
 The parent session **never claims a task**. Plan-markdown edits under `.gobby/plans/*.md` are exempt from `require-task-before-edit` (see `is_plan_file()` in `src/gobby/workflows/enforcement/blocking.py`), so plan-mode + plan-file editing alone do not require a claim. The parent's role from Step 7 onward is pure orchestration.
 
-Each adversary (and `planner`, when present) round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned agent appends `## Adversary Findings — Round N` (or `## Planner Revision — Round N` for planner rounds) to the anchor's description and calls `mark_task_review_approved` (clean) / `mark_task_review_rejected` (with findings) / `escalate_task` on the anchor.
+Each adversary round spawns against a **freshly-created per-round anchor task** (child of `planning_task_id`, `task_type: task`, `category: planning`). The anchor exists **only for verdict capture**: the spawned adversary appends `## Adversary Findings — Round N` to the anchor's description and calls `mark_task_review_approved` (clean) / `mark_task_review_rejected` (with findings) / `escalate_task` on the anchor.
+
+**Coordinator owns plan revision between rounds.** The coordinator (this chat session) acts as the planner for all revision rounds in both interactive and delegated modes — there is no separate `planner` agent spawn. The compact-self call after each adversary spawn (Step 7.4) summarizes the coordinator's context so the next round's revision starts fresh, replacing the prior fresh-context guarantee that a planner-agent spawn provided.
 
 The parent **fires-and-forgets**: spawn the agent, end the turn cleanly. No claim, no `ScheduleWakeup`, no `Monitor`. The daemon's task-completion notification (P2P signoff message from the agent's session) wakes the parent when the agent terminates. On wake, the parent reads the anchor's terminal state via `get_task` and routes per Step 7.6.
 
@@ -555,8 +557,7 @@ set_variable(name="adversary_run_id", value=run.run_id, session_id="#<self>")
 
 The spawn path auto-injects `assigned_task_id` and auto-claims the anchor for the child session (`spawn_agent/_implementation.py:375`, `:499`) — no `initial_variables`, no manual claim here. The anchor (not the planning epic) is what the adversary marks at terminal.
 
-Immediately after the spawn (and after any planner re-spawn in revision
-rounds), trigger a self-compaction:
+Immediately after the spawn, trigger a self-compaction:
 
 ```text
 call_tool(
@@ -774,10 +775,10 @@ The `plan-expansion` workflow template still exists as a stricter alternative (h
 
 This skill is the coordinator for the lifecycle-dispatch flow.
 
-- The parent chat session never claims implementation or review tasks during Phase 3. It creates a fresh planning anchor for each round, spawns the required agent, records `active_anchor_id`, then ends the turn.
-- Round 1 spawns `plan-adversary` against the user-approved first draft. Planner is not involved before the first adversary verdict.
-- Round N, where N > 1, first spawns `planner` in a fresh context with the plan file, cumulative `## Plan Changelog`, and latest `## Adversary Findings — Round N-1`; after planner resubmits, the coordinator creates a new adversary anchor and spawns `plan-adversary`.
-- Wake routing reads the active anchor with `get_task`. `status=review_approved` proceeds only after the plan file contains `## M1 Task Manifest`; `status=open` with remaining budget spawns the next round; `status=open` with exhausted budget surfaces final findings; `status=escalated` surfaces the escalation reason.
+- The parent chat session never claims implementation or review tasks during Phase 3. It creates a fresh planning anchor for each adversary round, spawns the adversary, records `active_anchor_id`, then ends the turn.
+- Round 1 spawns `plan-adversary` against the user-approved first draft.
+- Round N, where N > 1, the coordinator (this chat session, with context restored fresh by the post-spawn compact-self from Round N-1) revises the plan file in place using the latest `## Adversary Findings — Round N-1`, runs the Step 5 verification checklist, then creates a new adversary anchor and spawns `plan-adversary` for Round N. There is no separate `planner` agent spawn — the coordinator IS the planner for all revision rounds.
+- Wake routing reads the active anchor with `get_task`. `status=review_approved` proceeds only after the plan file contains `## M1 Task Manifest`; `status=open` with remaining budget triggers coordinator revision and the next adversary spawn; `status=open` with exhausted budget surfaces final findings; `status=escalated` surfaces the escalation reason.
 - The daemon's task-completion notification is the wake signal. Do not use `ScheduleWakeup`, `Monitor`, or polling in Phase 3.
 - In delegated mode, load the `build` skill before Phase 3b, ask for build scope, then either trigger `gobby build <plan_file>` with the resolved profile or show the exact CLI command.
-- The coordinator does not edit the plan file during Phase 3. Manifest writes belong to `plan-adversary`; surgical revisions belong to fresh-context `planner`.
+- The coordinator owns surgical plan-file revisions between rounds in both modes. Manifest writes belong to `plan-adversary` (final act of approval); the coordinator must not author the manifest.
