@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -20,6 +20,7 @@ from gobby.llm.claude_models import DoneEvent
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _CLI_COMPACT_COMMANDS,
+    _send_codex_compaction_command,
     register_terminal_tools,
 )
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
@@ -112,15 +113,42 @@ class TestCompactSelfTerminalPath:
         }
         tmux.send_keys.assert_awaited_once_with("%12", "/compact\n", literal=True)
 
-    def test_codex_session_fires_slash_compact(self) -> None:
+    def test_codex_session_interrupts_then_fires_slash_compact(self) -> None:
         session = _make_terminal_session("codex")
         registry, tmux = _register_compact_self(session)
 
-        result = _call_compact_self(registry, tmux, session_id="s1")
+        with patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0):
+            result = _call_compact_self(registry, tmux, session_id="s1")
 
-        assert result["compacted"] is True
-        assert result["command"] == "/compact"
-        tmux.send_keys.assert_awaited_once_with("%12", "/compact\n", literal=True)
+        assert result == {
+            "compacted": True,
+            "command": "/compact",
+            "cli": "codex",
+            "via": "tmux",
+            "interrupted": True,
+        }
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "Escape", literal=False),
+            call("%12", "/compact\n", literal=True),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_codex_compaction_interrupt_failure_returns_false(self) -> None:
+        tmux = MagicMock()
+        tmux.send_keys = AsyncMock(return_value=False)
+
+        ok, reason = await _send_codex_compaction_command(
+            tmux,
+            "%12",
+            "/compact",
+            "s1",
+            settle_seconds=0,
+        )
+
+        assert ok is False
+        assert reason is not None
+        assert "Codex interrupt" in reason
+        tmux.send_keys.assert_awaited_once_with("%12", "Escape", literal=False)
 
     def test_gemini_session_fires_slash_compress(self) -> None:
         session = _make_terminal_session("gemini")
@@ -202,6 +230,36 @@ class TestCompactSelfFailureModes:
 
         assert result["compacted"] is False
         assert "tmux send-keys failed" in result["reason"]
+
+    def test_tmux_send_keys_timeout_returns_compacted_false(self) -> None:
+        session = _make_terminal_session("claude")
+        registry, tmux = _register_compact_self(session)
+        tmux.send_keys.side_effect = TimeoutError
+
+        result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result["compacted"] is False
+        assert "timed out" in result["reason"]
+
+    def test_session_ref_resolver_failure_returns_compacted_false(self) -> None:
+        registry = _TestRegistry(name="test", description="test")
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.side_effect = TimeoutError
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, MagicMock())
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+        result = asyncio.run(compact_self(session_id="#42"))
+
+        assert result["compacted"] is False
+        assert "failed to resolve session #42" in result["reason"]
 
 
 class TestCompactSelfWebChatPath:

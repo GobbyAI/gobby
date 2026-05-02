@@ -7,6 +7,7 @@ other agents) to interact with running terminal sessions.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -24,8 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Maps session.source (CLI provider name) to the slash command that triggers
-# context compaction in the running CLI subprocess. Claude Code uses /compact;
-# every other supported CLI uses /compress.
+# context compaction in the running CLI subprocess.
 _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "claude": "/compact",
     "codex": "/compact",
@@ -33,6 +33,84 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "qwen": "/compress",
     "droid": "/compress",
 }
+_CODEX_INTERRUPT_KEY = "Escape"
+_CODEX_INTERRUPT_SETTLE_SECONDS = 0.2
+
+
+async def _send_tmux_keys(
+    tmux: TmuxSessionManager,
+    target: str,
+    keys: str,
+    session_id: str,
+    *,
+    literal: bool,
+    action: str,
+) -> tuple[bool, str | None]:
+    """Send tmux keys and keep failures structured for MCP callers."""
+    try:
+        ok = await tmux.send_keys(target, keys, literal=literal)
+    except TimeoutError:
+        logger.warning("Timed out %s to tmux target %s for %s", action, target, session_id)
+        return False, f"tmux send-keys timed out for session {session_id} while {action}"
+    except Exception as exc:
+        detail = str(exc) or type(exc).__name__
+        logger.warning(
+            "Failed %s to tmux target %s for %s: %s",
+            action,
+            target,
+            session_id,
+            detail,
+            exc_info=True,
+        )
+        return False, f"tmux send-keys failed for session {session_id} while {action}: {detail}"
+
+    if not ok:
+        return False, f"tmux send-keys failed for session {session_id} while {action}"
+    return True, None
+
+
+async def _send_compaction_command(
+    tmux: TmuxSessionManager,
+    target: str,
+    command: str,
+    session_id: str,
+) -> tuple[bool, str | None]:
+    """Send a compaction command through tmux and keep failures structured."""
+    return await _send_tmux_keys(
+        tmux,
+        target,
+        f"{command}\n",
+        session_id,
+        literal=True,
+        action="sending compaction command",
+    )
+
+
+async def _send_codex_compaction_command(
+    tmux: TmuxSessionManager,
+    target: str,
+    command: str,
+    session_id: str,
+    *,
+    settle_seconds: float | None = None,
+) -> tuple[bool, str | None]:
+    """Interrupt Codex, then submit the compaction slash command."""
+    ok, reason = await _send_tmux_keys(
+        tmux,
+        target,
+        _CODEX_INTERRUPT_KEY,
+        session_id,
+        literal=False,
+        action="sending Codex interrupt",
+    )
+    if not ok:
+        return False, reason
+
+    delay = _CODEX_INTERRUPT_SETTLE_SECONDS if settle_seconds is None else settle_seconds
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    return await _send_compaction_command(tmux, target, command, session_id)
 
 
 def _resolve_tmux_target(
@@ -102,6 +180,15 @@ def _resolve_session_for_compaction(
                 resolved_id = candidate
         except ValueError as exc:
             return None, None, f"Session {session_id} not found: {exc}"
+        except Exception as exc:
+            detail = str(exc) or type(exc).__name__
+            logger.warning(
+                "Failed resolving session reference %r for compaction: %s",
+                session_id,
+                detail,
+                exc_info=True,
+            )
+            return None, None, f"failed to resolve session {session_id}: {detail}"
 
     session = session_manager.get(resolved_id)
     if session is None:
@@ -151,8 +238,8 @@ def register_terminal_tools(
         description=(
             "Trigger context compaction in the calling session's CLI by firing "
             "the appropriate slash command (/compact for Claude Code, "
-            "/compress for others). Designed to be called at workflow handoff "
-            "boundaries — e.g. /gobby plan calls this after spawning "
+            "/compact for Codex, /compress for other supported CLIs). Designed "
+            "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after spawning "
             "plan-adversary so the coordinator's bulky requirements-gathering "
             "context is summarized away while the sub-agent runs. Web-chat "
             "sessions use the live daemon ChatSession registry."
@@ -207,18 +294,30 @@ def register_terminal_tools(
         assert target is not None
         assert tmux is not None
 
-        ok = await tmux.send_keys(target, f"{command}\n", literal=True)
+        if source == "codex":
+            ok, reason = await _send_codex_compaction_command(
+                tmux,
+                target,
+                command,
+                resolved_session_id,
+            )
+        else:
+            ok, reason = await _send_compaction_command(tmux, target, command, resolved_session_id)
+
         if not ok:
             return {
                 "compacted": False,
-                "reason": f"tmux send-keys failed for session {resolved_session_id}",
+                "reason": reason,
             }
-        return {
+        result = {
             "compacted": True,
             "command": command,
             "cli": source,
             "via": "tmux",
         }
+        if source == "codex":
+            result["interrupted"] = True
+        return result
 
     @registry.tool(
         name="capture_output",
