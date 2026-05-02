@@ -277,30 +277,36 @@ Report the verification output in the exact format `plan-draft` specifies.
 
 ## Step 5.5: Mechanical Structural Validation
 
-Step 5 is a narrative review. Step 5.5 is a mechanical schema check that
+Step 5 is a narrative review. Step 5.5 is a mechanical CLI check that
 catches structural drift the narrative pass cannot reliably enumerate
 (missing `kind:` annotations, malformed acceptance items, dropped phase
 headings whose IDs do not match the contract regex, malformed deferral
-objects, missing manifests at expansion time). It is fast and deterministic
-— always run it, never skip it.
+objects, target-inventory drift, conservative table-row decomposition, and
+index-proven missing direct consumers when code-index context exists). It is
+fast and deterministic — always run it, never skip it.
 
 ```text
-result = call_tool(
-    server_name="gobby-tasks-ops",
-    tool_name="validate_plan_file",
-    arguments={"plan_file": <artifact_path from Step 4>},
-    session_id="#<self>",
-)
+uv run gobby plans validate <artifact_path from Step 4>
 ```
 
-Branch on the response:
+If the current working directory is not the project root, add an explicit
+project context:
 
-- **`valid: True`** — record `phase_count` and `deliverable_count` for the
-  user-facing report (Step 5 already showed the narrative checks; mention
-  the mechanical pass alongside as a single combined report). Proceed to
-  Step 6.
-- **`valid: False`** — display the validator errors **verbatim** to the
-  user. Then attempt an in-place fix:
+```text
+uv run gobby plans validate <artifact_path from Step 4> --project <project-name-or-id>
+```
+
+Use `gobby tasks expand validate-plan` only from task-expansion workflows or
+when debugging the expansion CLI itself. Plan authoring and adversary
+resubmission checks use `gobby plans validate`.
+
+Branch on the command result:
+
+- **Exit code 0** — record the reported phase list for the user-facing
+  report (Step 5 already showed the narrative checks; mention the mechanical
+  pass alongside as a single combined report). Proceed to Step 6.
+- **Nonzero exit** — display the validator errors **verbatim** to the user.
+  Then attempt an in-place fix:
   - If the error names a class already taught by `plan-draft` (e.g.
     `phases missing` → fix phase headings to `## P<N>: Name`; `missing
     kind` → add `` `kind: ...` `` annotation; `missing acceptance` → add
@@ -313,17 +319,16 @@ Branch on the response:
     output to the user and ask them to confirm the fix before
     proceeding. Do NOT advance to Step 6 with a failing validator.
 
-Step 5.5 catches the false-negative class the narrative checklist
-misses: a plan can pass all five Step 5 checks (no test tasks, valid
-deps, categories, phase syntax tolerated by the old skill, self-contained
+Step 5.5 catches the false-negative class the narrative checklist misses:
+a plan can pass all five Step 5 checks (no test tasks, valid deps,
+categories, phase syntax tolerated by the old skill, self-contained
 sections) and still fail the contract because, say, its phase headings
 parse to `section_id: "1"` instead of `section_id: "P1"` and the parser
-silently drops them. The mechanical validator at
-`src/gobby/tasks/expansion/_compile.py::validate_plan_file` checks the
-contract regex `^P\d+$` and the deliverables-without-phases case
-explicitly. The plan-adversary later runs the same gate (plus its
-qualitative review); failing fast here saves an entire adversary round
-and the LLM call that goes with it.
+silently drops them. The `gobby plans validate` command runs the same
+contract validation used by expansion, plus deterministic plan lints; the
+plan-adversary spawn gate runs the same validation again before review.
+Failing fast here saves an entire adversary round and the LLM call that
+goes with it.
 
 Resume safety: if Step 5.5 returns `valid: False` and the skill is
 interrupted before applying a fix, re-entry from Step 5 (via the resume

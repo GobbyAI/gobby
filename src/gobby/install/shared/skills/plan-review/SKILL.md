@@ -29,14 +29,14 @@ A plan that passes this review is ready for `/gobby expand`.
 
 ## Plan-Coverage Contract Gate
 
-Mechanical parser rejection happens upstream of the adversary. The interactive
-planner and autonomous front-half both run `validate_plan_file`
-(`src/gobby/tasks/expansion/_compile.py`) before every adversary spawn; that
-helper calls `parse_plan(..., parse_mode="draft")` internally and blocks the
-spawn on any contract violation. By the time the adversary is invoked, the
-typed grammar has already passed the draft-mode contract gate — re-running the
-parser pre-verdict is structural duplication that wastes a spawn round on
-syntax the planner already cleared.
+Mechanical parser rejection happens upstream of the adversary. Plan-authoring
+sessions run `uv run gobby plans validate <plan-file>` before resubmission;
+the planner/adversary spawn gate also calls the same internal validator before
+every adversary spawn. The validator calls `parse_plan(..., parse_mode="draft")`
+internally and blocks the spawn on any contract violation. By the time the
+adversary is invoked, the typed grammar has already passed the draft-mode
+contract gate — re-running the parser pre-verdict is structural duplication
+that wastes a spawn round on syntax the planner already cleared.
 
 The adversary's only mechanical gate is the post-approval
 `parse_mode="expansion"` self-check on manifest write (see Manifest Emission
@@ -49,11 +49,12 @@ surfacing a contract violation the planner gate missed — or one the parser
 cannot detect mechanically (table-row decomposition, traceability gaps) —
 cite the exact rejection cause from the table.
 
-The planner-side gate also runs deterministic semantic lint before adversary
-spawn. `target-coverage` and index-proven `consumer-sweep` failures are
-mechanical validator failures, not qualitative review findings. If one appears
-in your prompt or task history, require the planner to sweep the whole plan for
-that same failure class before resubmission.
+The planner-side gate and `gobby plans validate` also run deterministic semantic
+lint. `target-coverage`, conservative `table-row-decomposition`, and
+index-proven `consumer-sweep` failures are mechanical validator failures, not
+qualitative review findings. If one appears in your prompt or task history,
+require the planner to sweep the whole plan for that same failure class before
+resubmission.
 
 Canonical heading regex:
 
@@ -101,12 +102,13 @@ TDD wrappers without phases, so `validate_plan_file`
 (`src/gobby/tasks/expansion/_compile.py`) blocks adversary spawn for any plan
 with one or more `kind: deliverable` sections but zero phase sections.
 
-The ninth rejection is qualitative because table intent cannot be parsed
-reliably. Any `deliverable` section whose body uses a markdown table to
-enumerate work items MUST emit one acceptance item per table data row with
-stable IDs. Reject a deliverable whose acceptance-item count is lower than its
-table data-row count, cite the missing rows, and name "table-row decomposition"
-in the finding.
+The ninth rejection is a conservative semantic-lint check. Any `deliverable`
+section whose body uses a markdown table to enumerate work items MUST emit one
+acceptance item per table data row with stable IDs. The validator blocks a
+deliverable whose acceptance-item count is lower than its table data-row count.
+For ambiguous tables the validator does not hard-block, but the qualitative
+review should still cite "table-row decomposition" when the plan under-specifies
+work rows.
 
 ---
 

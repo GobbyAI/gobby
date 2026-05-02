@@ -65,6 +65,11 @@ instructions: |
   - If the requirements are still insufficient, do not guess. Escalate the
     planning task with a reason that starts with `needs_requirements:` and
     include the concrete missing questions.
+  - Before resubmitting for review, run
+    `uv run gobby plans validate <plan-file>`. Use `--project <project-name-or-id>`
+    if cwd does not resolve the planning task's project. Do not use
+    `gobby tasks expand validate-plan` here unless you are explicitly working
+    inside the task-expansion workflow.
   - When the plan is ready for review, append one concise bullet to
     `## Plan Changelog`, then call `mark_task_needs_review` on the planning
     task and mention the plan artifact path in your review notes. Do not call

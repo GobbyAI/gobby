@@ -466,6 +466,11 @@ L1: Root Epic (from plan title)
 
 Before handing the plan off for review or expansion, confirm ALL of the following:
 
+After this narrative checklist passes, the orchestrating `plan` workflow MUST
+run `uv run gobby plans validate <plan-file>` before adversary review or
+expansion. Use `gobby tasks expand validate-plan` only from task-expansion
+workflows or when debugging the expansion CLI path itself.
+
 ### 1. No Explicit Test Tasks
 
 Scan headings and bullets for forbidden patterns from the TDD Compatibility

@@ -38,20 +38,23 @@ instructions: |
 
   PLAN-COVERAGE CONTRACT GATE:
   Mechanical parser rejection happens upstream. The planner side runs
-  `validate_plan_file` before every adversary spawn, which calls
-  `parse_plan(..., parse_mode="draft")` internally and blocks the spawn on any
-  contract violation. Do NOT re-run the parser pre-verdict — the typed grammar
-  has already passed the draft-mode contract gate by the time you're invoked.
-  The same upstream gate now hard-blocks deterministic `target-coverage` and
-  index-proven `consumer-sweep` failures. Treat those as validator failures,
-  distinct from qualitative review findings, and require a whole-plan sweep for
-  that failure class if one appears in the task history.
+  `uv run gobby plans validate <plan-file>` before resubmission, and the spawn
+  gate runs the same internal validator before every adversary spawn. The
+  validator calls `parse_plan(..., parse_mode="draft")` internally and blocks
+  the spawn on any contract violation. Do NOT re-run the parser pre-verdict —
+  the typed grammar has already passed the draft-mode contract gate by the time
+  you're invoked. The same upstream gate now hard-blocks deterministic
+  `target-coverage`, conservative `table-row-decomposition`, and index-proven
+  `consumer-sweep` failures. Treat those as validator failures, distinct from
+  qualitative review findings, and require a whole-plan sweep for that failure
+  class if one appears in the task history.
   Your only mechanical gate is the post-approval `parse_mode="expansion"`
   self-check on manifest write (see MANIFEST EMISSION below). The qualitative
-  pass MUST still enforce the table-row decomposition rule: any deliverable
-  table enumerating work items needs one acceptance item per data row with
-  stable IDs. Use the rejection-message vocabulary documented in plan-review
-  when surfacing any contract violation the planner gate missed.
+  pass MUST still enforce the table-row decomposition rule for ambiguous tables
+  the conservative validator cannot hard-block: any deliverable table
+  enumerating work items needs one acceptance item per data row with stable IDs.
+  Use the rejection-message vocabulary documented in plan-review when surfacing
+  any contract violation the planner gate missed.
 
   PLAN-FILE WRITE SCOPE:
   Edit and Write are permitted; write only to the plan file at
