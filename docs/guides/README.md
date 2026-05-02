@@ -16,6 +16,7 @@ Documentation guides for using Gobby's features.
 | [sessions.md](sessions.md) | Session lifecycle, handoffs, and context management |
 | [memory.md](memory.md) | Persistent knowledge across sessions |
 | [workflows-overview.md](workflows-overview.md) | How rules, agents, and pipelines fit together |
+| [dispatch.md](dispatch.md) | Stage-manifest dispatch, readiness projection, and rule actions |
 | [rules.md](rules.md) | Rule engine — events, effects, conditions, enforcement |
 | [pipelines.md](pipelines.md) | Pipeline workflows with data flow and approval gates |
 | [search.md](search.md) | Unified search with TF-IDF, embeddings, and hybrid modes |

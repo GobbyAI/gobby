@@ -295,19 +295,26 @@ not the YAML template files.
 
 ### Dispatch Architecture
 
-Gobby task automation is state-driven dispatch. The dispatcher is a deterministic
-heartbeat that scans tasks with `allow_automation=true`, evaluates ordered lifecycle
-rules, acquires a per-task mutex, and executes the selected action.
+Gobby task automation is stage-manifest dispatch. The dispatcher is a
+deterministic heartbeat that scans tasks with `allow_automation=true`, reads the
+task's current manifest row, evaluates ordered rules, acquires a per-task mutex,
+and executes the selected action.
+
+The dispatch chain is:
+
+```text
+task_stages_registry -> task_stage_states manifest -> ordered rule -> action
+```
 
 Dispatch rules live in `src/gobby/dispatch/rules.py`. To add a rule:
 
-1. Add a small rule function that checks task lifecycle, status, labels, artifacts,
-   and automation fields.
-2. Return an explicit action such as spawn, start expansion, create isolation,
-   advance lifecycle, append audit marker, or escalate.
-3. Register it in the ordered rule list near the stage it belongs to.
-4. Keep the rule deterministic. Prompting belongs in spawned agents; the dispatcher
-   only routes state.
+1. Add a small rule function that checks the current manifest row, artifacts,
+   labels, and automation fields.
+2. Return an explicit action such as start stage, spawn agent, start expansion,
+   create isolation, advance stage, append audit marker, or escalate.
+3. Register it in the ordered rule list near the manifest stage it belongs to.
+4. Keep the rule deterministic. Prompting belongs in spawned agents; the
+   dispatcher only routes manifest state.
 
 Build state is resolved before dispatch:
 
@@ -315,9 +322,11 @@ Build state is resolved before dispatch:
   enables them.
 - `yolo` means rules choose deterministic fallbacks instead of escalating when possible.
 - `isolation` is explicit task state: `none`, `worktree`, or `clone`.
-- Stage skips are stored as `stage-:<name>` labels. Profiles such as `quick`, `review`,
-  `full`, and `full-yolo` are CLI/MCP/HTTP sugar that resolve to stage skips, isolation,
-  and yolo at build time.
+- `stages` is the ordered manifest materialized in `task_stage_states` from the
+  stage registry. The current stage is the first row whose state is not `done`.
+- Phase 3.2 profile bundles such as `quick`, `review`, `full`, and `full-yolo`
+  are CLI/MCP/HTTP sugar that resolve to the peer build fields above at build
+  time.
 - `assigned_agent` and `additional_skills` route leaf work. Missing leaf assignment
   falls back to `backend-developer` with an audit marker.
 
@@ -334,12 +343,12 @@ Concurrency and audit data are adjacent to tasks:
 - `task_artifacts` stores sparse pointers such as `plan_file_path`, `target_branch`,
   worktree/clone path and ID pairs, expansion run IDs, PR URL, and future merge SHA.
   Write related fields atomically, especially worktree/clone pairs.
-- `task_lifecycle_events` is append-only audit. Lifecycle helpers write it when
-  advancing stages; readers use it for history and diagnostics.
+- Audit rows are append-only. Stage helpers write them when changing manifest
+  rows; readers use them for history and diagnostics.
 
 The dispatcher enforces a global agent-slot cap (`max_active_agents`, default 10). When
 the cap is full, no persistent queue is needed; the next heartbeat re-evaluates task
-state.
+manifest state.
 
 Retired orchestration templates live under `workflows/*/deprecated/` as archival
 tombstones. Active bundled sync reads only top-level YAML and soft-deletes installed rows

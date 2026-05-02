@@ -186,6 +186,28 @@ Every plan is one Markdown document. The structure is:
   `(depends: P<N>)` for the whole phase, on task headings. Use the bare
   section_id — `(depends: Phase 1)` does NOT resolve.
 
+### Canonical Build Stages
+
+Build turns the approved plan into a stage manifest. The active registry stages,
+in manifest order, are:
+
+1. `ideation`
+2. `research`
+3. `architecture`
+4. `prd`
+5. `planning`
+6. `test_arch`
+7. `expansion`
+8. `development`
+9. `holistic_qa`
+10. `pr`
+11. `merge`
+
+Review behavior is metadata on these surviving rows through `review_policy`,
+`reviewer_agent`, attempt counters, and caps. Do not model review work as
+separate manifest rows when drafting a plan; route it through the surviving
+stage that owns the review.
+
 ### Canonical Template
 
 Each section heading carries a `` `kind: ...` `` annotation on the next
