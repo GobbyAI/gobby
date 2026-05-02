@@ -72,11 +72,7 @@ def _migration_234():
 def _db_before_234(tmp_path: Path) -> LocalDatabase:
     db = LocalDatabase(tmp_path / "before-234.db")
     _apply_baseline(db)
-    pre_234 = [
-        migration
-        for migration in MIGRATIONS
-        if BASELINE_VERSION < migration[0] < 234
-    ]
+    pre_234 = [migration for migration in MIGRATIONS if BASELINE_VERSION < migration[0] < 234]
     _run_migration_list(db, BASELINE_VERSION, pre_234)
     return db
 
@@ -145,9 +141,7 @@ def test_creates_registry_tables(tmp_path: Path) -> None:
     assert "stateIN('ready','in_progress','done')" in states_sql.replace(" ", "")
     assert "REFERENCES task_stages_registry(name)" in states_sql
 
-    indexes = {
-        row["name"] for row in db.fetchall("PRAGMA index_list(task_stage_states)")
-    }
+    indexes = {row["name"] for row in db.fetchall("PRAGMA index_list(task_stage_states)")}
     assert {
         "idx_task_stage_states_position",
         "idx_task_stage_states_state",
@@ -198,9 +192,8 @@ def test_fresh_install_matches(tmp_path: Path) -> None:
 
     assert ARTIFACT_REPORT_COLUMNS.issubset(_column_info(db, "task_artifacts"))
     assert "is_escalated" in _column_info(db, "tasks")
-    assert (
-        db.fetchone("SELECT COUNT(*) AS count FROM task_stages_registry")["count"]
-        == len(CANONICAL_STAGE_NAMES)
+    assert db.fetchone("SELECT COUNT(*) AS count FROM task_stages_registry")["count"] == len(
+        CANONICAL_STAGE_NAMES
     )
 
 
@@ -214,9 +207,7 @@ def test_tasks_is_escalated_added(tmp_path: Path) -> None:
     assert columns["is_escalated"]["type"].upper() == "INTEGER"
     assert columns["is_escalated"]["notnull"] == 1
     assert columns["is_escalated"]["dflt_value"] == "0"
-    assert db.fetchone("SELECT is_escalated FROM tasks WHERE id = 'task-1'")[
-        "is_escalated"
-    ] == 0
+    assert db.fetchone("SELECT is_escalated FROM tasks WHERE id = 'task-1'")["is_escalated"] == 0
 
 
 def test_registry_seeded_inline(tmp_path: Path) -> None:
@@ -238,9 +229,7 @@ def test_registry_seeded_inline(tmp_path: Path) -> None:
     assert len(payload["stages"]) == len(rows)
     assert {row["bundled_hash"] for row in rows} == {expected_hash}
     assert DISCOVERY_DEFAULT_AGENTS == {
-        row["name"]: row["default_agent"]
-        for row in rows
-        if row["name"] in DISCOVERY_DEFAULT_AGENTS
+        row["name"]: row["default_agent"] for row in rows if row["name"] in DISCOVERY_DEFAULT_AGENTS
     }
 
 
@@ -285,15 +274,29 @@ def test_default_stages_seeded_inline(tmp_path: Path) -> None:
     for row in rows:
         by_task_type.setdefault(row["task_type"], []).append(row["stage_name"])
 
-    assert set(by_task_type) == {"epic", "feature", "bug", "refactor", "chore", "task"}
-    assert all(stages for stages in by_task_type.values())
-    assert by_task_type["chore"] == by_task_type["task"]
-    assert len({tuple(stages) for stages in by_task_type.values()}) == 5
+    assert by_task_type == {
+        "bug": ["development", "pr", "merge"],
+        "chore": ["development", "pr", "merge"],
+        "epic": [
+            "ideation",
+            "research",
+            "architecture",
+            "prd",
+            "planning",
+            "test_arch",
+            "expansion",
+            "development",
+            "holistic_qa",
+            "pr",
+            "merge",
+        ],
+        "feature": ["planning", "test_arch", "expansion", "development", "pr", "merge"],
+        "refactor": ["planning", "development", "pr", "merge"],
+        "task": ["development", "pr", "merge"],
+    }
 
     for task_type, stages in by_task_type.items():
-        positions = [
-            row["position"] for row in rows if row["task_type"] == task_type
-        ]
+        positions = [row["position"] for row in rows if row["task_type"] == task_type]
         assert positions == list(range(1, len(stages) + 1))
 
 
@@ -304,7 +307,6 @@ def test_fresh_db_fk_resolution_into_234(tmp_path: Path) -> None:
 
     assert get_current_version(db) >= 234
     assert db.fetchall("PRAGMA foreign_key_check") == []
-    assert (
-        db.fetchone("SELECT COUNT(*) AS count FROM task_stages_registry")["count"]
-        == len(CANONICAL_STAGE_NAMES)
+    assert db.fetchone("SELECT COUNT(*) AS count FROM task_stages_registry")["count"] == len(
+        CANONICAL_STAGE_NAMES
     )

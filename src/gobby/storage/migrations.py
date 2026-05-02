@@ -15,7 +15,9 @@ To add a new migration:
     3. Also add the migration to BASELINE_SCHEMA for future fresh installs.
 """
 
+import json
 import logging
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -74,6 +76,47 @@ _ARTIFACT_REPORT_COLUMNS = (
     "structured_pr_verdict",
     "merge_campaign_report",
 )
+_MIGRATION_234_SESSION_ID = "migration:234"
+_PERSONAL_PROJECT_ID = "00000000-0000-0000-0000-000000060887"
+_REQUIRED_REVIEW_STAGES = {
+    "planning": "plan-adversary",
+    "expansion": "expansion-qa",
+    "development": "qa-reviewer",
+    "holistic_qa": "holistic-reviewer",
+    "pr": None,
+}
+_CONDUCTOR_STAGE_OVERRIDES = {
+    "requirements": "prd",
+    "planning": "planning",
+    "expansion": "expansion",
+    "test-architecture": "test_arch",
+}
+_LIFECYCLE_STAGE_TARGETS = {
+    "plan_review": "planning",
+    "test_arch": "test_arch",
+    "expanding": "expansion",
+    "in_development": "development",
+    "holistic_review": "holistic_qa",
+    "pr": "pr",
+    "merging": "merge",
+}
+_STAGE_ORDER = {
+    "ideation": 10,
+    "research": 20,
+    "architecture": 30,
+    "prd": 40,
+    "planning": 50,
+    "adversarial_review": 60,
+    "test_arch": 70,
+    "expansion": 80,
+    "expansion_qa": 90,
+    "development": 100,
+    "code_review_qa": 110,
+    "holistic_qa": 120,
+    "pr": 130,
+    "merge": 140,
+}
+_NORMALIZED_STATUSES = {"open", "in_progress", "needs_review", "review_approved", "closed"}
 _DEFAULT_STAGE_MANIFESTS = {
     "epic": (
         "ideation",
@@ -81,30 +124,23 @@ _DEFAULT_STAGE_MANIFESTS = {
         "architecture",
         "prd",
         "planning",
-        "adversarial_review",
         "test_arch",
         "expansion",
-        "expansion_qa",
         "development",
-        "code_review_qa",
         "holistic_qa",
         "pr",
         "merge",
     ),
     "feature": (
         "planning",
-        "adversarial_review",
         "test_arch",
         "expansion",
-        "expansion_qa",
         "development",
-        "code_review_qa",
-        "holistic_qa",
         "pr",
         "merge",
     ),
-    "bug": ("development", "code_review_qa", "pr", "merge"),
-    "refactor": ("planning", "development", "code_review_qa", "pr", "merge"),
+    "bug": ("development", "pr", "merge"),
+    "refactor": ("planning", "development", "pr", "merge"),
     "chore": ("development", "pr", "merge"),
     "task": ("development", "pr", "merge"),
 }
@@ -228,6 +264,466 @@ def _default_task_artifact_column(column: str) -> str:
     if column == "updated_at":
         return "datetime('now') AS updated_at"
     return f"NULL AS {column}"
+
+
+def _decode_task_labels(labels_json: str | None) -> list[str]:
+    if not labels_json:
+        return []
+    try:
+        labels = json.loads(labels_json)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(labels, list):
+        return []
+    return [label for label in labels if isinstance(label, str)]
+
+
+def _numeric_label_value(labels: list[str], prefix: str) -> int:
+    values: list[int] = []
+    for label in labels:
+        if not label.startswith(prefix):
+            continue
+        suffix = label.removeprefix(prefix).strip()
+        if suffix.isdigit():
+            values.append(int(suffix))
+    return max(values, default=0)
+
+
+def _normalize_status_escalated(status: str) -> tuple[str, bool]:
+    """Normalize legacy escalation status before lifecycle/status mapping."""
+    if status == "escalated":
+        return "in_progress", True
+    return status, False
+
+
+def _normalize_status_closed_non_merged(lifecycle: str, status: str) -> tuple[str, bool]:
+    """Normalize legacy non-merged closures before lifecycle/status mapping."""
+    if status == "closed" and lifecycle != "merged":
+        return "in_progress", True
+    return status, False
+
+
+def _conductor_override_stage(labels: list[str], task_id: str) -> str | None:
+    overrides: list[str] = []
+    for label in labels:
+        if not label.startswith("conductor-stage:"):
+            continue
+        conductor_stage = label.removeprefix("conductor-stage:").strip()
+        stage_name = _CONDUCTOR_STAGE_OVERRIDES.get(conductor_stage)
+        if stage_name is None:
+            raise RuntimeError(
+                f"Migration 234 cannot map conductor-stage label {label!r} for task {task_id}"
+            )
+        overrides.append(stage_name)
+    unique = set(overrides)
+    if len(unique) > 1:
+        raise RuntimeError(
+            f"Migration 234 found multiple conductor-stage labels for task {task_id}: "
+            f"{sorted(unique)}"
+        )
+    return overrides[0] if overrides else None
+
+
+def _stage_skip_labels(labels: list[str]) -> set[str]:
+    skipped: set[str] = set()
+    for label in labels:
+        if not label.startswith("stage-:"):
+            continue
+        stage_name = label.removeprefix("stage-:").strip()
+        if stage_name:
+            skipped.add(stage_name)
+    return skipped
+
+
+def _filtered_labels_after_backfill(labels: list[str], *, conductor_override: bool) -> list[str]:
+    filtered: list[str] = []
+    for label in labels:
+        if label.startswith("stage-:"):
+            continue
+        if conductor_override and label.startswith("conductor-stage:"):
+            continue
+        filtered.append(label)
+    return filtered
+
+
+def _load_default_manifest(
+    db: LocalDatabase,
+    task_type: str,
+    skipped_stages: set[str],
+) -> list[str]:
+    rows = db.fetchall(
+        """
+        SELECT stage_name
+          FROM task_type_default_stages
+         WHERE task_type = ?
+         ORDER BY position, stage_name
+        """,
+        (task_type,),
+    )
+    if not rows and task_type != "task":
+        rows = db.fetchall(
+            """
+            SELECT stage_name
+              FROM task_type_default_stages
+             WHERE task_type = 'task'
+             ORDER BY position, stage_name
+            """
+        )
+    return [row["stage_name"] for row in rows if row["stage_name"] not in skipped_stages]
+
+
+def _is_mapped_tuple(lifecycle: str, status: str) -> bool:
+    if status not in _NORMALIZED_STATUSES:
+        return False
+    if lifecycle == "open":
+        return status != "closed"
+    if lifecycle == "merged":
+        return True
+    if lifecycle == "merging":
+        return status != "closed"
+    if lifecycle in _LIFECYCLE_STAGE_TARGETS:
+        return status in {"open", "in_progress", "needs_review", "review_approved"}
+    return False
+
+
+def _target_stage_rank(stage_name: str | None) -> int | None:
+    if stage_name is None:
+        return None
+    return _STAGE_ORDER.get(stage_name)
+
+
+def _state_through_target(
+    manifest: list[str],
+    target_stage: str | None,
+    target_state: str,
+) -> list[str]:
+    target_rank = _target_stage_rank(target_stage)
+    if target_rank is None:
+        return ["ready" for _stage in manifest]
+
+    states: list[str] = []
+    for stage_name in manifest:
+        stage_rank = _STAGE_ORDER.get(stage_name)
+        if stage_name == target_stage:
+            states.append(target_state)
+        elif stage_rank is not None and stage_rank < target_rank:
+            states.append("done")
+        else:
+            states.append("ready")
+    return states
+
+
+def _state_done_through_lifecycle(manifest: list[str], lifecycle: str) -> list[str]:
+    target_stage = _LIFECYCLE_STAGE_TARGETS.get(lifecycle)
+    return _state_through_target(manifest, target_stage, "done")
+
+
+def _resolve_state_from_lifecycle_status(
+    lifecycle: str,
+    status: str,
+    manifest: list[str],
+    *,
+    closed_non_merged: bool,
+) -> list[str]:
+    if closed_non_merged:
+        return _state_done_through_lifecycle(manifest, lifecycle)
+    if lifecycle == "merged":
+        return ["done" for _stage in manifest]
+    if lifecycle == "open":
+        return ["ready" for _stage in manifest]
+    if lifecycle == "merging":
+        return _state_through_target(manifest, "merge", "in_progress")
+
+    target_stage = _LIFECYCLE_STAGE_TARGETS.get(lifecycle)
+    if lifecycle in {"plan_review", "expanding", "in_development", "holistic_review", "pr"}:
+        target_state = {
+            "open": "in_progress",
+            "in_progress": "in_progress",
+            "needs_review": "needs_review",
+            "review_approved": "review_approved",
+        }[status]
+        return _state_through_target(manifest, target_stage, target_state)
+    if lifecycle == "test_arch":
+        target_state = {
+            "open": "in_progress",
+            "in_progress": "in_progress",
+            "needs_review": "in_progress",
+            "review_approved": "done",
+        }[status]
+        return _state_through_target(manifest, target_stage, target_state)
+
+    raise RuntimeError(f"Migration 234 cannot map lifecycle/status tuple {(lifecycle, status)!r}")
+
+
+def _resolve_conductor_stage_state(
+    stage_name: str,
+    status: str,
+    *,
+    closed_non_merged: bool,
+) -> str:
+    if closed_non_merged or status == "closed":
+        return "done"
+    if status in {"open", "in_progress"}:
+        return "in_progress"
+    if status == "needs_review":
+        return "needs_review" if stage_name in _REQUIRED_REVIEW_STAGES else "in_progress"
+    if status == "review_approved":
+        return "review_approved" if stage_name in _REQUIRED_REVIEW_STAGES else "done"
+    raise RuntimeError(
+        f"Migration 234 cannot map conductor-stage status {status!r} for stage {stage_name!r}"
+    )
+
+
+def _stage_caps_for_row(row: dict[str, object], stage_name: str) -> tuple[int | None, int | None]:
+    max_work_attempts = None
+    max_review_rounds = None
+    if stage_name == "expansion":
+        max_work_attempts = row.get("max_expansion_attempts")
+    elif stage_name == "merge":
+        max_work_attempts = row.get("max_merge_attempts")
+
+    if stage_name == "development":
+        max_review_rounds = row.get("max_qa_rounds")
+    elif stage_name == "holistic_qa":
+        max_review_rounds = row.get("max_holistic_rounds")
+    elif stage_name == "pr":
+        max_review_rounds = row.get("max_review_rounds")
+
+    return (
+        int(max_work_attempts) if max_work_attempts is not None else None,
+        int(max_review_rounds) if max_review_rounds is not None else None,
+    )
+
+
+def _stage_timing_fields(
+    row: dict[str, object], state: str
+) -> tuple[object, object, object, object]:
+    actor = row.get("claimed_by_session_id") or row.get("closed_in_session_id")
+    if state == "ready":
+        return None, None, None, None
+    if state == "done":
+        return row.get("created_at"), actor, row.get("closed_at") or row.get("updated_at"), actor
+    return row.get("updated_at") or row.get("created_at"), actor, None, None
+
+
+def _registry_metadata(db: LocalDatabase) -> dict[str, dict[str, object]]:
+    rows = db.fetchall(
+        """
+        SELECT name, review_policy, reviewer_agent
+          FROM task_stages_registry
+        """
+    )
+    return {row["name"]: dict(row) for row in rows}
+
+
+def _ensure_migration_234_session(db: LocalDatabase) -> None:
+    row = db.fetchone("SELECT id FROM sessions WHERE id = ?", (_MIGRATION_234_SESSION_ID,))
+    if row is not None:
+        return
+    project = db.fetchone(
+        "SELECT id FROM projects WHERE id = ?",
+        (_PERSONAL_PROJECT_ID,),
+    )
+    project_id = _PERSONAL_PROJECT_ID
+    if project is None:
+        fallback = db.fetchone("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+        if fallback is None:
+            raise RuntimeError("Migration 234 cannot create synthetic close session: no project")
+        project_id = fallback["id"]
+    db.execute(
+        """
+        INSERT OR IGNORE INTO sessions (
+            id, external_id, machine_id, source, project_id, title,
+            status, agent_depth, created_at, updated_at
+        )
+        VALUES (?, ?, 'migration', 'migration', ?, 'Migration 234',
+                'active', 0, datetime('now'), datetime('now'))
+        """,
+        (_MIGRATION_234_SESSION_ID, _MIGRATION_234_SESSION_ID, project_id),
+    )
+
+
+def _close_all_done_stage_manifests(db: LocalDatabase) -> None:
+    if (
+        db.fetchone(
+            """
+            SELECT 1
+              FROM tasks
+             WHERE closed_at IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM task_stage_states tss WHERE tss.task_id = tasks.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM task_stage_states tss
+                    WHERE tss.task_id = tasks.id AND tss.state != 'done'
+               )
+             LIMIT 1
+            """
+        )
+        is None
+    ):
+        return
+    _ensure_migration_234_session(db)
+    db.execute(
+        """
+        UPDATE tasks
+           SET closed_at = datetime('now'),
+               closed_in_session_id = ?,
+               updated_at = datetime('now')
+         WHERE closed_at IS NULL
+           AND EXISTS (
+               SELECT 1 FROM task_stage_states tss WHERE tss.task_id = tasks.id
+           )
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM task_stage_states tss
+                WHERE tss.task_id = tasks.id AND tss.state != 'done'
+           )
+        """,
+        (_MIGRATION_234_SESSION_ID,),
+    )
+
+
+def _backfill_task_stage_states(db: LocalDatabase) -> None:
+    """Backfill task stage-state manifests from legacy lifecycle/status fields."""
+
+    registry = _registry_metadata(db)
+    census: Counter[tuple[str, str]] = Counter()
+    tasks = db.fetchall(
+        """
+        SELECT tasks.id, tasks.task_type, tasks.lifecycle, tasks.status, tasks.labels,
+               tasks.created_at, tasks.updated_at, tasks.claimed_by_session_id,
+               tasks.closed_in_session_id, tasks.closed_at, tasks.closed_commit_sha,
+               tasks.escalated_at, task_artifacts.pr_url,
+               task_artifacts.max_expansion_attempts, task_artifacts.max_qa_rounds,
+               task_artifacts.max_merge_attempts, task_artifacts.max_holistic_rounds,
+               task_artifacts.max_review_rounds
+          FROM tasks
+          LEFT JOIN task_artifacts ON task_artifacts.task_id = tasks.id
+         ORDER BY tasks.created_at, tasks.id
+        """
+    )
+
+    for task_row in tasks:
+        row = dict(task_row)
+        task_id = str(row["id"])
+        labels = _decode_task_labels(row.get("labels"))
+        conductor_stage = _conductor_override_stage(labels, task_id)
+        skipped_stages = _stage_skip_labels(labels)
+        manifest = (
+            [conductor_stage]
+            if conductor_stage is not None
+            else _load_default_manifest(db, str(row.get("task_type") or "task"), skipped_stages)
+        )
+
+        lifecycle = str(row.get("lifecycle") or "open")
+        raw_status = str(row.get("status") or "open")
+        normalized_status, was_escalated_status = _normalize_status_escalated(raw_status)
+        if was_escalated_status:
+            db.execute("UPDATE tasks SET is_escalated = 1 WHERE id = ?", (task_id,))
+        normalized_status, closed_non_merged = _normalize_status_closed_non_merged(
+            lifecycle, normalized_status
+        )
+
+        if conductor_stage is not None:
+            if normalized_status not in _NORMALIZED_STATUSES:
+                raise RuntimeError(
+                    "Migration 234 cannot map task lifecycle/status tuple "
+                    f"{(lifecycle, normalized_status)!r} for task {task_id}"
+                )
+            stage_states = [
+                _resolve_conductor_stage_state(
+                    conductor_stage,
+                    normalized_status,
+                    closed_non_merged=closed_non_merged,
+                )
+            ]
+            census[(f"conductor:{conductor_stage}", normalized_status)] += 1
+        else:
+            if not _is_mapped_tuple(lifecycle, normalized_status):
+                raise RuntimeError(
+                    "Migration 234 cannot map task lifecycle/status tuple "
+                    f"{(lifecycle, normalized_status)!r} for task {task_id}"
+                )
+            stage_states = _resolve_state_from_lifecycle_status(
+                lifecycle,
+                normalized_status,
+                manifest,
+                closed_non_merged=closed_non_merged,
+            )
+            census[(lifecycle, normalized_status)] += 1
+
+        db.execute("DELETE FROM task_stage_states WHERE task_id = ?", (task_id,))
+        planning_rounds = _numeric_label_value(labels, "planning-round:")
+        qa_rounds = _numeric_label_value(labels, "qa-attempts:")
+        for position, (stage_name, state) in enumerate(
+            zip(manifest, stage_states, strict=True),
+            start=1,
+        ):
+            metadata = registry.get(stage_name)
+            if metadata is None:
+                raise RuntimeError(
+                    f"Migration 234 cannot backfill task {task_id}: unknown stage {stage_name!r}"
+                )
+            entered_at, entered_by, completed_at, completed_by = _stage_timing_fields(row, state)
+            max_work_attempts, max_review_rounds = _stage_caps_for_row(row, stage_name)
+            artifact_refs = (
+                json.dumps({"pr_url": row["pr_url"]}, sort_keys=True)
+                if stage_name == "pr" and row.get("pr_url")
+                else None
+            )
+            db.execute(
+                """
+                INSERT INTO task_stage_states (
+                    task_id, stage_name, position, state, review_policy, reviewer_agent,
+                    entered_at, entered_by_session_id, completed_at, completed_by_session_id,
+                    completed_commit_sha, work_attempt_count, review_round_count,
+                    max_work_attempts, max_review_rounds, artifact_refs, notes, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, NULL, ?)
+                """,
+                (
+                    task_id,
+                    stage_name,
+                    position,
+                    state,
+                    metadata.get("review_policy") or "none",
+                    metadata.get("reviewer_agent"),
+                    entered_at,
+                    entered_by,
+                    completed_at,
+                    completed_by,
+                    row.get("closed_commit_sha") if state == "done" else None,
+                    planning_rounds
+                    if stage_name == "planning"
+                    else qa_rounds
+                    if stage_name == "development"
+                    else 0,
+                    max_work_attempts,
+                    max_review_rounds,
+                    artifact_refs,
+                    row.get("updated_at"),
+                ),
+            )
+
+        filtered_labels = _filtered_labels_after_backfill(
+            labels,
+            conductor_override=conductor_stage is not None,
+        )
+        if filtered_labels != labels:
+            db.execute(
+                "UPDATE tasks SET labels = ?, updated_at = updated_at WHERE id = ?",
+                (json.dumps(filtered_labels) if filtered_labels else None, task_id),
+            )
+
+    logger.info("Migration 234 task-stage backfill census: %s", sorted(census.items()))
+    db.execute("UPDATE tasks SET is_escalated = 1 WHERE escalated_at IS NOT NULL")
+    _close_all_done_stage_manifests(db)
+
+
+def _backfill_task_stage_states_from_legacy(db: LocalDatabase) -> None:
+    _backfill_task_stage_states(db)
 
 
 def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
@@ -364,6 +860,17 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                     bundled_hash,
                 ),
             )
+        for stage_name, reviewer_agent in _REQUIRED_REVIEW_STAGES.items():
+            db.execute(
+                """
+                UPDATE task_stages_registry
+                   SET review_policy = 'required',
+                       reviewer_agent = ?,
+                       updated_at = datetime('now')
+                 WHERE name = ?
+                """,
+                (reviewer_agent, stage_name),
+            )
 
         for task_type, stages_for_type in _DEFAULT_STAGE_MANIFESTS.items():
             db.execute("DELETE FROM task_type_default_stages WHERE task_type = ?", (task_type,))
@@ -375,6 +882,8 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
                     """,
                     (task_type, stage_name, position),
                 )
+
+        _backfill_task_stage_states(db)
 
 
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [

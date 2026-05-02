@@ -2,11 +2,103 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import (
+    BASELINE_VERSION,
+    MIGRATIONS,
+    _apply_baseline,
+    _run_migration_list,
+    get_current_version,
+)
 from tests.phase2_stage_contract_helpers import register_contract_tests
 
 pytestmark = pytest.mark.unit
+
+PERSONAL_PROJECT_ID = "00000000-0000-0000-0000-000000060887"
+
+
+def _migration_234():
+    for migration in MIGRATIONS:
+        if migration[0] == 234:
+            return migration
+    pytest.fail("migration version 234 is missing from MIGRATIONS")
+
+
+def _db_before_234(tmp_path: Path) -> LocalDatabase:
+    db = LocalDatabase(tmp_path / "before-234-backfill.db")
+    _apply_baseline(db)
+    pre_234 = [migration for migration in MIGRATIONS if BASELINE_VERSION < migration[0] < 234]
+    _run_migration_list(db, BASELINE_VERSION, pre_234)
+    return db
+
+
+def _apply_234(db: LocalDatabase) -> None:
+    current_version = get_current_version(db)
+    assert current_version < 234
+    _run_migration_list(db, current_version, [_migration_234()])
+
+
+def _insert_task(
+    db: LocalDatabase,
+    task_id: str,
+    *,
+    task_type: str = "feature",
+    lifecycle: str = "open",
+    status: str = "open",
+    labels: list[str] | None = None,
+    closed_at: str | None = None,
+    escalated_at: str | None = None,
+) -> None:
+    db.execute(
+        """
+        INSERT INTO tasks (
+            id, project_id, title, task_type, lifecycle, status, labels,
+            closed_at, escalated_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            task_id,
+            PERSONAL_PROJECT_ID,
+            f"Task {task_id}",
+            task_type,
+            lifecycle,
+            status,
+            json.dumps(labels) if labels else None,
+            closed_at,
+            escalated_at,
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-02T00:00:00+00:00",
+        ),
+    )
+
+
+def _stage_rows(db: LocalDatabase, task_id: str) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in db.fetchall(
+            """
+            SELECT stage_name, position, state, review_policy, reviewer_agent,
+                   work_attempt_count, review_round_count, max_work_attempts,
+                   max_review_rounds, artifact_refs
+              FROM task_stage_states
+             WHERE task_id = ?
+             ORDER BY position
+            """,
+            (task_id,),
+        )
+    ]
+
+
+def _state_map(db: LocalDatabase, task_id: str) -> dict[str, str]:
+    return {row["stage_name"]: row["state"] for row in _stage_rows(db, task_id)}
+
 
 register_contract_tests(
     globals(),
@@ -248,3 +340,152 @@ register_contract_tests(
     },
     required_symbols=("gobby.storage.migrations:_backfill_task_stage_states",),
 )
+
+
+def test_backfill_maps_core_lifecycle_states(tmp_path: Path) -> None:
+    db = _db_before_234(tmp_path)
+    _insert_task(db, "open-task", lifecycle="open", status="needs_review")
+    _insert_task(db, "planning-task", lifecycle="plan_review", status="needs_review")
+    _insert_task(db, "test-arch-task", lifecycle="test_arch", status="review_approved")
+    _insert_task(db, "development-task", lifecycle="in_development", status="review_approved")
+    _insert_task(
+        db,
+        "merged-task",
+        lifecycle="merged",
+        status="closed",
+        closed_at="2026-01-03T00:00:00+00:00",
+    )
+
+    _apply_234(db)
+
+    assert _state_map(db, "open-task") == {
+        "planning": "ready",
+        "test_arch": "ready",
+        "expansion": "ready",
+        "development": "ready",
+        "pr": "ready",
+        "merge": "ready",
+    }
+    assert _state_map(db, "planning-task") == {
+        "planning": "needs_review",
+        "test_arch": "ready",
+        "expansion": "ready",
+        "development": "ready",
+        "pr": "ready",
+        "merge": "ready",
+    }
+    assert _state_map(db, "test-arch-task") == {
+        "planning": "done",
+        "test_arch": "done",
+        "expansion": "ready",
+        "development": "ready",
+        "pr": "ready",
+        "merge": "ready",
+    }
+    assert _state_map(db, "development-task") == {
+        "planning": "done",
+        "test_arch": "done",
+        "expansion": "done",
+        "development": "review_approved",
+        "pr": "ready",
+        "merge": "ready",
+    }
+    assert set(_state_map(db, "merged-task").values()) == {"done"}
+
+
+def test_backfill_honors_labels_rounds_caps_and_pr_artifact(tmp_path: Path) -> None:
+    db = _db_before_234(tmp_path)
+    _insert_task(
+        db,
+        "epic-task",
+        task_type="epic",
+        lifecycle="holistic_review",
+        status="needs_review",
+        labels=["keep", "stage-:test_arch", "planning-round:3", "qa-attempts:5"],
+    )
+    db.execute(
+        """
+        INSERT INTO task_artifacts (
+            task_id, max_expansion_attempts, max_qa_rounds, max_merge_attempts,
+            max_holistic_rounds, max_review_rounds, pr_url
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("epic-task", 2, 4, 6, 7, 8, "https://example.test/pr/1"),
+    )
+
+    _apply_234(db)
+
+    rows = {row["stage_name"]: row for row in _stage_rows(db, "epic-task")}
+    assert list(rows) == [
+        "ideation",
+        "research",
+        "architecture",
+        "prd",
+        "planning",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ]
+    assert rows["planning"]["review_round_count"] == 3
+    assert rows["development"]["review_round_count"] == 5
+    assert rows["expansion"]["max_work_attempts"] == 2
+    assert rows["development"]["max_review_rounds"] == 4
+    assert rows["merge"]["max_work_attempts"] == 6
+    assert rows["holistic_qa"]["max_review_rounds"] == 7
+    assert rows["pr"]["max_review_rounds"] == 8
+    assert json.loads(rows["pr"]["artifact_refs"]) == {"pr_url": "https://example.test/pr/1"}
+
+    labels = db.fetchone("SELECT labels FROM tasks WHERE id = ?", ("epic-task",))["labels"]
+    assert json.loads(labels) == ["keep", "planning-round:3", "qa-attempts:5"]
+
+
+def test_backfill_conductor_override_and_escalation_normalization(tmp_path: Path) -> None:
+    db = _db_before_234(tmp_path)
+    _insert_task(
+        db,
+        "planning-anchor",
+        task_type="task",
+        lifecycle="open",
+        status="needs_review",
+        labels=["conductor-stage:planning", "stage-:development", "keep"],
+    )
+    _insert_task(db, "escalated-pr", lifecycle="pr", status="escalated")
+
+    _apply_234(db)
+
+    assert _state_map(db, "planning-anchor") == {"planning": "needs_review"}
+    planning_row = _stage_rows(db, "planning-anchor")[0]
+    assert planning_row["review_policy"] == "required"
+    assert planning_row["reviewer_agent"] == "plan-adversary"
+    labels = db.fetchone("SELECT labels FROM tasks WHERE id = ?", ("planning-anchor",))["labels"]
+    assert json.loads(labels) == ["keep"]
+
+    assert _state_map(db, "escalated-pr")["pr"] == "in_progress"
+    assert (
+        db.fetchone("SELECT is_escalated FROM tasks WHERE id = 'escalated-pr'")["is_escalated"] == 1
+    )
+
+
+def test_backfill_close_pass_closes_all_done_open_tasks(tmp_path: Path) -> None:
+    db = _db_before_234(tmp_path)
+    _insert_task(db, "merged-open", lifecycle="merged", status="in_progress")
+
+    _apply_234(db)
+
+    task = db.fetchone(
+        "SELECT closed_at, closed_in_session_id FROM tasks WHERE id = ?",
+        ("merged-open",),
+    )
+    assert task["closed_at"] is not None
+    assert task["closed_in_session_id"] == "migration:234"
+
+
+def test_backfill_unmapped_tuple_fails_loudly(tmp_path: Path) -> None:
+    db = _db_before_234(tmp_path)
+    _insert_task(db, "unknown-status", lifecycle="in_development", status="paused")
+
+    with pytest.raises(RuntimeError, match=r"\('in_development', 'paused'\)"):
+        _apply_234(db)
