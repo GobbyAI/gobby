@@ -26,6 +26,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.mcp_proxy.tools.tasks._front_half import create_front_half_registry
 from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
+from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.validation import TaskValidator
@@ -97,6 +98,9 @@ def create_task_ops_registry(
 
     # Merge artifact mutation tools for merge/expansion-qa/holistic-reviewer agents
     registry.merge_from(create_ops_artifact_registry(ctx))
+
+    # Merge mutating stage manifest tools (read-only stage tools live in gobby-tasks)
+    registry.merge_from(create_stage_ops_registry(ctx))
 
     # Merge GitHub integration tools (2 tools)
     registry.merge_from(create_github_registry(ctx))

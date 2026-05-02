@@ -96,6 +96,7 @@ class InternalTool:
     input_schema: dict[str, Any]
     func: Callable[..., Any]
     brief: str | None = None
+    output_schema: dict[str, Any] | None = None
 
 
 class InternalToolRegistry:
@@ -125,6 +126,7 @@ class InternalToolRegistry:
         input_schema: dict[str, Any],
         func: Callable[..., Any],
         brief: str | None = None,
+        output_schema: dict[str, Any] | None = None,
     ) -> None:
         """
         Register a tool with the registry.
@@ -142,6 +144,7 @@ class InternalToolRegistry:
             input_schema=input_schema,
             func=func,
             brief=brief,
+            output_schema=output_schema,
         )
         logger.debug(f"Registered internal tool '{name}' on '{self.name}'")
 
@@ -353,11 +356,14 @@ class InternalToolRegistry:
         if not tool:
             return None
 
-        return {
+        result = {
             "name": tool.name,
             "description": tool.description,
             "inputSchema": tool.input_schema,
         }
+        if tool.output_schema is not None:
+            result["outputSchema"] = tool.output_schema
+        return result
 
     def get_tool(self, name: str) -> Callable[..., Any] | None:
         """Return tool function by name, or None if not found."""

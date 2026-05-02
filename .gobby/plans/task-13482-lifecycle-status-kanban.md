@@ -223,9 +223,16 @@ Existing rules in `dispatch/rules.py` are renamed and refactored 1:1 onto the ne
 
 `kind: framing`
 
-New `gobby-tasks` MCP tools:
+The split mirrors the existing repo convention: read tools live on `gobby-tasks`, while mutating ops tools live on `gobby-tasks-ops`.
+
+New `gobby-tasks` MCP tools (read):
 
 - `get_task_stages(task_id)` → ordered list of `(stage_name, state, review_policy, work_attempt_count, review_round_count, artifact_refs)`
+- `list_stages_registry()`
+- `get_task_type_defaults(task_type)`
+
+New `gobby-tasks-ops` MCP tools (mutating):
+
 - `start_stage(task_id, stage_name, notes?)`
 - `complete_stage(task_id, stage_name, commit_sha?, artifact_updates?, validation_override_reason?)`
 - `fail_stage(task_id, stage_name, reason, needs_human?)`
@@ -233,7 +240,6 @@ New `gobby-tasks` MCP tools:
 - `record_pr_verdict(task_id, verdict, findings, report_ref?)` — maps to `approve_review` / `reject_review` on `pr`
 - `record_pr_opened(task_id, pr_url, github_pr_number?)` — writes PR metadata without changing stage state
 - `record_merge_result(task_id, merge_sha?, report_ref?)` — completes `merge` and closes the task
-- `list_stages_registry()` / `get_task_type_defaults(task_type)`
 
 The three review tools (`mark_task_needs_review`, `mark_task_review_approved`, `mark_task_review_rejected`) are preserved with their existing signatures, rewired to first-class stage transitions per the **Tool surface** section above. They raise `IllegalStageTransitionError` when called against a `policy=none` row or against the wrong source state.
 
