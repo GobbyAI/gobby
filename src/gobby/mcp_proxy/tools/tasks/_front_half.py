@@ -41,7 +41,6 @@ from gobby.tasks.state_semantics import (
 FRONT_HALF_LABEL = "conductor:front-half"
 FRONT_HALF_COMPLETE_LABEL = "conductor:front-half-complete"
 STAGE_LABEL_PREFIX = "conductor-stage:"
-PLANNING_ROUND_LABEL_PREFIX = "planning-round:"
 
 NEEDS_REQUIREMENTS_PREFIX = "needs_requirements:"
 
@@ -137,7 +136,6 @@ def create_front_half_registry(ctx: RegistryContext) -> InternalToolRegistry:
             parent_task,
             stage="planning",
             description=_planning_stage_description(parent_task, plan_file),
-            extra_labels=[f"{PLANNING_ROUND_LABEL_PREFIX}0"],
         )
 
         planning_round = _planning_round(planning_task)
@@ -579,22 +577,54 @@ def _close_stage_task(ctx: RegistryContext, task: Task, *, reason: str) -> Task:
 
 
 def _planning_round(task: Task) -> int:
-    for label in task.labels or []:
-        if label.startswith(PLANNING_ROUND_LABEL_PREFIX):
-            suffix = label.removeprefix(PLANNING_ROUND_LABEL_PREFIX)
-            try:
-                return int(suffix)
-            except ValueError:
-                return 0
-    return 0
+    return _review_round_count(task, preferred_stage="planning")
 
 
-def _set_planning_round(ctx: RegistryContext, task: Task, planning_round: int) -> Task:
-    labels = [
-        label for label in (task.labels or []) if not label.startswith(PLANNING_ROUND_LABEL_PREFIX)
-    ]
-    labels.append(f"{PLANNING_ROUND_LABEL_PREFIX}{planning_round}")
-    return ctx.task_manager.update_task(task.id, labels=labels)
+def _review_round_count(task: Task, *, preferred_stage: str | None = None) -> int:
+    stages = tuple(task.stages or ())
+    if preferred_stage is not None:
+        for stage in stages:
+            if _stage_name(stage) == preferred_stage:
+                return _counter_value(stage, "review_round_count")
+    current = _current_counter_stage(stages)
+    return _counter_value(current, "review_round_count")
+
+
+def _current_counter_stage(stages: tuple[Any, ...]) -> Any | None:
+    pending = [stage for stage in stages if _field(stage, "state") != "done"]
+    if not pending:
+        return None
+    return min(pending, key=lambda stage: (_counter_position(stage), _stage_name(stage) or ""))
+
+
+def _counter_position(stage: Any) -> int:
+    value = _field(stage, "position")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _counter_value(stage: Any | None, field_name: str) -> int:
+    value = _field(stage, field_name)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _stage_name(stage: Any) -> str | None:
+    value = _field(stage, "stage_name", "name")
+    return value if isinstance(value, str) and value else None
+
+
+def _field(value: Any, *names: str) -> Any:
+    for name in names:
+        if isinstance(value, dict) and name in value:
+            return value[name]
+        if hasattr(value, name):
+            return getattr(value, name)
+    return None
 
 
 def _get_or_create_stage_task(

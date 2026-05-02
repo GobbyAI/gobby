@@ -17,7 +17,6 @@ from gobby.tasks.expansion import _apply, _compile
 from gobby.tasks.expansion._common import (
     AUTOMATED_LEAF_CATEGORIES,
     _contract_single_task_id,
-    _skipped_stages,
     list_agent_definitions,
 )
 
@@ -25,7 +24,6 @@ __all__ = [
     "AUTOMATED_LEAF_CATEGORIES",
     "ExpansionService",
     "_contract_single_task_id",
-    "_skipped_stages",
     "compile_plan_to_spec",
     "list_agent_definitions",
 ]

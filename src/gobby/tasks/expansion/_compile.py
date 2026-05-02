@@ -38,9 +38,9 @@ from gobby.tasks.expansion._common import (
     _contract_task_ids,
     _dev_is_only_enabled_stage,
     _find_test_files,
+    _manifest_stage_names,
     _read_text_if_exists,
     _render_template,
-    _skipped_stages,
     _stable_ref_id,
     _stable_test_id,
     _strip_frontmatter,
@@ -825,12 +825,12 @@ def _build_prompt_context(self: Any, run: ExpansionRun, task: Task) -> dict[str,
     if file_context:
         research_sections.append(file_context)
 
-    skipped_stages = sorted(_skipped_stages(task))
+    enabled_stages = sorted(_manifest_stage_names(task)) if task.stages else []
     return {
         "task_id": task.id,
         "title": task.title,
         "description": task.description or "",
-        "skipped_stages": skipped_stages,
+        "enabled_stages": enabled_stages,
         "context_str": "\n\n".join(research_sections),
         "research_str": file_context or "No repository files were selected for context.",
     }

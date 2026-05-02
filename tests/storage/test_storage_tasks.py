@@ -940,7 +940,6 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Reject me",
-            labels=["planning-round:0"],
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
@@ -957,7 +956,7 @@ class TestLocalTaskManager:
         assert rejected.assignee is None
         assert rejected.claimed_by_session_id is None
         assert "## Adversary Findings — Round 1" in (rejected.description or "")
-        assert "planning-round:1" in (rejected.labels or [])
+        assert not any(label.startswith("planning-round:") for label in rejected.labels or [])
 
     def test_mark_task_review_rejected_requires_review_state(
         self, task_manager, project_id, session_manager
@@ -972,7 +971,6 @@ class TestLocalTaskManager:
         task = task_manager.create_task(
             project_id,
             "Reject me from in_progress",
-            labels=["planning-round:0"],
         )
         task_manager.claim_task(task.id, session.id)
         _start_current_stage(task_manager, task.id, session.id)
@@ -993,7 +991,7 @@ class TestLocalTaskManager:
     ) -> None:
         """Re-running mark_task_review_rejected with the same round_number must
         replace the existing `## Adversary Findings — Round N` section instead
-        of stacking. Mirrors the planning-round:N label dedup at the same call site.
+        of stacking.
         """
         session = session_manager.register(
             external_id="rejected-dedup-ext",

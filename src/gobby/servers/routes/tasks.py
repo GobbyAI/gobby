@@ -128,7 +128,7 @@ class TaskReviewRejectionRequest(BaseModel):
     notes: str | None = Field(default=None, description="Review findings or rejection notes")
     round: int | None = Field(
         default=None,
-        description="Optional planning round number used to update planning-round:N",
+        description="Optional planning round number used for round-scoped rejection notes",
     )
 
 

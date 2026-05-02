@@ -13,7 +13,6 @@ from typing import Any, cast
 from gobby.dispatch import rules as dispatch_rules
 from gobby.dispatch.actions import (
     Action,
-    AdvanceLifecycleAction,
     AdvanceStageAction,
     AppendAuditMarkerAction,
     CreateIsolationAction,
@@ -42,7 +41,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_states import StageState, StageStatesManager
-from gobby.storage.tasks._transitions import advance_lifecycle
+from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 
 MAX_ACTIVE_AGENTS = 10
 DISPATCH_HOLDER = "dispatcher"
@@ -381,14 +380,6 @@ def execute_action(
                     action.stage_name,
                     by_session_id=action.by_session_id,
                 )
-        if isinstance(action, AdvanceLifecycleAction):
-            return advance_lifecycle(
-                db,
-                action.task_id,
-                action.to_lifecycle,
-                action.to_status,
-                {"reason": action.reason, "by_actor": action.by_actor},
-            )
         if isinstance(action, AppendAuditMarkerAction):
             return append_audit_marker(db, action.task_id, action.heading, action.body)
         if isinstance(action, EscalateAction):
@@ -493,12 +484,8 @@ def append_audit_marker(db: DatabaseProtocol, task_id: str, heading: str, body: 
 
 
 def escalate_task(*, db: DatabaseProtocol, task_id: str, reason: str) -> bool:
-    return update_task(
-        db,
-        task_id,
-        status="escalated",
-        escalation_reason=reason,
-    )
+    _escalate_task(db, task_id, reason=reason)
+    return True
 
 
 def _candidate_stage_snapshot(

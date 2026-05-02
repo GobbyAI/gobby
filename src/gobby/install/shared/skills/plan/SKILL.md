@@ -430,7 +430,7 @@ planning = create_task(
     task_type="epic",
     title=f"Interactive plan for {parent_ref}",
     category="planning",
-    labels=["interactive:planning", "planning-round:0"],
+    labels=["interactive:planning"],
 )
 set_variable(name="planning_task_id", value=planning.id, session_id="#<self>")
 ```
@@ -445,7 +445,11 @@ If the plan file is not already at `.gobby/plans/task-<parent_seq>-<slug>.md` (t
 
 ### 7.3. Round accounting
 
-Read `current_round` from the `planning-round:N` label on the planning epic (default `0`). **Internal state is 0-indexed** (matches autonomous front-half convention); **all user-visible and adversary-facing surfaces use `current_round + 1`**. First round is `planning-round:0` internally but "Round 1" in every message.
+Read `current_round` from the planning epic's current stage
+`review_round_count` (default `0`). **Internal state is 0-indexed** (matches
+autonomous front-half convention); **all user-visible and adversary-facing
+surfaces use `current_round + 1`**. First round is stored as `0` internally but
+"Round 1" in every message.
 
 Surface: `Round {current_round + 1} of {max_rounds}`.
 
@@ -540,7 +544,6 @@ anchor = create_task(
     task_type="task",
     category="planning",
     title=f"Plan-adversary review — round {current_round + 1}",
-    labels=[f"planning-round:{current_round}"],
 )
 set_variable(name="active_anchor_id", value=anchor.id, session_id="#<self>")
 

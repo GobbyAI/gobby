@@ -176,7 +176,7 @@ async def test_build_validates_clones_dir_when_clone_isolation(
 
 
 @pytest.mark.asyncio
-async def test_build_plan_file_creates_planning_epic_artifacts_labels_and_kicks_tick(
+async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kicks_tick(
     temp_db,
     tmp_path: Path,
 ) -> None:
@@ -197,15 +197,14 @@ async def test_build_plan_file_creates_planning_epic_artifacts_labels_and_kicks_
     events = task_manager.lifecycle_events.list_events(task.id)
 
     assert result.created is True
-    assert result.initial_lifecycle == "test_arch"
+    assert result.initial_lifecycle == "ideation"
     assert result.applied_stages_skipped == ["planning", "pr"]
     assert result.tick_dispatched >= 0
     assert task.task_type == "epic"
     assert task.category == "planning"
     assert task.allow_automation is True
-    assert task.lifecycle == "test_arch"
     assert task.isolation == "worktree"
-    assert set(task.labels) >= {"stage-:planning", "stage-:pr"}
+    assert not any(label.startswith("stage-:") for label in task.labels or [])
     assert artifacts.plan_file_path == str(plan_file)
     assert artifacts.target_branch == "main"
     assert events[-1].reason == "gobby build"
@@ -292,7 +291,7 @@ async def test_build_rejects_stage_caps_below_one(
 
 
 @pytest.mark.asyncio
-async def test_build_leaf_forces_none_isolation_and_sets_agent_and_lifecycle(
+async def test_build_leaf_forces_none_isolation_and_sets_agent(
     temp_db,
     sample_project,
 ) -> None:
@@ -313,9 +312,8 @@ async def test_build_leaf_forces_none_isolation_and_sets_agent_and_lifecycle(
 
     updated = task_manager.get_task(leaf.id)
     assert result.created is False
-    assert result.initial_lifecycle == "in_development"
+    assert result.initial_lifecycle == "development"
     assert updated.allow_automation is True
-    assert updated.lifecycle == "in_development"
     assert updated.isolation == "none"
     assert updated.assigned_agent == "backend-developer"
 

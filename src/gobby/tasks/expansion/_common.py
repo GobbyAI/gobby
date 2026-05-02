@@ -25,10 +25,9 @@ AUTOMATED_LEAF_CATEGORIES = frozenset(
     {"code", "config", "docs", "manual", "refactor", "research", "test"}
 )
 _DEFAULT_AGENT = "backend-developer"
-_STAGE_LABEL_PREFIX = "stage-:"
 _DEFAULT_PHASE_ID = "phase-1"
 _EXPANSION_STAGES = frozenset(
-    {"plan_review", "test_arch", "expanding", "dev", "qa", "holistic_review", "pr"}
+    {"planning", "test_arch", "expansion", "development", "holistic_qa", "pr"}
 )
 _FRONTEND_SIGNALS = frozenset(
     {
@@ -86,21 +85,24 @@ _BACKEND_SIGNALS = frozenset(
 )
 
 
-def _skipped_stages(task: Task) -> set[str]:
-    """Return resolved stage skip labels from a task, ignoring profile sugar labels."""
-    stages: set[str] = set()
-    for label in task.labels or []:
-        if not isinstance(label, str) or not label.startswith(_STAGE_LABEL_PREFIX):
-            continue
-        stage = label.removeprefix(_STAGE_LABEL_PREFIX).strip()
-        if stage:
-            stages.add(stage)
-    return stages
+def _stage_name(stage: Any) -> str | None:
+    if isinstance(stage, dict):
+        value = stage.get("stage_name", stage.get("name"))
+    else:
+        value = getattr(stage, "stage_name", getattr(stage, "name", None))
+    return value if isinstance(value, str) and value else None
+
+
+def _manifest_stage_names(task: Task) -> tuple[str, ...]:
+    """Return stage names from the persisted manifest attached to a task."""
+    return tuple(
+        stage_name for stage in task.stages if (stage_name := _stage_name(stage)) is not None
+    )
 
 
 def _dev_is_only_enabled_stage(task: Task) -> bool:
-    skipped = _skipped_stages(task)
-    return "dev" not in skipped and _EXPANSION_STAGES - skipped == {"dev"}
+    enabled = set(_manifest_stage_names(task))
+    return bool(enabled) and enabled & _EXPANSION_STAGES == {"development"}
 
 
 def _append_agent_selection_marker(description: str) -> str:

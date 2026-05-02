@@ -15,7 +15,6 @@ from gobby.mcp_proxy.tools.tasks._front_half import (
     FRONT_HALF_COMPLETE_LABEL,
     FRONT_HALF_LABEL,
     NEEDS_REQUIREMENTS_PREFIX,
-    PLANNING_ROUND_LABEL_PREFIX,
     _artifact_paths,
     create_front_half_registry,
 )
@@ -152,6 +151,21 @@ def _approve_stage_task(
     task_manager.mark_task_review_approved(task_id, approval_notes=notes)
 
 
+def _set_current_review_round(
+    task_manager: LocalTaskManager, task_id: str, round_count: int
+) -> None:
+    current = task_manager.stage_states.current_stage(task_id)
+    assert current is not None
+    task_manager.db.execute(
+        """
+        UPDATE task_stage_states
+           SET review_round_count = ?
+         WHERE task_id = ? AND stage_name = ?
+        """,
+        (round_count, task_id, current.stage_name),
+    )
+
+
 class TestFrontHalfTick:
     def test_artifact_paths_returns_none_without_persisted_plan(
         self,
@@ -265,7 +279,7 @@ class TestFrontHalfTick:
         assert refreshed_requirements.status == "closed"
 
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
-        assert f"{PLANNING_ROUND_LABEL_PREFIX}0" in (planning_task.labels or [])
+        assert not any(label.startswith("planning-round:") for label in planning_task.labels or [])
 
     @pytest.mark.asyncio
     async def test_requirements_approval_without_plan_path_fails_closed(
@@ -357,7 +371,7 @@ class TestFrontHalfTick:
         refreshed = task_manager.get_task(planning_task.id)
         assert refreshed is not None
         assert refreshed.status == "open"
-        assert f"{PLANNING_ROUND_LABEL_PREFIX}1" in (refreshed.labels or [])
+        assert not any(label.startswith("planning-round:") for label in refreshed.labels or [])
 
     @pytest.mark.asyncio
     async def test_planning_budget_exhaustion_returns_failure(
@@ -381,7 +395,7 @@ class TestFrontHalfTick:
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
         task_manager.update_task(
             planning_task.id,
-            labels=[FRONT_HALF_LABEL, _STAGE_LABELS["planning"], f"{PLANNING_ROUND_LABEL_PREFIX}2"],
+            labels=[FRONT_HALF_LABEL, _STAGE_LABELS["planning"]],
         )
         task_manager.mark_task_needs_review(planning_task.id, review_notes="Ready")
         task_manager.mark_task_review_rejected(
@@ -389,6 +403,7 @@ class TestFrontHalfTick:
             rejection_notes="Still missing critical constraints",
             round_number=3,
         )
+        _set_current_review_round(task_manager, planning_task.id, 3)
 
         with session_context_for_test(test_session):
             result = await front_half_registry.call(
@@ -400,7 +415,7 @@ class TestFrontHalfTick:
         refreshed = task_manager.get_task(planning_task.id)
         assert refreshed is not None
         assert refreshed.status == "open"
-        assert f"{PLANNING_ROUND_LABEL_PREFIX}3" in (refreshed.labels or [])
+        assert not any(label.startswith("planning-round:") for label in refreshed.labels or [])
 
     @pytest.mark.asyncio
     async def test_planning_approval_starts_expansion_run(
@@ -536,7 +551,6 @@ class TestFrontHalfTick:
             labels=[
                 FRONT_HALF_LABEL,
                 _STAGE_LABELS["planning"],
-                f"{PLANNING_ROUND_LABEL_PREFIX}0",
             ],
         )
         expansion_task = task_manager.create_task(

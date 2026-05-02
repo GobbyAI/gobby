@@ -56,10 +56,10 @@ instructions: |
   skills block.
 
   HANDOFF:
-  Inspect _skipped_stages on the parent epic. If `qa` is in _skipped_stages,
-  commit the implementation and self-close with close_task using the commit_sha.
-  If QA is enabled, commit the implementation and call mark_task_needs_review so
-  rule_qa can dispatch a reviewer.
+  Inspect the assigned task's stage manifest. If the current development row has
+  no review gate, commit the implementation and self-close with close_task using
+  the commit_sha. If review is enabled, commit the implementation and call
+  mark_task_needs_review so rule_qa can dispatch a reviewer.
 
   CRITICAL RULES:
   - Do NOT call reopen_task or de_escalate_task.
@@ -134,9 +134,9 @@ steps:
   - name: implement
     description: "Implement, validate, and hand off or close"
     status_message: |
-      Implement the backend leaf. Commit changes, then inspect _skipped_stages
-      on the parent epic. If qa is skipped, close_task with commit_sha; otherwise
-      mark_task_needs_review for QA.
+      Implement the backend leaf. Commit changes, then inspect the assigned task
+      manifest. If development review is disabled, close_task with commit_sha;
+      otherwise mark_task_needs_review for QA.
     allowed_tools: "all"
     blocked_mcp_tools:
       - "gobby-tasks:de_escalate_task"

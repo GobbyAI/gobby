@@ -437,9 +437,9 @@ class LocalTaskManager:
         epic_id: str,
         isolation: Isolation | str,
         unattended: bool | None,
-        skip_stage_labels: Iterable[str],
         allow_automation: bool,
         *,
+        skip_stages: Iterable[str] = (),
         yolo: bool | None = None,
     ) -> int:
         """Apply build dispatch state to an epic and every descendant task."""
@@ -450,8 +450,8 @@ class LocalTaskManager:
             epic_id=epic_id,
             isolation=isolation,
             unattended=unattended,
-            skip_stage_labels=skip_stage_labels,
             allow_automation=allow_automation,
+            skip_stages=skip_stages,
         )
         self._notify_listeners()
         return updated_count

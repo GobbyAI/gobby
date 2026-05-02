@@ -570,7 +570,7 @@ class TestLifecycleMutations:
         data = response.json()
         assert data["state"]["current_stage"] == {"name": "development", "state": "ready"}
         assert "## Adversary Findings — Round 1" in (data["description"] or "")
-        assert "planning-round:1" in (data["labels"] or [])
+        assert not any(label.startswith("planning-round:") for label in data["labels"] or [])
 
     def test_escalate_task(self, client: TestClient, sample_task: dict) -> None:
         response = client.post(

@@ -506,7 +506,9 @@ def register_mark_task_review_rejected(
                 },
                 "round_number": {
                     "type": "integer",
-                    "description": "Optional planning round number used to update the planning-round:N label.",
+                    "description": (
+                        "Optional planning round number used for round-scoped rejection notes."
+                    ),
                     "default": None,
                 },
                 "signoff_summary": {

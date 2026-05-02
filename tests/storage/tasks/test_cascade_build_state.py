@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
 from gobby.storage.tasks import Isolation, LocalTaskManager, cascade_build_state_to_subtree
@@ -46,16 +44,11 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         category="docs",
     )
 
-    with temp_db.transaction() as conn:
-        conn.execute("UPDATE tasks SET lifecycle = ? WHERE id = ?", ("holistic_review", leaf.id))
-
     kwargs = {
         "isolation": Isolation.clone,
         "unattended": True,
         "allow_automation": True,
     }
-    if "skip_stage_labels" in inspect.signature(cascade_build_state_to_subtree).parameters:
-        kwargs["skip_stage_labels"] = []
 
     updated_count = cascade_build_state_to_subtree(temp_db, epic.id, **kwargs)
 
@@ -72,7 +65,6 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
     assert "keep-me" in (updated_epic.labels or [])
     assert updated_leaf.assigned_agent == "backend-developer"
     assert updated_leaf.additional_skills == ["sql-review"]
-    assert updated_leaf.lifecycle == "holistic_review"
 
 
 def test_cascade_uses_initialize_manifest() -> None:

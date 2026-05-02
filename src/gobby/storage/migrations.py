@@ -352,6 +352,21 @@ def _filtered_labels_after_backfill(labels: list[str], *, conductor_override: bo
     return filtered
 
 
+def _drop_legacy_review_round_labels(db: LocalDatabase) -> None:
+    rows = db.fetchall("SELECT id, labels FROM tasks WHERE labels IS NOT NULL")
+    for row in rows:
+        labels = _decode_task_labels(row["labels"])
+        filtered = [
+            label for label in labels if not label.startswith(("planning-round:", "qa-attempts:"))
+        ]
+        if filtered == labels:
+            continue
+        db.execute(
+            "UPDATE tasks SET labels = ? WHERE id = ?",
+            (json.dumps(filtered), row["id"]),
+        )
+
+
 def _load_default_manifest(
     db: LocalDatabase,
     task_type: str,
@@ -1027,6 +1042,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         236,
         "Drop legacy task lifecycle and artifact cap columns",
         _drop_legacy_task_state_columns,
+    ),
+    (
+        237,
+        "Drop legacy review-round labels",
+        _drop_legacy_review_round_labels,
     ),
 ]
 

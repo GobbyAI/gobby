@@ -151,8 +151,8 @@ call_tool("gobby-tasks", "mark_task_review_rejected", {
 ```
 
 Used by structured review loops such as plan adversary rounds. The current
-stage row returns to `ready`; `round_number` is optional and updates
-`planning-round:N` when the review loop tracks numbered revisions.
+stage row returns to `ready`; `round_number` is optional and scopes the
+rejection notes for numbered review loops.
 
 ### Interactive vs Autonomous
 

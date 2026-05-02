@@ -95,11 +95,6 @@ _SKIPPABLE_STAGE_ORDER = (
     "holistic_review",
     "pr",
 )
-_PLAN_START_SEQUENCE = (
-    ("planning", "plan_review"),
-    ("test_arch", "test_arch"),
-    ("expansion", "expanding"),
-)
 _CANONICAL_STAGE_NAMES = {
     "ideation",
     "research",
@@ -185,7 +180,6 @@ async def _build_plan_file(
     project_id: str,
     target_branch: str | None,
 ) -> BuildResult:
-    initial_lifecycle = _initial_lifecycle_for_plan(skip_stages)
     task = task_manager.create_task(
         project_id=project_id,
         title=f"Build {plan_file.name}",
@@ -193,11 +187,8 @@ async def _build_plan_file(
         task_type="epic",
         category="planning",
     )
-    labels = _stage_labels(skip_stages)
     task_manager.update_task(
         task.id,
-        labels=labels,
-        lifecycle=initial_lifecycle,
         allow_automation=True,
         unattended=opts.unattended,
         isolation=opts.isolation,
@@ -209,7 +200,8 @@ async def _build_plan_file(
         target_branch=target_branch,
     )
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
-    _record_build_event(task_manager, task, initial_lifecycle)
+    initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
+    _record_build_event(task_manager, task.id, initial_lifecycle)
     return BuildResult(
         task_id=task.id,
         created=True,
@@ -236,18 +228,16 @@ async def _build_leaf(
             f"category {task.category} cannot be automated; expected one of: {allowed}"
         )
 
-    initial_lifecycle = "in_development"
     task_manager.update_task(
         task.id,
-        labels=_merge_stage_labels(task.labels, skip_stages),
-        lifecycle=initial_lifecycle,
         allow_automation=True,
         unattended=opts.unattended,
         isolation="none",
         assigned_agent=opts.assigned_agent,
     )
     specs = _initialize_stage_manifest(task_manager, task, opts, skip_stages)
-    _record_build_event(task_manager, task, initial_lifecycle)
+    initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
+    _record_build_event(task_manager, task.id, initial_lifecycle)
     return BuildResult(
         task_id=task.id,
         created=False,
@@ -278,11 +268,11 @@ async def _build_epic(
         task.id,
         isolation=opts.isolation,
         unattended=opts.unattended,
-        skip_stage_labels=_stage_labels(skip_stages),
+        skip_stages=skip_stages,
         allow_automation=True,
     )
-    initial_lifecycle = str(task.lifecycle)
-    _record_build_event(task_manager, task, initial_lifecycle)
+    initial_lifecycle = _current_stage_name(task_manager, task.id, specs)
+    _record_build_event(task_manager, task.id, initial_lifecycle)
     return BuildResult(
         task_id=task.id,
         created=False,
@@ -511,36 +501,25 @@ def _validate_epic_isolation_artifacts(isolation: Isolation, artifacts: TaskArti
         raise ValueError(f"task already has clone artifact: {artifacts.clone_path}")
 
 
-def _initial_lifecycle_for_plan(skip_stages: list[str]) -> str:
-    skipped = set(skip_stages)
-    for stage_name, lifecycle in _PLAN_START_SEQUENCE:
-        if stage_name not in skipped:
-            return lifecycle
-    return "in_development"
-
-
-def _stage_labels(skip_stages: list[str]) -> list[str]:
-    return [f"stage-:{stage}" for stage in skip_stages]
-
-
-def _merge_stage_labels(existing: list[str] | None, skip_stages: list[str]) -> list[str]:
-    labels = list(existing or [])
-    seen = set(labels)
-    for label in _stage_labels(skip_stages):
-        if label not in seen:
-            labels.append(label)
-            seen.add(label)
-    return labels
+def _current_stage_name(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    specs: list[StageManifestSpec],
+) -> str:
+    current = task_manager.stage_states.current_stage(task_id)
+    if current is not None:
+        return current.stage_name
+    return min(specs, key=lambda spec: spec.position).stage_name
 
 
 def _record_build_event(
     task_manager: LocalTaskManager,
-    task: Task,
+    task_id: str,
     to_state: str,
 ) -> None:
     task_manager.lifecycle_events.record_lifecycle_event(
-        task.id,
-        from_state=str(task.lifecycle),
+        task_id,
+        from_state=None,
         to_state=to_state,
         reason="gobby build",
         by_actor="build",

@@ -297,7 +297,6 @@ def mark_task_review_rejected(
         section = f"{heading}\n\n{rejection_notes}"
         existing = task.description or ""
         # Re-running the same round must replace the prior section, not stack.
-        # Mirrors the planning-round:N label dedup below — same idempotency policy.
         # Only attempt the in-place replacement for round-scoped headings; the
         # generic "## Review Rejection" heading is used for one-off rejections
         # without a round number and is allowed to stack.
@@ -312,16 +311,10 @@ def mark_task_review_rejected(
         else:
             description = f"{existing}\n\n{section}" if existing else section
 
-    labels = list(task.labels or [])
-    if normalized_round is not None:
-        labels = [label for label in labels if not label.startswith("planning-round:")]
-        labels.append(f"planning-round:{normalized_round}")
-
     update_task(
         db,
         task_id,
         description=description,
-        labels=labels if normalized_round is not None else UNSET,
         assignee=None,
         claimed_by_session_id=None,
     )

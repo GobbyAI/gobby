@@ -14,6 +14,7 @@ from typing import Any, cast
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
+from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
     UNSET,
     Isolation,
@@ -25,48 +26,24 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
+from gobby.storage.tasks._stage_states import StageManifestSpec, StageStatesManager
 
 logger = logging.getLogger(__name__)
 
 
-def _normalize_skip_stage_labels(skip_stage_labels: Iterable[str]) -> list[str]:
-    """Return stable, de-duplicated stage labels to add during build cascade."""
-    labels: list[str] = []
-    seen: set[str] = set()
-    for raw_label in skip_stage_labels:
-        label = raw_label.strip()
-        if not label or label in seen:
-            continue
-        labels.append(label)
-        seen.add(label)
-    return labels
-
-
-def _skipped_stages(labels: Iterable[str | None] | None) -> set[str]:
-    """Extract build stage names from task labels."""
-    if not labels:
-        return set()
-    stages: set[str] = set()
-    for label in labels:
-        if not isinstance(label, str) or not label.startswith("stage-:"):
-            continue
-        stage = label.removeprefix("stage-:").strip()
-        if stage:
-            stages.add(stage)
-    return stages
-
-
-def _decode_labels(labels_json: str | None) -> list[str]:
-    """Decode task labels from storage, tolerating legacy nulls."""
-    if not labels_json:
-        return []
-    try:
-        parsed: object = json.loads(labels_json)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [item for item in parsed if isinstance(item, str)]
+def _manifest_specs_for_task_type(
+    stage_states: StageStatesManager,
+    task_type: str,
+    skip_stages: set[str],
+) -> list[StageManifestSpec]:
+    defaults = stage_states.registry.list_default_stages(task_type)
+    if not defaults and task_type != "task":
+        defaults = stage_states.registry.list_default_stages("task")
+    manifest = [stage_name for stage_name, _position in defaults if stage_name not in skip_stages]
+    return [
+        StageManifestSpec(stage_name=stage_name, position=index)
+        for index, stage_name in enumerate(manifest)
+    ]
 
 
 def _is_unattended(task: Any) -> bool:
@@ -387,15 +364,15 @@ def cascade_build_state_to_subtree(
     epic_id: str,
     isolation: Isolation | str,
     unattended: bool | None,
-    skip_stage_labels: Iterable[str],
     allow_automation: bool,
     *,
+    skip_stages: Iterable[str] = (),
     yolo: bool | None = None,
 ) -> int:
     """Apply build dispatch state to an epic and every descendant task.
 
-    The cascade intentionally only touches dispatch controls and stage-skip
-    labels. Agent assignment, additional skills, and lifecycle fields remain
+    The cascade intentionally only touches dispatch controls and child manifest
+    shape. Agent assignment, additional skills, and lifecycle fields remain
     task-local decisions.
 
     Returns the number of tasks updated, including the root epic.
@@ -403,7 +380,7 @@ def cascade_build_state_to_subtree(
     if unattended is None:
         unattended = bool(yolo)
     normalized_isolation = Isolation(isolation).value
-    labels_to_add = _normalize_skip_stage_labels(skip_stage_labels)
+    skipped = {stage.strip() for stage in skip_stages if stage.strip()}
     now = datetime.now(UTC).isoformat()
 
     with db.transaction_immediate() as conn:
@@ -418,7 +395,7 @@ def cascade_build_state_to_subtree(
                 FROM tasks child
                 JOIN subtree parent ON child.parent_task_id = parent.id
             )
-            SELECT id, labels
+            SELECT id, task_type
             FROM tasks
             WHERE id IN (SELECT id FROM subtree)
             """,
@@ -428,17 +405,10 @@ def cascade_build_state_to_subtree(
         if not rows:
             raise ValueError(f"Task {epic_id} not found")
 
-        update_params: list[tuple[str, int, int, str, str, str]] = []
+        update_params: list[tuple[int, int, str, str, str]] = []
         for row in rows:
-            labels = _decode_labels(cast(str | None, row["labels"]))
-            known_labels = set(labels)
-            for label in labels_to_add:
-                if label not in known_labels:
-                    labels.append(label)
-                    known_labels.add(label)
             update_params.append(
                 (
-                    json.dumps(labels),
                     int(allow_automation),
                     int(unattended),
                     normalized_isolation,
@@ -450,8 +420,7 @@ def cascade_build_state_to_subtree(
         conn.executemany(
             """
             UPDATE tasks
-            SET labels = ?,
-                allow_automation = ?,
+            SET allow_automation = ?,
                 unattended = ?,
                 isolation = ?,
                 updated_at = ?
@@ -459,6 +428,15 @@ def cascade_build_state_to_subtree(
             """,
             update_params,
         )
+
+    stage_states = StageStatesManager(db, TaskLifecycleEventManager(db))
+    for row in rows:
+        task_id = cast(str, row["id"])
+        if task_id == epic_id:
+            continue
+        specs = _manifest_specs_for_task_type(stage_states, cast(str, row["task_type"]), skipped)
+        if specs:
+            stage_states.initialize_manifest(task_id, specs, by_session_id=None)
 
     return len(rows)
 

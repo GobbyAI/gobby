@@ -5,14 +5,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
 from typing import Any, cast
 
 from gobby.storage.expansion_runs import ExpansionRun
 from gobby.storage.tasks import Task
 from gobby.tasks.expansion._common import (
     _TDD_CATEGORIES,
-    _skipped_stages,
+    _manifest_stage_names,
     _stable_ref_id,
     _stable_test_id,
 )
@@ -34,17 +33,12 @@ def _copy_target_branch_to_leaf(
 
 def _complete_dev_only_run(self: Any, run_id: str, task: Task) -> ExpansionRun:
     """Complete dev-only builds without creating expansion children."""
-    now = datetime.now(UTC).isoformat()
-    with self.db.transaction() as conn:
-        conn.execute(
-            "UPDATE tasks SET lifecycle = 'in_development', updated_at = ? WHERE id = ?",
-            (now, task.id),
-        )
+    self.task_manager.stage_states.complete_stage(task.id, "expansion", by_session_id=None)
     self.run_manager.append_log(
         run_id,
         level="info",
         message="Skipping expansion because dev is the only enabled stage",
-        extra={"skipped_stages": sorted(_skipped_stages(task))},
+        extra={"enabled_stages": sorted(_manifest_stage_names(task))},
     )
     run = self.run_manager.save_apply_result(
         run_id,
