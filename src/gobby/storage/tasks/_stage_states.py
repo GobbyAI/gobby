@@ -8,9 +8,9 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from gobby.dispatch.mutex import RuntimeDispatchMutex
+from gobby.dispatch.mutex import RuntimeDispatchMutex, RuntimeStageSnapshotState
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
@@ -338,7 +338,8 @@ class StageStatesManager:
     ) -> list[StageState]:
         self._validate_specs(specs)
         holder = by_session_id or "system"
-        with self._mutex(task_id, holder, "initialize_manifest"):
+        snapshot = self.current_stage(task_id)
+        with self._mutex(task_id, holder, "initialize_manifest", expected_stage=snapshot):
             existing = self.list_for_task(task_id)
             if existing:
                 if [
@@ -397,7 +398,13 @@ class StageStatesManager:
         by_session_id: str | None,
     ) -> StageState:
         holder = by_session_id or "system"
-        with self._mutex(task_id, holder, f"{spec.stage_name}:add_stage"):
+        snapshot = self.current_stage(task_id)
+        with self._mutex(
+            task_id,
+            holder,
+            f"{spec.stage_name}:add_stage",
+            expected_stage=snapshot,
+        ):
             current = self.current_stage(task_id)
             self._validate_add(task_id, spec, current)
             registry = self._registry_entry(spec.stage_name)
@@ -453,7 +460,13 @@ class StageStatesManager:
         by_session_id: str | None,
     ) -> None:
         holder = by_session_id or "system"
-        with self._mutex(task_id, holder, f"{stage_name}:remove_stage"):
+        snapshot = self.current_stage(task_id)
+        with self._mutex(
+            task_id,
+            holder,
+            f"{stage_name}:remove_stage",
+            expected_stage=snapshot,
+        ):
             row = self.get(task_id, stage_name)
             current = self.current_stage(task_id)
             self._validate_remove(task_id, stage_name, row, current)
@@ -609,7 +622,13 @@ class StageStatesManager:
         validation_override_reason: str | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
-        with self._mutex(task_id, holder, f"{stage_name}:{verb}"):
+        snapshot = self.current_stage(task_id)
+        with self._mutex(
+            task_id,
+            holder,
+            f"{stage_name}:{verb}",
+            expected_stage=snapshot,
+        ):
             current = self.current_stage(task_id)
             row = self.get(task_id, stage_name)
             if row is None:
@@ -927,14 +946,39 @@ class StageStatesManager:
             raise ValueError(f"Unknown stage '{stage_name}'")
         return entry
 
-    def _mutex(self, task_id: str, holder: str, action: str) -> RuntimeDispatchMutex:
+    def _mutex(
+        self,
+        task_id: str,
+        holder: str,
+        action: str,
+        *,
+        expected_stage: StageState | None = None,
+    ) -> RuntimeDispatchMutex:
+        if expected_stage is None:
+            return RuntimeDispatchMutex(
+                storage=self.mutexes,
+                task_id=task_id,
+                holder=holder,
+                action_kind=f"stage_state:{action}",
+                ttl_seconds=30,
+            )
         return RuntimeDispatchMutex(
             storage=self.mutexes,
             task_id=task_id,
             holder=holder,
             action_kind=f"stage_state:{action}",
             ttl_seconds=30,
+            expected_stage_name=expected_stage.stage_name,
+            expected_stage_state=self._snapshot_state(expected_stage.state),
+            expected_stage_updated_at=expected_stage.updated_at,
+            candidate_loader=self.current_stage,
         )
+
+    @staticmethod
+    def _snapshot_state(value: StageState5) -> RuntimeStageSnapshotState | None:
+        if value in {"ready", "in_progress", "needs_review", "review_approved"}:
+            return cast(RuntimeStageSnapshotState, value)
+        return None
 
     @staticmethod
     def _validate_state_value(value: str) -> None:

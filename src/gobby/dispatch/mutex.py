@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal, cast
 
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 CandidateLoader = Callable[[str], object | None]
+RuntimeStageSnapshotState = Literal["ready", "in_progress", "needs_review", "review_approved"]
+
+_ACTIONABLE_STAGE_STATES = frozenset({"ready", "in_progress", "needs_review", "review_approved"})
 
 
 class RuntimeDispatchMutexError(RuntimeError):
@@ -23,7 +27,7 @@ class DispatchCandidateChangedError(RuntimeDispatchMutexError):
     """Raised when a task changes state after the lease is acquired."""
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class RuntimeDispatchMutex:
     """Context manager for a dispatcher-owned task lease."""
 
@@ -33,8 +37,9 @@ class RuntimeDispatchMutex:
     action_kind: str
     ttl_seconds: int
     now: datetime | str | None = None
-    expected_lifecycle: str | None = None
-    expected_status: str | None = None
+    expected_stage_name: str | None = None
+    expected_stage_state: RuntimeStageSnapshotState | None = None
+    expected_stage_updated_at: str | None = None
     candidate_loader: CandidateLoader | None = None
     _acquired: bool = field(default=False, init=False)
     _released: bool = field(default=False, init=False)
@@ -53,10 +58,10 @@ class RuntimeDispatchMutex:
             msg = f"dispatch mutex for task {self.task_id!r} is held by another dispatcher"
             raise DispatchMutexUnavailableError(msg)
 
-        self._acquired = True
-        if not self._candidate_tuple_still_matches():
+        object.__setattr__(self, "_acquired", True)
+        if not self._candidate_stage_snapshot_still_matches():
             self.release()
-            msg = f"task {self.task_id!r} changed lifecycle/status after dispatch lease acquisition"
+            msg = f"task {self.task_id!r} changed current-stage snapshot after dispatch lease"
             raise DispatchCandidateChangedError(msg)
 
         return self
@@ -80,41 +85,62 @@ class RuntimeDispatchMutex:
         if not self.storage.attach_run_id(self.task_id, run_id):
             msg = f"dispatch mutex for task {self.task_id!r} disappeared before attach"
             raise RuntimeDispatchMutexError(msg)
-        self._run_id = run_id
+        object.__setattr__(self, "_run_id", run_id)
 
     def release(self) -> bool:
         """Release this context's lease if it is still held by this holder."""
         if not self._acquired or self._released:
             return False
         released = self.storage.release_mutex(self.task_id, self.holder)
-        self._released = True
+        object.__setattr__(self, "_released", True)
         return released
 
-    def _candidate_tuple_still_matches(self) -> bool:
-        if (
-            self.candidate_loader is None
-            or self.expected_lifecycle is None
-            or self.expected_status is None
-        ):
+    def _candidate_stage_snapshot_still_matches(self) -> bool:
+        if self.candidate_loader is None:
             return True
         candidate = self.candidate_loader(self.task_id)
-        return self.candidate_tuple_matches(
-            candidate,
-            lifecycle=self.expected_lifecycle,
-            status=self.expected_status,
-        )
+        stage_name, stage_state, stage_updated_at = _read_candidate_stage_snapshot(candidate)
+        return self.candidate_stage_snapshot_matches(stage_name, stage_state, stage_updated_at)
 
-    @staticmethod
-    def candidate_tuple_matches(
-        candidate: object | None,
+    def candidate_stage_snapshot_matches(
+        self: object,
+        current_stage_name: str | None = None,
+        current_stage_state: str | None = None,
+        current_stage_updated_at: str | None = None,
         *,
-        lifecycle: str,
-        status: str,
+        stage_name: str | None = None,
+        stage_state: str | None = None,
+        stage_updated_at: str | None = None,
     ) -> bool:
-        if candidate is None:
-            return False
-        candidate_lifecycle, candidate_status = _read_candidate_tuple(candidate)
-        return candidate_lifecycle == lifecycle and candidate_status == status
+        """True iff the candidate's current-stage row is unchanged from scan time."""
+        resolved_stage_name = current_stage_name if current_stage_name is not None else stage_name
+        resolved_stage_state = (
+            current_stage_state if current_stage_state is not None else stage_state
+        )
+        resolved_stage_updated_at = (
+            current_stage_updated_at if current_stage_updated_at is not None else stage_updated_at
+        )
+        if isinstance(self, RuntimeDispatchMutex):
+            return _stage_snapshot_matches(
+                expected_stage_name=self.expected_stage_name,
+                expected_stage_state=self.expected_stage_state,
+                expected_stage_updated_at=self.expected_stage_updated_at,
+                current_stage_name=resolved_stage_name,
+                current_stage_state=resolved_stage_state,
+                current_stage_updated_at=resolved_stage_updated_at,
+            )
+
+        candidate_stage_name, candidate_stage_state, candidate_stage_updated_at = (
+            _read_candidate_stage_snapshot(self)
+        )
+        return _stage_snapshot_matches(
+            expected_stage_name=resolved_stage_name,
+            expected_stage_state=_coerce_actionable_stage_state(resolved_stage_state),
+            expected_stage_updated_at=resolved_stage_updated_at,
+            current_stage_name=candidate_stage_name,
+            current_stage_state=candidate_stage_state,
+            current_stage_updated_at=candidate_stage_updated_at,
+        )
 
     @staticmethod
     def force_release_for_run(storage: TaskDispatchMutexManager, run_id: str) -> int:
@@ -127,18 +153,98 @@ class RuntimeDispatchMutex:
         return storage.force_release(task_id)
 
 
-def _read_candidate_tuple(candidate: object) -> tuple[str | None, str | None]:
-    if isinstance(candidate, Mapping):
-        lifecycle = candidate.get("lifecycle")
-        status = candidate.get("status")
-    else:
-        lifecycle = getattr(candidate, "lifecycle", None)
-        status = getattr(candidate, "status", None)
-
+def _stage_snapshot_matches(
+    *,
+    expected_stage_name: str | None,
+    expected_stage_state: str | None,
+    expected_stage_updated_at: str | None,
+    current_stage_name: str | None,
+    current_stage_state: str | None,
+    current_stage_updated_at: str | None,
+) -> bool:
+    if (
+        expected_stage_name is None
+        or expected_stage_state is None
+        or expected_stage_updated_at is None
+        or current_stage_name is None
+        or current_stage_state is None
+        or current_stage_updated_at is None
+    ):
+        return False
     return (
-        lifecycle if isinstance(lifecycle, str) else None,
-        status if isinstance(status, str) else None,
+        current_stage_name == expected_stage_name
+        and current_stage_state == expected_stage_state
+        and current_stage_updated_at == expected_stage_updated_at
     )
+
+
+def _read_candidate_stage_snapshot(
+    candidate: object | None,
+) -> tuple[str | None, str | None, str | None]:
+    stage = _read_candidate_current_stage(candidate)
+    return _read_stage_name(stage), _read_stage_state(stage), _read_stage_updated_at(stage)
+
+
+def _read_candidate_current_stage(candidate: object | None) -> object | None:
+    if candidate is None:
+        return None
+    current_stage = _read_field(candidate, "current_stage")
+    if current_stage is not None:
+        return current_stage
+    stages = _read_field(candidate, "stages")
+    if isinstance(stages, Sequence) and not isinstance(stages, str | bytes | bytearray):
+        pending = [stage for stage in stages if _read_stage_state(stage) != "done"]
+        return min(pending, key=_read_stage_position) if pending else None
+    if _read_stage_name(candidate) is not None or _read_stage_state(candidate) is not None:
+        return candidate
+    return None
+
+
+def _read_stage_name(stage: object | None) -> str | None:
+    value = _read_field(stage, "stage_name", _read_field(stage, "name"))
+    return value if isinstance(value, str) else None
+
+
+def _read_stage_state(stage: object | None) -> str | None:
+    value = _read_field(stage, "state")
+    return value if isinstance(value, str) else None
+
+
+def _read_stage_updated_at(stage: object | None) -> str | None:
+    value = _read_field(stage, "updated_at")
+    return value if isinstance(value, str) else None
+
+
+def _read_stage_position(stage: object) -> int:
+    value = _read_field(stage, "position", 0)
+    try:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            return int(value)
+        return 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _read_field(
+    obj: object | None,
+    name: str,
+    default: object | None = None,
+) -> object | None:
+    if obj is None:
+        return default
+    if isinstance(obj, Mapping):
+        return cast(Mapping[str, object | None], obj).get(name, default)
+    return getattr(obj, name, default)
+
+
+def _coerce_actionable_stage_state(
+    value: object | None,
+) -> RuntimeStageSnapshotState | None:
+    if isinstance(value, str) and value in _ACTIONABLE_STAGE_STATES:
+        return cast(RuntimeStageSnapshotState, value)
+    return None
 
 
 __all__ = [
@@ -146,4 +252,5 @@ __all__ = [
     "DispatchMutexUnavailableError",
     "RuntimeDispatchMutex",
     "RuntimeDispatchMutexError",
+    "RuntimeStageSnapshotState",
 ]

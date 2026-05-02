@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
@@ -26,6 +26,7 @@ from gobby.dispatch.mutex import (
     DispatchCandidateChangedError,
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
+    RuntimeStageSnapshotState,
 )
 from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 from gobby.storage.database import DatabaseProtocol, LocalDatabase
@@ -85,14 +86,28 @@ async def run_heartbeat(
                 cap_reached=True,
             )
 
+        snapshot_candidate = candidate
+        if _candidate_current_stage(snapshot_candidate) is None:
+            reloaded = reload_candidate(candidate.id, db=resolved_db, project_id=project_id)
+            if reloaded is None:
+                result = HeartbeatResult(
+                    result.scanned,
+                    result.executed,
+                    result.skipped + 1,
+                )
+                continue
+            snapshot_candidate = reloaded
+        stage_name, stage_state, stage_updated_at = _candidate_stage_snapshot(snapshot_candidate)
+
         mutex = RuntimeDispatchMutex(
             mutex_storage,
             task_id=candidate.id,
             holder=holder,
             action_kind="heartbeat",
             ttl_seconds=ttl_seconds,
-            expected_lifecycle=_state_value(candidate.lifecycle),
-            expected_status=candidate.status,
+            expected_stage_name=stage_name,
+            expected_stage_state=stage_state,
+            expected_stage_updated_at=stage_updated_at,
             candidate_loader=lambda task_id: reload_candidate(
                 task_id,
                 db=resolved_db,
@@ -112,10 +127,8 @@ async def run_heartbeat(
 
         try:
             current = reload_candidate(candidate.id, db=resolved_db, project_id=project_id)
-            if current is None or not RuntimeDispatchMutex.candidate_tuple_matches(
-                current,
-                lifecycle=_state_value(candidate.lifecycle),
-                status=candidate.status,
+            if current is None or not mutex.candidate_stage_snapshot_matches(
+                *_candidate_stage_snapshot(current)
             ):
                 mutex.release()
                 result = HeartbeatResult(result.scanned, result.executed, result.skipped + 1)
@@ -469,8 +482,54 @@ def escalate_task(*, db: DatabaseProtocol, task_id: str, reason: str) -> bool:
     )
 
 
-def _state_value(value: object) -> str:
-    return str(getattr(value, "value", value))
+def _candidate_stage_snapshot(
+    candidate: object | None,
+) -> tuple[str | None, RuntimeStageSnapshotState | None, str | None]:
+    stage = _candidate_current_stage(candidate)
+    return _stage_name(stage), _stage_snapshot_state(stage), _stage_updated_at(stage)
+
+
+def _candidate_current_stage(candidate: object | None) -> object | None:
+    if candidate is None:
+        return None
+    current_stage = _field(candidate, "current_stage")
+    if current_stage is not None:
+        return current_stage
+    return dispatch_rules.current_stage(candidate)
+
+
+def _stage_name(stage: object | None) -> str | None:
+    value = _field(stage, "stage_name", _field(stage, "name"))
+    return value if isinstance(value, str) else None
+
+
+def _stage_snapshot_state(stage: object | None) -> RuntimeStageSnapshotState | None:
+    value = _field(stage, "state")
+    if isinstance(value, str) and value in {
+        "ready",
+        "in_progress",
+        "needs_review",
+        "review_approved",
+    }:
+        return cast(RuntimeStageSnapshotState, value)
+    return None
+
+
+def _stage_updated_at(stage: object | None) -> str | None:
+    value = _field(stage, "updated_at")
+    return value if isinstance(value, str) else None
+
+
+def _field(
+    obj: object | None,
+    name: str,
+    default: object | None = None,
+) -> object | None:
+    if obj is None:
+        return default
+    if isinstance(obj, Mapping):
+        return cast(Mapping[str, object | None], obj).get(name, default)
+    return getattr(obj, name, default)
 
 
 __all__ = [
