@@ -59,7 +59,7 @@ class _FakeCodeIndexStorage:
     ) -> list[dict[str, Any]]:
         del callee_names
         if project_id == "project-1" and symbol_ids == ("sym-do-work",):
-            return [{"file_path": "src/api.py"}]
+            return [{"file_path": "src/api.py"}, {"file_path": "tests/test_api.py"}]
         return []
 
 
@@ -88,10 +88,14 @@ Update docs/demo.md.
     return path
 
 
-def _write_consumer_plan(tmp_path: Path) -> Path:
+def _write_consumer_plan(
+    tmp_path: Path,
+    *,
+    target_line: str = "Target: `src/service.py`",
+) -> Path:
     path = tmp_path / "consumer.md"
     path.write_text(
-        """> **Plan ID:** cli-consumer-plan
+        f"""> **Plan ID:** cli-consumer-plan
 
 # CLI Consumer Plan
 
@@ -101,7 +105,7 @@ def _write_consumer_plan(tmp_path: Path) -> Path:
 ### 1.1 Rename Service [category: code]
 `kind: deliverable`
 
-Target: `src/service.py`
+{target_line}
 
 Rename the service implementation.
 
@@ -187,8 +191,31 @@ def test_validate_command_runs_consumer_sweep(
     monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
     monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: storage)
 
-    result = CliRunner().invoke(plans, ["validate", str(plan), "--project", "gobby"])
+    result = CliRunner().invoke(
+        plans,
+        ["validate", str(plan), "--project", "gobby", "--include-tests"],
+    )
 
     assert result.exit_code != 0
     assert "consumer-sweep" in result.output
     assert "src/api.py" in result.output
+    assert "tests/test_api.py" in result.output
+
+
+def test_validate_command_excludes_test_consumers_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _write_consumer_plan(
+        tmp_path,
+        target_line="Targets:\n- `src/service.py`\n- `src/api.py`",
+    )
+    storage = _FakeCodeIndexStorage()
+    monkeypatch.setattr(plans_module, "resolve_project_ref", lambda project_ref: "project-1")
+    monkeypatch.setattr(plans_module, "_open_db", lambda: _FakeDb())
+    monkeypatch.setattr(plans_module, "CodeIndexStorage", lambda db: storage)
+
+    result = CliRunner().invoke(plans, ["validate", str(plan), "--project", "gobby"])
+
+    assert result.exit_code == 0
+    assert "Consumer sweep: passed" in result.output
+    assert "tests/test_api.py" not in result.output

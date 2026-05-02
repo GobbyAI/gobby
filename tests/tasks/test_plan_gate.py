@@ -72,9 +72,9 @@ Implement.
     return path
 
 
-def _write_symbol_change_plan(path: Path) -> Path:
+def _write_symbol_change_plan(path: Path, *, targets: str = "Target: `src/service.py`") -> Path:
     path.write_text(
-        """> **Plan ID:** symbol-change
+        f"""> **Plan ID:** symbol-change
 
 # Symbol Change
 
@@ -84,7 +84,7 @@ def _write_symbol_change_plan(path: Path) -> Path:
 ### 1.1 Rename Service [category: code]
 `kind: deliverable`
 
-Target: `src/service.py`
+{targets}
 
 Rename symbol: `app.service.do_work`.
 
@@ -129,7 +129,7 @@ class _IndexedStorage:
     ) -> list[dict[str, str]]:
         del callee_names
         if project_id == "project-1" and "sym-do-work" in symbol_ids:
-            return [{"file_path": "src/api.py"}]
+            return [{"file_path": "src/api.py"}, {"file_path": "tests/test_api.py"}]
         return []
 
 
@@ -251,4 +251,24 @@ def test_plan_adversary_spawn_blocks_on_consumer_sweep(tmp_path: Path) -> None:
     assert result is not None
     assert result["success"] is False
     assert "consumer-sweep" in result["error"]
+    assert "src/api.py" in result["error"]
+    assert "tests/test_api.py" not in result["error"]
     assert result["consumer_sweep"]["valid"] is False
+
+
+def test_plan_adversary_spawn_excludes_test_consumers(tmp_path: Path) -> None:
+    plan = _write_symbol_change_plan(
+        tmp_path / "symbol.md",
+        targets="Targets:\n- `src/service.py`\n- `src/api.py`",
+    )
+    manager = _make_task_manager_with_artifact(str(plan))
+    code_index = SimpleNamespace(storage=_IndexedStorage(), graph=object())
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-adversary",
+        task_id="t1",
+        task_manager=manager,
+        code_index=code_index,
+    )
+
+    assert result is None

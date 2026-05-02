@@ -23,6 +23,12 @@ _CHANGE_VERBS_RE = re.compile(
     r"\b(remove|delete|rename|move|change|modify|update|refactor|rewrite|replace|extract|alter)\b",
     re.IGNORECASE,
 )
+_TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
+_TARGET_DESTRUCTIVE_MARKER_RE = re.compile(
+    r"\b(DELETIONS ONLY|DELETE FILE|REMOVE FILE|DROP FILE|RENAMED? FILE|MOVED? FILE|"
+    r"DELETED ENTIRELY|REMOVED ENTIRELY)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +90,7 @@ def run_consumer_sweep(
     *,
     project_id: str | None,
     code_index: Any | None,
+    include_tests: bool = True,
 ) -> ConsumerSweepResult:
     """Fail when direct code-index consumers are missing from section targets."""
     if not project_id:
@@ -102,7 +109,16 @@ def run_consumer_sweep(
         targets = collect_target_inventory(plan_doc, section)
         if not targets:
             continue
-        issues.extend(_sweep_section(plan_doc, section, project_id, storage, targets))
+        issues.extend(
+            _sweep_section(
+                plan_doc,
+                section,
+                project_id,
+                storage,
+                targets,
+                include_tests=include_tests,
+            )
+        )
     return ConsumerSweepResult(tuple(issues))
 
 
@@ -112,17 +128,21 @@ def _sweep_section(
     project_id: str,
     storage: Any,
     targets: frozenset[str],
+    *,
+    include_tests: bool,
 ) -> list[ConsumerSweepIssue]:
     issues: list[ConsumerSweepIssue] = []
     text = _section_text(plan_doc, section)
 
     for symbol_ref in sorted(_symbol_intents(text)):
         symbols = _resolve_symbols(storage, project_id, symbol_ref)
+        symbols = _symbols_defined_in_targets(symbols, targets)
         if not symbols:
             continue
         symbol_ids = tuple(_symbol_attr(symbol, "id") for symbol in symbols)
         names = tuple({symbol_ref, symbol_ref.rsplit(".", 1)[-1]})
         consumers = _direct_symbol_consumers(storage, project_id, symbol_ids, names)
+        consumers = _filter_consumer_paths(consumers, include_tests=include_tests)
         missing = tuple(sorted(path for path in consumers if path not in targets))
         if missing:
             issues.append(
@@ -139,8 +159,9 @@ def _sweep_section(
                 )
             )
 
-    for file_path in sorted(_file_change_intents(plan_doc, section)):
+    for file_path in sorted(_file_destructive_intents(plan_doc, section)):
         consumers = _direct_file_consumers(storage, project_id, file_path)
+        consumers = _filter_consumer_paths(consumers, include_tests=include_tests)
         missing = tuple(sorted(path for path in consumers if path not in targets))
         if missing:
             issues.append(
@@ -177,17 +198,62 @@ def _symbol_intents(text: str) -> set[str]:
     return {ref for ref in refs if ref}
 
 
-def _file_change_intents(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
+def _file_destructive_intents(plan_doc: PlanDocument, section: PlanSection) -> set[str]:
     paths: set[str] = set()
-    for line in section_body_lines(plan_doc, section, before_acceptance=False):
-        if not _CHANGE_VERBS_RE.search(line):
+    body_lines = section_body_lines(plan_doc, section, before_acceptance=True)
+    index = 0
+    while index < len(body_lines):
+        line = body_lines[index]
+        match = _TARGET_LINE_RE.match(line)
+        if match is None:
+            index += 1
             continue
-        paths.update(find_file_paths_in_text(line))
-    for item in section.acceptance_items:
-        if not _CHANGE_VERBS_RE.search(item.prose):
+
+        rest = match.group("rest").strip()
+        if rest:
+            paths.update(_destructive_target_paths(rest))
+            index += 1
             continue
-        paths.update(find_file_paths_in_text(item.prose))
+
+        index += 1
+        while index < len(body_lines):
+            candidate = body_lines[index]
+            stripped = candidate.strip()
+            if not stripped:
+                break
+            if _TARGET_LINE_RE.match(candidate):
+                break
+            if stripped.startswith("#") or stripped.startswith("`kind:"):
+                break
+            if find_file_paths_in_text(candidate):
+                paths.update(_destructive_target_paths(candidate))
+                index += 1
+                continue
+            break
     return paths
+
+
+def _destructive_target_paths(line: str) -> set[str]:
+    occurrences = _path_occurrences(line)
+    if not occurrences:
+        return set()
+    destructive_paths: set[str] = set()
+    line_wide_marker = _TARGET_DESTRUCTIVE_MARKER_RE.search(line[: occurrences[0][1]])
+    for idx, (path, _start, end) in enumerate(occurrences):
+        next_start = occurrences[idx + 1][1] if idx + 1 < len(occurrences) else len(line)
+        annotation = line[end:next_start]
+        if line_wide_marker or _TARGET_DESTRUCTIVE_MARKER_RE.search(annotation):
+            destructive_paths.add(path)
+    return destructive_paths
+
+
+def _path_occurrences(line: str) -> list[tuple[str, int, int]]:
+    occurrences: list[tuple[str, int, int]] = []
+    for path in find_file_paths_in_text(line):
+        start = line.find(path)
+        if start >= 0:
+            occurrences.append((path, start, start + len(path)))
+    return sorted(occurrences, key=lambda item: item[1])
 
 
 def _resolve_symbols(storage: Any, project_id: str, symbol_ref: str) -> tuple[Any, ...]:
@@ -207,6 +273,14 @@ def _resolve_symbols(storage: Any, project_id: str, symbol_ref: str) -> tuple[An
     return ()
 
 
+def _symbols_defined_in_targets(symbols: tuple[Any, ...], targets: frozenset[str]) -> tuple[Any, ...]:
+    return tuple(
+        symbol
+        for symbol in symbols
+        if (normalize_file_path(_symbol_attr(symbol, "file_path")) or "") in targets
+    )
+
+
 def _direct_symbol_consumers(
     storage: Any,
     project_id: str,
@@ -215,7 +289,7 @@ def _direct_symbol_consumers(
 ) -> set[str]:
     fake = getattr(storage, "find_direct_callers", None)
     if callable(fake):
-        return _row_paths(fake(project_id, symbol_ids, callee_names))
+        return _row_paths(fake(project_id, symbol_ids, () if symbol_ids else callee_names))
 
     db = getattr(storage, "db", None)
     if db is None or not hasattr(db, "fetchall"):
@@ -227,7 +301,7 @@ def _direct_symbol_consumers(
         placeholders = ", ".join("?" for _ in symbol_ids)
         conditions.append(f"callee_symbol_id IN ({placeholders})")
         params.extend(symbol_ids)
-    if callee_names:
+    elif callee_names:
         placeholders = ", ".join("?" for _ in callee_names)
         conditions.append(f"callee_name IN ({placeholders})")
         params.extend(callee_names)
@@ -252,17 +326,6 @@ def _direct_file_consumers(storage: Any, project_id: str, file_path: str) -> set
         return _row_paths(fake(project_id, file_path, module_candidates, symbol_ids))
 
     consumers = _direct_symbol_consumers(storage, project_id, symbol_ids, ())
-    db = getattr(storage, "db", None)
-    if db is None or not hasattr(db, "fetchall") or not module_candidates:
-        return consumers
-
-    placeholders = ", ".join("?" for _ in module_candidates)
-    rows = db.fetchall(
-        "SELECT DISTINCT source_file AS file_path FROM code_imports "
-        f"WHERE project_id = ? AND target_module IN ({placeholders})",
-        (project_id, *module_candidates),
-    )
-    consumers.update(_row_paths(rows))
     consumers.discard(file_path)
     return consumers
 
@@ -318,6 +381,24 @@ def _row_paths(rows: Any) -> set[str]:
         if normalized is not None:
             paths.add(normalized)
     return paths
+
+
+def _filter_consumer_paths(paths: set[str], *, include_tests: bool) -> set[str]:
+    if include_tests:
+        return paths
+    return {path for path in paths if not _is_test_path(path)}
+
+
+def _is_test_path(path: str) -> bool:
+    normalized = normalize_file_path(path)
+    if normalized is None:
+        return False
+    return (
+        normalized.startswith("tests/")
+        or normalized.startswith("test/")
+        or "/tests/" in normalized
+        or "/test/" in normalized
+    )
 
 
 def _row_value(row: Any, key: str) -> Any | None:

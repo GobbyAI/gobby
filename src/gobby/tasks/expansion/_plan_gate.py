@@ -73,7 +73,12 @@ def validate_plan_for_agent_spawn(
             plan_doc = parse_plan(plan_path, parse_mode="draft")
         except (OSError, PlanParseError):
             return None
-        sweep = run_consumer_sweep(plan_doc, project_id=project_id, code_index=code_index)
+        sweep = run_consumer_sweep(
+            plan_doc,
+            project_id=project_id,
+            code_index=code_index,
+            include_tests=False,
+        )
         if sweep.valid:
             return None
         result = {

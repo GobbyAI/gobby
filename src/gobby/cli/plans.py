@@ -121,10 +121,15 @@ def register_plan_command(
 @plans.command("validate")
 @click.argument("plan_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--project", "-p", "project_ref", help="Project context for code-index checks.")
-def validate_plan_command(plan_file: Path, project_ref: str | None) -> None:
+@click.option(
+    "--include-tests",
+    is_flag=True,
+    help="Include test files in consumer-sweep target coverage.",
+)
+def validate_plan_command(plan_file: Path, project_ref: str | None, include_tests: bool) -> None:
     """Validate a plan file, including semantic and consumer-sweep lint."""
 
-    result = _validate_plan_for_cli(plan_file, project_ref)
+    result = _validate_plan_for_cli(plan_file, project_ref, include_tests=include_tests)
     if not result["valid"]:
         for error in result.get("errors", []):
             click.echo(f"Error: {error}", err=True)
@@ -184,7 +189,12 @@ def _open_db() -> LocalDatabase:
     return db
 
 
-def _validate_plan_for_cli(plan_file: Path, project_ref: str | None) -> dict[str, Any]:
+def _validate_plan_for_cli(
+    plan_file: Path,
+    project_ref: str | None,
+    *,
+    include_tests: bool,
+) -> dict[str, Any]:
     plan_path = plan_file if plan_file.is_absolute() else Path.cwd() / plan_file
     result = validate_plan_file(None, plan_path)
     if not result.get("valid"):
@@ -203,7 +213,12 @@ def _validate_plan_for_cli(plan_file: Path, project_ref: str | None) -> dict[str
         code_index = _CliCodeIndexContext(CodeIndexStorage(db))
 
     try:
-        sweep = run_consumer_sweep(plan_doc, project_id=project_id, code_index=code_index)
+        sweep = run_consumer_sweep(
+            plan_doc,
+            project_id=project_id,
+            code_index=code_index,
+            include_tests=include_tests,
+        )
     finally:
         if db is not None:
             db.close()
