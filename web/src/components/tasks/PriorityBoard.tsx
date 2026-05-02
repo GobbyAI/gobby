@@ -4,10 +4,6 @@ import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
 import { getTaskBucket, getTaskStateSummary } from '../../lib/taskState'
 
-// =============================================================================
-// Column definitions
-// =============================================================================
-
 interface PriorityColumnDef {
   key: 'now' | 'next' | 'later'
   label: string
@@ -21,20 +17,46 @@ const COLUMNS: PriorityColumnDef[] = [
   { key: 'later', label: 'Later', color: 'var(--text-muted)', description: 'Low + Backlog' },
 ]
 
+const WRAPPER_CLS = 'flex flex-1 flex-col overflow-hidden'
+const BOARD_CLS = 'flex flex-1 gap-3 overflow-x-auto p-2'
+const COLUMN_CLS =
+  'flex min-w-60 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]'
+const COLUMN_HEADER_CLS = 'flex items-center gap-[0.4rem] px-3 pb-[0.2rem] pt-[0.6rem]'
+const COLUMN_DOT_CLS = 'h-2 w-2 shrink-0 rounded-full'
+const COLUMN_LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.9)] font-bold text-[var(--text-primary)]'
+const COLUMN_COUNT_CLS =
+  'ml-auto min-w-[1.2rem] rounded-full bg-[var(--bg-tertiary)] px-[0.35rem] py-[0.05rem] text-center text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const COLUMN_DESC_CLS =
+  'border-b border-[var(--border)] px-3 pb-2 text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const COLUMN_BODY_CLS = 'flex flex-1 flex-col gap-[0.4rem] overflow-y-auto p-2'
+const COLUMN_EMPTY_CLS =
+  'px-2 py-6 text-center text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+
+const CARD_CLS =
+  'group flex w-full cursor-pointer flex-col gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-[0.6rem] py-[0.55rem] text-left font-[inherit] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--accent)] hover:bg-[var(--bg-tertiary)]'
+const CARD_HEADER_CLS = 'flex items-center gap-[0.3rem]'
+const CARD_REF_CLS = 'mr-auto font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-muted)]'
+const CARD_TITLE_CLS =
+  'overflow-hidden text-[length:calc(var(--font-size-base)*0.8)] leading-[1.35] text-[var(--text-primary)] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] [display:-webkit-box]'
+const CARD_FOOTER_CLS = 'mt-[0.1rem] flex items-center gap-[0.3rem]'
+const CARD_STATUS_CLS = 'ml-auto text-[length:calc(var(--font-size-base)*0.65)] text-[var(--text-muted)]'
+const CARD_ACTION_CLS =
+  'inline-flex h-[1.2rem] w-[1.2rem] cursor-pointer items-center justify-center rounded-[0.2rem] bg-[var(--bg-tertiary)] text-[length:calc(var(--font-size-base)*0.6)] text-[var(--text-muted)] opacity-0 transition-[opacity,background,color] duration-100 group-hover:opacity-100 hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]'
+
+const DONE_SUMMARY_CLS =
+  'p-2 text-center text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+
 function classifyTask(task: GobbyTask): 'now' | 'next' | 'later' | null {
   const bucket = getTaskBucket(task)
 
   if (bucket === 'closed') return null
 
-  // In-progress or blocked tasks with high urgency → Now
   if (bucket === 'in_progress' || bucket === 'blocked') return 'now'
   if (task.priority <= 1) return 'now'
 
-  // Review and merge-ready work stays near the front of the queue.
   if (bucket === 'review' || bucket === 'merge_ready') return 'next'
   if (task.priority === 2) return 'next'
 
-  // Low/Backlog → Later
   return 'later'
 }
 
@@ -47,7 +69,6 @@ function groupByPriority(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
     if (col) grouped.get(col)!.push(task)
   }
 
-  // Sort within columns: by priority, then by updated_at desc
   for (const [, list] of grouped) {
     list.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority
@@ -57,10 +78,6 @@ function groupByPriority(tasks: GobbyTask[]): Map<string, GobbyTask[]> {
 
   return grouped
 }
-
-// =============================================================================
-// PriorityCard
-// =============================================================================
 
 function PriorityCard({
   task,
@@ -73,22 +90,22 @@ function PriorityCard({
 }) {
   return (
     <button
-      className="priority-card"
+      className={CARD_CLS}
       onClick={() => onSelect(task.id)}
     >
-      <div className="priority-card-header">
+      <div className={CARD_HEADER_CLS}>
         <StatusDot task={task} />
-        <span className="priority-card-ref">{task.ref}</span>
+        <span className={CARD_REF_CLS}>{task.ref}</span>
         <PriorityBadge priority={task.priority} />
       </div>
-      <div className="priority-card-title">{task.title}</div>
-      <div className="priority-card-footer">
+      <div className={CARD_TITLE_CLS}>{task.title}</div>
+      <div className={CARD_FOOTER_CLS}>
         <TypeBadge type={task.task_type} />
-        <span className="priority-card-status">{getTaskStateSummary(task)}</span>
+        <span className={CARD_STATUS_CLS}>{getTaskStateSummary(task)}</span>
         {onUpdateStatus && getTaskBucket(task) === 'ready' && (
           <button
             type="button"
-            className="priority-card-action"
+            className={CARD_ACTION_CLS}
             title="Start work"
             onClick={e => { e.stopPropagation(); onUpdateStatus(task.id, 'in_progress') }}
           >
@@ -100,10 +117,6 @@ function PriorityCard({
     </button>
   )
 }
-
-// =============================================================================
-// PriorityColumn
-// =============================================================================
 
 function PriorityColumn({
   col,
@@ -117,16 +130,16 @@ function PriorityColumn({
   onUpdateStatus?: (taskId: string, newStatus: string) => void
 }) {
   return (
-    <div className="priority-column">
-      <div className="priority-column-header">
-        <span className="priority-column-dot" style={{ background: col.color }} />
-        <span className="priority-column-label">{col.label}</span>
-        <span className="priority-column-count">{tasks.length}</span>
+    <div className={COLUMN_CLS}>
+      <div className={COLUMN_HEADER_CLS}>
+        <span className={COLUMN_DOT_CLS} style={{ background: col.color }} />
+        <span className={COLUMN_LABEL_CLS}>{col.label}</span>
+        <span className={COLUMN_COUNT_CLS}>{tasks.length}</span>
       </div>
-      <div className="priority-column-desc">{col.description}</div>
-      <div className="priority-column-body">
+      <div className={COLUMN_DESC_CLS}>{col.description}</div>
+      <div className={COLUMN_BODY_CLS}>
         {tasks.length === 0 ? (
-          <div className="priority-column-empty">No tasks</div>
+          <div className={COLUMN_EMPTY_CLS}>No tasks</div>
         ) : (
           tasks.map(task => (
             <PriorityCard
@@ -142,10 +155,6 @@ function PriorityColumn({
   )
 }
 
-// =============================================================================
-// PriorityBoard
-// =============================================================================
-
 interface PriorityBoardProps {
   tasks: GobbyTask[]
   onSelectTask: (id: string) => void
@@ -160,8 +169,8 @@ export function PriorityBoard({ tasks, onSelectTask, onUpdateStatus }: PriorityB
   )
 
   return (
-    <div className="priority-board-wrapper">
-      <div className="priority-board">
+    <div className={WRAPPER_CLS}>
+      <div className={BOARD_CLS}>
         {COLUMNS.map(col => (
           <PriorityColumn
             key={col.key}
@@ -173,7 +182,7 @@ export function PriorityBoard({ tasks, onSelectTask, onUpdateStatus }: PriorityB
         ))}
       </div>
       {doneCount > 0 && (
-        <div className="priority-done-summary">
+        <div className={DONE_SUMMARY_CLS}>
           {doneCount} completed task{doneCount !== 1 ? 's' : ''} hidden
         </div>
       )}

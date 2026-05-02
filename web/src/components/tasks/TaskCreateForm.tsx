@@ -39,6 +39,30 @@ const PRIORITY_OPTIONS = [
   { value: 4, label: 'Backlog' },
 ]
 
+const BACKDROP_CLS = 'fixed inset-0 z-[200] bg-[var(--surface-scrim)]'
+const MODAL_CLS =
+  'fixed left-1/2 top-1/2 z-[210] max-h-[85vh] w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-xl)]'
+const HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-5 py-4'
+const TITLE_CLS = 'text-[length:calc(var(--font-size-base)*1.05)] font-semibold'
+const CLOSE_BTN_CLS =
+  'flex h-8 w-8 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
+
+const FORM_CLS = 'flex flex-col gap-3 px-5 py-4'
+const FIELD_CLS = 'flex flex-col gap-1'
+const ROW_CLS = 'flex gap-3 [&>div]:flex-1'
+const LABEL_CLS = 'text-[length:calc(var(--font-size-base)*0.75)] font-medium text-[var(--text-muted)]'
+const REQUIRED_CLS = 'text-[var(--color-error)]'
+const INPUT_CLS =
+  'rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none pointer-coarse:min-h-11'
+const TEXTAREA_CLS =
+  'min-h-12 resize-y rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.85)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none'
+
+const ACTIONS_CLS = 'flex justify-end gap-2 border-t border-[var(--border)] pt-2'
+const CANCEL_BTN_CLS =
+  'min-w-[100px] cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+const SUBMIT_BTN_CLS =
+  'min-w-[100px] cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11'
+
 export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: TaskCreateFormProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -49,7 +73,6 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
   const [validationCriteria, setValidationCriteria] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  // Reset and apply defaults when form opens
   useEffect(() => {
     if (isOpen) {
       setTitle(defaults?.title || '')
@@ -107,29 +130,27 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
 
   if (!isOpen) return null
 
-  // Parent task options: epics and tasks that can be parents
   const parentOptions = tasks.filter(t => t.task_type === 'epic' || t.task_type === 'task')
 
   return (
     <>
-      <div className="task-create-backdrop" onClick={handleClose} />
-      <div className="task-create-modal">
-        <div className="task-create-header">
-          <h3 className="task-create-title">{defaults?.title ? 'Clone Task' : 'New Task'}</h3>
-          <button className="flex h-8 w-8 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11" onClick={handleClose} title="Close">
+      <div className={BACKDROP_CLS} onClick={handleClose} />
+      <div className={MODAL_CLS}>
+        <div className={HEADER_CLS}>
+          <h3 className={TITLE_CLS}>{defaults?.title ? 'Clone Task' : 'New Task'}</h3>
+          <button className={CLOSE_BTN_CLS} onClick={handleClose} title="Close">
             <CloseIcon />
           </button>
         </div>
 
-        <form className="task-create-form" onSubmit={handleSubmit}>
-          {/* Title */}
-          <div className="task-create-field">
-            <label className="task-create-label">
-              Title <span className="task-create-required">*</span>
+        <form className={FORM_CLS} onSubmit={handleSubmit}>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>
+              Title <span className={REQUIRED_CLS}>*</span>
             </label>
             <input
               type="text"
-              className="task-create-input"
+              className={INPUT_CLS}
               value={title}
               onChange={e => setTitle(e.target.value)}
               placeholder="Task title..."
@@ -138,12 +159,11 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             />
           </div>
 
-          {/* Type & Priority row */}
-          <div className="task-create-row">
-            <div className="task-create-field">
-              <label className="task-create-label">Type</label>
+          <div className={ROW_CLS}>
+            <div className={FIELD_CLS}>
+              <label className={LABEL_CLS}>Type</label>
               <select
-                className="task-create-select"
+                className={INPUT_CLS}
                 value={taskType}
                 onChange={e => setTaskType(e.target.value)}
               >
@@ -152,10 +172,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
                 ))}
               </select>
             </div>
-            <div className="task-create-field">
-              <label className="task-create-label">Priority</label>
+            <div className={FIELD_CLS}>
+              <label className={LABEL_CLS}>Priority</label>
               <select
-                className="task-create-select"
+                className={INPUT_CLS}
                 value={priority}
                 onChange={e => setPriority(Number(e.target.value))}
               >
@@ -166,11 +186,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             </div>
           </div>
 
-          {/* Parent task */}
-          <div className="task-create-field">
-            <label className="task-create-label">Parent Task</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Parent Task</label>
             <select
-              className="task-create-select"
+              className={INPUT_CLS}
               value={parentTaskId}
               onChange={e => setParentTaskId(e.target.value)}
             >
@@ -181,11 +200,10 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             </select>
           </div>
 
-          {/* Description */}
-          <div className="task-create-field">
-            <label className="task-create-label">Description</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Description</label>
             <textarea
-              className="task-create-textarea"
+              className={TEXTAREA_CLS}
               value={description}
               onChange={e => setDescription(e.target.value)}
               placeholder="Detailed description..."
@@ -193,23 +211,21 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             />
           </div>
 
-          {/* Labels */}
-          <div className="task-create-field">
-            <label className="task-create-label">Labels</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Labels</label>
             <input
               type="text"
-              className="task-create-input"
+              className={INPUT_CLS}
               value={labelsInput}
               onChange={e => setLabelsInput(e.target.value)}
               placeholder="Comma-separated labels..."
             />
           </div>
 
-          {/* Validation criteria */}
-          <div className="task-create-field">
-            <label className="task-create-label">Validation Criteria</label>
+          <div className={FIELD_CLS}>
+            <label className={LABEL_CLS}>Validation Criteria</label>
             <textarea
-              className="task-create-textarea"
+              className={TEXTAREA_CLS}
               value={validationCriteria}
               onChange={e => setValidationCriteria(e.target.value)}
               placeholder="How to verify this task is complete..."
@@ -217,18 +233,17 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
             />
           </div>
 
-          {/* Actions */}
-          <div className="task-create-actions">
+          <div className={ACTIONS_CLS}>
             <button
               type="button"
-              className="flex-1 cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11"
+              className={CANCEL_BTN_CLS}
               onClick={handleClose}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11"
+              className={SUBMIT_BTN_CLS}
               disabled={!title.trim() || submitting}
             >
               {submitting ? 'Creating...' : 'Create Task'}

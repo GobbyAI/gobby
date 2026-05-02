@@ -119,7 +119,7 @@ describe('KanbanBoard', () => {
   it('shows column counts', () => {
     const { container } = render(<KanbanBoard {...defaultProps} />)
 
-    const counts = container.querySelectorAll('.kanban-column-count')
+    const counts = container.querySelectorAll('[data-testid="kanban-column-count"]')
     // One of the columns should have count "1" for each task
     const countTexts = Array.from(counts).map(el => el.textContent)
     expect(countTexts).toContain('1')
