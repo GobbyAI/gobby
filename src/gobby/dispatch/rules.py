@@ -18,6 +18,19 @@ from gobby.dispatch.prompts import PROMPT_BUILDERS
 
 Rule = Callable[[object, object], Action | None]
 
+_STAGE_AGENT_SLUGS: dict[tuple[str, str], str] = {
+    ("ideation", "in_progress"): "analyst",
+    ("research", "in_progress"): "researcher",
+    ("architecture", "in_progress"): "architect",
+    ("prd", "in_progress"): "product-manager",
+    ("planning", "in_progress"): "planner",
+    ("planning", "needs_review"): "plan-adversary",
+    ("test_arch", "in_progress"): "test-architect",
+    ("expansion", "needs_review"): "expansion-qa",
+    ("holistic_qa", "in_progress"): "holistic-reviewer",
+    ("merge", "in_progress"): "merge-orchestrator",
+}
+
 NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION = {
     "research_spike": ("ideation.ready", "research.ready", "prd.done", "manifest_exhausted"),
     "prd_doc": ("ideation.ready", "prd.done", "manifest_exhausted"),
@@ -121,35 +134,35 @@ def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
 
 
 def ideation_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "ideation", "in_progress", "analyst")
+    return _spawn_configured_stage_agent(task, context, "ideation", "in_progress")
 
 
 def research_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "research", "in_progress", "researcher")
+    return _spawn_configured_stage_agent(task, context, "research", "in_progress")
 
 
 def architecture_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "architecture", "in_progress", "architect")
+    return _spawn_configured_stage_agent(task, context, "architecture", "in_progress")
 
 
 def prd_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "prd", "in_progress", "product-manager")
+    return _spawn_configured_stage_agent(task, context, "prd", "in_progress")
 
 
 def planning_work_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "planning", "in_progress", "planner")
+    return _spawn_configured_stage_agent(task, context, "planning", "in_progress")
 
 
 def planning_review_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "planning", "needs_review", "plan-adversary")
+    return _spawn_configured_stage_agent(task, context, "planning", "needs_review")
 
 
 def planning_advance_rule(task: object, context: object) -> Action | None:
-    return _complete_stage_on_state(task, context, "planning", "review_approved")
+    return _complete_review_approved_stage(task, context, "planning")
 
 
 def test_arch_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "test_arch", "in_progress", "test-architect")
+    return _spawn_configured_stage_agent(task, context, "test_arch", "in_progress")
 
 
 def expansion_work_rule(task: object, context: object) -> Action | None:
@@ -160,11 +173,11 @@ def expansion_work_rule(task: object, context: object) -> Action | None:
 
 
 def expansion_review_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "expansion", "needs_review", "expansion-qa")
+    return _spawn_configured_stage_agent(task, context, "expansion", "needs_review")
 
 
 def expansion_advance_rule(task: object, context: object) -> Action | None:
-    return _complete_stage_on_state(task, context, "expansion", "review_approved")
+    return _complete_review_approved_stage(task, context, "expansion")
 
 
 def development_rule(task: object, context: object) -> Action | None:
@@ -195,7 +208,7 @@ def development_advance_rule(task: object, context: object) -> Action | None:
 
 
 def holistic_qa_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "holistic_qa", "in_progress", "holistic-reviewer")
+    return _spawn_configured_stage_agent(task, context, "holistic_qa", "in_progress")
 
 
 def holistic_qa_review_rule(task: object, context: object) -> Action | None:
@@ -206,7 +219,7 @@ def holistic_qa_review_rule(task: object, context: object) -> Action | None:
 
 
 def holistic_qa_advance_rule(task: object, context: object) -> Action | None:
-    return _complete_stage_on_state(task, context, "holistic_qa", "review_approved")
+    return _complete_review_approved_stage(task, context, "holistic_qa")
 
 
 def pr_work_rule(task: object, context: object) -> Action | None:
@@ -222,11 +235,11 @@ def pr_review_rule(task: object, context: object) -> Action | None:
 
 
 def pr_advance_rule(task: object, context: object) -> Action | None:
-    return _complete_stage_on_state(task, context, "pr", "review_approved")
+    return _complete_review_approved_stage(task, context, "pr")
 
 
 def merge_rule(task: object, context: object) -> Action | None:
-    return _spawn_on_stage(task, context, "merge", "in_progress", "merge-orchestrator")
+    return _spawn_configured_stage_agent(task, context, "merge", "in_progress")
 
 
 def task_has_stage(task: object, stage_name: str) -> bool:
@@ -315,6 +328,17 @@ def _spawn_on_stage(
     return _spawn_stage_agent(task, stage, context, agent_slug)
 
 
+def _spawn_configured_stage_agent(
+    task: object,
+    context: object,
+    stage_name: str,
+    state: str,
+) -> Action | None:
+    return _spawn_on_stage(
+        task, context, stage_name, state, _STAGE_AGENT_SLUGS[(stage_name, state)]
+    )
+
+
 def _complete_stage_on_state(
     task: object,
     context: object,
@@ -328,6 +352,14 @@ def _complete_stage_on_state(
         stage_name=stage_name,
         method="complete_stage",
     )
+
+
+def _complete_review_approved_stage(
+    task: object,
+    context: object,
+    stage_name: str,
+) -> AdvanceStageAction | None:
+    return _complete_stage_on_state(task, context, stage_name, "review_approved")
 
 
 def _spawn_stage_agent(

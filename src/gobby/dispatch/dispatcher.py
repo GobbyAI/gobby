@@ -57,6 +57,19 @@ class HeartbeatResult:
     cap_reached: bool = False
 
 
+def _skipped(result: HeartbeatResult) -> HeartbeatResult:
+    return HeartbeatResult(result.scanned, result.executed, result.skipped + 1)
+
+
+def _cap_reached(result: HeartbeatResult) -> HeartbeatResult:
+    return HeartbeatResult(
+        scanned=result.scanned,
+        executed=result.executed,
+        skipped=result.skipped,
+        cap_reached=True,
+    )
+
+
 async def run_heartbeat(
     *,
     db: DatabaseProtocol | None = None,
@@ -79,24 +92,16 @@ async def run_heartbeat(
 
     for candidate in candidates:
         if count_active_agents(resolved_db, project_id=project_id) >= cap:
-            return HeartbeatResult(
-                scanned=result.scanned,
-                executed=result.executed,
-                skipped=result.skipped,
-                cap_reached=True,
-            )
+            return _cap_reached(result)
 
-        snapshot_candidate = candidate
-        if _candidate_current_stage(snapshot_candidate) is None:
-            reloaded = reload_candidate(candidate.id, db=resolved_db, project_id=project_id)
-            if reloaded is None:
-                result = HeartbeatResult(
-                    result.scanned,
-                    result.executed,
-                    result.skipped + 1,
-                )
-                continue
-            snapshot_candidate = reloaded
+        snapshot_candidate = _candidate_for_stage_snapshot(
+            candidate,
+            db=resolved_db,
+            project_id=project_id,
+        )
+        if snapshot_candidate is None:
+            result = _skipped(result)
+            continue
         stage_name, stage_state, stage_updated_at = _candidate_stage_snapshot(snapshot_candidate)
 
         mutex = RuntimeDispatchMutex(
@@ -117,28 +122,19 @@ async def run_heartbeat(
         try:
             mutex.__enter__()
         except (DispatchMutexUnavailableError, DispatchCandidateChangedError):
-            result = HeartbeatResult(
-                scanned=result.scanned,
-                executed=result.executed,
-                skipped=result.skipped + 1,
-                cap_reached=False,
-            )
+            result = _skipped(result)
             continue
 
         try:
             current = reload_candidate(candidate.id, db=resolved_db, project_id=project_id)
-            if current is None or not mutex.candidate_stage_snapshot_matches(
-                *_candidate_stage_snapshot(current)
-            ):
-                mutex.release()
-                result = HeartbeatResult(result.scanned, result.executed, result.skipped + 1)
+            if current is None or not _candidate_matches_mutex_snapshot(mutex, current):
+                result = _release_and_skip(mutex, result)
                 continue
 
             context = build_context(resolved_db, current, services=services)
             action = dispatch_rules.evaluate(current, context, _rules())
             if action is None:
-                mutex.release()
-                result = HeartbeatResult(result.scanned, result.executed, result.skipped + 1)
+                result = _release_and_skip(mutex, result)
                 continue
 
             await _execute_action(
@@ -154,6 +150,29 @@ async def run_heartbeat(
             raise
 
     return result
+
+
+def _candidate_for_stage_snapshot(
+    candidate: Task,
+    *,
+    db: DatabaseProtocol,
+    project_id: str | None,
+) -> Task | None:
+    if _candidate_current_stage(candidate) is not None:
+        return candidate
+    return reload_candidate(candidate.id, db=db, project_id=project_id)
+
+
+def _candidate_matches_mutex_snapshot(
+    mutex: RuntimeDispatchMutex,
+    candidate: Task,
+) -> bool:
+    return mutex.candidate_stage_snapshot_matches(*_candidate_stage_snapshot(candidate))
+
+
+def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> HeartbeatResult:
+    mutex.release()
+    return _skipped(result)
 
 
 def _rules() -> list[Any]:
