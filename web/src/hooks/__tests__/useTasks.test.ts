@@ -269,6 +269,26 @@ describe('useTasks', () => {
     })
   })
 
+  it('adds stage filters to task list fetches', async () => {
+    const { result } = renderHook(() => useTasks())
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    mockFetch.fn.mockClear()
+
+    act(() => {
+      result.current.setFilters(prev => ({
+        ...prev,
+        stage: 'build',
+        stageState: 'needs_review',
+      }))
+    })
+
+    await waitFor(() => {
+      expect(String(mockFetch.fn.mock.calls[0]?.[0])).toContain('stage=build')
+      expect(String(mockFetch.fn.mock.calls[0]?.[0])).toContain('stage_state=needs_review')
+    })
+  })
+
   it('getTask fetches a single task detail', async () => {
     const taskDetail = { ...SAMPLE_TASKS[0], description: 'Detailed desc' }
     mockFetch.mockJsonResponse(/\/api\/tasks\/task-1$/, taskDetail)

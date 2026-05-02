@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useTasks } from '../../hooks/useTasks'
+import { useStagesRegistry } from '../../hooks/useStagesRegistry'
 import type { GobbyTask } from '../../hooks/useTasks'
 import { StatusDot, PriorityBadge, TypeBadge, TaskStateBadges } from './TaskBadges'
 import { TaskDetail } from './TaskDetail'
@@ -325,11 +326,13 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
     markTaskReviewApproved,
     escalateTask,
     deEscalateTask,
+    advanceStage,
     closeTask,
     reopenTask,
     getDependencies,
     getSubtasks,
   } = useTasks(projectFilter)
+  const { registry: stagesRegistry } = useStagesRegistry()
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -660,7 +663,9 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
           )}
           <LifecycleBoard
             tasks={(subtreeRootId ? kanbanTasks : displayTasks) as unknown as LifecycleTask[]}
+            stagesRegistry={stagesRegistry}
             onSelectTask={setSelectedTaskId}
+            onAdvanceStage={advanceStage}
           />
         </>
       ) : viewMode === 'tree' ? (
