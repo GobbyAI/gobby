@@ -108,6 +108,29 @@ describe('AgentStatusBar', () => {
     expect(screen.queryByText('WEB')).toBeNull()
   })
 
+  it('renders the New Chat button by default and invokes onNewChat when clicked', async () => {
+    const onNewChat = vi.fn()
+
+    render(
+      <AgentStatusBar interactionMode="none" onNewChat={onNewChat} />,
+    )
+
+    const newChatButton = screen.getByRole('button', { name: /new chat/i })
+    expect(newChatButton).toBeInTheDocument()
+    expect(newChatButton).toBeEnabled()
+    expect(newChatButton).toHaveClass('btn', 'btn-secondary', 'btn-sm')
+
+    await userEvent.click(newChatButton)
+    expect(onNewChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the New Chat button when onNewChat is not provided', () => {
+    render(<AgentStatusBar interactionMode="none" />)
+
+    const newChatButton = screen.getByRole('button', { name: /new chat/i })
+    expect(newChatButton).toBeDisabled()
+  })
+
   it('shows only Detach while attached', () => {
     const onDetach = vi.fn()
 

@@ -773,6 +773,7 @@ export function ChatPage({
               canControlViewedSession ? handleResumeViewedSession : undefined
             }
             onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+            onNewChat={() => handleNewChat()}
           />
 
           {/* Chat input */}
@@ -780,7 +781,6 @@ export function ChatPage({
             <ChatInput
               onSend={onSend}
               onStop={chat.onStop}
-              onNewChat={handleNewChat}
               isStreaming={chat.isStreaming}
               disabled={chatInputDisabled}
               disabledPlaceholder={chatInputDisabledPlaceholder}

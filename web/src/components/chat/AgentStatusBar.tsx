@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { ContextUsage, SessionInteractionMode, SessionObservationMeta } from '../../types/chat'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
+import { PlusIcon } from './icons/PlusIcon'
 
 interface AgentStatusBarProps {
   viewingMeta?: SessionObservationMeta | null
@@ -13,6 +14,7 @@ interface AgentStatusBarProps {
   onAttach?: () => void
   onResume?: () => void
   onDetach?: () => void
+  onNewChat?: () => void
 }
 
 const CONTEXT_USAGE_REFRESH_MS = 15_000
@@ -65,6 +67,7 @@ export function AgentStatusBar({
   onAttach,
   onResume,
   onDetach,
+  onNewChat,
 }: AgentStatusBarProps) {
   const usageClock = useSyncExternalStore(
     contextUsageUpdatedAt == null ? subscribeToClockDisabled : subscribeToClock,
@@ -125,6 +128,15 @@ export function AgentStatusBar({
             Detach
           </button>
         )}
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={onNewChat}
+          disabled={!onNewChat}
+        >
+          <PlusIcon />
+          New Chat
+        </button>
         <div className="agent-status-bar__context">
           <ContextUsageIndicator
             totalInputTokens={contextUsage?.totalInputTokens ?? 0}
