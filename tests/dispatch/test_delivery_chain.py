@@ -174,6 +174,6 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
 
     assert stage_row(temp_db, task.id, "merge")["state"] == "done"
     row = task_row(temp_db, task.id)
-    assert row["status"] == "closed"
+    assert row["closed_at"]
     assert row["closed_reason"] == "manifest_exhausted"
     assert row["closed_commit_sha"] == "merge-final123"

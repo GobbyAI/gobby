@@ -8,11 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 from gobby.dispatch.actions import (
-    AdvanceLifecycleAction,
     AppendAuditMarkerAction,
     CreateIsolationAction,
     SpawnAgentAction,
     StartExpansionAction,
+    StartStageAction,
 )
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
@@ -23,17 +23,29 @@ from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_sta
 pytestmark = pytest.mark.unit
 
 
+_LEGACY_STAGE_MAP = {
+    "expanding": "expansion",
+    "holistic_review": "holistic_qa",
+    "in_development": "development",
+    "merged": "merge",
+    "test_arch": "test_arch",
+}
+
+
 def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(project_id=sample_project["id"], title=title)
-    stage_name = fields.pop("stage_name", "development")
+    legacy_lifecycle = fields.pop("lifecycle", None)
+    legacy_status = fields.pop("status", None)
+    stage_name = fields.pop(
+        "stage_name",
+        _LEGACY_STAGE_MAP.get(str(legacy_lifecycle), "development"),
+    )
     stage_state = fields.pop("stage_state", "ready")
     update_task(
         temp_db,
         task.id,
         allow_automation=fields.pop("allow_automation", True),
-        lifecycle=fields.pop("lifecycle", "in_development"),
-        status=fields.pop("status", "open"),
         task_type=fields.pop("task_type", "task"),
         assigned_agent=fields.pop("assigned_agent", "backend-developer"),
         isolation=fields.pop("isolation", "none"),
@@ -42,6 +54,11 @@ def _task(temp_db, sample_project, title: str = "Dispatch task", **fields):
     )
     initialize_manifest(temp_db, task.id, [spec(stage_name, 0)])
     set_stage_state(temp_db, task.id, stage_name, stage_state)
+    if legacy_status == "closed":
+        temp_db.execute(
+            "UPDATE tasks SET closed_at = ?, closed_reason = ? WHERE id = ?",
+            (datetime.now(UTC).isoformat(), "test_terminal", task.id),
+        )
     return get_task(temp_db, task.id)
 
 
@@ -159,7 +176,7 @@ async def test_toctou_skip_on_changed_tuple(
 
 
 def _task_changed(temp_db, task_id: str):
-    update_task(temp_db, task_id, lifecycle="holistic_review", status="open")
+    set_stage_state(temp_db, task_id, "development", "in_progress")
     return get_task(temp_db, task_id)
 
 
@@ -209,15 +226,11 @@ async def test_advance_action_releases_lease_immediately(
 ) -> None:
     from gobby.dispatch import dispatcher
 
-    task = _task(temp_db, sample_project, lifecycle="test_arch")
+    task = _task(temp_db, sample_project, stage_name="test_arch")
     storage = _mutex_storage(temp_db)
-    action = AdvanceLifecycleAction(
+    action = StartStageAction(
         task_id=task.id,
-        from_lifecycle="test_arch",
-        from_status="open",
-        to_lifecycle="expanding",
-        to_status="open",
-        reason="skip",
+        stage_name="test_arch",
     )
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
 
