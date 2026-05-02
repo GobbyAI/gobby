@@ -11,6 +11,7 @@ import {
 } from "./execution-utils";
 import { formatTime, formatDuration, formatJson } from "./executionFormatters";
 import { SegmentedControl } from "../ui/SegmentedControl";
+import { cn } from "../../lib/utils";
 import "./reports-page.css";
 
 // =============================================================================
@@ -114,7 +115,7 @@ const DETAIL_BACKDROP_CLS =
 const DETAIL_PANEL_BASE_CLS =
   "fixed top-0 right-0 z-[100] flex h-full max-w-[90vw] translate-x-full flex-col overflow-y-auto border-l border-[var(--border)] bg-[var(--bg-secondary)] transition-transform duration-[0.25s] ease max-md:!w-screen max-md:!max-w-screen";
 
-const DETAIL_PANEL_OPEN_CLS = "!translate-x-0";
+const DETAIL_PANEL_OPEN_CLS = "translate-x-0";
 
 const DETAIL_RESIZE_HANDLE_CLS =
   "absolute top-0 left-[-3px] z-[101] h-full w-[6px] cursor-col-resize transition-colors duration-150 hover:bg-[var(--accent)] hover:opacity-50 active:bg-[var(--accent)] active:opacity-50 max-md:hidden";
@@ -764,7 +765,7 @@ export function ReportsPage({
           }).map((opt) => (
             <button
               key={opt.value}
-              className={`${STAT_CHIP_BASE_CLS} ${statusFilter === opt.value ? STAT_CHIP_ACTIVE_CLS : ""}`}
+              className={cn(STAT_CHIP_BASE_CLS, statusFilter === opt.value && STAT_CHIP_ACTIVE_CLS)}
               onClick={() =>
                 setStatusFilter(
                   statusFilter === opt.value && opt.value !== "all"
@@ -924,7 +925,7 @@ export function ReportsPage({
             onClick={() => setSelectedId(null)}
           />
           <div
-            className={`${DETAIL_PANEL_BASE_CLS} ${selectedId ? DETAIL_PANEL_OPEN_CLS : ""}`}
+            className={cn(DETAIL_PANEL_BASE_CLS, selectedId && DETAIL_PANEL_OPEN_CLS)}
             style={{ width: panelWidth }}
           >
             <div
@@ -974,17 +975,17 @@ function PipelineHeaders({
   return (
     <>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         onClick={() => onSort("name")}
       >
         Name{" "}
         <SortArrow column="name" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
-      <th className={`${TH_BASE_CLS} ${TH_ID_CLS}`} style={{ width: 120 }}>
+      <th className={cn(TH_BASE_CLS, TH_ID_CLS)} style={{ width: 120 }}>
         ID
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 140 }}
         onClick={() => onSort("time")}
       >
@@ -992,7 +993,7 @@ function PipelineHeaders({
         <SortArrow column="time" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS} max-md:hidden`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS, "max-md:hidden")}
         style={{ width: 80 }}
         onClick={() => onSort("duration")}
       >
@@ -1004,7 +1005,7 @@ function PipelineHeaders({
         />
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 100 }}
         onClick={() => onSort("status")}
       >
@@ -1031,14 +1032,14 @@ function AgentHeaders({
   return (
     <>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         onClick={() => onSort("name")}
       >
         Name{" "}
         <SortArrow column="name" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 80 }}
         onClick={() => onSort("provider")}
       >
@@ -1049,11 +1050,11 @@ function AgentHeaders({
           sortDirection={sortDir}
         />
       </th>
-      <th className={`${TH_BASE_CLS} ${TH_ID_CLS}`} style={{ width: 120 }}>
+      <th className={cn(TH_BASE_CLS, TH_ID_CLS)} style={{ width: 120 }}>
         ID
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 140 }}
         onClick={() => onSort("time")}
       >
@@ -1061,7 +1062,7 @@ function AgentHeaders({
         <SortArrow column="time" sortColumn={sortCol} sortDirection={sortDir} />
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS} max-md:hidden`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS, "max-md:hidden")}
         style={{ width: 80 }}
         onClick={() => onSort("duration")}
       >
@@ -1073,7 +1074,7 @@ function AgentHeaders({
         />
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 70 }}
         onClick={() => onSort("turns")}
       >
@@ -1085,7 +1086,7 @@ function AgentHeaders({
         />
       </th>
       <th
-        className={`${TH_BASE_CLS} ${TH_SORTABLE_CLS}`}
+        className={cn(TH_BASE_CLS, TH_SORTABLE_CLS)}
         style={{ width: 100 }}
         onClick={() => onSort("status")}
       >
@@ -1115,25 +1116,25 @@ function PipelineRow({
 }) {
   return (
     <tr
-      className={`reports-row ${ROW_BASE_CLS} ${selectedId === pe.id ? ROW_SELECTED_CLS : ""}`}
+      className={cn("reports-row", ROW_BASE_CLS, selectedId === pe.id && ROW_SELECTED_CLS)}
       onClick={() => onSelect(pe.id)}
     >
       <td className={CELL_BASE_CLS} data-label="">
         <StatusDot status={pe.status} />
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_NAME_CLS}`} data-label="Name">{pe.pipeline_name}</td>
-      <td className={`${CELL_BASE_CLS} ${CELL_ID_CLS}`} data-label="ID">{pe.id.slice(0, 12)}</td>
-      <td className={`${CELL_BASE_CLS} ${CELL_TIME_CLS}`} data-label="Time">
+      <td className={cn(CELL_BASE_CLS, CELL_NAME_CLS)} data-label="Name">{pe.pipeline_name}</td>
+      <td className={cn(CELL_BASE_CLS, CELL_ID_CLS)} data-label="ID">{pe.id.slice(0, 12)}</td>
+      <td className={cn(CELL_BASE_CLS, CELL_TIME_CLS)} data-label="Time">
         {formatDateTime(pe.created_at)}
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_DURATION_CLS}`} data-label="Duration">
+      <td className={cn(CELL_BASE_CLS, CELL_DURATION_CLS)} data-label="Duration">
         {pe.completed_at
           ? formatDuration(pe.created_at, pe.completed_at)
           : pe.status === "running"
             ? "..."
             : "—"}
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_STATUS_CLS}`} data-label="Status">
+      <td className={cn(CELL_BASE_CLS, CELL_STATUS_CLS)} data-label="Status">
         {normalizeStatus(pe.status)}
       </td>
     </tr>
@@ -1151,25 +1152,25 @@ function AgentRow({
 }) {
   return (
     <tr
-      className={`reports-row ${ROW_BASE_CLS} ${selectedId === ar.id ? ROW_SELECTED_CLS : ""}`}
+      className={cn("reports-row", ROW_BASE_CLS, selectedId === ar.id && ROW_SELECTED_CLS)}
       onClick={() => onSelect(ar.id)}
     >
       <td className={CELL_BASE_CLS} data-label="">
         <StatusDot status={ar.status} />
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_NAME_CLS}`} data-label="Name">
+      <td className={cn(CELL_BASE_CLS, CELL_NAME_CLS)} data-label="Name">
         {ar.workflow_name || ar.prompt?.slice(0, 60) || "Agent Run"}
       </td>
       <td className={CELL_BASE_CLS} data-label="Provider">
-        <span className={`${TYPE_BADGE_BASE_CLS} ${TYPE_BADGE_AGENT_CLS}`}>
+        <span className={cn(TYPE_BADGE_BASE_CLS, TYPE_BADGE_AGENT_CLS)}>
           {ar.provider}
         </span>
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_ID_CLS}`} data-label="ID">{ar.id.slice(0, 12)}</td>
-      <td className={`${CELL_BASE_CLS} ${CELL_TIME_CLS}`} data-label="Time">
+      <td className={cn(CELL_BASE_CLS, CELL_ID_CLS)} data-label="ID">{ar.id.slice(0, 12)}</td>
+      <td className={cn(CELL_BASE_CLS, CELL_TIME_CLS)} data-label="Time">
         {formatDateTime(ar.created_at)}
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_DURATION_CLS}`} data-label="Duration">
+      <td className={cn(CELL_BASE_CLS, CELL_DURATION_CLS)} data-label="Duration">
         {ar.started_at && ar.completed_at
           ? formatDuration(ar.started_at, ar.completed_at)
           : ar.status === "running"
@@ -1179,7 +1180,7 @@ function AgentRow({
       <td className={CELL_BASE_CLS} data-label="Turns" style={{ textAlign: "center" }}>
         {ar.turns_used}
       </td>
-      <td className={`${CELL_BASE_CLS} ${CELL_STATUS_CLS}`} data-label="Status">
+      <td className={cn(CELL_BASE_CLS, CELL_STATUS_CLS)} data-label="Status">
         {normalizeStatus(ar.status)}
       </td>
     </tr>
@@ -1274,7 +1275,7 @@ function PipelineDetail({
                 <div className={APPROVAL_ACTIONS_CLS}>
                   <button
                     type="button"
-                    className={`${BTN_BASE_CLS} ${BTN_APPROVE_CLS}`}
+                    className={cn(BTN_BASE_CLS, BTN_APPROVE_CLS)}
                     onClick={() => onApprove(waitingStep.approval_token!)}
                     disabled={actionLoading === waitingStep.approval_token}
                   >
@@ -1284,7 +1285,7 @@ function PipelineDetail({
                   </button>
                   <button
                     type="button"
-                    className={`${BTN_BASE_CLS} ${BTN_REJECT_CLS}`}
+                    className={cn(BTN_BASE_CLS, BTN_REJECT_CLS)}
                     onClick={() => onReject(waitingStep.approval_token!)}
                     disabled={actionLoading === waitingStep.approval_token}
                   >
@@ -1379,7 +1380,7 @@ function PipelineDetail({
         {execution.parent_execution_id && (
           <div className={DETAIL_SECTION_CLS}>
             <span className={DETAIL_LABEL_CLS}>Parent</span>
-            <span className={`${DETAIL_VALUE_CLS} ${DETAIL_MONO_CLS}`}>
+            <span className={cn(DETAIL_VALUE_CLS, DETAIL_MONO_CLS)}>
               {execution.parent_execution_id}
             </span>
           </div>
@@ -1442,7 +1443,7 @@ function AgentDetail({
           <div className={DETAIL_SECTION_CLS}>
             <button
               type="button"
-              className={`${BTN_BASE_CLS} ${BTN_REJECT_CLS}`}
+              className={cn(BTN_BASE_CLS, BTN_REJECT_CLS)}
               onClick={() => onCancel(run.id)}
               disabled={actionLoading === run.id}
             >
@@ -1555,12 +1556,12 @@ function AgentDetail({
           <div className={DETAIL_SECTION_CLS}>
             <span className={DETAIL_LABEL_CLS}>Context</span>
             {run.task_id && (
-              <span className={`${DETAIL_VALUE_CLS} ${DETAIL_MONO_CLS}`}>
+              <span className={cn(DETAIL_VALUE_CLS, DETAIL_MONO_CLS)}>
                 Task: {run.task_id}
               </span>
             )}
             {run.git_branch && (
-              <span className={`${DETAIL_VALUE_CLS} ${DETAIL_MONO_CLS}`}>
+              <span className={cn(DETAIL_VALUE_CLS, DETAIL_MONO_CLS)}>
                 Branch: {run.git_branch}
               </span>
             )}

@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react'
 import type { WorkflowDetail } from '../../hooks/useWorkflows'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
+import { cn } from '../../lib/utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,7 +54,7 @@ const BTN_CLS =
   'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-60 pointer-coarse:min-h-11'
 
 const BTN_PRIMARY_CLS =
-  '!border-[var(--accent)] !bg-[var(--accent)] font-medium !text-[var(--accent-foreground)] hover:!border-[var(--accent-hover)] hover:!bg-[var(--accent-hover)]'
+  'border-[var(--accent)] bg-[var(--accent)] font-medium text-[var(--accent-foreground)] hover:border-[var(--accent-hover)] hover:bg-[var(--accent-hover)]'
 
 const META_CLS = 'flex-shrink-0 border-b border-[var(--border)] px-4 py-3'
 
@@ -100,7 +101,7 @@ const STEP_ACTION_CLS =
   'cursor-pointer rounded border border-[var(--border)] bg-transparent px-2.5 py-1 text-[length:var(--text-xs)] text-[var(--text-secondary)] transition-all duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-40 pointer-coarse:min-h-11'
 
 const STEP_ACTION_DANGER_CLS =
-  'hover:!border-[var(--color-destructive)] hover:!bg-[var(--color-destructive)] hover:!text-[var(--color-destructive-foreground)]'
+  'hover:border-[var(--color-destructive)] hover:bg-[var(--color-destructive)] hover:text-[var(--color-destructive-foreground)]'
 
 const FIELD_CLS = 'mb-2.5'
 
@@ -352,7 +353,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
   }), [handleSave, isDirty])
 
   return (
-    <div className={`${EDITOR_CLS}${inSidebar ? ` ${EDITOR_SIDEBAR_CLS}` : ''}`}>
+    <div className={cn(EDITOR_CLS, inSidebar && EDITOR_SIDEBAR_CLS)}>
       {ConfirmDialogElement}
       {!inSidebar && (
         <div className={TOOLBAR_CLS}>
@@ -375,7 +376,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
             </button>
             <button
               type="button"
-              className={`${BTN_CLS} ${BTN_PRIMARY_CLS}`}
+              className={cn(BTN_CLS, BTN_PRIMARY_CLS)}
               onClick={handleSave}
               disabled={saving}
             >
@@ -396,7 +397,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
         />
       </div>
 
-      <div className={`${STEPS_CLS}${inSidebar ? ` ${STEPS_SIDEBAR_CLS}` : ''}`}>
+      <div className={cn(STEPS_CLS, inSidebar && STEPS_SIDEBAR_CLS)}>
         <div className={SECTION_HEADER_CLS}>
           Steps
           <span className={STEP_COUNT_CLS}>{steps.length}</span>
@@ -450,7 +451,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
                     </button>
                     <button
                       type="button"
-                      className={`${STEP_ACTION_CLS} ${STEP_ACTION_DANGER_CLS}`}
+                      className={cn(STEP_ACTION_CLS, STEP_ACTION_DANGER_CLS)}
                       onClick={() => deleteStep(idx)}
                       title="Delete step"
                     >

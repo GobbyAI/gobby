@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { BatchLaunchAgentDialog } from './LaunchAgentDialog'
+import { cn } from '../../lib/utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,13 +70,13 @@ export function TaskSelectionToolbar({
           {selectedTasks.length} task{selectedTasks.length !== 1 ? 's' : ''} selected
         </span>
         <button
-          className={`${BTN_BASE_CLS} ${BTN_PRIMARY_CLS}`}
+          className={cn(BTN_BASE_CLS, BTN_PRIMARY_CLS)}
           onClick={() => setShowBatchDialog(true)}
         >
           <RocketIcon /> Launch Agents
         </button>
         <button
-          className={`${BTN_BASE_CLS} ${BTN_DEFAULT_CLS}`}
+          className={cn(BTN_BASE_CLS, BTN_DEFAULT_CLS)}
           onClick={onClearSelection}
         >
           Clear

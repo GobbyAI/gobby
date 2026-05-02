@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/Dialog'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
+import { cn } from '../../lib/utils'
 
 interface AgentPickerDropdownProps {
   definitions: AgentDefInfo[]
@@ -72,14 +73,14 @@ export function AgentPickerDropdown({
           <div className={SCOPE_TOGGLE_CLS}>
             <button
               type="button"
-              className={`${SCOPE_BTN_BASE_CLS} ${scope === 'global' ? SCOPE_BTN_ACTIVE_CLS : ''}`}
+              className={cn(SCOPE_BTN_BASE_CLS, scope === 'global' && SCOPE_BTN_ACTIVE_CLS)}
               onClick={() => setScope('global')}
             >
               Global
             </button>
             <button
               type="button"
-              className={`${SCOPE_BTN_BASE_CLS} ${scope === 'project' ? SCOPE_BTN_ACTIVE_CLS : ''}`}
+              className={cn(SCOPE_BTN_BASE_CLS, scope === 'project' && SCOPE_BTN_ACTIVE_CLS)}
               onClick={() => setScope('project')}
             >
               Project
@@ -97,7 +98,7 @@ export function AgentPickerDropdown({
               <button
                 key={`${d.source}-${name}`}
                 type="button"
-                className={`${ITEM_BASE_CLS} ${isActive ? ITEM_ACTIVE_CLS : ''}`}
+                className={cn(ITEM_BASE_CLS, isActive && ITEM_ACTIVE_CLS)}
                 onClick={() => {
                   onSelect(name)
                   onClose()
