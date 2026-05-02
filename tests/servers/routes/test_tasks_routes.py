@@ -131,6 +131,40 @@ class TestListTasks:
         task = next(t for t in data["tasks"] if t["id"] == sample_task["id"])
         assert "state" in task
 
+    @pytest.mark.parametrize(
+        ("legacy_type", "canonical_type"),
+        [
+            ("docs", "chore"),
+            ("fix", "simple_fix"),
+            ("nit", "simple_fix"),
+            ("performance", "task"),
+            ("research", "research_spike"),
+            ("test", "task"),
+        ],
+    )
+    def test_list_normalizes_legacy_task_type_aliases(
+        self,
+        client: TestClient,
+        temp_db,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        legacy_type: str,
+        canonical_type: str,
+    ) -> None:
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Legacy task type",
+            task_type=canonical_type,
+        )
+        temp_db.execute("UPDATE tasks SET task_type = ? WHERE id = ?", (legacy_type, task.id))
+
+        response = client.get("/api/tasks", params={"task_type": canonical_type})
+
+        assert response.status_code == 200
+        task_payloads = response.json()["tasks"]
+        legacy_task = next(item for item in task_payloads if item["id"] == task.id)
+        assert legacy_task["task_type"] == canonical_type
+
     def test_list_rejects_legacy_status_filter(self, client: TestClient, sample_task: dict) -> None:
         response = client.get("/api/tasks?status=open")
         assert response.status_code == 400

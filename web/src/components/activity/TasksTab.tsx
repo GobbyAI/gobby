@@ -9,16 +9,36 @@ import {
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
+import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import "../tasks/task-execution.css";
 import type { DependencyTree, GobbyTask } from "../../hooks/useTasks";
-import { PriorityBadge, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
+import { PriorityBadge, StatusDot, TaskStateBadges, TypeBadge } from "../tasks/TaskBadges";
 import {
   getCanonicalTaskState,
   getTaskDisplayState,
-  TASK_STATE_COLORS,
-  TASK_STATE_LABELS,
-  type TaskDisplayState,
+  getTaskStateSummary,
 } from "../../lib/taskState";
+import {
+  normalizeTaskPayload,
+  normalizeTaskPayloads,
+  type RawTaskPayload,
+} from "../../lib/taskNormalization";
+import {
+  buildTree,
+  collectExpandableNodeIds,
+  collectVisibleTaskRows,
+  compareTasksForDisplay,
+  DEFAULT_FILTERS,
+  filterTreeBySearch,
+  getStageStateColor,
+  matchesTaskFilter,
+  PRIORITY_TEXT_COLORS,
+  PRIORITY_TEXT_WEIGHTS,
+  RECENT_CLOSED_TASK_LIMIT,
+  type TaskFilterKey,
+  type VisibleTaskRow,
+} from "./TasksTabModel";
+import { TasksTabFilters } from "./TasksTabFilters";
 import {
   TasksTabDetailPanel,
   type GobbyTaskDetail,
@@ -31,277 +51,61 @@ interface TasksTabProps {
   chatSessionId?: string | null;
 }
 
-interface TreeNode {
-  id: string;
-  task: GobbyTask;
-  children: TreeNode[];
-}
-
-interface VisibleTaskRow {
-  node: TreeNode;
-  depth: number;
-  isInternal: boolean;
-  isOpen: boolean;
-}
-
-type TaskFilterKey = TaskDisplayState | "escalated";
-
 interface TaskContextMenu {
   x: number;
   y: number;
   task: GobbyTask;
 }
 
-const STAGE_STATE_FILTERS: TaskDisplayState[] = [
-  "ready",
-  "in_progress",
-  "needs_review",
-  "review_approved",
-];
-const STATUS_FILTERS: TaskFilterKey[] = ["blocked", "escalated", "closed"];
-const DEFAULT_FILTERS = new Set<TaskFilterKey>([
-  ...STAGE_STATE_FILTERS,
-  "blocked",
-  "escalated",
-]);
-const RECENT_CLOSED_TASK_LIMIT = 20;
-
-const STATUS_DOT_COLORS = TASK_STATE_COLORS;
-
-const PRIORITY_TEXT_COLORS: Record<number, string> = {
-  0: "var(--text-primary)",
-  1: "var(--text-primary)",
-  2: "var(--text-primary)",
-  3: "var(--text-secondary)",
-  4: "var(--text-muted)",
-};
-
-const PRIORITY_TEXT_WEIGHTS: Record<number, string> = {
-  0: "var(--font-weight-semibold)",
-  1: "var(--font-weight-semibold)",
-  2: "var(--font-weight-normal)",
-  3: "var(--font-weight-normal)",
-  4: "var(--font-weight-normal)",
-};
-
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || "";
 }
 
-function compareTasksForDisplay(a: GobbyTask, b: GobbyTask): number {
-  const priorityDiff = (a.priority ?? 4) - (b.priority ?? 4);
-  if (priorityDiff !== 0) {
-    return priorityDiff;
+function extractTaskPayload(data: unknown): RawTaskPayload | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { id?: unknown; task?: unknown };
+  if (typeof record.id === "string") return record as RawTaskPayload;
+  if (record.task && typeof record.task === "object") {
+    return record.task as RawTaskPayload;
   }
-
-  const seqA = a.seq_num ?? Number.MAX_SAFE_INTEGER;
-  const seqB = b.seq_num ?? Number.MAX_SAFE_INTEGER;
-  if (seqA !== seqB) {
-    return seqA - seqB;
-  }
-
-  const createdAtDiff = (a.created_at ?? "").localeCompare(b.created_at ?? "");
-  if (createdAtDiff !== 0) {
-    return createdAtDiff;
-  }
-
-  return (a.updated_at ?? "").localeCompare(b.updated_at ?? "");
+  return null;
 }
 
-function buildTree(tasks: GobbyTask[]): TreeNode[] {
-  const nodeMap = new Map<string, TreeNode>();
-  const roots: TreeNode[] = [];
-
-  for (const task of tasks) {
-    nodeMap.set(task.id, { id: task.id, task, children: [] });
-  }
-
-  for (const task of tasks) {
-    const node = nodeMap.get(task.id)!;
-    if (task.parent_task_id && nodeMap.has(task.parent_task_id)) {
-      nodeMap.get(task.parent_task_id)!.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  for (const node of nodeMap.values()) {
-    node.children.sort((left, right) =>
-      compareTasksForDisplay(left.task, right.task),
-    );
-  }
-  roots.sort((left, right) => compareTasksForDisplay(left.task, right.task));
-
-  return roots;
-}
-
-function taskMatchesSearch(task: GobbyTask, term: string): boolean {
-  const lower = term.toLowerCase();
-  return (
-    task.title.toLowerCase().includes(lower) ||
-    task.ref.toLowerCase().includes(lower)
-  );
-}
-
-function filterTreeBySearch(nodes: TreeNode[], term: string): TreeNode[] {
-  const trimmed = term.trim();
-  if (!trimmed) {
-    return nodes;
-  }
-
-  const visit = (node: TreeNode): TreeNode | null => {
-    const children = node.children
-      .map(visit)
-      .filter((child): child is TreeNode => child !== null);
-
-    if (!taskMatchesSearch(node.task, trimmed) && children.length === 0) {
-      return null;
-    }
-
-    return {
-      ...node,
-      children,
-    };
-  };
-
-  return nodes
-    .map(visit)
-    .filter((node): node is TreeNode => node !== null);
-}
-
-function collectExpandableNodeIds(
-  nodes: TreeNode[],
-  ids: Set<string> = new Set(),
-): Set<string> {
-  for (const node of nodes) {
-    if (node.children.length > 0) {
-      ids.add(node.id);
-      collectExpandableNodeIds(node.children, ids);
-    }
-  }
-  return ids;
-}
-
-function collectVisibleTaskRows(
-  nodes: TreeNode[],
-  collapsedIds: Set<string>,
-  depth = 0,
-  forceOpen = false,
-): VisibleTaskRow[] {
-  return nodes.flatMap((node) => {
-    const isInternal = node.children.length > 0;
-    const isOpen = forceOpen || !collapsedIds.has(node.id);
-    const row: VisibleTaskRow = {
-      node,
-      depth,
-      isInternal,
-      isOpen,
-    };
-
-    if (!isInternal || !isOpen) {
-      return [row];
-    }
-
-    return [
-      row,
-      ...collectVisibleTaskRows(node.children, collapsedIds, depth + 1, forceOpen),
-    ];
-  });
-}
-
-function getTaskFilterLabel(filter: TaskFilterKey): string {
-  if (filter === "escalated") {
-    return "Escalated";
-  }
-  return TASK_STATE_LABELS[filter];
-}
-
-function getTaskFilterColor(filter: TaskFilterKey): string {
-  if (filter === "escalated") {
-    return "var(--status-escalated, #ef4444)";
-  }
-  return STATUS_DOT_COLORS[filter] ?? "#737373";
-}
-
-function matchesTaskFilter(task: GobbyTask, filters: Set<TaskFilterKey>): boolean {
-  const state = getCanonicalTaskState(task);
-  if (state.is_closed) return filters.has("closed");
-  if (state.is_escalated) return filters.has("escalated");
-  const displayState = getTaskDisplayState(task);
-  return filters.has(displayState);
-}
-
-function FilterDropdown({
-  filters,
-  onToggle,
-  onClose,
-}: {
-  filters: Set<TaskFilterKey>;
-  onToggle: (status: TaskFilterKey) => void;
-  onClose: () => void;
-}) {
-  const filterGroups: Array<{ label: string; states: TaskFilterKey[] }> = [
-    { label: "Stage", states: STAGE_STATE_FILTERS },
-    { label: "Status", states: STATUS_FILTERS },
-  ];
-
-  return (
-    <>
-      <div className="fixed inset-0 z-[99]" onClick={onClose} />
-      <div
-        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl p-1.5 flex flex-col gap-0.5 min-w-[10rem] max-w-[min(20rem,calc(100vw-2rem))]"
-        style={{ background: "var(--bg-secondary)" }}
-      >
-        {filterGroups.map((group) => (
-          <div key={group.label} className="flex flex-col gap-0.5 py-0.5">
-            <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
-              {group.label}
-            </div>
-            {group.states.map((status) => (
-              <label
-                key={status}
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-muted-foreground cursor-pointer hover:bg-muted/50"
-              >
-                <input
-                  type="checkbox"
-                  className="w-3 h-3"
-                  checked={filters.has(status)}
-                  onChange={() => onToggle(status)}
-                />
-                <span
-                  className="w-1.5 h-1.5 rounded-full shrink-0"
-                  style={{
-                    backgroundColor: getTaskFilterColor(status),
-                  }}
-                />
-                <span>{getTaskFilterLabel(status)}</span>
-              </label>
-            ))}
-          </div>
-        ))}
-      </div>
-    </>
-  );
+function normalizeActivityTask(raw: RawTaskPayload, fallback?: GobbyTask | null): GobbyTask {
+  return normalizeTaskPayload({
+    ...fallback,
+    ...raw,
+    stages: raw.stages ?? fallback?.stages ?? [],
+    current_stage:
+      raw.current_stage ??
+      raw.state?.current_stage ??
+      fallback?.current_stage ??
+      fallback?.state?.current_stage ??
+      null,
+  }) as GobbyTask;
 }
 
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
 }: TasksTabProps) {
+  const { registry: stagesRegistry } = useStagesRegistry();
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedStageFilter, setSelectedStageFilter] = useState<string | null>(null);
   const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
     () => new Set(DEFAULT_FILTERS),
   );
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const activeFilterCount = useMemo(() => {
     const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
-    return [...symmetricDifference].filter(
+    const statusFilterCount = [...symmetricDifference].filter(
       (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
     ).length;
-  }, [statusFilters]);
+    return statusFilterCount + (selectedStageFilter ? 1 : 0);
+  }, [selectedStageFilter, statusFilters]);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -334,16 +138,18 @@ export const TasksTab = memo(function TasksTab({
     params.set("limit", "500");
     params.set("sort_by", "updated_at");
     params.set("sort_order", "desc");
+    params.set("include_stages", "1");
+    if (selectedStageFilter) params.set("stage", selectedStageFilter);
     fetch(`${baseUrl}/api/tasks?${params}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : { tasks: [] }))
-      .then((data) => setTasks(data.tasks ?? []))
+      .then((data) => setTasks(normalizeTaskPayloads(data.tasks ?? []) as GobbyTask[]))
       .catch((err) => {
         if (err.name !== "AbortError") setTasks([]);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-  }, [projectId]);
+  }, [projectId, selectedStageFilter]);
 
   useEffect(() => {
     fetchTasks();
@@ -375,16 +181,17 @@ export const TasksTab = memo(function TasksTab({
           setSelectedTaskId(null);
         }
       } else if (event === "task_created") {
-        const newTask = taskData as unknown as GobbyTask;
+        const newTask = normalizeActivityTask(taskData as RawTaskPayload);
         setTasks((prev) => {
           if (prev.some((t) => t.id === taskId)) return prev;
           return [...prev, newTask];
         });
       } else {
         // task_updated, task_closed, task_reopened, task_de_escalated
-        const updated = taskData as unknown as GobbyTask;
         setTasks((prev) =>
-          prev.map((t) => (t.id === taskId ? { ...t, ...updated } : t)),
+          prev.map((t) =>
+            t.id === taskId ? normalizeActivityTask(taskData as RawTaskPayload, t) : t,
+          ),
         );
       }
 
@@ -401,7 +208,9 @@ export const TasksTab = memo(function TasksTab({
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (controller.signal.aborted) return;
-            setTaskDetail(data?.id ? data : (data?.task ?? null));
+            const raw = extractTaskPayload(data);
+            const cached = tasks.find((task) => task.id === taskId) ?? null;
+            setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
           })
           .catch((err) => {
             if (err?.name !== "AbortError") {
@@ -419,7 +228,7 @@ export const TasksTab = memo(function TasksTab({
         window.clearTimeout(debouncedRefetchRef.current);
       debouncedRefetchRef.current = window.setTimeout(() => fetchTasks(), 500);
     },
-    [fetchTasks, projectId, selectedTaskId],
+    [fetchTasks, projectId, selectedTaskId, tasks],
   );
 
   useEffect(() => {
@@ -451,7 +260,11 @@ export const TasksTab = memo(function TasksTab({
       signal: controller.signal,
     })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setTaskDetail(data?.id ? data : (data?.task ?? null)))
+      .then((data) => {
+        const raw = extractTaskPayload(data);
+        const cached = tasks.find((task) => task.id === selectedTaskId) ?? null;
+        setTaskDetail(raw ? (normalizeActivityTask(raw, cached) as GobbyTaskDetail) : null);
+      })
       .catch((err) => {
         if (err.name !== "AbortError") setTaskDetail(null);
       })
@@ -459,7 +272,7 @@ export const TasksTab = memo(function TasksTab({
         if (!controller.signal.aborted) setDetailLoading(false);
       });
     return () => controller.abort();
-  }, [selectedTaskId]);
+  }, [selectedTaskId, tasks]);
 
   // Fetch dependencies + subtasks alongside the detail. Each call uses its own
   // controller so a stale response from a previous selection can't overwrite
@@ -483,11 +296,13 @@ export const TasksTab = memo(function TasksTab({
         if (err.name !== "AbortError") setTaskDependencies(null);
       });
     fetch(
-      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200`,
+      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200&include_stages=1`,
       { signal: controllerSubtasks.signal },
     )
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setTaskSubtasks(data?.tasks ?? []))
+      .then((data) =>
+        setTaskSubtasks(normalizeTaskPayloads(data?.tasks ?? []) as GobbyTask[]),
+      )
       .catch((err) => {
         if (err.name !== "AbortError") setTaskSubtasks([]);
       });
@@ -504,6 +319,10 @@ export const TasksTab = memo(function TasksTab({
       else next.add(status);
       return next;
     });
+  }, []);
+
+  const toggleStageFilter = useCallback((stageName: string | null) => {
+    setSelectedStageFilter(stageName);
   }, []);
 
   // Client-side filter + display ordering. The activity Tasks tree should read
@@ -676,13 +495,18 @@ export const TasksTab = memo(function TasksTab({
         throw new Error(`Failed to claim task (${response.status})`);
       }
       const claimedTask = await response.json();
+      const rawClaimedTask = extractTaskPayload(claimedTask);
       setTasks((prev) =>
         prev.map((task) =>
-          task.id === taskId ? { ...task, ...(claimedTask?.task ?? claimedTask) } : task,
+          task.id === taskId && rawClaimedTask
+            ? normalizeActivityTask(rawClaimedTask, task)
+            : task,
         ),
       );
-      if (selectedTaskId === taskId) {
-        setTaskDetail((claimedTask?.task ?? claimedTask) as GobbyTaskDetail);
+      if (selectedTaskId === taskId && rawClaimedTask) {
+        setTaskDetail((prev) =>
+          normalizeActivityTask(rawClaimedTask, prev ?? undefined) as GobbyTaskDetail,
+        );
       }
     } catch (error) {
       setClaimError(
@@ -711,9 +535,8 @@ export const TasksTab = memo(function TasksTab({
     (row: VisibleTaskRow) => {
       const task = row.node.task;
       const taskState = getCanonicalTaskState(task);
-      const dotColor = taskState.is_escalated
-        ? getTaskFilterColor("escalated")
-        : STATUS_DOT_COLORS[getTaskDisplayState(task)] ?? "#737373";
+      const currentStage = taskState.current_stage;
+      const stateSummary = getTaskStateSummary(task);
       const textColor =
         PRIORITY_TEXT_COLORS[task.priority ?? 3] ?? "var(--text-secondary)";
       const textWeight =
@@ -739,6 +562,8 @@ export const TasksTab = memo(function TasksTab({
           tabIndex={0}
           aria-level={row.depth + 1}
           aria-expanded={row.isInternal ? row.isOpen : undefined}
+          aria-label={`${ref ?? task.ref} ${task.title}: ${stateSummary}`}
+          title={stateSummary}
           onClick={() => {
             userSelectedRef.current = true;
             setClaimError(null);
@@ -785,12 +610,21 @@ export const TasksTab = memo(function TasksTab({
           ) : (
             <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
           )}
-          <span
-            className="activity-task-row-dot"
-            style={{ backgroundColor: dotColor }}
-          />
+          <StatusDot task={task} />
           {ref && (
             <span className="activity-task-row-ref">{ref}</span>
+          )}
+          {currentStage && (
+            <span className="activity-task-row-stage" title={stateSummary}>
+              <span
+                className="activity-task-row-stage-pip"
+                style={{ backgroundColor: getStageStateColor(currentStage.state) }}
+                aria-hidden="true"
+              />
+              <span className="activity-task-row-stage-label">
+                {currentStage.display_name}
+              </span>
+            </span>
           )}
           <span
             className="activity-task-row-title"
@@ -873,9 +707,12 @@ export const TasksTab = memo(function TasksTab({
           )}
         </button>
         {showFilterDropdown && (
-          <FilterDropdown
+          <TasksTabFilters
             filters={statusFilters}
+            stages={stagesRegistry}
+            selectedStage={selectedStageFilter}
             onToggle={toggleFilter}
+            onSelectStage={toggleStageFilter}
             onClose={() => setShowFilterDropdown(false)}
           />
         )}
@@ -903,7 +740,7 @@ export const TasksTab = memo(function TasksTab({
             <p>No tasks match filters</p>
             {tasks.length > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
-                Tasks exist, but none match the current task-state filters.
+                Tasks exist, but none match the current task filters.
               </p>
             )}
           </div>

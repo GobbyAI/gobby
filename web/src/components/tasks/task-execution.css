@@ -281,19 +281,43 @@
   flex-shrink: 0;
 }
 
-.activity-task-row-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  flex-shrink: 0;
-  border-radius: 999px;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-
 .activity-task-row-ref {
   flex-shrink: 0;
   color: var(--text-muted);
   font-size: calc(var(--font-size-base) * 0.7);
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
+}
+
+.activity-task-row-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 7.5rem;
+  height: 1.15rem;
+  flex: 0 1 auto;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.activity-task-row-stage-pip {
+  width: 0.4rem;
+  height: 0.4rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+
+.activity-task-row-stage-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-task-row-title {
@@ -350,6 +374,42 @@
   padding: 0.9rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-primary);
+}
+
+.activity-task-detail-status {
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-task-detail-status .task-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 1.5rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.activity-task-detail-status .task-status-strip-pulse {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.activity-task-detail-status .task-status-strip-agent,
+.activity-task-detail-status .task-status-strip-step,
+.activity-task-detail-status .task-status-strip-time {
+  min-width: 0;
+}
+
+.activity-task-detail-status .task-status-strip-step {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.activity-task-detail-status .task-status-strip-time {
+  color: var(--text-muted);
 }
 
 .activity-task-detail-meta-row {

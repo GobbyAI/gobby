@@ -11,7 +11,7 @@ from typing import Any
 
 from gobby.storage.database import DatabaseProtocol
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 
@@ -174,8 +174,10 @@ def list_tasks(
     elif closed is False:
         query += " AND closed_at IS NULL"
     if task_type:
-        query += " AND task_type = ?"
-        params.append(task_type)
+        task_type_values = task_type_filter_values(task_type)
+        placeholders = ", ".join("?" for _ in task_type_values)
+        query += f" AND task_type IN ({placeholders})"
+        params.extend(task_type_values)
     if label:
         # tasks.labels is a JSON list. We use json_each to find if the label is in the list.
         query += " AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value = ?)"

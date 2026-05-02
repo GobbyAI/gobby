@@ -1,17 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { ReviewPolicy } from '../lib/stageActions'
+import {
+  normalizeStagesRegistryResponse,
+  type StageRegistryEntry,
+  type StagesRegistryWireResponse,
+} from '../lib/taskNormalization'
 
-export interface StageRegistryEntry {
-  name: string
-  display_name: string
-  category: string
-  review_policy: ReviewPolicy | string
-  sequence_order?: number | null
-}
-
-interface StagesRegistryResponse {
-  registry?: StageRegistryEntry[]
-}
+export type { StageRegistryEntry }
 
 interface UseStagesRegistryResult {
   registry: StageRegistryEntry[]
@@ -31,8 +25,8 @@ async function fetchStagesRegistry(): Promise<StageRegistryEntry[]> {
   if (!response.ok) {
     throw new Error(`Failed to fetch stages registry (${response.status})`)
   }
-  const data: StagesRegistryResponse = await response.json()
-  return data.registry ?? []
+  const data: StagesRegistryWireResponse = await response.json()
+  return normalizeStagesRegistryResponse(data)
 }
 
 function registryRequest(): Promise<StageRegistryEntry[]> {

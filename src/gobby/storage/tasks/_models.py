@@ -46,6 +46,14 @@ TASK_TYPE_CHOICES: tuple[str, ...] = (
     "prd_doc",
 )
 VALID_TASK_TYPES: frozenset[str] = frozenset(TASK_TYPE_CHOICES)
+TASK_TYPE_ALIASES: dict[str, str] = {
+    "docs": "chore",
+    "fix": "simple_fix",
+    "nit": "simple_fix",
+    "performance": "task",
+    "research": "research_spike",
+    "test": "task",
+}
 
 
 def validate_task_type(task_type: str | None) -> str:
@@ -54,11 +62,19 @@ def validate_task_type(task_type: str | None) -> str:
         raise ValueError("task_type is required")
     if not isinstance(task_type, str):
         raise ValueError("task_type must be a string")
-    normalized = task_type.lower().strip()
+    raw = task_type.lower().strip()
+    normalized = TASK_TYPE_ALIASES.get(raw, raw)
     if normalized not in VALID_TASK_TYPES:
         allowed = ", ".join(TASK_TYPE_CHOICES)
         raise ValueError(f"Invalid task_type '{task_type}'. Expected one of: {allowed}.")
     return normalized
+
+
+def task_type_filter_values(task_type: str) -> tuple[str, ...]:
+    """Return canonical and legacy storage values for a task type filter."""
+    canonical = validate_task_type(task_type)
+    aliases = tuple(alias for alias, target in TASK_TYPE_ALIASES.items() if target == canonical)
+    return (canonical, *aliases)
 
 
 class Isolation(StrEnum):

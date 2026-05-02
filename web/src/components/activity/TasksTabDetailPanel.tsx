@@ -5,10 +5,11 @@ import type { DependencyTree, GobbyTask, GobbyTaskDetail } from "../../hooks/use
 import {
   getCanonicalTaskState,
   getTaskDisplayState,
-  getTaskStateLabel,
+  getTaskStateSummary,
   TASK_STATE_LABELS,
   type TaskDisplayState,
 } from "../../lib/taskState";
+import { TaskStatusStrip } from "../tasks/TaskStatusStrip";
 
 export type { GobbyTaskDetail };
 
@@ -34,13 +35,6 @@ const SUBTASK_STATE_ORDER: TaskDisplayState[] = [
   "blocked",
   "closed",
 ];
-
-function formatStageState(stage: string): string {
-  return stage
-    .split("_")
-    .map((part) => (part.length > 0 ? part[0].toUpperCase() + part.slice(1) : part))
-    .join(" ");
-}
 
 function formatTaskDetailDate(iso: string | null | undefined): string {
   if (!iso) {
@@ -72,7 +66,7 @@ export function TasksTabDetailPanel({
   const taskState = getCanonicalTaskState(task);
   const ownerLabel = task.agent_name ?? taskState.owner_session_id ?? "Unassigned";
   const ownerMono = !task.agent_name && Boolean(taskState.owner_session_id);
-  const stateLabel = getTaskStateLabel(task);
+  const stateLabel = getTaskStateSummary(task);
   const categoryLabel = task.category ?? task.task_type;
   const labels = task.labels?.filter(Boolean) ?? [];
   const blockerCount = dependencies?.blockers?.length ?? 0;
@@ -139,7 +133,7 @@ export function TasksTabDetailPanel({
         {taskState.current_stage && (
           <TaskDetailMetaRow
             label="Stage"
-            value={`${taskState.current_stage.display_name}: ${formatStageState(taskState.current_stage.state)}`}
+            value={taskState.current_stage.display_name}
             title="Current manifest stage"
           />
         )}
@@ -194,6 +188,12 @@ export function TasksTabDetailPanel({
           />
         )}
       </div>
+
+      {task.stages?.length > 0 && (
+        <div className="activity-task-detail-status">
+          <TaskStatusStrip task={task} compact />
+        </div>
+      )}
 
       {labels.length > 0 && (
         <div className="activity-task-detail-labels">

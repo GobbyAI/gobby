@@ -7,9 +7,13 @@ import type {
   StageState5,
   StageStateView,
 } from '../lib/stageActions'
-import { currentStage as selectCurrentStage } from '../lib/stageActions'
 import type { CanonicalTaskState, TaskCompatProjection } from '../lib/taskState'
-import { countTasksByState, getCanonicalTaskState, matchesTaskStateFilter } from '../lib/taskState'
+import { countTasksByState, matchesTaskStateFilter } from '../lib/taskState'
+import {
+  normalizeTaskPayload,
+  normalizeTaskPayloads,
+  type RawTaskPayload,
+} from '../lib/taskNormalization'
 
 export type {
   LifecycleTask,
@@ -153,55 +157,8 @@ function getBaseUrl(): string {
   return ''
 }
 
-type RawTaskPayload = Omit<Partial<GobbyTask>, 'stages' | 'current_stage' | 'state'> & {
-  id: string
-  title?: string
-  type?: string
-  stages?: StageStateView[] | null
-  current_stage?: StageStateView | null
-  state?: Partial<CanonicalTaskState> | null
-}
-
-function normalizeTask<T extends RawTaskPayload>(task: T): T & GobbyTask {
-  const stages = Array.isArray(task.stages) ? task.stages : []
-  const projected = {
-    ...task,
-    ref: task.ref ?? (task.seq_num != null ? `#${task.seq_num}` : task.id),
-    title: task.title ?? '',
-    status: task.status ?? 'open',
-    priority: task.priority ?? 2,
-    task_type: task.task_type ?? task.type ?? 'task',
-    parent_task_id: task.parent_task_id ?? null,
-    created_at: task.created_at ?? '',
-    updated_at: task.updated_at ?? '',
-    seq_num: task.seq_num ?? null,
-    path_cache: task.path_cache ?? null,
-    assignee: task.assignee ?? null,
-    agent_name: task.agent_name ?? null,
-    sequence_order: task.sequence_order ?? null,
-    start_date: task.start_date ?? null,
-    due_date: task.due_date ?? null,
-    project_id: task.project_id ?? '',
-    current_stage: task.current_stage ?? task.state?.current_stage ?? null,
-    stages,
-  } as GobbyTask
-  const current = projected.current_stage ?? selectCurrentStage(projected)
-  const canonical = getCanonicalTaskState({
-    ...projected,
-    current_stage: current,
-    state: task.state,
-  })
-
-  return {
-    ...projected,
-    current_stage: canonical.current_stage,
-    state: canonical,
-  } as T & GobbyTask
-}
-
-function normalizeTasks<T extends RawTaskPayload>(tasks: T[] | undefined): Array<T & GobbyTask> {
-  return (tasks ?? []).map(task => normalizeTask(task))
-}
+const normalizeTask = normalizeTaskPayload
+const normalizeTasks = normalizeTaskPayloads
 
 function setQueryParam(
   params: URLSearchParams,
@@ -600,7 +557,7 @@ export function useTasks(projectId?: string | null, pageSize: number = DEFAULT_P
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(
-        `${baseUrl}/api/tasks?parent_task_id=${encodeURIComponent(taskId)}&limit=100`
+        `${baseUrl}/api/tasks?parent_task_id=${encodeURIComponent(taskId)}&limit=100&include_stages=1`
       )
       if (response.ok) {
         const data: TaskListResponse = await response.json()

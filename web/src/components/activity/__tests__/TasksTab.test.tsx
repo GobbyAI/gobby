@@ -112,6 +112,24 @@ const taskList = [
 describe("TasksTab", () => {
   beforeEach(() => {
     mockFetch = createMockFetch();
+    mockFetch.mockJsonResponse("/api/stages/registry", {
+      stages: [
+        {
+          name: "development",
+          display_label: "Development",
+          category: "implementation",
+          review_policy: "required",
+          position_hint: 10,
+        },
+        {
+          name: "operator_review",
+          display_label: "Operator Review",
+          category: "verification",
+          review_policy: "required",
+          position_hint: 20,
+        },
+      ],
+    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, { tasks: taskList });
     mockFetch.mockJsonResponse(/\/api\/tasks\/[^/]+$/, {
       task: {
@@ -142,6 +160,13 @@ describe("TasksTab", () => {
 
     expect(screen.queryByText("Closed task")).toBeNull();
     expect(screen.queryByText("Load more")).toBeNull();
+    expect(
+      String(
+        mockFetch.fn.mock.calls.find(([url]) =>
+          String(url).includes("/api/tasks?"),
+        )?.[0],
+      ),
+    ).toContain("include_stages=1");
 
     const tasksPane = screen.getByTestId("task-tree");
     expect(tasksPane).toHaveClass("activity-tasks-pane", "overflow-y-auto");
@@ -493,16 +518,34 @@ describe("TasksTab", () => {
     });
   });
 
-  it("renders canonical state tasks and groups the filter menu by stage and status", async () => {
+  it("renders stage chips, canonical status labels, and grouped filters", async () => {
     const reviewStage = {
-      name: "development",
-      display_name: "Development",
+      stage_name: "development",
+      position: 10,
       category: "delivery",
       state: "needs_review",
       review_policy: "required",
       updated_at: "2026-04-13T00:00:00Z",
     };
     mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/stages/registry", {
+      stages: [
+        {
+          name: "development",
+          display_label: "Development",
+          category: "implementation",
+          review_policy: "required",
+          position_hint: 10,
+        },
+        {
+          name: "operator_review",
+          display_label: "Operator Review",
+          category: "verification",
+          review_policy: "required",
+          position_hint: 20,
+        },
+      ],
+    });
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [
         {
@@ -517,11 +560,11 @@ describe("TasksTab", () => {
           seq_num: 601,
           path_cache: "601",
           project_id: "proj-1",
-          current_stage: reviewStage,
+          current_stage: { name: "development", state: "needs_review" },
           stages: [reviewStage],
           state: {
             owner_session_id: "session-1",
-            current_stage: reviewStage,
+            current_stage: { name: "development", state: "needs_review" },
             is_claimed: true,
             is_closed: false,
             is_escalated: false,
@@ -544,13 +587,41 @@ describe("TasksTab", () => {
       expect(screen.getByText("Canonical needs review task")).toBeTruthy();
     });
 
+    expect(screen.getByText("Development")).toBeTruthy();
+    expect(
+      screen.getByLabelText("Status: Development: Needs Review · Claimed"),
+    ).toBeTruthy();
+
     fireEvent.click(screen.getByTitle("Filter by task state"));
 
     expect(screen.getByText("Stage")).toBeTruthy();
+    expect(screen.getByText("Stage state")).toBeTruthy();
     expect(screen.getByText("Status")).toBeTruthy();
+    expect(screen.getAllByText("Development").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Operator Review")).toBeTruthy();
     expect(screen.getByText("Needs Review")).toBeTruthy();
     expect(screen.getByText("Review Approved")).toBeTruthy();
     expect(screen.getByText("Closed")).toBeTruthy();
+  });
+
+  it("selecting a stage filter fetches that stage", async () => {
+    render(<TasksTab projectId="proj-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Review approved task")).toBeTruthy();
+    });
+
+    mockFetch.fn.mockClear();
+    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(await screen.findByRole("button", { name: "Development" }));
+
+    await waitFor(() => {
+      const taskFetch = mockFetch.fn.mock.calls.find(([url]) =>
+        String(url).includes("/api/tasks?"),
+      );
+      expect(String(taskFetch?.[0])).toContain("stage=development");
+      expect(String(taskFetch?.[0])).toContain("include_stages=1");
+    });
   });
 
   it("hides the active-filter badge while statusFilters matches the default set", async () => {
@@ -593,6 +664,13 @@ describe("TasksTab", () => {
 
   it("renders detail metadata in the lower pane without the old inline summary line", async () => {
     mockFetch.resetRoutes();
+    const detailStage = {
+      stage_name: "development",
+      position: 10,
+      state: "needs_review",
+      review_policy: "required",
+      updated_at: "2026-04-11T11:30:00Z",
+    };
     const detailTask = {
       id: "task-detail",
       ref: "#510",
@@ -612,6 +690,8 @@ describe("TasksTab", () => {
       start_date: null,
       due_date: null,
       project_id: "proj-1",
+      current_stage: { name: "development", state: "needs_review" },
+      stages: [detailStage],
     };
     mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
       tasks: [detailTask],
@@ -638,8 +718,9 @@ describe("TasksTab", () => {
     expect(screen.getByText("Updated")).toBeTruthy();
     expect(screen.getByText("Category")).toBeTruthy();
     expect(screen.getByText("Path")).toBeTruthy();
-    expect(screen.getByText("Agent Delta")).toBeTruthy();
+    expect(screen.getAllByText("Agent Delta").length).toBeGreaterThan(0);
     expect(screen.getByText("UI")).toBeTruthy();
+    expect(screen.getAllByText("Development: Needs Review").length).toBeGreaterThan(0);
     expect(screen.getByText("Validation")).toBeTruthy();
     expect(screen.queryByText("Ready · Medium · bug")).toBeNull();
   });
@@ -677,7 +758,7 @@ describe("TasksTab", () => {
       expect(screen.getByText("No tasks match filters")).toBeTruthy();
       expect(
         screen.getByText(
-          "Tasks exist, but none match the current task-state filters.",
+          "Tasks exist, but none match the current task filters.",
         ),
       ).toBeTruthy();
     });

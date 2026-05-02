@@ -510,12 +510,14 @@ describe('useTasks', () => {
   it('test_stages_populated', async () => {
     const stagedTask = {
       ...SAMPLE_TASKS[0],
+      state: {
+        current_stage: { name: 'development', state: 'needs_review' },
+      },
       stages: [
         {
-          name: 'build',
-          display_name: 'Build',
-          category: 'delivery',
-          state: 'ready',
+          stage_name: 'development',
+          position: 20,
+          state: 'needs_review',
           review_policy: 'required',
           updated_at: '2026-05-02T00:00:00Z',
         },
@@ -532,9 +534,21 @@ describe('useTasks', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(String(mockFetch.fn.mock.calls[0]?.[0])).toContain('include_stages=1')
-    expect((result.current.tasks[0] as { stages?: unknown }).stages).toEqual(
-      stagedTask.stages,
-    )
+    expect(result.current.tasks[0]?.stages[0]).toMatchObject({
+      name: 'development',
+      display_name: 'Development',
+      category: '',
+      state: 'needs_review',
+      review_policy: 'required',
+      position: 20,
+      updated_at: '2026-05-02T00:00:00Z',
+    })
+    expect(result.current.tasks[0]?.current_stage).toMatchObject({
+      name: 'development',
+      display_name: 'Development',
+      state: 'needs_review',
+    })
+    expect(result.current.tasks[0]?.current_stage?.display_name).not.toBeUndefined()
   })
 
   it('test_advance_stage_with_action_param', async () => {
