@@ -1258,7 +1258,7 @@ Per-tool registration coverage (one acceptance per data row of the §2.3 tool ta
 
 `kind: deliverable`
 
-Target: `src/gobby/servers/routes/tasks.py`, `src/gobby/servers/routes/stages.py` (new)
+Target: `src/gobby/servers/routes/tasks.py`, `src/gobby/servers/routes/stages.py` (new), `src/gobby/servers/routes/__init__.py` (existing — re-exports `create_tasks_router` at lines 31, 58; extended to re-export `create_stages_router`), `src/gobby/servers/app_factory.py` (existing — `_register_routes` at line 494, `app.include_router(create_tasks_router(server))` at line 541; extended to import and mount `create_stages_router(server)` so the new `/api/stages/registry` and `/api/task-types/{type}/default-stages` endpoints are reachable)
 
 Add new endpoints and extend the list endpoint with stage filters.
 
@@ -1424,11 +1424,11 @@ Other agent YAMLs whose stage context is unclear (`requirements-analyst.yaml`, `
 
 **Goal**: Rewrite the dispatcher's rule evaluation, candidate scan, and build-time manifest resolution to use `task_stage_states` instead of `(lifecycle, status)` tuples. After Phase 3, the daemon dispatches purely from the manifest model.
 
-### 3.1 Rewrite `dispatch/rules.py` to query stage manifest [category: code] (depends: 2.1, 2.2)
+### 3.1 Rewrite `dispatch/rules.py` to query stage manifest [category: code] (depends: 2.1, 2.2, 5.2)
 
 `kind: deliverable`
 
-Target: `src/gobby/dispatch/rules.py`, `src/gobby/dispatch/actions.py`, `src/gobby/dispatch/dispatcher.py`
+Target: `src/gobby/dispatch/rules.py`, `src/gobby/dispatch/actions.py`, `src/gobby/dispatch/dispatcher.py`, `src/gobby/storage/tasks/_models.py` (existing — `Task` dataclass; gains denormalized `stages: tuple[StageState, ...]` field populated by `reload_candidate` via the LEFT JOIN per the body of this deliverable. The `is_escalated` projection on `Task` is wired by §5.2 — the new `(depends: 5.2)` edge above guarantees that column exists on `Task` before any `dispatch/rules.py` rule reads `child.is_escalated`.)
 
 Replace string-checking helpers and rule bodies with manifest-aware reads. Existing helpers to retire or rewrite:
 
@@ -2154,7 +2154,7 @@ Per-row coverage (one acceptance per data row of the §5.4 Stage|Agent-slug tabl
 
 `kind: deliverable`
 
-Target: `web/src/components/tasks/LifecycleBoard.tsx`, `web/src/components/tasks/StageColumn.tsx`, `web/src/components/tasks/StageCard.tsx`, `web/src/lib/stageActions.ts` (all new)
+Target: `web/src/components/tasks/LifecycleBoard.tsx`, `web/src/components/tasks/StageColumn.tsx`, `web/src/components/tasks/StageCard.tsx`, `web/src/lib/stageActions.ts`, `web/src/styles/lifecycle-board.css` (per acceptance 6.1.8 — token-only stylesheet for the board chrome; raw color literals are forbidden, enforced by 6.1.9), `web/src/__tests__/lifecycle-board-css-lint.test.ts` (per acceptance 6.1.9 — automated lint test asserting no raw color literals in `lifecycle-board.css`) (all new)
 
 Replicate the props pattern of `KanbanBoard` (`web/src/components/tasks/KanbanBoard.tsx`) but driven by registry stages instead of fixed buckets. Use the existing `@atlaskit/pragmatic-drag-and-drop` library — it's already wired (`web/package.json` v1.7.7) and handles draggable cards + drop targets in `KanbanBoard`.
 
