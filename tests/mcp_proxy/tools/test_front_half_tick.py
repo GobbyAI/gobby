@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.tasks._front_half import (
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.tasks import TaskSyncManager
+from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -144,10 +145,26 @@ def _write_plan_file(repo_root: Path, parent_task) -> Path:
     return plan_file
 
 
+def _start_current_stage(task_manager: LocalTaskManager, task_id: str) -> None:
+    current = task_manager.stage_states.current_stage(task_id)
+    assert current is not None
+    if current.state == "ready":
+        task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id="test")
+
+
+def _submit_stage_for_review(
+    task_manager: LocalTaskManager,
+    task_id: str,
+    review_notes: str = "Ready for review",
+) -> None:
+    _start_current_stage(task_manager, task_id)
+    task_manager.mark_task_needs_review(task_id, review_notes=review_notes)
+
+
 def _approve_stage_task(
     task_manager: LocalTaskManager, task_id: str, notes: str = "Approved"
 ) -> None:
-    task_manager.mark_task_needs_review(task_id, review_notes="Ready for review")
+    _submit_stage_for_review(task_manager, task_id)
     task_manager.mark_task_review_approved(task_id, approval_notes=notes)
 
 
@@ -276,7 +293,7 @@ class TestFrontHalfTick:
 
         refreshed_requirements = task_manager.get_task(requirements_task.id)
         assert refreshed_requirements is not None
-        assert refreshed_requirements.status == "closed"
+        assert is_task_closed(refreshed_requirements)
 
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
         assert not any(label.startswith("planning-round:") for label in planning_task.labels or [])
@@ -322,7 +339,7 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
-        task_manager.mark_task_needs_review(planning_task.id, review_notes="Plan ready")
+        _submit_stage_for_review(task_manager, planning_task.id, review_notes="Plan ready")
 
         with session_context_for_test(test_session):
             result = await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
@@ -352,7 +369,7 @@ class TestFrontHalfTick:
             await front_half_registry.call("front_half_tick", {"task_id": parent_task.id})
 
         planning_task = _stage_task(task_manager, parent_task.id, "planning")
-        task_manager.mark_task_needs_review(planning_task.id, review_notes="Ready")
+        _submit_stage_for_review(task_manager, planning_task.id, review_notes="Ready")
         task_manager.mark_task_review_rejected(
             planning_task.id,
             rejection_notes="Sequencing is weak",
@@ -370,7 +387,7 @@ class TestFrontHalfTick:
 
         refreshed = task_manager.get_task(planning_task.id)
         assert refreshed is not None
-        assert refreshed.status == "open"
+        assert not is_task_closed(refreshed)
         assert not any(label.startswith("planning-round:") for label in refreshed.labels or [])
 
     @pytest.mark.asyncio
@@ -397,7 +414,7 @@ class TestFrontHalfTick:
             planning_task.id,
             labels=[FRONT_HALF_LABEL, _STAGE_LABELS["planning"]],
         )
-        task_manager.mark_task_needs_review(planning_task.id, review_notes="Ready")
+        _submit_stage_for_review(task_manager, planning_task.id, review_notes="Ready")
         task_manager.mark_task_review_rejected(
             planning_task.id,
             rejection_notes="Still missing critical constraints",
@@ -414,7 +431,7 @@ class TestFrontHalfTick:
         assert result["next_action"] == "front_half_failed"
         refreshed = task_manager.get_task(planning_task.id)
         assert refreshed is not None
-        assert refreshed.status == "open"
+        assert not is_task_closed(refreshed)
         assert not any(label.startswith("planning-round:") for label in refreshed.labels or [])
 
     @pytest.mark.asyncio
@@ -526,7 +543,7 @@ class TestFrontHalfTick:
         assert result["dispatch"]["agent"] == "test-architect"
 
         expansion_task = _stage_task(task_manager, parent_task.id, "expansion")
-        assert expansion_task.status == "closed"
+        assert is_task_closed(expansion_task)
 
     @pytest.mark.asyncio
     async def test_review_approved_test_architecture_marks_front_half_complete(

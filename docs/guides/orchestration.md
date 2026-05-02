@@ -24,17 +24,15 @@ not the main task-dispatch loop.
 The dispatcher scans tasks that have `allow_automation=true`, then evaluates
 ordered rules over:
 
-- lifecycle stage
-- task status
-- labels, including `stage-:<name>` skip labels
+- current stage manifest row and stage state
+- closed, claimed, escalated, dependency, and review state
 - `yolo`
 - `isolation`
 - `assigned_agent` and `additional_skills`
 - artifact state in `task_artifacts`
-- dependency and claim state
 
 Rules return explicit actions such as spawn an agent, start expansion, create
-worktree/clone isolation, advance lifecycle, append an audit marker, or
+worktree/clone isolation, advance stage state, append an audit marker, or
 escalate. The dispatcher does not make model calls. Reasoning happens in the
 spawned agent for that stage.
 
@@ -74,12 +72,13 @@ The shared service resolves profiles and flags into stored state, returns a
 | `allow_automation` | Opt-in gate. Tasks without it are ignored by dispatch. |
 | `yolo` | Deterministic fallback mode. Rules avoid escalation where a defined fallback exists. |
 | `isolation` | `none`, `worktree`, or `clone`. Epic isolation is created before leaf dispatch. |
-| `stage-:<name>` labels | Stage skips. Profiles resolve to labels at build time. |
+| Stage manifest rows | Ordered stage plan after build-time profile skips are applied. |
 | `assigned_agent` | Leaf agent selected by expansion or `gobby build --agent`. |
 | `additional_skills` | Extra skills included when dispatching the leaf agent. |
 
 Profiles such as `quick`, `review`, `full`, and `full-yolo` are build-time
-sugar. The dispatcher reads resolved task fields and labels, not profile names.
+sugar. The dispatcher reads resolved task fields and stage manifest rows, not
+profile names.
 
 ## Dispatch Tables
 

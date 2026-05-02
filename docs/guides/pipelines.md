@@ -288,7 +288,7 @@ Use dispatch for:
 
 - scanning opted-in tasks
 - lifecycle-stage advancement
-- enforcing `allow_automation`, `yolo`, isolation, and stage skips
+- enforcing `allow_automation`, `yolo`, isolation, and the resolved stage manifest
 - bounded worker spawning under the global agent-slot cap
 
 Retired orchestration pipelines remain in place only as disabled tombstones so

@@ -25,6 +25,10 @@ INSTRUCTION_SCOPE = (
     "src/gobby/install/shared/workflows/agents/",
     "src/gobby/install/shared/skills/",
 )
+ACTIVE_GUIDE_SCOPE = (
+    "CLAUDE.md",
+    "docs/guides/",
+)
 
 
 def _git_grep(pattern: str, *paths: str) -> subprocess.CompletedProcess[str]:
@@ -50,6 +54,12 @@ def test_grep_returns_empty_for_full_runtime_scope() -> None:
 
 def test_grep_returns_empty_for_bundled_agent_instructions() -> None:
     result = _git_grep(r"_skipped_stages|stage-:", *INSTRUCTION_SCOPE)
+
+    _assert_no_matches(result)
+
+
+def test_active_guides_do_not_describe_legacy_stage_skip_labels() -> None:
+    result = _git_grep(r"stage-:", *ACTIVE_GUIDE_SCOPE)
 
     _assert_no_matches(result)
 

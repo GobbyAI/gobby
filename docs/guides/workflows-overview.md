@@ -81,7 +81,7 @@ stage is ready.
 Dispatch composes:
 
 - Build state from `gobby build`: `allow_automation`, `yolo`, `isolation`,
-  `stage-:<name>` labels, `assigned_agent`, and `additional_skills`
+  resolved stage manifest, `assigned_agent`, and `additional_skills`
 - Task lifecycle from `gobby-tasks`
 - Sparse dispatch state from `task_artifacts`
 - Per-task leases from `task_dispatch_mutex`

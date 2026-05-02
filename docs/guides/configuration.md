@@ -488,11 +488,11 @@ dispatch_interval_seconds: 60
 
 profiles:
   quick:
-    skip_stages: [plan_review, test_arch, expanding, qa, holistic_review, pr]
+    skip_stages: [research, holistic_qa]
     isolation: none
     yolo: false
   review:
-    skip_stages: [plan_review, pr]
+    skip_stages: []
     isolation: worktree
     yolo: false
   full:
@@ -505,9 +505,10 @@ profiles:
     yolo: true
 ```
 
-Profiles are build-time sugar. `gobby build` resolves them to `stage-:<name>`
-labels plus stored `isolation` and `yolo` values on the task. Changing a profile
-later does not rewrite already-built tasks.
+Profiles are build-time sugar. `gobby build` resolves them by pruning skipped
+stages from the persisted stage manifest and storing `isolation` and `yolo`
+values on the task. Changing a profile later does not rewrite already-built
+tasks.
 
 `max_active_agents` is the global dispatch slot cap. If all slots are full, the
 candidate waits until the next heartbeat; task state acts as the queue.
