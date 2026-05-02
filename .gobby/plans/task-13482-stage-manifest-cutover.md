@@ -4,6 +4,8 @@
 
 `plan_kind: implementation` — deliverable manifest emitted by plan-adversary on approval.
 
+> **Plan ID:** `task-13482-stage-manifest-cutover`.
+
 ## Overview
 
 `kind: framing`
@@ -2589,3 +2591,522 @@ End-to-end acceptance covers:
 - Cross-project / multi-tenant kanban.
 - Per-stage time tracking, SLAs, due dates.
 - Drag-and-drop reordering of stages within a task's manifest. Drag-to-advance state is in scope; drag-to-reorder positions is not.
+
+
+## M1 Task Manifest
+
+`kind: manifest`
+
+```yaml
+- title: "Schema migration + bundled stages.yaml: registry, defaults, manifest, and PR/merge artifact columns"
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: "src/gobby/storage/migrations.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.1"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.2"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.3"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.4"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.5"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.6"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.6a"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7a"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7b"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7c"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7d"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7e"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7f"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7g"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7h"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7i"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7j"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7k"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7l"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7m"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7n"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7o"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7p"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7q"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7r"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7s"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7t"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7u"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7v"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7w"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7x"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7y"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7z"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7aa"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7ab"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7ac"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.7ad"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.8"
+    - "covers:task-13482-stage-manifest-cutover:1.1:1.1.9"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "1.1"
+- title: "Sync loader for the bundled stages.yaml"
+  category: config
+  task_type: chore
+  depends_on:
+    - "1.1"
+  validation_criteria: "src/gobby/storage/tasks/_stage_registry_loader.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:1.2:1.2.1"
+    - "covers:task-13482-stage-manifest-cutover:1.2:1.2.2"
+    - "covers:task-13482-stage-manifest-cutover:1.2:1.2.3"
+    - "covers:task-13482-stage-manifest-cutover:1.2:1.2.4"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "1.2"
+- title: "Placeholder agent YAMLs for discovery stages"
+  category: config
+  task_type: chore
+  depends_on: []
+  validation_criteria: "src/gobby/install/shared/workflows/agents/analyst.yaml"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.1"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.2"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.3"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.4"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.5"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.6"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.7"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.8"
+    - "covers:task-13482-stage-manifest-cutover:1.3:1.3.9"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "1.3"
+- title: "Stage registry + stage states storage managers"
+  category: code
+  task_type: feature
+  depends_on:
+    - "1.1"
+  validation_criteria: "src/gobby/storage/tasks/_stage_registry.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.1"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.2"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.3"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.4"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.5"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.6"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.7"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.8"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.9"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.10"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.11"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.12"
+    - "covers:task-13482-stage-manifest-cutover:2.1:2.1.13"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.1"
+- title: "One-shot backfill: derive task_stage_states from existing legacy state"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+  validation_criteria: "src/gobby/storage/migrations.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.1"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.2"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.3"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.4"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.5"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.6"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7a"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7b"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7c"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7d"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7e"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7f"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.7g"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.8"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.9"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.10"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.11"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.12"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.13"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.13a"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.13b"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.14"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.15"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.15a"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.16"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.17"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.18"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.19"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.19a"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.20"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.21"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.22"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.22a"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.23"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.24"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.25"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.26"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.27"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.28"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.29"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.30"
+    - "covers:task-13482-stage-manifest-cutover:2.2:2.2.31"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.2"
+- title: "New gobby-tasks MCP tools for stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+  validation_criteria: "src/gobby/mcp_proxy/tools/tasks/_stages.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.1"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.2"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.3"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.4"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.5"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.6"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.6a"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.6b"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.6c"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.7"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.8"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.9"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.10"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.11"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.12"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.13"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.14"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.15"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.16"
+    - "covers:task-13482-stage-manifest-cutover:2.3:2.3.17"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.3"
+- title: "New HTTP routes for stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+  validation_criteria: "src/gobby/servers/routes/stages.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.1"
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.2"
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.3"
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.4"
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.5"
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.6"
+    - "covers:task-13482-stage-manifest-cutover:2.4:2.4.7"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.4"
+- title: "New CLI commands and build flags"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.3"
+  validation_criteria: "src/gobby/cli/tasks/stages.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.1"
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.2"
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.2a"
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.3"
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.4"
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.4a"
+    - "covers:task-13482-stage-manifest-cutover:2.5:2.5.5"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.5"
+- title: "Rewire mark_task_review_* tools to first-class stage-axis transitions"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.3"
+  validation_criteria: "src/gobby/storage/tasks/_transitions.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.1"
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.2"
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.3"
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.4"
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.5"
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.6a"
+    - "covers:task-13482-stage-manifest-cutover:2.6:2.6.6"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "2.6"
+- title: "Rewrite dispatch/rules.py to query stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.2"
+    - "2.6"
+    - "5.2"
+  validation_criteria: "src/gobby/dispatch/rules.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.1"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.2"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.3"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.4"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.4a"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.4b"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.4c"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.5"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.6"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.7"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.8"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.9"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.10"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.11"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.11a"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.11b"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.12"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.12a"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.12b"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.12c"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.13"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.14"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.15"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.15a"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.16"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.17"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.17a"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.18"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.19"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.20"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.20a"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.20b"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.21"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.22"
+    - "covers:task-13482-stage-manifest-cutover:3.1:3.1.23"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.1"
+- title: "Manifest resolution at build time + readiness projections rewrite"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.2"
+    - "3.1"
+  validation_criteria: "src/gobby/build/service.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:3.2:3.2.1"
+    - "covers:task-13482-stage-manifest-cutover:3.2:3.2.2"
+    - "covers:task-13482-stage-manifest-cutover:3.2:3.2.3"
+    - "covers:task-13482-stage-manifest-cutover:3.2:3.2.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.2"
+- title: "Cut over RuntimeDispatchMutex candidate-snapshot check to stage manifest"
+  category: code
+  task_type: feature
+  depends_on:
+    - "3.1"
+    - "3.2"
+  validation_criteria: "src/gobby/dispatch/mutex.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:3.3:3.3.1"
+    - "covers:task-13482-stage-manifest-cutover:3.3:3.3.2"
+    - "covers:task-13482-stage-manifest-cutover:3.3:3.3.3"
+    - "covers:task-13482-stage-manifest-cutover:3.3:3.3.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "3.3"
+- title: "PR stage rule + delivery artifacts"
+  category: code
+  task_type: feature
+  depends_on:
+    - "3.1"
+  validation_criteria: "src/gobby/dispatch/rules.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.1"
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.2"
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.2a"
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.3"
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.4"
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.5"
+    - "covers:task-13482-stage-manifest-cutover:4.1:4.1.6"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "4.1"
+- title: "Merge stage rule + delivery artifacts"
+  category: code
+  task_type: feature
+  depends_on:
+    - "4.1"
+  validation_criteria: "src/gobby/dispatch/rules.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:4.2:4.2.1"
+    - "covers:task-13482-stage-manifest-cutover:4.2:4.2.2"
+    - "covers:task-13482-stage-manifest-cutover:4.2:4.2.3"
+    - "covers:task-13482-stage-manifest-cutover:4.2:4.2.4"
+    - "covers:task-13482-stage-manifest-cutover:4.2:4.2.5"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "4.2"
+- title: "New task types + default-stages seed"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.1"
+    - "2.2"
+  validation_criteria: "src/gobby/storage/tasks/_models.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:5.1:5.1.1"
+    - "covers:task-13482-stage-manifest-cutover:5.1:5.1.2"
+    - "covers:task-13482-stage-manifest-cutover:5.1:5.1.3"
+    - "covers:task-13482-stage-manifest-cutover:5.1:5.1.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "5.1"
+- title: "Wire is_escalated first-class column through dataclass + readers"
+  category: code
+  task_type: feature
+  depends_on:
+    - "1.1"
+    - "2.2"
+  validation_criteria: "src/gobby/storage/tasks/_models.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:5.2:5.2.1"
+    - "covers:task-13482-stage-manifest-cutover:5.2:5.2.2"
+    - "covers:task-13482-stage-manifest-cutover:5.2:5.2.3"
+    - "covers:task-13482-stage-manifest-cutover:5.2:5.2.4"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "5.2"
+- title: "Drop lifecycle, lifecycle_stage, active status semantics"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.6"
+    - "3.1"
+    - "3.2"
+    - "3.3"
+    - "4.1"
+    - "4.2"
+    - "5.2"
+    - "6.3"
+  validation_criteria: "src/gobby/storage/migrations.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.1"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.2"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.3"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.4"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.5"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.6"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.7"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.8"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.9"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.10"
+    - "covers:task-13482-stage-manifest-cutover:5.3:5.3.11"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "5.3"
+- title: "Discovery-stage agent follow-up tracking"
+  category: manual
+  task_type: chore
+  depends_on:
+    - "1.3"
+  validation_criteria: "tests/dispatch/test_agent_followup_tasks.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.1"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.2"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.3"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.4"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.4a"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.5"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.6"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.7"
+    - "covers:task-13482-stage-manifest-cutover:5.4:5.4.8"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "5.4"
+- title: "New LifecycleBoard.tsx + StageColumn.tsx + StageCard.tsx + stageActions.ts helper"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.4"
+  validation_criteria: "web/src/components/tasks/LifecycleBoard.tsx"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.1"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.2"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.3"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.4"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.4a"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.4b"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.5"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.5a"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.6"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.7"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.8"
+    - "covers:task-13482-stage-manifest-cutover:6.1:6.1.9"
+  assigned_agent: frontend-developer
+  tdd: true
+  source_section: "6.1"
+- title: "useTasks denormalized stage manifest + new filters"
+  category: code
+  task_type: feature
+  depends_on:
+    - "2.4"
+    - "6.1"
+  validation_criteria: "web/src/hooks/useTasks.ts"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:6.2:6.2.1"
+    - "covers:task-13482-stage-manifest-cutover:6.2:6.2.2"
+    - "covers:task-13482-stage-manifest-cutover:6.2:6.2.3"
+    - "covers:task-13482-stage-manifest-cutover:6.2:6.2.4"
+  assigned_agent: frontend-developer
+  tdd: true
+  source_section: "6.2"
+- title: "Mount LifecycleBoard, retire taskState.ts legacy types"
+  category: code
+  task_type: feature
+  depends_on:
+    - "6.1"
+    - "6.2"
+  validation_criteria: "web/src/components/tasks/TasksPage.tsx"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:6.3:6.3.1"
+    - "covers:task-13482-stage-manifest-cutover:6.3:6.3.2"
+    - "covers:task-13482-stage-manifest-cutover:6.3:6.3.3"
+    - "covers:task-13482-stage-manifest-cutover:6.3:6.3.4"
+    - "covers:task-13482-stage-manifest-cutover:6.3:6.3.5"
+  assigned_agent: frontend-developer
+  tdd: true
+  source_section: "6.3"
+- title: "Remove stage-skip label handling and migration helpers"
+  category: refactor
+  task_type: refactor
+  depends_on:
+    - "5.3"
+    - "6.3"
+  validation_criteria: "src/gobby/dispatch/rules.py"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:7.1:7.1.1"
+    - "covers:task-13482-stage-manifest-cutover:7.1:7.1.2"
+    - "covers:task-13482-stage-manifest-cutover:7.1:7.1.3"
+    - "covers:task-13482-stage-manifest-cutover:7.1:7.1.4"
+    - "covers:task-13482-stage-manifest-cutover:7.1:7.1.5"
+  assigned_agent: backend-developer
+  tdd: true
+  source_section: "7.1"
+- title: "Documentation pass"
+  category: docs
+  task_type: chore
+  depends_on:
+    - "7.1"
+  validation_criteria: "CLAUDE.md"
+  labels:
+    - "covers:task-13482-stage-manifest-cutover:7.2:7.2.1"
+    - "covers:task-13482-stage-manifest-cutover:7.2:7.2.2"
+    - "covers:task-13482-stage-manifest-cutover:7.2:7.2.3"
+    - "covers:task-13482-stage-manifest-cutover:7.2:7.2.4"
+  assigned_agent: backend-developer
+  tdd: false
+  source_section: "7.2"
+```
