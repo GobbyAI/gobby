@@ -40,6 +40,21 @@ def source_text(relative: str) -> str:
     return repo_path(relative).read_text()
 
 
+def source_texts(paths: Iterable[str]) -> str:
+    chunks: list[str] = []
+    for relative in paths:
+        path = repo_path(relative)
+        if path.is_file():
+            chunks.append(path.read_text())
+            continue
+        for file_path in sorted(p for p in path.rglob("*") if p.is_file()):
+            try:
+                chunks.append(file_path.read_text())
+            except UnicodeDecodeError:
+                continue
+    return "\n".join(chunks)
+
+
 def table_columns(db: LocalDatabase, table: str) -> set[str]:
     return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table})")}
 
