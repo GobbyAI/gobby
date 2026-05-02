@@ -39,24 +39,26 @@ class TestToolHandlers:
         response = event_handlers.handle_after_tool(event)
         assert response.decision == "allow"
 
-    def test_before_tool_blocks_gobby_tasks_cli_dict_input(
+    def test_before_tool_allows_gobby_tasks_cli_dict_input(
         self, event_handlers: EventHandlers
     ) -> None:
-        """Native Bash access to `gobby tasks` should be blocked."""
+        """Task CLI policy is enforced by rules, not hardcoded hook logic."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
-            data={"tool_name": "Bash", "tool_input": {"command": "uv run gobby tasks --help"}},
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "uv run gobby tasks list --ready"},
+            },
             metadata={"_platform_session_id": "plat-123"},
         )
         response = event_handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "gobby-tasks MCP server" in response.reason
+        assert response.decision == "allow"
 
-    def test_before_tool_blocks_gobby_tasks_cli_string_input(
+    def test_before_tool_allows_gobby_tasks_cli_string_input(
         self, event_handlers: EventHandlers
     ) -> None:
-        """String shell payloads from app-server adapters are blocked too."""
+        """String shell payloads from app-server adapters are allowed by the hook."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Bash", "tool_input": "gobby tasks list --limit 1"},
@@ -64,13 +66,12 @@ class TestToolHandlers:
         )
         response = event_handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "create_task" in response.context
+        assert response.decision == "allow"
 
-    def test_before_tool_blocks_gobby_tasks_cli_exec_command_alias(
+    def test_before_tool_allows_gobby_tasks_cli_exec_command_alias(
         self, event_handlers: EventHandlers
     ) -> None:
-        """Shell aliases should hit the same gobby-tasks block."""
+        """Shell aliases are left to the rules engine."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "exec_command", "tool_input": {"command": "gobby tasks list"}},
@@ -78,13 +79,12 @@ class TestToolHandlers:
         )
         response = event_handlers.handle_before_tool(event)
 
-        assert response.decision == "block"
-        assert "gobby-tasks MCP server" in response.reason
+        assert response.decision == "allow"
 
     def test_before_tool_allows_other_gobby_cli_commands(
         self, event_handlers: EventHandlers
     ) -> None:
-        """Only `gobby tasks` is blocked by the native guard."""
+        """Other gobby CLI commands remain allowed."""
         event = make_event(
             HookEventType.BEFORE_TOOL,
             data={"tool_name": "Bash", "tool_input": {"command": "uv run gobby status"}},

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.session_types import HookSessionManager
+from gobby.tasks.state_semantics import serialize_task_state
 from gobby.workflows.summary_actions import schedule_tmux_window_rename
 
 if TYPE_CHECKING:
@@ -20,6 +21,16 @@ if TYPE_CHECKING:
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.storage.session_models import Session
     from gobby.storage.session_tasks import SessionTaskManager
+
+
+def _task_status_label(task: object) -> str:
+    state = serialize_task_state(task)
+    if state["is_closed"]:
+        return "closed"
+    if state["is_escalated"]:
+        return "escalated"
+    current_stage = state["current_stage"]
+    return current_stage["state"] if current_stage else "ready"
 
 
 class SessionLookupService:
@@ -254,7 +265,7 @@ class SessionLookupService:
                 event.metadata["_task_context"] = {
                     "id": task.id,
                     "title": task.title,
-                    "status": task.status,
+                    "status": _task_status_label(task),
                 }
                 # Keep legacy field for backwards compatibility
                 event.metadata["_task_title"] = task.title

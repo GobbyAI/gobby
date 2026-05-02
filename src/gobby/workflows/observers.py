@@ -7,6 +7,7 @@ They run BEFORE rule evaluation in the hook handler's _evaluate_rules path.
 
 import logging
 import re
+from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import _SHELL_TOOLS
@@ -18,6 +19,23 @@ if TYPE_CHECKING:
     from gobby.tasks.session_tasks import SessionTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert observer-tracked values into JSON-safe session-variable data."""
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_json_safe(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(asdict(value))
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump(mode="json"))
+    if hasattr(value, "to_dict"):
+        return _json_safe(value.to_dict())
+    return str(value)
 
 
 _MODE_LEVEL_MAP = {"plan": 0, "accept_edits": 1, "normal": 1, "bypass": 2}
@@ -641,7 +659,7 @@ def _track_mcp_call(
 
     mcp_results = variables.setdefault("mcp_results", {})
     server_results = mcp_results.setdefault(server_name, {})
-    server_results[inner_tool] = result
+    server_results[inner_tool] = _json_safe(result)
 
     logger.debug(
         f"Session {session_id}: MCP call tracked {server_name}/{inner_tool} "

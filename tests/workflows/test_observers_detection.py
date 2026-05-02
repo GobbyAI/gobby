@@ -1,5 +1,7 @@
 """Tests for detection functions in observers module."""
 
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -618,6 +620,25 @@ class TestDetectMcpCall:
         mcp_results = variables.get("mcp_results", {})
         assert "demo-server" in mcp_results
         assert mcp_results["demo-server"]["demo-tool"] == "success"
+
+    def test_tracks_json_safe_result(self, variables, make_after_tool_event) -> None:
+        @dataclass
+        class DemoResult:
+            id: str
+            count: int
+
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={"server_name": "demo-server", "tool_name": "demo-tool"},
+            tool_output={"result": {"items": [DemoResult(id="a", count=1)]}},
+        )
+
+        detect_mcp_call(event, variables, SESSION_ID)
+
+        assert variables["mcp_results"]["demo-server"]["demo-tool"] == {
+            "items": [{"id": "a", "count": 1}]
+        }
+        json.dumps(variables)
 
     def test_tracks_multiple_tools(self, variables, make_after_tool_event) -> None:
         event1 = make_after_tool_event(

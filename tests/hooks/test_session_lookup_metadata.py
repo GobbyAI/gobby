@@ -82,3 +82,33 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     assert event.project_id == "project-from-cwd"
     assert event.metadata["_platform_session_id"] == "mapped-platform-session"
     session_manager.get_session_id.assert_called_once_with("claude-external", "claude")
+
+
+def test_task_context_uses_stage_native_status() -> None:
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(
+        id="platform-session", project_id="project-1"
+    )
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Stage-native task",
+        stages=[SimpleNamespace(name="implementation", state="in_progress", position=1)],
+        closed_at=None,
+        is_escalated=False,
+        active_blocked_by=[],
+    )
+    session_task_manager.get_session_tasks.return_value = [{"task": task, "action": "worked_on"}]
+    service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
+    event = _event({"_platform_session_id": "platform-session"})
+
+    service.resolve(event)
+
+    assert event.task_id == "task-1"
+    assert event.metadata["_task_title"] == "Stage-native task"
+    assert event.metadata["_task_context"] == {
+        "id": "task-1",
+        "title": "Stage-native task",
+        "status": "in_progress",
+    }
