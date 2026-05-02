@@ -1,4 +1,4 @@
-"""Phase 5 migration 236 legacy-column removal contracts."""
+"""Current baseline legacy-column removal contracts."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import re
 
 import pytest
 
+from gobby.storage.database import LocalDatabase
+from gobby.storage.migrations import run_migrations
 from tests.phase5_contract_helpers import (
     LEGACY_CAP_COLUMNS,
-    migration_action,
     source_text,
     table_columns,
 )
@@ -16,52 +17,43 @@ from tests.phase5_contract_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def test_lifecycle_column_dropped(temp_db) -> None:
-    migration_action(236)
-    assert "lifecycle" not in table_columns(temp_db, "tasks")
+def _fresh_db(tmp_path) -> LocalDatabase:
+    db = LocalDatabase(tmp_path / "baseline-v239.db")
+    run_migrations(db)
+    return db
 
 
-def test_lifecycle_stage_column_dropped(temp_db) -> None:
-    migration_action(236)
-    assert "lifecycle_stage" not in table_columns(temp_db, "tasks")
+def test_lifecycle_column_dropped(tmp_path) -> None:
+    db = _fresh_db(tmp_path)
+    assert "lifecycle" not in table_columns(db, "tasks")
 
 
-def test_status_column_dropped(temp_db) -> None:
-    migration_action(236)
-    assert "status" not in table_columns(temp_db, "tasks")
+def test_lifecycle_stage_column_dropped(tmp_path) -> None:
+    db = _fresh_db(tmp_path)
+    assert "lifecycle_stage" not in table_columns(db, "tasks")
+
+
+def test_status_column_dropped(tmp_path) -> None:
+    db = _fresh_db(tmp_path)
+    assert "status" not in table_columns(db, "tasks")
 
 
 @pytest.mark.parametrize("column", LEGACY_CAP_COLUMNS)
-def test_legacy_cap_column_dropped(temp_db, column: str) -> None:
-    migration_action(236)
-    assert column not in table_columns(temp_db, "task_artifacts")
+def test_legacy_cap_column_dropped(tmp_path, column: str) -> None:
+    db = _fresh_db(tmp_path)
+    assert column not in table_columns(db, "task_artifacts")
 
 
-def test_fresh_schema_lacks_all_five_legacy_cap_columns(temp_db) -> None:
-    migration_action(236)
-    assert table_columns(temp_db, "task_artifacts").isdisjoint(LEGACY_CAP_COLUMNS)
+def test_fresh_schema_lacks_all_five_legacy_cap_columns(tmp_path) -> None:
+    db = _fresh_db(tmp_path)
+    assert table_columns(db, "task_artifacts").isdisjoint(LEGACY_CAP_COLUMNS)
 
 
-def test_upgrade_path_preserves_per_stage_caps_after_drop(temp_db, sample_project) -> None:
-    migration_action(236)
-    from gobby.storage.tasks import LocalTaskManager
-
-    manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Preserve caps")
-
-    stage_columns = table_columns(temp_db, "task_stage_states")
+def test_baseline_preserves_per_stage_cap_columns(tmp_path) -> None:
+    db = _fresh_db(tmp_path)
+    stage_columns = table_columns(db, "task_stage_states")
     assert {"max_work_attempts", "max_review_rounds"} <= stage_columns
-    assert table_columns(temp_db, "task_artifacts").isdisjoint(LEGACY_CAP_COLUMNS)
-
-    rows = temp_db.fetchall(
-        """
-        SELECT stage_name, max_work_attempts, max_review_rounds
-          FROM task_stage_states
-         WHERE task_id = ?
-        """,
-        (task.id,),
-    )
-    assert rows
+    assert table_columns(db, "task_artifacts").isdisjoint(LEGACY_CAP_COLUMNS)
 
 
 def test_no_runtime_reader_references_legacy_cap_columns() -> None:

@@ -1,4 +1,4 @@
-"""Red tests for lifecycle dispatch storage migrations."""
+"""Lifecycle dispatch storage baseline tests."""
 
 from __future__ import annotations
 
@@ -8,18 +8,18 @@ from typing import Any
 import pytest
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import _apply_baseline, get_current_version, run_migrations
+from gobby.storage.migrations import BASELINE_VERSION, get_current_version, run_migrations
 
 pytestmark = pytest.mark.unit
 
 TASK_COLUMNS = {
-    "lifecycle",
     "allow_automation",
     "unattended",
     "isolation",
     "assigned_agent",
     "additional_skills",
 }
+LEGACY_TASK_COLUMNS = {"lifecycle", "lifecycle_stage", "status"}
 LIFECYCLE_TABLES = {
     "task_dispatch_mutex",
     "task_artifacts",
@@ -51,10 +51,11 @@ def _task_column(db: LocalDatabase, name: str) -> dict[str, Any]:
 
 
 def _assert_lifecycle_schema(db: LocalDatabase) -> None:
-    assert TASK_COLUMNS.issubset(_column_names(db, "tasks"))
+    task_columns = _column_names(db, "tasks")
+    assert TASK_COLUMNS.issubset(task_columns)
+    assert LEGACY_TASK_COLUMNS.isdisjoint(task_columns)
     assert LIFECYCLE_TABLES.issubset(_table_names(db))
     assert LIFECYCLE_INDEXES.issubset(_index_names(db))
-    assert _task_column(db, "lifecycle")["dflt_value"] == "'open'"
     assert _task_column(db, "allow_automation")["dflt_value"] == "0"
     assert _task_column(db, "unattended")["dflt_value"] == "0"
     assert _task_column(db, "isolation")["dflt_value"] == "'worktree'"
@@ -77,18 +78,17 @@ def test_fresh_database_gets_lifecycle_dispatch_schema(tmp_path: Path) -> None:
 
     applied = run_migrations(db)
 
-    assert applied >= 2
-    assert get_current_version(db) >= 222
+    assert applied == 1
+    assert get_current_version(db) == BASELINE_VERSION
     _assert_lifecycle_schema(db)
 
 
-def test_v220_database_upgrades_to_lifecycle_dispatch_schema(tmp_path: Path) -> None:
-    db = LocalDatabase(tmp_path / "v220-lifecycle.db")
-    _apply_baseline(db)
-    assert get_current_version(db) == 220
+def test_existing_baseline_database_keeps_lifecycle_dispatch_schema(tmp_path: Path) -> None:
+    db = LocalDatabase(tmp_path / "current-lifecycle.db")
+    run_migrations(db)
 
     applied = run_migrations(db)
 
-    assert applied >= 2
-    assert get_current_version(db) >= 222
+    assert applied == 0
+    assert get_current_version(db) == BASELINE_VERSION
     _assert_lifecycle_schema(db)

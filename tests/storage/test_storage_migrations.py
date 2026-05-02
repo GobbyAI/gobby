@@ -10,6 +10,7 @@ from gobby.storage.migrations import (
     MigrationUnsupportedError,
     _run_migration_list,
     get_current_version,
+    latest_known_version,
     migrations_needed,
     run_migrations,
 )
@@ -32,25 +33,21 @@ def _index_names(db: LocalDatabase, table: str) -> set[str]:
 
 
 def test_migrations_fresh_db_bootstraps_launch_baseline(tmp_path) -> None:
-    """Fresh databases apply the flattened baseline and current incremental migrations."""
+    """Fresh databases apply the flattened v239 baseline."""
     db_path = tmp_path / "migration_test.db"
     db = LocalDatabase(db_path)
 
-    migration_versions = [version for version, _description, _action in MIGRATIONS]
-    expected_versions = sorted({BASELINE_VERSION, *migration_versions})
-    latest_version = max(expected_versions)
-
-    assert BASELINE_VERSION == 220
+    assert BASELINE_VERSION == 239
+    assert latest_known_version() == 239
+    assert MIGRATIONS == []
     assert get_current_version(db) == 0
 
     applied = run_migrations(db)
 
-    # 1 for the baseline, plus one per migration whose version > BASELINE_VERSION.
-    expected_applied = 1 + sum(1 for version in migration_versions if version > BASELINE_VERSION)
-    assert applied == expected_applied
-    assert get_current_version(db) == latest_version
+    assert applied == 1
+    assert get_current_version(db) == 239
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == expected_versions
+    assert versions == [239]
 
 
 def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
@@ -60,14 +57,10 @@ def test_migrations_idempotency_at_launch_baseline(tmp_path) -> None:
 
     run_migrations(db)
 
-    migration_versions = [version for version, _description, _action in MIGRATIONS]
-    expected_versions = sorted({BASELINE_VERSION, *migration_versions})
-    latest_version = max(expected_versions)
-
     assert run_migrations(db) == 0
-    assert get_current_version(db) == latest_version
+    assert get_current_version(db) == 239
     versions = [row["version"] for row in db.fetchall("SELECT version FROM schema_version")]
-    assert versions == expected_versions
+    assert versions == [239]
 
 
 def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
@@ -101,7 +94,7 @@ def test_sql_string_migrations_roll_back_atomically(tmp_path) -> None:
 
 
 def test_migrations_recreate_missing_system_session(tmp_path) -> None:
-    """Existing 219 databases self-heal the bootstrapped system session on startup."""
+    """Existing baseline databases self-heal the bootstrapped system session on startup."""
     db_path = tmp_path / "system_session_repair.db"
     db = LocalDatabase(db_path)
 
@@ -122,9 +115,9 @@ def test_migrations_recreate_missing_system_session(tmp_path) -> None:
     assert repaired["title"] == "_system"
 
 
-@pytest.mark.parametrize("legacy_version", [1, 218])
+@pytest.mark.parametrize("legacy_version", [1, 218, 219, 238])
 def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) -> None:
-    """Historical SQLite upgrades were dropped at the 219 launch baseline."""
+    """Historical SQLite upgrades below the v239 baseline are unsupported."""
     db_path = tmp_path / f"legacy_{legacy_version}.db"
     db = LocalDatabase(db_path)
     db.execute(
@@ -142,7 +135,9 @@ def test_pre_launch_sqlite_versions_are_unsupported(tmp_path, legacy_version) ->
 
     message = str(exc_info.value)
     assert f"Database version {legacy_version}" in message
-    assert "SQLite launch baseline 219" in message
+    assert "current SQLite baseline 239" in message
+    assert "reset" in message
+    assert "manually recover" in message
     assert "~/.gobby/gobby-hub.db" in message
 
 
@@ -158,7 +153,7 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
         )
         """
     )
-    future_version = max(version for version, _description, _action in MIGRATIONS) + 1
+    future_version = latest_known_version() + 1
     db.execute("INSERT INTO schema_version (version) VALUES (?)", (future_version,))
 
     assert run_migrations(db) == 0
@@ -167,7 +162,7 @@ def test_newer_sqlite_version_is_left_untouched(tmp_path) -> None:
 
 
 def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
-    """The 219 baseline includes representative storage domains."""
+    """The v239 baseline includes representative storage domains."""
     db_path = tmp_path / "baseline_tables.db"
     db = LocalDatabase(db_path)
 
@@ -180,6 +175,9 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
         "agent_runs",
         "tasks",
         "task_dependencies",
+        "task_stages_registry",
+        "task_type_default_stages",
+        "task_stage_states",
         "session_tasks",
         "expansion_runs",
         "pending_interactions",
@@ -200,7 +198,7 @@ def test_flattened_baseline_core_tables_exist(tmp_path) -> None:
 
 
 def test_flattened_baseline_launch_columns(tmp_path) -> None:
-    """The 219 baseline exposes the canonical post-flattening columns."""
+    """The v239 baseline exposes the canonical post-flattening columns."""
     db_path = tmp_path / "baseline_columns.db"
     db = LocalDatabase(db_path)
 
@@ -218,9 +216,16 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
     assert {"title_source", "sandbox_enabled", "sandbox_policy_hash"}.issubset(
         _column_names(db, "sessions")
     )
-    assert {"claimed_by_session_id", "lifecycle_stage", "dispatch_failure_count"}.issubset(
-        _column_names(db, "tasks")
-    )
+    task_columns = _column_names(db, "tasks")
+    assert {
+        "claimed_by_session_id",
+        "dispatch_failure_count",
+        "allow_automation",
+        "unattended",
+        "isolation",
+        "is_escalated",
+    }.issubset(task_columns)
+    assert {"status", "lifecycle", "lifecycle_stage"}.isdisjoint(task_columns)
     assert {"graph_synced", "graph_sync_attempted_at"}.issubset(
         _column_names(db, "code_indexed_files")
     )
@@ -233,12 +238,30 @@ def test_flattened_baseline_launch_columns(tmp_path) -> None:
 
     assert "expansion_context" not in _column_names(db, "tasks")
     assert "expansion_status" not in _column_names(db, "tasks")
+    assert {
+        "pr_review_report",
+        "structured_pr_verdict",
+        "merge_campaign_report",
+        "last_reviewed_plan_hash",
+        "plan_review_attempts",
+        "test_arch_attempts",
+        "qa_attempts",
+        "holistic_attempts",
+        "merge_attempts",
+    }.issubset(_column_names(db, "task_artifacts"))
+    assert {
+        "max_expansion_attempts",
+        "max_qa_rounds",
+        "max_merge_attempts",
+        "max_holistic_rounds",
+        "max_review_rounds",
+    }.isdisjoint(_column_names(db, "task_artifacts"))
     assert "input_token_usd_per_1m" not in _column_names(db, "model_costs")
     assert "output_token_usd_per_1m" not in _column_names(db, "model_costs")
 
 
 def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
-    """The 219 baseline includes indexes and FK semantics formerly added by migrations."""
+    """The v239 baseline includes indexes and FK semantics formerly added by migrations."""
     db_path = tmp_path / "baseline_indexes.db"
     db = LocalDatabase(db_path)
 
@@ -246,9 +269,11 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
 
     assert {
         "idx_tasks_claimed_session",
-        "idx_tasks_lifecycle_stage",
         "idx_tasks_closed_session",
+        "idx_tasks_dispatch_scan",
     }.issubset(_index_names(db, "tasks"))
+    assert "idx_tasks_status" not in _index_names(db, "tasks")
+    assert "idx_tasks_lifecycle_stage" not in _index_names(db, "tasks")
     assert {"idx_sessions_prune_status_updated_at", "idx_sessions_parent_session"}.issubset(
         _index_names(db, "sessions")
     )
@@ -260,6 +285,63 @@ def test_flattened_baseline_indexes_and_constraints(tmp_path) -> None:
     rows = db.fetchall("PRAGMA foreign_key_list(tasks)")
     claimed_fk = next(row for row in rows if row["from"] == "claimed_by_session_id")
     assert claimed_fk["on_delete"] == "SET NULL"
+
+
+def test_flattened_baseline_stage_registry_and_defaults(tmp_path) -> None:
+    """The v239 baseline contains the repaired stage registry and zero-based defaults."""
+    db_path = tmp_path / "baseline_stages.db"
+    db = LocalDatabase(db_path)
+
+    run_migrations(db)
+
+    stage_rows = db.fetchall(
+        """
+        SELECT name, review_policy, reviewer_agent
+          FROM task_stages_registry
+         ORDER BY position_hint, name
+        """
+    )
+    stage_names = [row["name"] for row in stage_rows]
+    assert stage_names == [
+        "ideation",
+        "research",
+        "architecture",
+        "prd",
+        "planning",
+        "test_arch",
+        "expansion",
+        "development",
+        "holistic_qa",
+        "pr",
+        "merge",
+    ]
+    assert {"adversarial_review", "expansion_qa", "code_review_qa"}.isdisjoint(stage_names)
+
+    by_stage = {row["name"]: row for row in stage_rows}
+    assert by_stage["planning"]["review_policy"] == "required"
+    assert by_stage["planning"]["reviewer_agent"] == "plan-adversary"
+    assert by_stage["development"]["review_policy"] == "required"
+    assert by_stage["development"]["reviewer_agent"] == "qa-reviewer"
+    assert by_stage["pr"]["review_policy"] == "required"
+    assert by_stage["pr"]["reviewer_agent"] is None
+
+    default_rows = db.fetchall(
+        """
+        SELECT task_type, stage_name, position
+          FROM task_type_default_stages
+         ORDER BY task_type, position, stage_name
+        """
+    )
+    by_type: dict[str, list[tuple[str, int]]] = {}
+    for row in default_rows:
+        by_type.setdefault(row["task_type"], []).append((row["stage_name"], row["position"]))
+
+    assert by_type["simple_fix"] == [("development", 0), ("pr", 1), ("merge", 2)]
+    assert by_type["research_spike"] == [("ideation", 0), ("research", 1), ("prd", 2)]
+    assert by_type["prd_doc"] == [("ideation", 0), ("prd", 1)]
+    assert by_type["architecture_doc"] == [("research", 0), ("architecture", 1)]
+    for rows in by_type.values():
+        assert [position for _stage_name, position in rows] == list(range(len(rows)))
 
 
 def test_migrations_needed_checks_latest_schema_version(tmp_path) -> None:

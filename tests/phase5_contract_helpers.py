@@ -6,10 +6,8 @@ import re
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
 
 from gobby.storage.database import LocalDatabase
-from gobby.storage.migrations import MIGRATIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,22 +55,6 @@ def source_texts(paths: Iterable[str]) -> str:
 
 def table_columns(db: LocalDatabase, table: str) -> set[str]:
     return {row["name"] for row in db.fetchall(f"PRAGMA table_info({table})")}
-
-
-def migration_action(version: int) -> Any:
-    for candidate, _description, action in MIGRATIONS:
-        if candidate == version:
-            return action
-    available = ", ".join(str(candidate) for candidate, _description, _action in MIGRATIONS)
-    raise AssertionError(f"migration {version} is not registered; available: {available}")
-
-
-def run_migration(db: LocalDatabase, version: int) -> None:
-    action = migration_action(version)
-    if isinstance(action, str):
-        db.executescript(action)
-    else:
-        action(db)
 
 
 def assert_no_regex_matches(
