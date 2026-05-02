@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createMockFetch, type MockFetchInstance } from '../../test/mocks/fetch'
@@ -7,8 +9,32 @@ vi.mock('../useWebSocketEvent', () => ({
 }))
 
 import { useTasks } from '../useTasks'
+import { useWebSocketEvent } from '../useWebSocketEvent'
 
 let mockFetch: MockFetchInstance
+const mockUseWebSocketEvent = vi.mocked(useWebSocketEvent)
+const useTasksSourcePath = join(process.cwd(), 'src/hooks/useTasks.ts')
+
+type StageAdvanceAction = 'start' | 'submit_for_review' | 'approve_review' | 'complete'
+
+type Phase6TasksApi = ReturnType<typeof useTasks> & {
+  advanceStage: (
+    taskId: string,
+    stageName: string,
+    action: StageAdvanceAction,
+  ) => Promise<unknown>
+  failStage: (taskId: string, stageName: string, reason: string) => Promise<unknown>
+  startStage: (taskId: string, stageName: string) => Promise<unknown>
+}
+
+function installFetchSpy(
+  handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+) {
+  const fetchMock = vi.fn(handler)
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+  window.fetch = fetchMock as unknown as typeof fetch
+  return fetchMock
+}
 
 function jsonResponse(data: unknown): Response {
   return new Response(JSON.stringify(data), {
@@ -79,6 +105,7 @@ const TASK_LIST_RESPONSE = {
 }
 
 beforeEach(() => {
+  mockUseWebSocketEvent.mockReset()
   mockFetch = createMockFetch()
   // Use regex to match ONLY the list endpoint (with query params), not /api/tasks/<id>
   mockFetch.mockJsonResponse(/\/api\/tasks\?/, TASK_LIST_RESPONSE)
@@ -458,5 +485,177 @@ describe('useTasks', () => {
     await waitFor(() => {
       expect(result.current.tasks.map(task => task.id)).toEqual(['task-review', 'task-approved'])
     })
+  })
+
+  it('test_stages_populated', async () => {
+    const stagedTask = {
+      ...SAMPLE_TASKS[0],
+      stages: [
+        {
+          name: 'build',
+          display_name: 'Build',
+          category: 'delivery',
+          state: 'ready',
+          review_policy: 'required',
+          updated_at: '2026-05-02T00:00:00Z',
+        },
+      ],
+    }
+    mockFetch.resetRoutes()
+    mockFetch.mockJsonResponse(/\/api\/tasks\?/, {
+      ...TASK_LIST_RESPONSE,
+      tasks: [stagedTask],
+      total: 1,
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(String(mockFetch.fn.mock.calls[0]?.[0])).toContain('include_stages=1')
+    expect((result.current.tasks[0] as { stages?: unknown }).stages).toEqual(
+      stagedTask.stages,
+    )
+  })
+
+  it('test_advance_stage_with_action_param', async () => {
+    const stageRequests: Array<{ url: string; init?: RequestInit }> = []
+    installFetchSpy(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) return jsonResponse(TASK_LIST_RESPONSE)
+      if (url.includes('/api/tasks/task-1/stages/build')) {
+        stageRequests.push({ url, init })
+        return jsonResponse(SAMPLE_TASKS[0])
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await act(async () => {
+      await (result.current as Phase6TasksApi).advanceStage('task-1', 'build', 'complete')
+    })
+
+    const stageRequest = stageRequests[0]
+    expect(stageRequest?.url).toContain('/api/tasks/task-1/stages/build')
+    expect(stageRequest?.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(stageRequest?.init?.body))).toEqual({ action: 'complete' })
+  })
+
+  it('test_advance_stage_imports_stage_advance_action_from_shared_helper', () => {
+    const source = readFileSync(useTasksSourcePath, 'utf8')
+
+    expect(source).toMatch(
+      /import\s+type\s*{[^}]*StageAdvanceAction[^}]*}\s+from\s+['"]\.\.\/lib\/stageActions['"]/,
+    )
+    expect(source).not.toMatch(/type\s+StageAdvanceAction\s*=/)
+  })
+
+  it('test_advance_stage_422_propagates_typed_error', async () => {
+    const payload = {
+      error: 'illegal_stage_transition',
+      stage_name: 'build',
+      current_state: 'done',
+      attempted_transition: 'complete',
+      review_policy: 'required',
+      reason: 'Done rows cannot advance',
+    }
+    installFetchSpy(async (input) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) return jsonResponse(TASK_LIST_RESPONSE)
+      if (url.includes('/api/tasks/task-1/stages/build')) {
+        return new Response(JSON.stringify(payload), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await expect(
+      (result.current as Phase6TasksApi).advanceStage('task-1', 'build', 'complete'),
+    ).rejects.toMatchObject(payload)
+  })
+
+  it('test_fail_stage_mutator', async () => {
+    const stageRequests: Array<{ url: string; init?: RequestInit }> = []
+    installFetchSpy(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) return jsonResponse(TASK_LIST_RESPONSE)
+      if (url.includes('/api/tasks/task-1/stages/build')) {
+        stageRequests.push({ url, init })
+        return jsonResponse(SAMPLE_TASKS[0])
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await act(async () => {
+      await (result.current as Phase6TasksApi).failStage(
+        'task-1',
+        'build',
+        'Unit tests failed',
+      )
+    })
+
+    const stageRequest = stageRequests[0]
+    expect(stageRequest?.url).toContain('/api/tasks/task-1/stages/build')
+    expect(stageRequest?.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(stageRequest?.init?.body))).toEqual({
+      action: 'fail',
+      reason: 'Unit tests failed',
+    })
+  })
+
+  it('test_start_stage_mutator', async () => {
+    const stageRequests: Array<{ url: string; init?: RequestInit }> = []
+    installFetchSpy(async (input, init) => {
+      const url = String(input)
+      if (url.includes('/api/tasks?')) return jsonResponse(TASK_LIST_RESPONSE)
+      if (url.includes('/api/tasks/task-1/stages/build')) {
+        stageRequests.push({ url, init })
+        return jsonResponse(SAMPLE_TASKS[0])
+      }
+      return new Response(JSON.stringify({ error: 'unexpected url' }), { status: 404 })
+    })
+
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    await act(async () => {
+      await (result.current as Phase6TasksApi).startStage('task-1', 'build')
+    })
+
+    const stageRequest = stageRequests[0]
+    expect(stageRequest?.url).toContain('/api/tasks/task-1/stages/build')
+    expect(stageRequest?.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(stageRequest?.init?.body))).toEqual({ action: 'start' })
+  })
+
+  it('test_ws_stage_changed_refetches', async () => {
+    const { result } = renderHook(() => useTasks())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    mockFetch.fn.mockClear()
+
+    const stageChangedHandler = mockUseWebSocketEvent.mock.calls.find(
+      ([eventType]) => eventType === 'stage_changed',
+    )?.[1]
+
+    expect(stageChangedHandler).toBeDefined()
+
+    act(() => {
+      stageChangedHandler?.({
+        task_id: 'task-1',
+        stage_name: 'build',
+        state: 'in_progress',
+      })
+    })
+
+    await waitFor(() => expect(mockFetch.fn).toHaveBeenCalledTimes(1))
   })
 })
