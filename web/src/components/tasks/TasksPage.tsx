@@ -5,7 +5,7 @@ import { StatusDot, PriorityBadge, TypeBadge, TaskStateBadges } from './TaskBadg
 import { TaskDetail } from './TaskDetail'
 import { TaskCreateForm } from './TaskCreateForm'
 import type { TaskCreateDefaults } from './TaskCreateForm'
-import { KanbanBoard } from './KanbanBoard'
+import { LifecycleBoard } from './LifecycleBoard'
 import { TaskTree } from './TaskTree'
 import { PriorityBoard } from './PriorityBoard'
 import { AuditLog } from './AuditLog'
@@ -21,6 +21,7 @@ import {
   TASK_BUCKET_ORDER,
   type TaskBucket,
 } from '../../lib/taskState'
+import type { LifecycleTask } from '../../lib/stageActions'
 
 // =============================================================================
 // Tailwind class constants
@@ -657,11 +658,9 @@ export function TasksPage({ projectFilter }: TasksPageProps = {}) {
               </button>
             </div>
           )}
-          <KanbanBoard
-            tasks={subtreeRootId ? kanbanTasks : displayTasks}
+          <LifecycleBoard
+            tasks={(subtreeRootId ? kanbanTasks : displayTasks) as unknown as LifecycleTask[]}
             onSelectTask={setSelectedTaskId}
-            onUpdateStatus={moveTaskToBucket}
-            onReorder={(taskId, newOrder) => updateTask(taskId, { sequence_order: newOrder })}
           />
         </>
       ) : viewMode === 'tree' ? (
