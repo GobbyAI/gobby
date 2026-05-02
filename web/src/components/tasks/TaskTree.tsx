@@ -5,23 +5,38 @@ import { StatusDot, PriorityBadge, TypeBadge } from './TaskBadges'
 import { TaskStatusStrip } from './TaskStatusStrip'
 import { getTaskBucket } from '../../lib/taskState'
 
-// =============================================================================
-// Tree data type
-// =============================================================================
-
 interface TreeNode {
   id: string
   task: GobbyTask
   children: TreeNode[]
 }
 
-// =============================================================================
-// Closed statuses to filter
-// =============================================================================
+const CONTAINER_CLS = 'flex-1 overflow-hidden'
+const TOOLBAR_CLS = 'mb-1 flex items-center gap-2 border-b border-[var(--border)] px-2 py-[0.4rem]'
+const TOOLBAR_BTN_CLS =
+  'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-[0.2rem] font-[inherit] text-[length:calc(var(--font-size-base)*0.7)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--border)] hover:text-[var(--text-primary)]'
+const TOOLBAR_CHECK_CLS =
+  'ml-auto flex cursor-pointer items-center gap-[0.3rem] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-secondary)] [&_input]:cursor-pointer'
+const SEARCH_CLS =
+  'w-40 rounded border border-[var(--border)] bg-[var(--bg-tertiary)] px-2 py-1 font-[inherit] text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--accent)]'
 
-// =============================================================================
-// Build tree from flat task list
-// =============================================================================
+const NODE_CLS =
+  'flex h-full cursor-pointer items-center gap-[0.4rem] px-2 text-[length:var(--font-size-base)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
+const NODE_SELECTED_CLS = 'bg-[color-mix(in_srgb,var(--color-info)_8%,transparent)]'
+const TOGGLE_CLS =
+  'inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center border-none bg-transparent p-0 text-[length:calc(var(--font-size-base)*0.75)] text-[var(--text-muted)]'
+const TOGGLE_LEAF_CLS = 'cursor-default'
+const REF_CLS = 'shrink-0 font-[inherit] text-[length:inherit] text-[var(--text-muted)]'
+const TITLE_CLS =
+  'flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[length:inherit] text-[var(--text-primary)]'
+const HIGHLIGHT_CLS =
+  'rounded-sm bg-[color-mix(in_srgb,var(--color-warning-foreground)_30%,transparent)] px-px text-[inherit]'
+
+const CTX_BACKDROP_CLS = 'fixed inset-0 z-[999]'
+const CTX_MENU_CLS =
+  'z-[1000] min-w-[180px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]'
+const CTX_ITEM_CLS =
+  'block w-full cursor-pointer rounded border-none bg-transparent px-2.5 py-1.5 text-left font-[var(--font-sans)] text-[length:calc(var(--font-size-base)*0.72)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]'
 
 function buildTree(tasks: GobbyTask[], hideClosed: boolean): TreeNode[] {
   const filtered = hideClosed ? tasks.filter(t => getTaskBucket(t) !== 'closed') : tasks
@@ -44,10 +59,6 @@ function buildTree(tasks: GobbyTask[], hideClosed: boolean): TreeNode[] {
   return roots
 }
 
-// =============================================================================
-// Highlight matching text
-// =============================================================================
-
 function HighlightText({ text, search }: { text: string; search: string }) {
   if (!search) return <>{text}</>
   const idx = text.toLowerCase().indexOf(search.toLowerCase())
@@ -55,15 +66,11 @@ function HighlightText({ text, search }: { text: string; search: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <mark className="tree-node-highlight">{text.slice(idx, idx + search.length)}</mark>
+      <mark className={HIGHLIGHT_CLS}>{text.slice(idx, idx + search.length)}</mark>
       {text.slice(idx + search.length)}
     </>
   )
 }
-
-// =============================================================================
-// Custom node renderer
-// =============================================================================
 
 function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => void) {
   return function TaskNode({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
@@ -81,23 +88,23 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
       <div
         ref={dragHandle}
         style={style}
-        className={`tree-node ${node.isSelected ? 'tree-node--selected' : ''}`}
+        className={node.isSelected ? `${NODE_CLS} ${NODE_SELECTED_CLS}` : NODE_CLS}
         onClick={() => node.activate()}
         onContextMenu={handleContextMenu}
       >
         {node.isInternal ? (
           <button
-            className="tree-node-toggle"
+            className={TOGGLE_CLS}
             onClick={e => { e.stopPropagation(); node.toggle() }}
           >
             {node.isOpen ? '▾' : '▸'}
           </button>
         ) : (
-          <span className="tree-node-toggle tree-node-toggle--leaf" />
+          <span className={`${TOGGLE_CLS} ${TOGGLE_LEAF_CLS}`} />
         )}
         <StatusDot task={task} />
-        <span className="tree-node-ref">{task.ref}</span>
-        <span className="tree-node-title">
+        <span className={REF_CLS}>{task.ref}</span>
+        <span className={TITLE_CLS}>
           <HighlightText text={task.title} search={searchTerm} />
         </span>
         <TypeBadge type={task.task_type} />
@@ -106,20 +113,20 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
 
         {ctxMenu && (
           <>
-            <div className="tree-ctx-backdrop" onClick={() => setCtxMenu(null)} />
+            <div className={CTX_BACKDROP_CLS} onClick={() => setCtxMenu(null)} />
             <div
-              className="tree-ctx-menu"
+              className={CTX_MENU_CLS}
               style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
             >
               <button
-                className="tree-ctx-item"
+                className={CTX_ITEM_CLS}
                 onClick={e => {
                   e.stopPropagation()
                   setCtxMenu(null)
                   onSubtreeKanban!(task.id)
                 }}
               >
-                {'\u25A6'} View subtree in Kanban
+                {'▦'} View subtree in Kanban
               </button>
             </div>
           </>
@@ -129,19 +136,11 @@ function makeTaskNode(searchTerm: string, onSubtreeKanban?: (taskId: string) => 
   }
 }
 
-// =============================================================================
-// Search match function: match on title or ref
-// =============================================================================
-
 function searchMatch(node: { data: TreeNode }, term: string): boolean {
   const task = node.data.task
   const lower = term.toLowerCase()
   return task.title.toLowerCase().includes(lower) || task.ref.toLowerCase().includes(lower)
 }
-
-// =============================================================================
-// TaskTree
-// =============================================================================
 
 interface TaskTreeProps {
   tasks: GobbyTask[]
@@ -150,7 +149,6 @@ interface TaskTreeProps {
   onSubtreeKanban?: (taskId: string) => void
 }
 
-/** Check if making childId a child of parentId would create a cycle. */
 function wouldCreateCycle(childId: string, parentId: string, tasks: GobbyTask[]): boolean {
   const taskMap = new Map(tasks.map(t => [t.id, t]))
   let current = parentId
@@ -176,7 +174,6 @@ export function TaskTree({ tasks, onSelectTask, onReparent, onSubtreeKanban }: T
     const container = containerRef.current
     if (!container) return
     const observer = new ResizeObserver(([entry]) => {
-      // Subtract toolbar height (approx 40px) from container
       const available = entry.contentRect.height - 40
       if (available > 100) setTreeHeight(Math.round(available))
     })
@@ -188,9 +185,7 @@ export function TaskTree({ tasks, onSelectTask, onReparent, onSubtreeKanban }: T
     ({ dragIds, parentId }: { dragIds: string[]; parentId: string | null; index: number }) => {
       if (!onReparent) return
       for (const dragId of dragIds) {
-        // Prevent cycles
         if (parentId && wouldCreateCycle(dragId, parentId, tasks)) continue
-        // Don't re-parent to self
         if (parentId === dragId) continue
         onReparent(dragId, parentId)
       }
@@ -199,30 +194,30 @@ export function TaskTree({ tasks, onSelectTask, onReparent, onSubtreeKanban }: T
   )
 
   return (
-    <div className="task-tree-container" ref={containerRef}>
-      <div className="task-tree-toolbar">
+    <div className={CONTAINER_CLS} ref={containerRef}>
+      <div className={TOOLBAR_CLS}>
         <input
           type="text"
-          className="task-tree-search"
+          className={SEARCH_CLS}
           placeholder="Filter tree..."
           value={searchTerm}
           onChange={e => setSearchTerm(e.target.value)}
         />
         <button
-          className="task-tree-toolbar-btn"
+          className={TOOLBAR_BTN_CLS}
           onClick={() => treeRef.current?.openAll()}
           title="Expand all"
         >
           Expand all
         </button>
         <button
-          className="task-tree-toolbar-btn"
+          className={TOOLBAR_BTN_CLS}
           onClick={() => treeRef.current?.closeAll()}
           title="Collapse all"
         >
           Collapse all
         </button>
-        <label className="task-tree-toolbar-check">
+        <label className={TOOLBAR_CHECK_CLS}>
           <input
             type="checkbox"
             checked={hideClosed}
