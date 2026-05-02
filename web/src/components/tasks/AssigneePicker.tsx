@@ -1,9 +1,29 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { formatAssigneeDisplay, getBaseUrl, shortId, agentIcon } from './assigneeUtils'
+import { cn } from '../../lib/utils'
 
-// =============================================================================
-// Types
-// =============================================================================
+const ROOT_CLS = 'relative'
+const TRIGGER_CLS = 'inline-flex cursor-pointer items-center gap-[5px] rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-0.5 font-[inherit] text-[length:var(--text-sm)] text-[var(--text-primary)] transition-colors duration-150 hover:border-[var(--accent)] pointer-coarse:min-h-11'
+const ICON_CLS = 'text-[length:var(--text-md)]'
+const VALUE_CLS = 'max-w-[140px] overflow-hidden text-ellipsis whitespace-nowrap'
+const CHEVRON_CLS = 'text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+
+const DROPDOWN_CLS = 'absolute left-0 top-full z-[100] mt-1 max-h-[300px] min-w-[220px] overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-primary)] p-1 shadow-[var(--shadow-md)]'
+const MODE_CLS = 'mb-1 flex gap-px border-b border-[var(--border)] p-1'
+const MODE_BTN_CLS = 'flex-1 cursor-pointer rounded-sm border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-[3px] font-[inherit] text-[length:var(--text-xs)] text-[var(--text-secondary)] pointer-coarse:min-h-11'
+const MODE_BTN_ACTIVE_CLS = 'border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[color-mix(in_srgb,var(--color-info)_15%,transparent)] text-[var(--color-info)]'
+
+const SECONDARY_INPUT_CLS = 'mx-2 my-1 block w-[calc(100%-1rem)] rounded-sm border border-[var(--border)] bg-[var(--bg-secondary)] px-2 py-1 font-[inherit] text-[length:var(--text-xs)] text-[var(--text-primary)] pointer-coarse:min-h-11'
+
+const OPTION_CLS = 'flex w-full cursor-pointer items-center gap-1.5 rounded border-0 bg-transparent px-2 py-1 text-left font-[inherit] text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+const OPTION_ACTIVE_CLS = 'bg-[color-mix(in_srgb,var(--color-info)_10%,transparent)] text-[var(--color-info)]'
+const OPTION_ICON_CLS = 'shrink-0 text-[length:var(--text-md)]'
+const OPTION_LABEL_CLS = 'flex-1 overflow-hidden text-ellipsis whitespace-nowrap'
+const OPTION_ID_CLS = 'font-[inherit] text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+
+const CUSTOM_ROW_CLS = 'flex gap-1 px-2 py-1'
+const CUSTOM_INPUT_CLS = 'flex-1 rounded-sm border border-[var(--border)] bg-[var(--bg-secondary)] px-1.5 py-[3px] font-[inherit] text-[length:var(--text-xs)] text-[var(--text-primary)] pointer-coarse:min-h-11'
+const CUSTOM_BTN_CLS = 'cursor-pointer rounded-sm border border-[color-mix(in_srgb,var(--color-info)_30%,transparent)] bg-[var(--color-info-soft)] px-2 py-[3px] font-[inherit] text-[length:var(--text-xs)] text-[var(--color-info)] disabled:cursor-default disabled:opacity-40 pointer-coarse:min-h-11'
 
 interface KnownAgent {
   id: string
@@ -28,7 +48,6 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
   const [showCustom, setShowCustom] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // Fetch known agents from recent sessions
   const fetchAgents = useCallback(async () => {
     try {
       const baseUrl = getBaseUrl()
@@ -66,7 +85,6 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
     if (isOpen) fetchAgents()
   }, [isOpen, fetchAgents])
 
-  // Close on outside click
   useEffect(() => {
     if (!isOpen) return
     const handler = (e: MouseEvent) => {
@@ -106,39 +124,37 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
     setSecondaryAssignee('')
   }
 
-  // Parse joint assignee display
   const displayAssignee = currentAssignee
     ? formatAssigneeDisplay(currentAssignee, currentAgentName)
     : 'Unassigned'
 
   return (
-    <div className="assignee-picker" ref={dropdownRef}>
+    <div className={ROOT_CLS} ref={dropdownRef}>
       <button
-        className="assignee-picker-trigger"
+        className={TRIGGER_CLS}
         onClick={() => setIsOpen(!isOpen)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={isOpen ? 'assignee-picker-dropdown' : undefined}
       >
-        <span className="assignee-picker-icon">
-          {currentAssignee ? agentIcon(currentAgentName ? 'agent' : 'session') : '\u25CB'}
+        <span className={ICON_CLS}>
+          {currentAssignee ? agentIcon(currentAgentName ? 'agent' : 'session') : '○'}
         </span>
-        <span className="assignee-picker-value">{displayAssignee}</span>
-        <span className="assignee-picker-chevron">{isOpen ? '\u25BE' : '\u25B8'}</span>
+        <span className={VALUE_CLS}>{displayAssignee}</span>
+        <span className={CHEVRON_CLS}>{isOpen ? '▾' : '▸'}</span>
       </button>
 
       {isOpen && (
-        <div className="assignee-picker-dropdown" id="assignee-picker-dropdown" role="listbox">
-          {/* Mode toggle */}
-          <div className="assignee-picker-mode">
+        <div className={DROPDOWN_CLS} id="assignee-picker-dropdown" role="listbox">
+          <div className={MODE_CLS}>
             <button
-              className={`assignee-picker-mode-btn ${mode === 'single' ? 'active' : ''}`}
+              className={cn(MODE_BTN_CLS, mode === 'single' && MODE_BTN_ACTIVE_CLS)}
               onClick={() => setMode('single')}
             >
               Single
             </button>
             <button
-              className={`assignee-picker-mode-btn ${mode === 'joint' ? 'active' : ''}`}
+              className={cn(MODE_BTN_CLS, mode === 'joint' && MODE_BTN_ACTIVE_CLS)}
               onClick={() => setMode('joint')}
             >
               Joint
@@ -147,7 +163,7 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
 
           {mode === 'joint' && (
             <input
-              className="assignee-picker-secondary"
+              className={SECONDARY_INPUT_CLS}
               placeholder="Secondary assignee..."
               value={secondaryAssignee}
               onChange={e => setSecondaryAssignee(e.target.value)}
@@ -155,41 +171,38 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
             />
           )}
 
-          {/* Unassigned option */}
           <button
-            className={`assignee-picker-option ${!currentAssignee ? 'active' : ''}`}
+            className={cn(OPTION_CLS, !currentAssignee && OPTION_ACTIVE_CLS)}
             onClick={() => handleSelect(null)}
           >
-            <span className="assignee-picker-option-icon">{'\u25CB'}</span>
+            <span className={OPTION_ICON_CLS}>○</span>
             <span>Unassigned</span>
           </button>
 
-          {/* Known agents */}
           {agents.map(agent => (
             <button
               key={agent.id}
-              className={`assignee-picker-option ${currentAssignee?.split('+')[0] === agent.id ? 'active' : ''}`}
+              className={cn(OPTION_CLS, currentAssignee?.split('+')[0] === agent.id && OPTION_ACTIVE_CLS)}
               onClick={() => handleSelect(agent)}
             >
-              <span className="assignee-picker-option-icon">{agentIcon(agent.type)}</span>
-              <span className="assignee-picker-option-label">{agent.label}</span>
-              <span className="assignee-picker-option-id">{shortId(agent.id)}</span>
+              <span className={OPTION_ICON_CLS}>{agentIcon(agent.type)}</span>
+              <span className={OPTION_LABEL_CLS}>{agent.label}</span>
+              <span className={OPTION_ID_CLS}>{shortId(agent.id)}</span>
             </button>
           ))}
 
-          {/* Custom entry */}
           <button
-            className={`assignee-picker-option assignee-picker-custom-toggle ${showCustom ? 'active' : ''}`}
+            className={cn(OPTION_CLS, showCustom && OPTION_ACTIVE_CLS)}
             onClick={() => setShowCustom(!showCustom)}
           >
-            <span className="assignee-picker-option-icon">{'\u270E'}</span>
+            <span className={OPTION_ICON_CLS}>✎</span>
             <span>Custom...</span>
           </button>
 
           {showCustom && (
-            <div className="assignee-picker-custom">
+            <div className={CUSTOM_ROW_CLS}>
               <input
-                className="assignee-picker-custom-input"
+                className={CUSTOM_INPUT_CLS}
                 placeholder="Session ID or name..."
                 value={customValue}
                 onChange={e => setCustomValue(e.target.value)}
@@ -197,7 +210,7 @@ export function AssigneePicker({ currentAssignee, currentAgentName, onAssign }: 
                 autoFocus
               />
               <button
-                className="assignee-picker-custom-btn"
+                className={CUSTOM_BTN_CLS}
                 onClick={handleCustomSubmit}
                 disabled={!customValue.trim()}
               >

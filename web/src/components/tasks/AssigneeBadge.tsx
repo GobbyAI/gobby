@@ -1,5 +1,9 @@
 import { agentIcon, formatAssigneeDisplay } from './assigneeUtils'
 
+const BADGE_CLS = 'inline-flex items-center gap-[3px] max-w-20 overflow-hidden text-[length:var(--text-2xs)] text-[var(--text-muted)]'
+const ICON_CLS = 'shrink-0 text-[length:var(--text-xs)]'
+const LABEL_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
+
 export function AssigneeBadge({
   assignee,
   agentName,
@@ -14,9 +18,9 @@ export function AssigneeBadge({
   const type = agentName ? 'agent' : 'session'
 
   return (
-    <span className="assignee-badge" title={assignee}>
-      <span className="assignee-badge-icon">{isJoint ? '\u{1F91D}' : agentIcon(type)}</span>
-      <span className="assignee-badge-label">{display}</span>
+    <span className={BADGE_CLS} title={assignee}>
+      <span className={ICON_CLS}>{isJoint ? '\u{1F91D}' : agentIcon(type)}</span>
+      <span className={LABEL_CLS}>{display}</span>
     </span>
   )
 }
