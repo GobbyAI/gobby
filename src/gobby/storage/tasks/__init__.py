@@ -45,8 +45,10 @@ from gobby.storage.tasks._lifecycle_events import (
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import (
     PRIORITY_MAP,
+    TASK_TYPE_CHOICES,
     UNSET,
     VALID_CATEGORIES,
+    VALID_TASK_TYPES,
     Isolation,
     Lifecycle,
     MaybeUnset,
@@ -59,6 +61,7 @@ from gobby.storage.tasks._models import (
     UnsetType,
     normalize_priority,
     validate_category,
+    validate_task_type,
 )
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
 from gobby.storage.tasks._stage_registry import (
@@ -128,9 +131,12 @@ __all__ = [
     "list_lifecycle_events",
     # Constants
     "PRIORITY_MAP",
+    "TASK_TYPE_CHOICES",
     "VALID_CATEGORIES",
+    "VALID_TASK_TYPES",
     "MaybeUnset",
     "UNSET",
     "UnsetType",
     "ReviewPolicy",
+    "validate_task_type",
 ]

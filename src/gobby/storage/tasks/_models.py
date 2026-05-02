@@ -38,6 +38,34 @@ VALID_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
+# Valid task types exposed across storage, CLI, HTTP, and MCP creation surfaces.
+TASK_TYPE_CHOICES: tuple[str, ...] = (
+    "task",
+    "bug",
+    "feature",
+    "epic",
+    "chore",
+    "refactor",
+    "simple_fix",
+    "research_spike",
+    "architecture_doc",
+    "prd_doc",
+)
+VALID_TASK_TYPES: frozenset[str] = frozenset(TASK_TYPE_CHOICES)
+
+
+def validate_task_type(task_type: str | None) -> str:
+    """Validate and normalize a task type value."""
+    if task_type is None:
+        raise ValueError("task_type is required")
+    if not isinstance(task_type, str):
+        raise ValueError("task_type must be a string")
+    normalized = task_type.lower().strip()
+    if normalized not in VALID_TASK_TYPES:
+        allowed = ", ".join(TASK_TYPE_CHOICES)
+        raise ValueError(f"Invalid task_type '{task_type}'. Expected one of: {allowed}.")
+    return normalized
+
 
 class Lifecycle(StrEnum):
     open = "open"
@@ -160,7 +188,9 @@ class Task:
         "escalated",
     ]
     priority: int
-    task_type: str  # bug, feature, task, epic, chore, refactor
+    # task, bug, feature, epic, chore, refactor, simple_fix, research_spike,
+    # architecture_doc, prd_doc
+    task_type: str
     created_at: str
     updated_at: str
     # Optional fields
@@ -214,6 +244,7 @@ class Task:
 
     def __post_init__(self) -> None:
         """Fill canonical lifecycle stage for manually constructed legacy-style tasks."""
+        self.task_type = validate_task_type(self.task_type)
         if self.lifecycle_stage is None:
             self.lifecycle_stage = lifecycle_stage_from_status(self.status)
         self.lifecycle = Lifecycle(self.lifecycle)

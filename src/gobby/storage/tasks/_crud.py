@@ -23,6 +23,7 @@ from gobby.storage.tasks._models import (
     Task,
     TaskIDCollisionError,
     TaskNotFoundError,
+    validate_task_type,
 )
 from gobby.tasks.state_semantics import (
     lifecycle_stage_from_status,
@@ -163,6 +164,7 @@ def create_task(
     task_id = ""
 
     # Default validation status
+    task_type = validate_task_type(task_type)
     validation_status = "pending" if validation_criteria else None
     canonical_owner = _derive_claimed_by_session_id(
         db,
@@ -539,7 +541,7 @@ def update_task(
         params.append(priority)
     if task_type is not UNSET:
         updates.append("task_type = ?")
-        params.append(task_type)
+        params.append(validate_task_type(cast(str | None, task_type)))
     if assignee is not UNSET:
         updates.append("assignee = ?")
         params.append(assignee)

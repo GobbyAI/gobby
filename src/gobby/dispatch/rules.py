@@ -18,6 +18,17 @@ from gobby.dispatch.prompts import PROMPT_BUILDERS
 Rule = Callable[[object, object], Action | None]
 
 _SKIP_PREFIX = "stage-:"
+NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION = {
+    "research_spike": ("ideation.ready", "research.ready", "prd.done", "manifest_exhausted"),
+    "prd_doc": ("ideation.ready", "prd.done", "manifest_exhausted"),
+    "architecture_doc": ("research.ready", "architecture.done", "manifest_exhausted"),
+}
+DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS = {
+    "ideation": "ideation_no_agent",
+    "research": "research_no_agent",
+    "architecture": "architecture_no_agent",
+    "prd": "prd_no_agent",
+}
 
 
 def evaluate(task: object, context: object, rules: Sequence[Rule] | None = None) -> Action | None:
@@ -176,11 +187,18 @@ def disabled_agent_escalation_rule(task: object, context: object) -> Action | No
         return None
     if stage_name in {"development", "holistic_qa"}:
         return None
-    if _mapping_field(_field(context, "stage_registry", {}), str(stage_name)) is None:
+    registry_entry = _mapping_field(_field(context, "stage_registry", {}), str(stage_name))
+    if registry_entry is None:
+        return None
+    if not _field(registry_entry, "default_agent"):
         return None
     if stage_agent_available(context, str(stage_name)):
         return None
-    return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_no_agent")
+    reason = DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS.get(
+        str(stage_name),
+        f"{stage_name}_no_agent",
+    )
+    return EscalateAction(task_id=_task_id(task), reason=reason)
 
 
 BASE_RULES: list[Rule] = [
@@ -352,6 +370,8 @@ def _is_child_terminal_or_parked(child: object) -> bool:
 
 __all__ = [
     "BASE_RULES",
+    "DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS",
+    "NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION",
     "Rule",
     "all_leaves_holistic_rule",
     "dev_rule",

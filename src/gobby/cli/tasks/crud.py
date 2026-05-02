@@ -20,8 +20,11 @@ from gobby.cli.tasks._utils import (
     sort_tasks_for_tree,
 )
 from gobby.cli.utils import resolve_project_ref
+from gobby.storage.tasks import TASK_TYPE_CHOICES
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.project_context import get_project_context
+
+TASK_TYPE_CHOICE = click.Choice(TASK_TYPE_CHOICES)
 
 
 @click.command("list")
@@ -468,7 +471,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 @click.argument("title")
 @click.option("--description", "-d", help="Task description")
 @click.option("--priority", "-p", type=int, default=2, help="Priority (1=High, 2=Med, 3=Low)")
-@click.option("--type", "-t", "task_type", default="task", help="Task type")
+@click.option("--type", "-t", "task_type", type=TASK_TYPE_CHOICE, default="task", help="Task type")
 @click.option("--depends-on", "-D", multiple=True, help="Task(s) this task depends on (#N, UUID)")
 @click.option("--project", "project_ref", help="Target project (name or UUID)")
 def create_task(
@@ -604,7 +607,8 @@ def show_task(task_id: str) -> None:
 @click.option(
     "--task-type",
     "task_type",
-    help="New task type (task, bug, feature, epic, chore, refactor)",
+    type=TASK_TYPE_CHOICE,
+    help="New task type",
 )
 def update_task(
     task_id: str,

@@ -10,13 +10,18 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from gobby.storage.task_dependencies import (
     DependencyCycleError,
     TaskDependencyManager,
 )
-from gobby.storage.tasks._models import VALID_CATEGORIES, TaskNotFoundError
+from gobby.storage.tasks._models import (
+    TASK_TYPE_CHOICES,
+    VALID_CATEGORIES,
+    TaskNotFoundError,
+    validate_task_type,
+)
 from gobby.storage.tasks._stage_states import (
     IllegalManifestMutationError,
     IllegalStageTransitionError,
@@ -46,7 +51,9 @@ class TaskCreateRequest(BaseModel):
         default=2, description="Priority (0=Critical, 1=High, 2=Medium, 3=Low, 4=Backlog)"
     )
     task_type: str = Field(
-        default="task", description="Task type (task, bug, feature, epic, chore)"
+        default="task",
+        description="Task type",
+        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
     )
     parent_task_id: str | None = Field(default=None, description="Parent task ID")
     labels: list[str] | None = Field(default=None, description="Labels for categorization")
@@ -60,6 +67,11 @@ class TaskCreateRequest(BaseModel):
         default=None, description="Project ID (resolved from cwd if omitted)"
     )
 
+    @field_validator("task_type")
+    @classmethod
+    def _validate_task_type(cls, value: str) -> str:
+        return validate_task_type(value)
+
 
 class TaskUpdateRequest(BaseModel):
     """Request body for updating a task."""
@@ -71,7 +83,11 @@ class TaskUpdateRequest(BaseModel):
         description="Compatibility field only. Use claim/review/escalate/close/reopen endpoints instead.",
     )
     priority: int | None = Field(default=None, description="New priority")
-    task_type: str | None = Field(default=None, description="New task type")
+    task_type: str | None = Field(
+        default=None,
+        description="New task type",
+        json_schema_extra={"enum": list(TASK_TYPE_CHOICES)},
+    )
     assignee: str | None = Field(
         default=None,
         description="Compatibility field only. Use /claim or /release-claim endpoints instead.",
@@ -80,6 +96,11 @@ class TaskUpdateRequest(BaseModel):
     parent_task_id: str | None = Field(default=None, description="New parent task ID")
     category: str | None = Field(default=None, description="New category")
     validation_criteria: str | None = Field(default=None, description="New validation criteria")
+
+    @field_validator("task_type")
+    @classmethod
+    def _validate_task_type(cls, value: str | None) -> str | None:
+        return validate_task_type(value) if value is not None else None
 
 
 class TaskClaimRequest(BaseModel):

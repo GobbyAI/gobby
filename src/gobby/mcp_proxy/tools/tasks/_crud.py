@@ -11,10 +11,11 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_dependencies import DependencyCycleError
-from gobby.storage.tasks import VALID_CATEGORIES, TaskNotFoundError
+from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
 
 logger = logging.getLogger(__name__)
 TASK_CATEGORY_ENUM = tuple(sorted(VALID_CATEGORIES))
+TASK_TYPE_ENUM = TASK_TYPE_CHOICES
 
 
 def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -56,7 +57,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             title: Task title
             description: Detailed description
             priority: Priority level (1=High, 2=Medium, 3=Low)
-            task_type: Task type (task, bug, feature, epic)
+            task_type: Task type
             parent_task_id: Optional parent task ID
             blocks: List of task IDs that this new task blocks
             depends_on: List of task IDs that this new task depends on (must complete first)
@@ -258,7 +259,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "task_type": {
                     "type": "string",
-                    "description": "Task type (task, bug, feature, epic, chore, refactor)",
+                    "description": "Task type",
+                    "enum": list(TASK_TYPE_ENUM),
                     "default": "task",
                 },
                 "parent_task_id": {
@@ -548,7 +550,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 },
                 "task_type": {
                     "type": "string",
-                    "description": "Task type (task, bug, feature, epic, chore, refactor)",
+                    "description": "Task type",
+                    "enum": list(TASK_TYPE_ENUM),
                     "default": None,
                 },
                 "workflow_name": {

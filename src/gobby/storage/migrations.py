@@ -144,6 +144,12 @@ _DEFAULT_STAGE_MANIFESTS = {
     "chore": ("development", "pr", "merge"),
     "task": ("development", "pr", "merge"),
 }
+NEW_TASK_TYPE_DEFAULTS = {
+    "simple_fix": ["development", "pr", "merge"],
+    "research_spike": ["ideation", "research", "prd"],
+    "architecture_doc": ["research", "architecture"],
+    "prd_doc": ["ideation", "prd"],
+}
 
 
 def _table_columns(db: LocalDatabase, table_name: str) -> set[str]:
@@ -474,6 +480,14 @@ def _resolve_conductor_stage_state(
     )
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int | str):
+        return int(value)
+    raise TypeError(f"Expected int-compatible migration value, got {type(value).__name__}")
+
+
 def _stage_caps_for_row(row: dict[str, object], stage_name: str) -> tuple[int | None, int | None]:
     max_work_attempts = None
     max_review_rounds = None
@@ -490,8 +504,8 @@ def _stage_caps_for_row(row: dict[str, object], stage_name: str) -> tuple[int | 
         max_review_rounds = row.get("max_review_rounds")
 
     return (
-        int(max_work_attempts) if max_work_attempts is not None else None,
-        int(max_review_rounds) if max_review_rounds is not None else None,
+        _optional_int(max_work_attempts),
+        _optional_int(max_review_rounds),
     )
 
 
@@ -886,6 +900,19 @@ def _add_task_stage_registry_schema(db: LocalDatabase) -> None:
         _backfill_task_stage_states(db)
 
 
+def _seed_new_task_type_defaults(db: LocalDatabase) -> None:
+    for task_type, stages_for_type in NEW_TASK_TYPE_DEFAULTS.items():
+        db.execute("DELETE FROM task_type_default_stages WHERE task_type = ?", (task_type,))
+        for position, stage_name in enumerate(stages_for_type, start=1):
+            db.execute(
+                """
+                INSERT INTO task_type_default_stages (task_type, stage_name, position)
+                VALUES (?, ?, ?)
+                """,
+                (task_type, stage_name, position),
+            )
+
+
 MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
     *_REGISTRY_MIGRATIONS,
     (
@@ -955,6 +982,11 @@ MIGRATIONS: list[tuple[int, str, MigrationAction]] = [
         234,
         "Add task stage registry, manifests, and lifecycle report fields",
         _add_task_stage_registry_schema,
+    ),
+    (
+        235,
+        "Seed Phase 5 task type default stage manifests",
+        _seed_new_task_type_defaults,
     ),
 ]
 
