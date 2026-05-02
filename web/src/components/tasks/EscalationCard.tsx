@@ -276,7 +276,7 @@ export function EscalationCard({ task, targetStatus, onResolve }: EscalationCard
       {/* Submit */}
       <div className="escalation-card-actions">
         <button
-          className="task-detail-action-btn task-detail-action-btn--primary"
+          className="flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11"
           onClick={handleResolve}
           disabled={!canSubmit}
         >

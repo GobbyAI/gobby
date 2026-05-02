@@ -116,7 +116,7 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
       <div className="task-create-modal">
         <div className="task-create-header">
           <h3 className="task-create-title">{defaults?.title ? 'Clone Task' : 'New Task'}</h3>
-          <button className="task-detail-close" onClick={handleClose} title="Close">
+          <button className="flex h-8 w-8 cursor-pointer items-center justify-center rounded border-0 bg-transparent text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11" onClick={handleClose} title="Close">
             <CloseIcon />
           </button>
         </div>
@@ -221,14 +221,14 @@ export function TaskCreateForm({ isOpen, tasks, defaults, onSubmit, onClose }: T
           <div className="task-create-actions">
             <button
               type="button"
-              className="task-detail-action-btn task-detail-action-btn--default"
+              className="flex-1 cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11"
               onClick={handleClose}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="task-detail-action-btn task-detail-action-btn--primary"
+              className="flex-1 cursor-pointer rounded-md border border-[var(--accent)] bg-[var(--accent)] px-3 py-1.5 font-[inherit] text-[length:calc(var(--font-size-base)*0.8)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[var(--accent-hover)] disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11"
               disabled={!title.trim() || submitting}
             >
               {submitting ? 'Creating...' : 'Create Task'}

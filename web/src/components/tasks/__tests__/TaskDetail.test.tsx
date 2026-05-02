@@ -5,7 +5,6 @@ import { TaskDetail } from '../TaskDetail'
 import type { GobbyTaskDetail } from '../../../hooks/useTasks'
 
 // Mock CSS imports
-vi.mock('../task-detail.css', () => ({}))
 vi.mock('../task-execution.css', () => ({}))
 vi.mock('../task-advanced.css', () => ({}))
 
