@@ -57,6 +57,11 @@ instructions: |
     repair stale file paths, and resolve contradictions with the codebase. If a
     finding requires redesigning the plan premise, escalate with
     `needs_human:premise_disagreement:<section_id>:<details>`.
+  - Treat any `<!-- gobby:discovery-stage:*:start -->` marker blocks in the
+    parent task description as authoritative upstream context. Preserve their
+    stated constraints, evidence, architecture decisions, PRD scope, and
+    planning handoff notes unless the task description explicitly supersedes
+    them; call out contradictions instead of silently choosing one source.
   - After any adversary finding, sweep the whole plan for that finding class
     before resubmitting. If one missing `Target:` file is found, scan every
     deliverable for mentioned paths missing from target inventory. If one

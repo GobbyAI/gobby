@@ -19,6 +19,22 @@ __all__ = ["get_bundled_agents_path", "sync_bundled_agents"]
 
 logger = logging.getLogger(__name__)
 
+_DISCOVERY_PLACEHOLDER_AGENTS = frozenset(
+    {
+        "analyst",
+        "researcher",
+        "architect",
+        "product-manager",
+    }
+)
+
+
+def _is_legacy_discovery_placeholder(name: str, definition_json: str, enabled: bool) -> bool:
+    """Return True for bundled disabled discovery placeholders that must become live."""
+    if name not in _DISCOVERY_PLACEHOLDER_AGENTS or enabled:
+        return False
+    return "PLACEHOLDER" in definition_json or "placeholder_agent:" in definition_json
+
 
 def get_bundled_agents_path() -> Path:
     """Get the path to bundled agents directory.
@@ -35,8 +51,9 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
     """Sync bundled agent definitions from install/shared/workflows/agents/ to the database.
 
     Creates installed rows directly from template files. Installed rows are
-    overwritten when the template changes (preserving the user's enabled toggle).
-    Soft-deleted rows are not restored.
+    overwritten when the template changes (preserving the user's enabled toggle,
+    except for legacy disabled discovery placeholders that are upgraded to real
+    enabled agents). Soft-deleted rows are not restored.
 
     Args:
         db: Database connection
@@ -95,11 +112,23 @@ def sync_bundled_agents(db: DatabaseProtocol) -> dict[str, Any]:
                     result["skipped"] += 1
                     continue
 
-                if existing.source == "installed" and existing.definition_json != body_json:
+                force_enable = _is_legacy_discovery_placeholder(
+                    name,
+                    existing.definition_json,
+                    existing.enabled,
+                )
+                if existing.source == "installed" and (
+                    existing.definition_json != body_json or force_enable
+                ):
+                    update_fields: dict[str, Any] = {
+                        "definition_json": body_json,
+                        "description": body.description,
+                    }
+                    if force_enable:
+                        update_fields["enabled"] = body.enabled
                     manager.update(
                         existing.id,
-                        definition_json=body_json,
-                        description=body.description,
+                        **update_fields,
                     )
                     result["updated"] += 1
                     logger.debug(

@@ -38,11 +38,85 @@ def _prompt(task: object, context: Mapping[str, object], *, role: str, contract:
 
 
 def _planner(task: object, context: Mapping[str, object]) -> str:
-    return _prompt(
+    base = _prompt(
         task,
         context,
         role="Revise the plan",
         contract="planner.yaml agent",
+    )
+    return (
+        f"{base}\nTreat discovery marker blocks in the task description as "
+        "authoritative upstream context for planning."
+    )
+
+
+def _discovery_stage(
+    task: object,
+    context: Mapping[str, object],
+    *,
+    role: str,
+    contract: str,
+    stage_name: str,
+    marker_name: str,
+    section_title: str,
+) -> str:
+    base = _prompt(task, context, role=role, contract=contract)
+    return (
+        f"{base}\n"
+        "Use assigned_task_id as the task to claim, read, update, and complete.\n"
+        "Treat existing discovery marker blocks in the task description as "
+        "authoritative upstream context.\n"
+        f"Update only the {marker_name} marker block and include one "
+        f"`## {section_title}` section.\n"
+        f"Complete the stage with stage_name='{stage_name}'."
+    )
+
+
+def _analyst(task: object, context: Mapping[str, object]) -> str:
+    return _discovery_stage(
+        task,
+        context,
+        role="Run ideation discovery",
+        contract="analyst.yaml agent",
+        stage_name="ideation",
+        marker_name="ideation",
+        section_title="Discovery Brief",
+    )
+
+
+def _researcher(task: object, context: Mapping[str, object]) -> str:
+    return _discovery_stage(
+        task,
+        context,
+        role="Run research discovery",
+        contract="researcher.yaml agent",
+        stage_name="research",
+        marker_name="research",
+        section_title="Research Findings",
+    )
+
+
+def _architect(task: object, context: Mapping[str, object]) -> str:
+    return _discovery_stage(
+        task,
+        context,
+        role="Run architecture discovery",
+        contract="architect.yaml agent",
+        stage_name="architecture",
+        marker_name="architecture",
+        section_title="Architecture Brief",
+    )
+
+
+def _product_manager(task: object, context: Mapping[str, object]) -> str:
+    return _discovery_stage(
+        task,
+        context,
+        role="Run PRD discovery",
+        contract="product-manager.yaml agent",
+        stage_name="prd",
+        marker_name="prd",
+        section_title="Product Reference Document",
     )
 
 
@@ -128,6 +202,8 @@ def _default(task: object, context: Mapping[str, object]) -> str:
 
 
 PROMPT_BUILDERS: dict[str, PromptBuilder] = {
+    "analyst": _analyst,
+    "architect": _architect,
     "backend-developer": _developer,
     "default": _default,
     "developer": _developer,
@@ -139,9 +215,11 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "plan-adversary": _plan_adversary,
     "plan-reviewer": _plan_adversary,
     "planner": _planner,
+    "product-manager": _product_manager,
     "qa-dev": _qa_dev,
     "qa-reviewer": _qa_reviewer,
     "reviewer": _holistic_reviewer,
+    "researcher": _researcher,
     "test-architect": _test_architect,
 }
 

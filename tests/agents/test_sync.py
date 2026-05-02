@@ -109,6 +109,85 @@ class TestSyncBundledAgents:
         assert body.description == "Updated description"
 
     @pytest.mark.unit
+    def test_sync_enables_legacy_discovery_placeholder(self, tmp_path: Path) -> None:
+        """Old disabled discovery placeholders should become enabled real agents on upgrade."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        yaml_file = agents_dir / "analyst.yaml"
+        yaml_file.write_text(
+            "name: analyst\n"
+            "description: PLACEHOLDER ideation agent\n"
+            "enabled: false\n"
+            "provider: claude\n"
+            "model: haiku\n"
+            "instructions: |\n"
+            "  PLACEHOLDER\n"
+            "  placeholder_agent:analyst:not_implemented\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+
+            yaml_file.write_text(
+                "name: analyst\n"
+                "description: Discovery analyst\n"
+                "enabled: true\n"
+                "provider: codex\n"
+                "model: gpt-5.5\n"
+                "reasoning_effort: high\n"
+                "instructions: Real ideation agent\n"
+            )
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        mgr = LocalWorkflowDefinitionManager(db)
+        row = mgr.get_by_name("analyst")
+        assert row is not None
+        assert row.enabled is True
+        body = AgentDefinitionBody.model_validate_json(row.definition_json)
+        assert body.enabled is True
+        assert body.provider == "codex"
+
+    @pytest.mark.unit
+    def test_sync_preserves_user_disabled_non_placeholder_agent(self, tmp_path: Path) -> None:
+        """Template updates should not re-enable unrelated user-disabled bundled agents."""
+        db = _setup_db(tmp_path)
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        yaml_file = agents_dir / "test-agent.yaml"
+        yaml_file.write_text(
+            "name: test-agent\n"
+            "description: A test agent\n"
+            "enabled: true\n"
+            "provider: claude\n"
+            "mode: interactive\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            mgr = LocalWorkflowDefinitionManager(db)
+            row = mgr.get_by_name("test-agent")
+            assert row is not None
+            mgr.update(row.id, enabled=False)
+
+            yaml_file.write_text(
+                "name: test-agent\n"
+                "description: Updated description\n"
+                "enabled: true\n"
+                "provider: claude\n"
+                "mode: interactive\n"
+            )
+            result = sync_bundled_agents(db)
+
+        assert result["updated"] == 1
+        row = LocalWorkflowDefinitionManager(db).get_by_name("test-agent")
+        assert row is not None
+        assert row.enabled is False
+
+    @pytest.mark.unit
     def test_sync_multiple_agents(self, tmp_path: Path) -> None:
         """Test syncing multiple agent files."""
         db = _setup_db(tmp_path)
@@ -234,6 +313,10 @@ class TestSyncBundledAgents:
         assert all(
             n in names
             for n in (
+                "analyst",
+                "researcher",
+                "architect",
+                "product-manager",
                 "requirements-analyst",
                 "planner",
                 "plan-adversary",
@@ -241,5 +324,4 @@ class TestSyncBundledAgents:
             )
         )
         assert "conductor" not in names
-        assert "developer" not in names
         assert "pipeline-worker" not in names

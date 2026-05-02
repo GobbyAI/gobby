@@ -37,7 +37,7 @@ def _context(stage_name: str, *, enabled: bool | None):
     )
 
 
-def test_disabled_placeholder_treated_as_missing() -> None:
+def test_disabled_default_agent_treated_as_missing() -> None:
     from gobby.dispatch.rules import stage_agent_available  # noqa: PLC0415
 
     assert stage_agent_available(_context("ideation", enabled=True), "ideation") is True
@@ -54,7 +54,7 @@ def test_disabled_placeholder_treated_as_missing() -> None:
         ("prd", "prd_no_agent"),
     ],
 )
-def test_disabled_placeholder_routes_to_disabled_agent_escalation_rule(
+def test_disabled_default_agent_routes_to_stage_generic_escalation_rule(
     stage_name: str,
     reason: str,
 ) -> None:

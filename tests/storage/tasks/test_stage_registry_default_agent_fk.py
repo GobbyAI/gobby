@@ -1,4 +1,4 @@
-"""Red tests for discovery-stage default-agent resolution."""
+"""Tests for discovery-stage default-agent resolution."""
 
 from __future__ import annotations
 
@@ -45,5 +45,5 @@ def test_discovery_stage_default_agents_resolve(tmp_path: Path) -> None:
         DISCOVERY_DEFAULT_AGENTS
     )
     assert {row["stage_name"]: bool(row["enabled"]) for row in rows} == dict.fromkeys(
-        DISCOVERY_DEFAULT_AGENTS, False
+        DISCOVERY_DEFAULT_AGENTS, True
     )
