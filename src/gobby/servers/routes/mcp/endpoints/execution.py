@@ -70,6 +70,52 @@ def _get_discovery_session_id(arguments: Any, request: Request | None = None) ->
     return _get_requested_session_id(arguments, request)
 
 
+def _session_ref_seq_num(session_ref: str | None) -> int | None:
+    if not session_ref:
+        return None
+    raw = session_ref[1:] if session_ref.startswith("#") else session_ref
+    return int(raw) if raw.isdigit() else None
+
+
+def _derive_project_from_unique_session_seq(
+    server: "HTTPServer", session_ref: str | None
+) -> str | None:
+    """Return a project_id for an unscoped #N session ref when it is unambiguous."""
+    seq_num = _session_ref_seq_num(session_ref)
+    session_manager = server.session_manager if server.session_manager else None
+    db = session_manager.db if session_manager else None
+    if seq_num is None or db is None:
+        return None
+
+    try:
+        rows = db.fetchall(
+            """
+            SELECT DISTINCT project_id
+            FROM sessions
+            WHERE seq_num = ? AND project_id IS NOT NULL
+            LIMIT 2
+            """,
+            (seq_num,),
+        )
+    except Exception as exc:
+        logger.debug(
+            "Could not derive project from session ref %r: %s",
+            session_ref,
+            exc,
+        )
+        return None
+
+    if len(rows) == 1:
+        project_id = rows[0]["project_id"]
+        return str(project_id) if project_id else None
+    if len(rows) > 1:
+        logger.debug(
+            "Session ref %r is ambiguous across projects; project header is required",
+            session_ref,
+        )
+    return None
+
+
 def _set_context_for_request(
     server: "HTTPServer", arguments: Any, request: Request | None = None
 ) -> SeededContextTokens:
@@ -97,6 +143,8 @@ def _set_context_for_request(
     # header-session UUID so the #N lookup can succeed. (After Change 1,
     # resolve_session_reference handles external_id UUIDs in the header too.)
     canonical_project_ref = project_id_header
+    if not canonical_project_ref and header_session_id:
+        canonical_project_ref = _derive_project_from_unique_session_seq(server, header_session_id)
     if (
         not canonical_project_ref
         and header_session_id

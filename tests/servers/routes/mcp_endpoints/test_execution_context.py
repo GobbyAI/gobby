@@ -106,6 +106,41 @@ class TestSetContextForRequest:
         # The derived project_id is fed back into the helper
         assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
 
+    def test_hash_n_no_project_header_bootstraps_from_unique_header_hash_ref(self) -> None:
+        """A stdio wrapper #N can provide scope when it is unique across projects."""
+        db = MagicMock()
+        db.fetchall.return_value = [{"project_id": PROJECT_ID}]
+        server = _make_server(db)
+        request = _make_request(session_id="#7")  # no project_id header
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(),
+        ) as mock_helper:
+            _set_context_for_request(server, {"session_id": "#5"}, request)
+
+        db.fetchall.assert_called_once()
+        assert db.fetchall.call_args.args[1] == (7,)
+        assert mock_helper.call_args.kwargs["project_ref"] == PROJECT_ID
+
+    def test_hash_n_header_ref_without_unique_project_stays_unscoped(self) -> None:
+        """Ambiguous #N refs still require an explicit project header."""
+        db = MagicMock()
+        db.fetchall.return_value = [
+            {"project_id": PROJECT_ID},
+            {"project_id": str(uuid.uuid4())},
+        ]
+        server = _make_server(db)
+        request = _make_request(session_id="#7")  # no project_id header
+
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.execution.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(),
+        ) as mock_helper:
+            _set_context_for_request(server, {"session_id": "#5"}, request)
+
+        assert mock_helper.call_args.kwargs["project_ref"] is None
+
     def test_no_session_id_forwards_header_project_ref(self) -> None:
         """No session ref → helper receives only the x-gobby-project-id header."""
         server = _make_server()

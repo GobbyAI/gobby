@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -145,20 +146,29 @@ class DaemonProxy:
 
     @staticmethod
     def _read_project_id() -> str | None:
-        """Read project_id from .gobby/project.json in CWD.
+        """Read project_id from the environment or nearest .gobby/project.json.
 
-        The stdio process runs in the PROJECT directory (spawned by the CLI).
-        Its os.getcwd() is the correct project, unlike the daemon's CWD.
+        The stdio process should run under the project, but different MCP
+        clients do not agree on the exact CWD. Walk upward so subdirectory
+        launches still send the project header required for #N session refs.
         """
         import json as _json
 
-        try:
-            with open(".gobby/project.json") as f:
-                data = _json.load(f)
+        env_project_id = os.environ.get("GOBBY_PROJECT_ID")
+        if env_project_id:
+            return env_project_id
+
+        for root in [Path.cwd(), *Path.cwd().parents]:
+            project_file = root / ".gobby" / "project.json"
+            if not project_file.exists():
+                continue
+            try:
+                data = _json.loads(project_file.read_text())
+            except (PermissionError, _json.JSONDecodeError, OSError):
+                return None
             pid = data.get("id")
             return pid if isinstance(pid, str) else None
-        except (FileNotFoundError, PermissionError, _json.JSONDecodeError, OSError):
-            return None
+        return None
 
     async def _request(
         self,

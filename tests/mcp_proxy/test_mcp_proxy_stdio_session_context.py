@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,6 +9,31 @@ import pytest
 from gobby.mcp_proxy.stdio import DaemonProxy
 
 pytestmark = pytest.mark.unit
+
+
+def test_project_id_reads_nearest_parent_project_json(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "repo"
+    nested = project_root / "src" / "pkg"
+    nested.mkdir(parents=True)
+    (project_root / ".gobby").mkdir()
+    (project_root / ".gobby" / "project.json").write_text(json.dumps({"id": "project-from-parent"}))
+    monkeypatch.chdir(nested)
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+
+    proxy = DaemonProxy(60887)
+
+    assert proxy._project_id == "project-from-parent"
+
+
+def test_project_id_env_overrides_project_json(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".gobby").mkdir()
+    (tmp_path / ".gobby" / "project.json").write_text(json.dumps({"id": "project-from-file"}))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GOBBY_PROJECT_ID", "project-from-env")
+
+    proxy = DaemonProxy(60887)
+
+    assert proxy._project_id == "project-from-env"
 
 
 def _mock_response(payload: dict[str, Any] | None = None) -> MagicMock:
